@@ -1,0 +1,1348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoadDraft</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #16171b; --panel: #24262b; --panel2: #2d3036; --panel3: #383b42;
+    --border: #3a3d45; --text: #d8dbe0; --dim: #8f95a0; --accent: #4f9cf5;
+    --accent2: #2f6db3; --ok: #74cf92; --warn: #e5b567; --err: #e57862;
+    --canvas: #26282d; --ribbon: #2b2e34; --tabstrip: #1d1f24;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid;
+    grid-template-rows: 34px 118px 1fr auto 26px;
+    grid-template-columns: 242px 1fr 320px;
+    grid-template-areas: "qat qat qat" "ribbon ribbon ribbon"
+                         "side canvas log" "cmd cmd cmd"
+                         "status status status";
+    background: var(--bg); color: var(--text);
+    font: 12.5px/1.4 -apple-system, "Segoe UI", sans-serif; overflow: hidden;
+    user-select: none;
+  }
+  .mono { font-family: ui-monospace, Menlo, monospace; }
+  svg.ic { display: block; }
+  svg.ic * { stroke: currentColor; stroke-width: 1.7; fill: none;
+             stroke-linecap: round; stroke-linejoin: round; }
+  svg.ic .f { fill: currentColor; stroke: none; }
+
+  /* ---------------------------------------------- quick access toolbar */
+  #qat { grid-area: qat; display: flex; align-items: center; gap: 4px;
+         padding: 0 10px; background: var(--tabstrip);
+         border-bottom: 1px solid #000; }
+  #qat .logo { font-weight: 700; font-size: 13px; margin-right: 8px; }
+  #qat .logo span { color: var(--accent); }
+  .qbtn { padding: 3px 6px; border-radius: 4px; color: var(--dim);
+          cursor: pointer; }
+  .qbtn:hover { background: var(--panel2); color: var(--text); }
+  #qat .proj { color: var(--dim); margin-left: 10px; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+  #qat .grow { flex: 1; }
+  #conn { font-size: 11px; color: var(--dim); }
+  #conn.bad { color: var(--err); }
+
+  /* --------------------------------------------------------- ribbon */
+  #ribbon { grid-area: ribbon; display: flex; flex-direction: column;
+            background: var(--ribbon); border-bottom: 1px solid #000; }
+  #rtabs { display: flex; gap: 2px; padding: 4px 10px 0;
+           background: var(--tabstrip); }
+  .rtab { padding: 4px 16px 5px; font-size: 12px; color: var(--dim);
+          cursor: pointer; border-radius: 5px 5px 0 0;
+          border: 1px solid transparent; border-bottom: none; }
+  .rtab:hover { color: var(--text); }
+  .rtab.active { background: var(--ribbon); color: var(--text);
+                 border-color: #000; font-weight: 600; }
+  #rpanels { flex: 1; display: flex; align-items: stretch; gap: 0;
+             padding: 5px 6px 3px; overflow-x: auto; }
+  .rpanel { display: flex; flex-direction: column; padding: 0 7px;
+            border-right: 1px solid var(--border); min-width: 60px; }
+  .rpanel:last-child { border-right: none; }
+  .rtools { flex: 1; display: flex; align-items: stretch; gap: 3px; }
+  .rcap { text-align: center; font-size: 10px; color: var(--dim);
+          padding: 2px 0 1px; letter-spacing: .3px; }
+  .rbig { display: flex; flex-direction: column; align-items: center;
+          justify-content: flex-start; gap: 3px; width: 56px;
+          padding: 6px 2px 3px; border-radius: 5px; cursor: pointer;
+          color: var(--text); border: 1px solid transparent;
+          text-align: center; font-size: 10.5px; line-height: 1.15; }
+  .rbig:hover { background: var(--panel3); border-color: var(--border); }
+  .rbig.active { background: var(--accent2); border-color: var(--accent);
+                 color: #fff; }
+  .rbig .ic { color: var(--accent); }
+  .rbig.active .ic { color: #fff; }
+  .rstack { display: flex; flex-direction: column; gap: 2px;
+            justify-content: center; }
+  .rsmall { display: flex; align-items: center; gap: 5px; padding: 2px 7px;
+            border-radius: 4px; cursor: pointer; font-size: 11px;
+            color: var(--text); border: 1px solid transparent;
+            white-space: nowrap; }
+  .rsmall:hover { background: var(--panel3); border-color: var(--border); }
+  .rsmall.active { background: var(--accent2); border-color: var(--accent);
+                   color: #fff; }
+  .rsmall .ic { color: var(--accent); }
+  .rctl { display: flex; flex-direction: column; gap: 5px;
+          justify-content: center; }
+  .rctl select { background: var(--panel2); color: var(--text);
+                 border: 1px solid var(--border); border-radius: 4px;
+                 padding: 3px 6px; font-size: 11.5px; max-width: 170px; }
+  .rctl label { display: flex; gap: 5px; align-items: center;
+                color: var(--dim); font-size: 11px; cursor: pointer; }
+
+  /* ------------------------------------------------------ toolspace */
+  aside { grid-area: side; background: var(--panel);
+          border-right: 1px solid #000; display: flex;
+          flex-direction: column; overflow: hidden; }
+  #ts-title { padding: 7px 12px; font-size: 11px; font-weight: 700;
+              letter-spacing: .8px; color: var(--dim);
+              background: var(--panel2); border-bottom: 1px solid var(--border); }
+  #tstree { flex: 1; overflow-y: auto; }
+  .tsec { border-bottom: 1px solid var(--border); }
+  .tsec-h { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+            cursor: pointer; font-size: 11.5px; font-weight: 600;
+            color: var(--text); }
+  .tsec-h:hover { background: var(--panel2); }
+  .tsec-h .tri { color: var(--dim); font-size: 9px; width: 10px; }
+  .tsec-h .cnt { color: var(--dim); font-weight: 400; margin-left: auto; }
+  .trow { display: flex; align-items: center; gap: 7px;
+          padding: 4px 10px 4px 24px; cursor: pointer;
+          border-left: 3px solid transparent; font-size: 12px; }
+  .trow:hover { background: var(--panel2); }
+  .trow.current { border-left-color: var(--accent); background: var(--panel2); }
+  .eye { cursor: pointer; width: 15px; text-align: center; color: var(--dim);
+         user-select: none; flex: none; font-size: 11px; }
+  .eye.on { color: var(--text); }
+  .swatch { width: 11px; height: 11px; border-radius: 2px;
+            border: 1px solid var(--border); flex: none; }
+  .lname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+           flex: 1; }
+  .trow .status { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .trow .status.loaded { background: var(--ok); }
+  .trow .status.error { background: var(--err); }
+  .trow .x { color: var(--dim); padding: 0 3px; }
+  .trow .x:hover { color: var(--err); }
+  .tempty { padding: 4px 10px 6px 24px; color: var(--dim); font-size: 11.5px; }
+
+  /* --------------------------------------------------------- canvas */
+  main { grid-area: canvas; display: flex; flex-direction: column;
+         overflow: hidden; background: var(--canvas); }
+  #viewwrap { flex: 1; overflow: auto; position: relative; }
+  #stage { position: relative; display: block; margin: 12px auto;
+           width: calc(100% - 24px); }
+  #view { display: block; width: 100%;
+          box-shadow: 0 3px 16px rgba(0,0,0,.55); }
+  #ovl { position: absolute; inset: 0; width: 100%; height: 100%;
+         pointer-events: none; }
+  #ovl .ch { stroke: #7ab5ff88; stroke-width: 1;
+             vector-effect: non-scaling-stroke; }
+  #ovl .rb { stroke: var(--accent); stroke-width: 1.4; fill: none;
+             stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+  #ovl .sel { stroke: var(--warn); stroke-width: 1.4; fill: #e5b56722;
+              vector-effect: non-scaling-stroke; }
+  #ovl .mark { fill: var(--accent); stroke: #10121a; stroke-width: 1;
+               vector-effect: non-scaling-stroke; }
+  #zoomer { position: absolute; right: 14px; bottom: 12px; display: flex;
+            gap: 5px; background: rgba(22,23,27,.92);
+            border: 1px solid var(--border); border-radius: 7px;
+            padding: 4px 6px; align-items: center; z-index: 5; }
+  .zbtn { padding: 2px 9px; background: var(--panel2); color: var(--text);
+          border: 1px solid var(--border); border-radius: 5px;
+          cursor: pointer; font-size: 12px; }
+  .zbtn:hover { border-color: var(--accent); }
+  #zoompct { color: var(--dim); font-size: 11px; min-width: 34px;
+             text-align: center; }
+  #ltabs { display: flex; gap: 2px; padding: 3px 8px 0;
+           background: var(--panel); border-top: 1px solid #000; }
+  .ltab { padding: 3px 16px 4px; font-size: 11.5px; background: var(--panel2);
+          color: var(--dim); cursor: pointer; border-radius: 0 0 6px 6px;
+          border: 1px solid var(--border); border-top: none; }
+  .ltab.active { background: #e8e8e8; color: #222; font-weight: 600; }
+  .ltab.plus { color: var(--accent); }
+
+  /* ------------------------------------------------------------ log */
+  #logpane { grid-area: log; background: var(--panel);
+             border-left: 1px solid #000; display: flex;
+             flex-direction: column; overflow: hidden; }
+  #log-title { padding: 7px 12px; font-size: 11px; font-weight: 700;
+               letter-spacing: .8px; color: var(--dim);
+               background: var(--panel2);
+               border-bottom: 1px solid var(--border); }
+  #log { flex: 1; overflow-y: auto; padding: 6px 10px; font-size: 12px;
+         user-select: text; }
+  .entry { margin-bottom: 6px; white-space: pre-wrap;
+           word-break: break-word; }
+  .entry .echo { color: var(--dim); }
+  .entry .ok { color: var(--ok); }
+  .entry .warn { color: var(--warn); }
+  .entry .err { color: var(--err); }
+  .entry .hint { color: var(--dim); }
+  .entry summary { color: var(--accent); cursor: pointer; font-size: 11px; }
+  .entry pre { margin: 3px 0 0; padding: 6px 8px; background: var(--bg);
+               border: 1px solid var(--border); border-radius: 5px;
+               overflow-x: auto; max-height: 240px; }
+
+  /* ---------------------------------------------------- command bar */
+  #cmdbar { grid-area: cmd; display: flex; gap: 8px; padding: 7px 12px;
+            background: var(--panel); border-top: 1px solid #000;
+            align-items: center; }
+  #prompt { color: var(--accent); white-space: nowrap; }
+  #cmd { flex: 1; background: var(--bg); border: 1px solid var(--border);
+         color: var(--text); border-radius: 6px; padding: 6px 10px;
+         outline: none; }
+  #cmd:focus { border-color: var(--accent); }
+  #run { padding: 5px 14px; background: var(--panel2); color: var(--text);
+         border: 1px solid var(--border); border-radius: 6px;
+         cursor: pointer; }
+
+  /* ------------------------------------------------------ status bar */
+  #statusbar { grid-area: status; display: flex; gap: 14px;
+               align-items: center; padding: 0 12px;
+               background: var(--tabstrip); border-top: 1px solid #000;
+               color: var(--dim); font-size: 11px; white-space: nowrap;
+               overflow: hidden; }
+  #st-coord { min-width: 190px; color: var(--text); }
+  .sttog { padding: 1px 9px; border-radius: 4px; cursor: pointer;
+           border: 1px solid var(--border); }
+  .sttog.on { background: var(--accent2); color: #fff;
+              border-color: var(--accent); }
+  #st-tool { color: var(--text); }
+
+  /* ---------------------------------------------------------- modal */
+  #modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55);
+              display: none; align-items: center; justify-content: center;
+              z-index: 50; }
+  #modal { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 10px; padding: 16px 18px; min-width: 330px; }
+  #modal h3 { margin: 0 0 12px; font-size: 14px; }
+  #modal .row { display: flex; align-items: center; gap: 10px;
+                margin-bottom: 9px; }
+  #modal .row label { flex: 1; color: var(--dim); font-size: 12px; }
+  #modal .row input, #modal .row select { width: 160px; background: var(--bg);
+      border: 1px solid var(--border); color: var(--text); border-radius: 5px;
+      padding: 5px 8px; outline: none; }
+  #modal .actions { display: flex; justify-content: flex-end; gap: 8px;
+                    margin-top: 14px; }
+  #modal .actions .zbtn { padding: 4px 16px; }
+</style>
+</head>
+<body>
+  <div id="qat">
+    <div class="logo">Road<span>Draft</span></div>
+    <div class="qbtn" id="q-save" title="Save document"></div>
+    <div class="qbtn" id="q-undo" title="Undo"></div>
+    <div class="qbtn" id="q-redo" title="Redo"></div>
+    <div class="proj" id="proj">…</div>
+    <div class="grow"></div>
+    <span id="conn">connecting…</span>
+  </div>
+
+  <div id="ribbon">
+    <div id="rtabs"></div>
+    <div id="rpanels"></div>
+  </div>
+
+  <aside>
+    <div id="ts-title">TOOLSPACE</div>
+    <div id="tstree"></div>
+  </aside>
+
+  <main>
+    <div id="viewwrap">
+      <div id="stage">
+        <img id="view" alt="drawing view">
+        <svg id="ovl" preserveAspectRatio="none"></svg>
+      </div>
+      <div id="zoomer">
+        <div class="zbtn" id="zout">−</div>
+        <div id="zoompct">fit</div>
+        <div class="zbtn" id="zin">+</div>
+        <div class="zbtn" id="zfit">Fit</div>
+        <div class="zbtn" id="zpng" title="open PNG">⤢</div>
+      </div>
+    </div>
+    <div id="ltabs"></div>
+  </main>
+
+  <div id="logpane">
+    <div id="log-title">COMMAND LOG</div>
+    <div id="log" class="mono"></div>
+  </div>
+
+  <div id="cmdbar" class="mono">
+    <span id="prompt">RD [model]&gt;</span>
+    <input id="cmd" autocomplete="off" spellcheck="false"
+           placeholder="Type a command — help lists everything. Or pick a ribbon tool and click.">
+    <div class="zbtn" id="run">Run</div>
+  </div>
+
+  <div id="statusbar">
+    <span id="st-coord"></span>
+    <span class="sttog" id="tog-ortho" title="Constrain drawing to horizontal/vertical (F8)">ORTHO</span>
+    <span id="st-tool"></span>
+    <span class="grow" style="flex:1"></span>
+    <span id="st-journal"></span>
+    <span id="st-entities"></span>
+  </div>
+
+  <div id="modal-bg"><div id="modal"></div></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
+            state: null, view: null, modelBounds: null, tool: "select",
+            pts: [], cursor: null, stationPicks: [], selected: null,
+            ribbonTab: "Home", dpi: 130, frames: true, dark: true,
+            ortho: false, tsOpen: { layers: true, sheets: true, refs: true } };
+
+const esc = s => String(s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const getJSON = async p => (await fetch(p)).json();
+const postJSON = async (p, body) => (await fetch(p, { method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body) })).json();
+
+// ------------------------------------------------------------------ icons
+const ICONS = {
+  select: `<path class="f" d="M6 3 L18.5 11.2 L12.6 12.3 L15.6 19.2 L12.9 20.4 L10 13.5 L6 17 Z"/>`,
+  pan: `<path d="M7.6 12 V7 a1.3 1.3 0 0 1 2.6 0 v4 M10.2 11 V5.4 a1.3 1.3 0 0 1 2.6 0 V11 M12.8 11 V6.4 a1.3 1.3 0 0 1 2.6 0 V12 M15.4 12.6 V9.6 a1.3 1.3 0 0 1 2.6 0 V15 c0 3.6-2.6 6-6 6-3 0-4.7-1.2-5.9-3.4 l-1.9-3.9 a1.3 1.3 0 0 1 2.3-1.2 l1 1.6 V12"/>`,
+  line: `<path d="M4.5 19.5 L19.5 4.5"/><circle class="f" cx="4.5" cy="19.5" r="1.7"/><circle class="f" cx="19.5" cy="4.5" r="1.7"/>`,
+  pline: `<path d="M3.5 19 L8.5 7.5 L14 14 L20.5 5"/><circle class="f" cx="3.5" cy="19" r="1.5"/><circle class="f" cx="8.5" cy="7.5" r="1.5"/><circle class="f" cx="14" cy="14" r="1.5"/><circle class="f" cx="20.5" cy="5" r="1.5"/>`,
+  circle: `<circle cx="12" cy="12" r="8"/><path d="M12 10.6 V13.4 M10.6 12 H13.4"/>`,
+  arc: `<path d="M4 19 A14.5 14.5 0 0 1 20 7.5"/><circle class="f" cx="4" cy="19" r="1.6"/><circle class="f" cx="20" cy="7.5" r="1.6"/><circle class="f" cx="10.6" cy="11.7" r="1.3"/>`,
+  text: `<path d="M6.5 20 L12 4.5 L17.5 20 M8.6 14.6 H15.4"/>`,
+  station: `<path d="M3 17 H10 Q14.5 17 16.5 13 T21.5 7.5"/><path d="M6.2 14.6 V19.4 M10.4 14.6 V19.4 M15.1 10.4 L18.3 13.2"/>`,
+  move: `<path d="M12 4 V20 M4 12 H20 M12 4 l-2.2 2.2 M12 4 l2.2 2.2 M12 20 l-2.2-2.2 M12 20 l2.2-2.2 M4 12 l2.2-2.2 M4 12 l2.2 2.2 M20 12 l-2.2-2.2 M20 12 l-2.2 2.2"/>`,
+  erase: `<path d="M9 20 H5 L3.2 18.1 a1.6 1.6 0 0 1 0-2.2 L13.2 5.4 a1.6 1.6 0 0 1 2.2 0 l5 5.2 a1.6 1.6 0 0 1 0 2.2 L13.6 20 H9 Z"/><path d="M9.6 9.2 L16.8 16.6"/>`,
+  block: `<path d="M12 3 L20 7 V17 L12 21 L4 17 V7 Z"/><path d="M4 7 L12 11 L20 7 M12 11 V21"/>`,
+  xref: `<path d="M13.5 3 H7 a1.6 1.6 0 0 0-1.6 1.6 V19.4 A1.6 1.6 0 0 0 7 21 h10 a1.6 1.6 0 0 0 1.6-1.6 V8 Z M13.5 3 v5 h5.1"/><path d="M2.5 13 h7.2 M9.7 13 l-2.4-2.4 M9.7 13 l-2.4 2.4"/>`,
+  reload: `<path d="M19.5 12 a7.5 7.5 0 1 1-2.3-5.4 M17.6 3.4 l.3 3.6 3.5-.4"/>`,
+  table: `<rect x="3.5" y="5" width="17" height="14" rx="1"/><path d="M3.5 10 H20.5 M9.2 10 V19 M14.8 10 V19"/>`,
+  sheet: `<path d="M14 3 H6.6 A1.6 1.6 0 0 0 5 4.6 v14.8 A1.6 1.6 0 0 0 6.6 21 h10.8 A1.6 1.6 0 0 0 19 19.4 V8 Z M14 3 v5 h5"/><path d="M9 14.5 h6 M12 11.5 v6"/>`,
+  titleblock: `<rect x="3" y="4.5" width="18" height="15"/><path d="M3 15.5 H21 M13.5 15.5 V19.5"/>`,
+  undo: `<path d="M7.5 5.5 L4 9 L7.5 12.5"/><path d="M4 9 H14 a5.2 5.2 0 0 1 0 10.4 H9"/>`,
+  redo: `<path d="M16.5 5.5 L20 9 L16.5 12.5"/><path d="M20 9 H10 a5.2 5.2 0 0 0 0 10.4 H15"/>`,
+  zoomfit: `<circle cx="10.5" cy="10.5" r="6.8"/><path d="M15.6 15.6 L21 21"/><rect x="7.6" y="7.6" width="5.8" height="5.8"/>`,
+  zoomin: `<circle cx="10.5" cy="10.5" r="6.8"/><path d="M15.6 15.6 L21 21 M10.5 7.8 v5.4 M7.8 10.5 h5.4"/>`,
+  zoomout: `<circle cx="10.5" cy="10.5" r="6.8"/><path d="M15.6 15.6 L21 21 M7.8 10.5 h5.4"/>`,
+  export: `<path d="M13.5 3.5 H7 a1.6 1.6 0 0 0-1.6 1.6 V19 A1.6 1.6 0 0 0 7 20.6 h10 a1.6 1.6 0 0 0 1.6-1.6 V8.5 Z M13.5 3.5 v5 h5.1"/><path d="M9 14.8 h6.2 M15.2 14.8 l-2.4-2.4 M15.2 14.8 l-2.4 2.4"/>`,
+  save: `<path d="M5 3.5 H16 L20.5 8 V19 a1.5 1.5 0 0 1-1.5 1.5 H5 A1.5 1.5 0 0 1 3.5 19 V5 A1.5 1.5 0 0 1 5 3.5 Z"/><path d="M7.5 3.5 V9 H15 V3.5 M7 20.5 V14 h10 v6.5"/>`,
+  journal: `<path d="M8 5 h13 M8 10 h13 M8 15 h13 M8 20 h13"/><circle class="f" cx="4" cy="5" r="1.1"/><circle class="f" cx="4" cy="10" r="1.1"/><circle class="f" cx="4" cy="15" r="1.1"/><circle class="f" cx="4" cy="20" r="1.1"/>`,
+  layers: `<path d="M12 3 L21 8 L12 13 L3 8 Z"/><path d="M4.8 11.4 L12 15.4 L19.2 11.4 M4.8 15.2 L12 19.2 L19.2 15.2"/>`,
+  toolspace: `<rect x="3" y="3.5" width="8" height="17" rx="1"/><path d="M14 5 h7 M14 10 h7 M14 15 h7 M14 20 h7"/>`,
+  newlayer: `<path d="M12 5 L19 9 L12 13 L5 9 Z"/><path d="M6 13.5 L12 17 L18 13.5"/><path d="M19.5 16.5 v5 M17 19 h5"/>`,
+};
+const icon = (name, size) =>
+  `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24">` +
+  (ICONS[name] || "") + `</svg>`;
+
+// ------------------------------------------------------------------- log
+function logHTML(html) {
+  const div = document.createElement("div");
+  div.className = "entry"; div.innerHTML = html;
+  $("log").appendChild(div);
+  while ($("log").children.length > 300) $("log").firstChild.remove();
+  $("log").scrollTop = $("log").scrollHeight;
+}
+const logEcho = line => logHTML(`<span class="echo">&gt; ${esc(line)}</span>`);
+const logHint = m => logHTML(`<span class="hint">${esc(m)}</span>`);
+function jsonBlock(obj, label) {
+  const text = JSON.stringify(obj, null, 2);
+  return `<details${text.length < 500 ? " open" : ""}><summary>${esc(label)}` +
+         `</summary><pre>${esc(text.length > 20000 ?
+           text.slice(0, 20000) + "\n…" : text)}</pre></details>`;
+}
+function logResult(res) {
+  if (!res) return;
+  if (res.ok) {
+    let html = `<span class="ok">${esc(res.message || "ok")}</span>`;
+    (res.warnings || []).forEach(w => {
+      html += `<br><span class="warn">⚠ ${esc(w)}</span>`; });
+    const extra = { ...res };
+    ["ok","name","message","warnings","command_id","created","modified",
+     "deleted"].forEach(k => delete extra[k]);
+    if (res.path) { html += `<br><span class="hint">→ ${esc(res.path)}</span>`;
+                    delete extra.path; delete extra.size_bytes; }
+    if (Object.keys(extra).length) html += jsonBlock(extra, "result data");
+    logHTML(html);
+  } else {
+    const e = res.error || {};
+    let html = `<span class="err">✗ ${esc(e.type || "error")}: ` +
+               `${esc(e.message || "failed")}</span>`;
+    if (e.hint) html += `<br><span class="hint">hint: ${esc(e.hint)}</span>`;
+    if (e.example) html += jsonBlock(e.example, "valid example");
+    logHTML(html);
+  }
+}
+
+// ------------------------------------------------------- coordinate maps
+function evtSpace(ev) {
+  const r = $("view").getBoundingClientRect();
+  const u = (ev.clientX - r.left) / r.width;
+  const v = (ev.clientY - r.top) / r.height;
+  if (!S.view) return null;
+  if (S.view.kind === "model") {
+    const b = S.view.bounds;
+    return [b[0] + u * (b[2] - b[0]), b[3] - v * (b[3] - b[1])];
+  }
+  const [W, H] = S.view.sizeIn;
+  return [u * W, H - v * H];
+}
+function spacePx(p) {
+  const img = $("view");
+  const nw = img.naturalWidth, nh = img.naturalHeight;
+  if (S.view.kind === "model") {
+    const b = S.view.bounds;
+    return [(p[0] - b[0]) / (b[2] - b[0]) * nw,
+            (b[3] - p[1]) / (b[3] - b[1]) * nh];
+  }
+  const [W, H] = S.view.sizeIn;
+  return [p[0] / W * nw, (H - p[1]) / H * nh];
+}
+function unitsPerPx() {
+  const r = $("view").getBoundingClientRect();
+  if (!S.view || !r.width) return 1;
+  if (S.view.kind === "model") {
+    const b = S.view.bounds; return (b[2] - b[0]) / r.width;
+  }
+  return S.view.sizeIn[0] / r.width;
+}
+const fmtPt = p => S.view && S.view.kind === "model"
+  ? `${p[0].toFixed(2)}, ${p[1].toFixed(2)} ft`
+  : `${p[0].toFixed(3)}, ${p[1].toFixed(3)} in`;
+
+// ------------------------------------------------------------ canvas img
+function imgURL() {
+  let url = `/render/${encodeURIComponent(S.space)}.png?rev=${S.rev}` +
+            `&dpi=${S.dpi}&frames=${S.frames ? 1 : 0}`;
+  if (S.space === "model") {
+    if (S.dark) url += "&theme=dark";
+    if (S.modelBounds)
+      url += `&bounds=${S.modelBounds.map(v => v.toFixed(4)).join(",")}`;
+  }
+  return url;
+}
+let canvasToken = 0;
+async function updateCanvas() {
+  const tok = ++canvasToken;
+  const resp = await fetch(imgURL());
+  if (tok !== canvasToken) return;
+  const kind = resp.headers.get("X-RD-Kind");
+  if (kind === "model")
+    S.view = { kind, bounds: resp.headers.get("X-RD-Bounds")
+                             .split(",").map(Number) };
+  else if (kind === "sheet")
+    S.view = { kind, sizeIn: resp.headers.get("X-RD-Size-In")
+                             .split(",").map(Number) };
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const img = $("view");
+  const old = img.dataset.obj;
+  img.onload = () => {
+    if (old) URL.revokeObjectURL(old);
+    clearPendingZoom();
+    $("ovl").setAttribute("viewBox",
+      `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+    drawOverlay();
+  };
+  img.dataset.obj = url; img.src = url;
+}
+
+// ---------------------------------------------------------------- ribbon
+const RIBBON = {
+  Home: [
+    { caption: "Palettes", items: [
+      { t: "big", icon: "toolspace", label: "Tool­space", act: "toolspace" }] },
+    { caption: "Draw", items: [
+      { t: "big", icon: "line", label: "Line", tool: "line" },
+      { t: "big", icon: "pline", label: "Polyline", tool: "pline" },
+      { t: "big", icon: "circle", label: "Circle", tool: "circle" },
+      { t: "big", icon: "arc", label: "Arc", tool: "arc" }] },
+    { caption: "Create Design", items: [
+      { t: "big", icon: "station", label: "Station­ing", tool: "station" }] },
+    { caption: "Modify", items: [
+      { t: "big", icon: "select", label: "Select", tool: "select" },
+      { t: "big", icon: "move", label: "Move", tool: "move" },
+      { t: "big", icon: "erase", label: "Erase", tool: "erase" },
+      { t: "stack", items: [
+        { icon: "undo", label: "Undo", act: "undo" },
+        { icon: "redo", label: "Redo", act: "redo" }] }] },
+    { caption: "Layers", items: [{ t: "layerctl" }] },
+    { caption: "Annotation", items: [
+      { t: "big", icon: "text", label: "Text", tool: "text" },
+      { t: "big", icon: "table", label: "Table", act: "table" }] },
+  ],
+  Insert: [
+    { caption: "Block", items: [
+      { t: "big", icon: "block", label: "Insert Block", tool: "insblock" },
+      { t: "stack", items: [
+        { icon: "block", label: "Define Block…", act: "defblock" }] }] },
+    { caption: "Reference", items: [
+      { t: "big", icon: "xref", label: "Attach", act: "attachref" },
+      { t: "stack", items: [
+        { icon: "reload", label: "Reload Refs", act: "reloadrefs" },
+        { icon: "erase", label: "Detach…", act: "detachref" }] }] },
+    { caption: "Sheet", items: [
+      { t: "big", icon: "sheet", label: "New Sheet", act: "newsheet" },
+      { t: "stack", items: [
+        { icon: "titleblock", label: "Title Block…", act: "titleblock" }] }] },
+  ],
+  Annotate: [
+    { caption: "Labels & Tables", items: [
+      { t: "big", icon: "station", label: "Station Labels", tool: "station" },
+      { t: "big", icon: "table", label: "Add Table", act: "table" }] },
+    { caption: "Text", items: [
+      { t: "big", icon: "text", label: "Text", tool: "text" }] },
+  ],
+  View: [
+    { caption: "Navigate", items: [
+      { t: "big", icon: "pan", label: "Pan", tool: "pan" },
+      { t: "stack", items: [
+        { icon: "zoomin", label: "Zoom In", act: "zoomin" },
+        { icon: "zoomout", label: "Zoom Out", act: "zoomout" },
+        { icon: "zoomfit", label: "Zoom Fit", act: "zoomfit" }] }] },
+    { caption: "Display", items: [{ t: "displayctl" }] },
+  ],
+  Output: [
+    { caption: "Export", items: [
+      { t: "big", icon: "export", label: "DXF", act: "dxf" },
+      { t: "big", icon: "export", label: "PDF", act: "pdf" }] },
+    { caption: "Document", items: [
+      { t: "big", icon: "save", label: "Save", act: "save" },
+      { t: "big", icon: "journal", label: "Journal", act: "journal" }] },
+  ],
+};
+
+function renderRibbon() {
+  const tabs = $("rtabs"); tabs.innerHTML = "";
+  Object.keys(RIBBON).forEach(name => {
+    const t = document.createElement("div");
+    t.className = "rtab" + (name === S.ribbonTab ? " active" : "");
+    t.textContent = name;
+    t.onclick = () => { S.ribbonTab = name; renderRibbon(); };
+    tabs.appendChild(t);
+  });
+  const panels = $("rpanels"); panels.innerHTML = "";
+  RIBBON[S.ribbonTab].forEach(pdef => {
+    const panel = document.createElement("div");
+    panel.className = "rpanel";
+    const tools = document.createElement("div");
+    tools.className = "rtools";
+    pdef.items.forEach(item => tools.appendChild(ribbonItem(item)));
+    const cap = document.createElement("div");
+    cap.className = "rcap"; cap.textContent = pdef.caption;
+    panel.append(tools, cap);
+    panels.appendChild(panel);
+  });
+}
+function ribbonItem(item) {
+  if (item.t === "stack") {
+    const stack = document.createElement("div");
+    stack.className = "rstack";
+    item.items.forEach(sub => {
+      const b = document.createElement("div");
+      b.className = "rsmall" + (sub.tool && S.tool === sub.tool
+                                ? " active" : "");
+      b.innerHTML = icon(sub.icon, 15) + `<span>${esc(sub.label)}</span>`;
+      b.onclick = () => sub.tool ? setTool(sub.tool) : ribbonAct(sub.act);
+      stack.appendChild(b);
+    });
+    return stack;
+  }
+  if (item.t === "layerctl") {
+    const box = document.createElement("div");
+    box.className = "rctl";
+    const sel = document.createElement("select");
+    sel.id = "riblayer";
+    (S.state ? S.state.layers : []).forEach(layer => {
+      const o = document.createElement("option");
+      o.value = layer.name; o.textContent = layer.name;
+      o.selected = S.state && layer.name === S.state.current_layer;
+      sel.appendChild(o);
+    });
+    sel.onchange = async () => logResult(await postJSON("/api/execute",
+      { command: "set_current_layer", params: { name: sel.value } }));
+    const nb = document.createElement("div");
+    nb.className = "rsmall";
+    nb.innerHTML = icon("newlayer", 15) + "<span>New Layer…</span>";
+    nb.onclick = () => ribbonAct("newlayer");
+    box.append(sel, nb);
+    return box;
+  }
+  if (item.t === "displayctl") {
+    const box = document.createElement("div");
+    box.className = "rctl";
+    box.innerHTML =
+      `<label>DPI <select id="rdpi">` +
+      [96, 130, 200].map(v =>
+        `<option${v === S.dpi ? " selected" : ""}>${v}</option>`).join("") +
+      `</select></label>` +
+      `<label><input type="checkbox" id="rframes"` +
+      `${S.frames ? " checked" : ""}> viewport frames</label>` +
+      `<label><input type="checkbox" id="rdark"` +
+      `${S.dark ? " checked" : ""}> dark model canvas</label>`;
+    setTimeout(() => {
+      $("rdpi").onchange = e => { S.dpi = +e.target.value; updateCanvas(); };
+      $("rframes").onchange = e => { S.frames = e.target.checked;
+                                     updateCanvas(); };
+      $("rdark").onchange = e => { S.dark = e.target.checked;
+                                   updateCanvas(); };
+    });
+    return box;
+  }
+  const b = document.createElement("div");
+  b.className = "rbig" + (item.tool && S.tool === item.tool ? " active" : "");
+  b.innerHTML = icon(item.icon, 26) + `<span>${esc(item.label)}</span>`;
+  b.title = item.tool && TOOLS[item.tool] ? TOOLS[item.tool].hint : item.label;
+  b.onclick = () => item.tool ? setTool(item.tool) : ribbonAct(item.act);
+  return b;
+}
+async function ribbonAct(act) {
+  const prefill = v => { $("cmd").value = v; $("cmd").focus(); };
+  if (act === "undo" || act === "redo")
+    logResult(await postJSON("/api/execute", { command: act, params: {} }));
+  else if (act === "toolspace") {
+    const aside = document.querySelector("aside");
+    aside.style.display = aside.style.display === "none" ? "" : "none";
+  }
+  else if (act === "table") prefill(S.space === "model"
+    ? 'table position=1200,900 title="CURVE DATA" columns=[{"header":"CURVE","width":80},{"header":"R","width":100}] rows=[["C-1","800.00"]] text_height=8'
+    : 'table position=26,8 title="CURVE DATA" columns=[{"header":"CURVE","width":1.0},{"header":"R","width":1.2}] rows=[["C-1","800.00\'"]] text_height=0.12');
+  else if (act === "defblock") prefill(
+    'block MARKER entities=[{"type":"circle","center":[0,0],"radius":1},' +
+    '{"type":"line","start":[-1,0],"end":[1,0]}]');
+  else if (act === "attachref") {
+    const v = await openForm("Attach reference (basefile)", [
+      { key: "name", label: "Reference name", value: "SURVEY" },
+      { key: "path", label: "Path to .rdoc.json", value: "examples/output/demo.rdoc.json" },
+      { key: "offset", label: "Offset x,y", value: "0,0" },
+      { key: "scale", label: "Scale", value: "1" }]);
+    if (v) {
+      const off = v.offset.split(",").map(Number);
+      logResult(await postJSON("/api/execute", { command: "attach_reference",
+        params: { name: v.name, path: v.path, space: S.space,
+                  offset: off.length === 2 && off.every(n => !isNaN(n))
+                          ? off : [0, 0],
+                  scale: parseFloat(v.scale) || 1 } }));
+    }
+  }
+  else if (act === "reloadrefs")
+    logResult(await postJSON("/api/execute",
+      { command: "reload_references", params: {} }));
+  else if (act === "detachref") prefill("xdetach NAME");
+  else if (act === "newsheet") {
+    const v = await openForm("New sheet", [
+      { key: "name", label: "Sheet name", value:
+        `C-${(S.state ? S.state.sheets.length : 0) + 101}` },
+      { key: "size", label: "Size", value: "ANSI_D",
+        options: ["ANSI_A", "ANSI_B", "ANSI_C", "ANSI_D", "ARCH_D",
+                  "ARCH_E"] }]);
+    if (v) {
+      const r = await postJSON("/api/execute", { command: "create_sheet",
+        params: { name: v.name, size: v.size } });
+      logResult(r);
+      if (r.ok) setSpace(r.created[0]);
+    }
+  }
+  else if (act === "titleblock") prefill(S.space !== "model"
+    ? `titleblock ${spaceLabel()} project="PROJECT" sheet_title="ROADWAY PLAN" sheet_number=${spaceLabel()}`
+    : "titleblock C-101 project=\"PROJECT\"");
+  else if (act === "newlayer")
+    prefill("mklayer V-NEW color=red linetype=continuous lineweight_mm=0.35");
+  else if (act === "dxf" || act === "pdf") {
+    logEcho(act);
+    logResult(await postJSON("/api/query",
+      { query: act === "dxf" ? "export_dxf" : "export_pdf", params: {} }));
+  }
+  else if (act === "save") {
+    logResult(await postJSON("/api/query", { query: "save_document",
+      params: { path: slugProject() + ".rdoc.json" } }));
+  }
+  else if (act === "journal") {
+    logResult(await postJSON("/api/query", { query: "save_journal",
+      params: { path: slugProject() + ".journal.jsonl" } }));
+  }
+  else if (act === "zoomin") zoomBtn(0.8);
+  else if (act === "zoomout") zoomBtn(1.25);
+  else if (act === "zoomfit") { S.zoom = 0; S.modelBounds = null;
+    applyZoom(); updateCanvas(); }
+}
+const slugProject = () => (S.state ? S.state.project : "project")
+  .replace(/[^A-Za-z0-9_-]+/g, "_");
+const spaceLabel = () => S.space === "model" ? "model" :
+  ((S.state && S.state.spaces.find(x => x.ref === S.space)) ||
+   { label: S.space }).label;
+
+// ------------------------------------------------------------- toolspace
+function tsSection(key, title, count, rowsHTMLBuilder) {
+  const sec = document.createElement("div");
+  sec.className = "tsec";
+  const head = document.createElement("div");
+  head.className = "tsec-h";
+  head.innerHTML = `<span class="tri">${S.tsOpen[key] ? "▼" : "▶"}</span>` +
+    `<span>${esc(title)}</span><span class="cnt">${count}</span>`;
+  head.onclick = () => { S.tsOpen[key] = !S.tsOpen[key]; renderToolspace(); };
+  sec.appendChild(head);
+  if (S.tsOpen[key]) rowsHTMLBuilder(sec);
+  return sec;
+}
+function renderToolspace() {
+  if (!S.state) return;
+  const tree = $("tstree"); tree.innerHTML = "";
+
+  tree.appendChild(tsSection("layers", "Layers", S.state.layers.length,
+    sec => {
+      S.state.layers.forEach(layer => {
+        const row = document.createElement("div");
+        row.className = "trow" +
+          (layer.name === S.state.current_layer ? " current" : "");
+        row.title = `${layer.description || layer.name} — click to set current`;
+        const eye = document.createElement("span");
+        eye.className = "eye" + (layer.visible ? " on" : "");
+        eye.textContent = layer.visible ? "●" : "○";
+        eye.onclick = async ev => { ev.stopPropagation();
+          logResult(await postJSON("/api/execute",
+            { command: "modify_layer", params: { name: layer.name,
+              changes: { visible: !layer.visible } } })); };
+        const sw = document.createElement("span");
+        sw.className = "swatch"; sw.style.background = layer.color;
+        const nm = document.createElement("span");
+        nm.className = "lname"; nm.textContent = layer.name;
+        row.append(eye, sw, nm);
+        row.onclick = async () => logResult(await postJSON("/api/execute",
+          { command: "set_current_layer", params: { name: layer.name } }));
+        sec.appendChild(row);
+      });
+    }));
+
+  tree.appendChild(tsSection("sheets", "Sheets", S.state.sheets.length,
+    sec => {
+      if (!S.state.sheets.length) {
+        const d = document.createElement("div");
+        d.className = "tempty"; d.textContent = "none — Insert ▸ New Sheet";
+        sec.appendChild(d); return;
+      }
+      S.state.sheets.forEach(sheet => {
+        const row = document.createElement("div");
+        row.className = "trow" + (sheet.id === S.space ? " current" : "");
+        row.innerHTML = `<span style="color:var(--dim)">${icon("sheet", 13)}` +
+          `</span><span class="lname">${esc(sheet.name)}</span>` +
+          `<span style="color:var(--dim);font-size:11px">${sheet.viewports}` +
+          ` vp · ${sheet.entities}</span>`;
+        row.onclick = () => setSpace(sheet.id);
+        sec.appendChild(row);
+      });
+    }));
+
+  tree.appendChild(tsSection("refs", "References",
+    (S.state.references || []).length, sec => {
+      const refs = S.state.references || [];
+      if (!refs.length) {
+        const d = document.createElement("div");
+        d.className = "tempty"; d.textContent = "none — Insert ▸ Attach";
+        sec.appendChild(d); return;
+      }
+      refs.forEach(ref => {
+        const row = document.createElement("div");
+        row.className = "trow";
+        row.title = `${ref.path}\n${ref.entities} entities — ` +
+                    (ref.error || "loaded");
+        const eye = document.createElement("span");
+        eye.className = "eye" + (ref.visible ? " on" : "");
+        eye.textContent = ref.visible ? "●" : "○";
+        eye.onclick = async ev => { ev.stopPropagation();
+          logResult(await postJSON("/api/execute",
+            { command: "modify_reference", params: { name: ref.name,
+              changes: { visible: !ref.visible } } })); };
+        const dot = document.createElement("span");
+        dot.className = "status " + ref.status;
+        const nm = document.createElement("span");
+        nm.className = "lname"; nm.textContent = ref.name;
+        const x = document.createElement("span");
+        x.className = "x"; x.textContent = "✕"; x.title = "detach";
+        x.onclick = async ev => { ev.stopPropagation();
+          logResult(await postJSON("/api/execute",
+            { command: "detach_reference", params: { name: ref.name } })); };
+        row.append(eye, dot, nm, x);
+        sec.appendChild(row);
+      });
+    }));
+}
+
+// ---------------------------------------------------------- layout tabs
+function renderLTabs() {
+  const bar = $("ltabs"); bar.innerHTML = "";
+  S.state.spaces.forEach(sp => {
+    const t = document.createElement("div");
+    t.className = "ltab" + (sp.ref === S.space ? " active" : "");
+    t.textContent = sp.label;
+    t.onclick = () => setSpace(sp.ref);
+    bar.appendChild(t);
+  });
+  const plus = document.createElement("div");
+  plus.className = "ltab plus"; plus.textContent = "+";
+  plus.title = "new sheet";
+  plus.onclick = () => ribbonAct("newsheet");
+  bar.appendChild(plus);
+}
+function renderStatus() {
+  const st = S.state;
+  $("proj").textContent = st.project;
+  $("st-journal").textContent = `journal: ${st.journal_length}`;
+  const sheetEnts = st.sheets.reduce((a, s) => a + s.entities, 0);
+  $("st-entities").textContent =
+    `entities: ${st.model_entity_count} model / ${sheetEnts} sheet`;
+  $("prompt").textContent = `RD [${spaceLabel()}]>`;
+}
+async function refresh() {
+  S.state = await getJSON("/api/state");
+  if (!S.state.spaces.some(sp => sp.ref === S.space)) setSpace("model");
+  if (S.state.rev !== S.rev) { S.rev = S.state.rev; updateCanvas(); }
+  renderToolspace(); renderLTabs(); renderStatus(); renderRibbon();
+}
+function setSpace(ref) {
+  S.space = ref; S.pts = []; S.stationPicks = []; S.selected = null;
+  if (S.state) { renderLTabs(); renderToolspace(); renderStatus(); }
+  updateCanvas();
+}
+
+// ----------------------------------------------------------------- tools
+const TOOLS = {
+  select:  { hint: "click an entity — Delete removes, Esc clears" },
+  pan:     { hint: "drag to pan; wheel zooms" },
+  line:    { hint: "click start, then end (Shift or ORTHO = orthogonal)" },
+  pline:   { hint: "click vertices; Enter or right-click to finish" },
+  circle:  { hint: "click center, then a radius point" },
+  arc:     { hint: "click start, a point on the arc, then end" },
+  text:    { hint: "click the insertion point" },
+  station: { hint: "click centerline elements in order; Enter to configure" },
+  move:    { hint: "click an entity, then base point, then destination" },
+  erase:   { hint: "click an entity to erase it" },
+  insblock:{ hint: "click the insertion point" },
+};
+function setTool(key) {
+  S.tool = key; S.pts = []; S.stationPicks = []; S.selected = null;
+  renderRibbon(); drawOverlay();
+  $("st-tool").textContent = `${key.toUpperCase()}: ${TOOLS[key].hint}`;
+}
+function cancelTool() {
+  S.pts = []; S.stationPicks = []; S.selected = null; drawOverlay();
+}
+function orthoAdjust(pt, ev) {
+  if (!(ev.shiftKey || S.ortho) || !S.pts.length) return pt;
+  const last = S.pts[S.pts.length - 1];
+  return Math.abs(pt[0] - last[0]) >= Math.abs(pt[1] - last[1])
+    ? [pt[0], last[1]] : [last[0], pt[1]];
+}
+const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+function circumcenter(a, b, c) {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) +
+                 c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-9) return null;
+  const sq = p => p[0] * p[0] + p[1] * p[1];
+  return [(sq(a) * (b[1] - c[1]) + sq(b) * (c[1] - a[1]) +
+           sq(c) * (a[1] - b[1])) / d,
+          (sq(a) * (c[0] - b[0]) + sq(b) * (a[0] - c[0]) +
+           sq(c) * (b[0] - a[0])) / d];
+}
+const angDeg = (c, p) => Math.atan2(p[1] - c[1], p[0] - c[0]) * 180 / Math.PI;
+function arcFrom3(p1, p2, p3) {
+  const c = circumcenter(p1, p2, p3);
+  if (!c) return null;
+  const r = dist(c, p1);
+  const a1 = angDeg(c, p1), a2 = angDeg(c, p2), a3 = angDeg(c, p3);
+  const span = x => ((x - a1) % 360 + 360) % 360;
+  const ccw = span(a2) <= span(a3);
+  return { center: c, radius: r, start: ccw ? a1 : a3, end: ccw ? a3 : a1 };
+}
+async function exec(command, params) {
+  logResult(await postJSON("/api/execute",
+    { command, params: { space: S.space, ...params } }));
+}
+async function hitAt(pt, tolPx) {
+  const r = await postJSON("/api/query", { query: "hit_test",
+    params: { space: S.space, point: pt, tolerance: tolPx * unitsPerPx() } });
+  return r.ok && r.hits.length ? r.hits : [];
+}
+async function toolClick(pt, ev) {
+  const tool = S.tool;
+  if (tool === "line") {
+    S.pts.push(orthoAdjust(pt, ev));
+    if (S.pts.length === 2) {
+      const [a, b] = S.pts; S.pts = [];
+      await exec("draw_line", { start: a, end: b });
+    }
+  } else if (tool === "pline") {
+    S.pts.push(orthoAdjust(pt, ev));
+  } else if (tool === "circle") {
+    S.pts.push(pt);
+    if (S.pts.length === 2) {
+      const [c, e] = S.pts; S.pts = [];
+      const r = dist(c, e);
+      if (r > 0) await exec("draw_circle", { center: c, radius: r });
+    }
+  } else if (tool === "arc") {
+    S.pts.push(pt);
+    if (S.pts.length === 3) {
+      const [p1, p2, p3] = S.pts; S.pts = [];
+      const arc = arcFrom3(p1, p2, p3);
+      if (!arc) await exec("draw_line", { start: p1, end: p3 });
+      else await exec("draw_arc", { center: arc.center, radius: arc.radius,
+        start_angle_deg: arc.start, end_angle_deg: arc.end });
+    }
+  } else if (tool === "text") {
+    const values = await openForm("Place text", [
+      { key: "content", label: "Text", value: "" },
+      { key: "height", label: `Height (${S.view.kind === "model" ? "ft" : "in"})`,
+        value: S.view.kind === "model" ? "8" : "0.15" },
+      { key: "rotation", label: "Rotation (deg)", value: "0" }]);
+    if (values && values.content)
+      await exec("place_text", { position: pt, content: values.content,
+        height: parseFloat(values.height) || 0.15,
+        rotation_deg: parseFloat(values.rotation) || 0 });
+  } else if (tool === "insblock") {
+    const blocks = S.state ? S.state.blocks : ["NORTH_ARROW"];
+    const values = await openForm("Insert block", [
+      { key: "block", label: "Block", value: blocks[0] || "NORTH_ARROW",
+        options: blocks },
+      { key: "scale", label: "Scale", value: "1" },
+      { key: "rotation", label: "Rotation (deg)", value: "0" }]);
+    if (values)
+      await exec("insert_block", { block_name: values.block, position: pt,
+        scale: parseFloat(values.scale) || 1,
+        rotation_deg: parseFloat(values.rotation) || 0 });
+  } else if (tool === "station") {
+    const hits = await hitAt(pt, 10);
+    const hit = hits.find(h => ["line", "polyline", "arc"].includes(h.type));
+    if (!hit) { logHint("no line/polyline/arc within tolerance"); return; }
+    if (!S.stationPicks.some(sp => sp.id === hit.id)) {
+      S.stationPicks.push({ id: hit.id, pt });
+      logHint(`path element ${S.stationPicks.length}: ${hit.id} ` +
+              `(${hit.type}) — Enter when done`);
+    }
+  } else if (tool === "erase") {
+    const hits = await hitAt(pt, 8);
+    if (hits.length)
+      logResult(await postJSON("/api/execute",
+        { command: "delete_entities", params: { ids: [hits[0].id] } }));
+    else logHint("nothing to erase there");
+  } else if (tool === "move") {
+    if (!S.selected) {
+      const hits = await hitAt(pt, 8);
+      if (!hits.length) { logHint("click an entity to move"); return; }
+      const info = await postJSON("/api/query",
+        { query: "get_entity", params: { id: hits[0].id } });
+      if (info.ok) {
+        S.selected = { id: hits[0].id, bbox: info.bbox };
+        logHint(`moving ${hits[0].id}: click base point`);
+      }
+    } else if (S.pts.length === 0) {
+      S.pts.push(pt);
+      logHint("click destination");
+    } else {
+      const base = S.pts[0]; S.pts = [];
+      const delta = [pt[0] - base[0], pt[1] - base[1]];
+      const id = S.selected.id; S.selected = null;
+      logResult(await postJSON("/api/execute", { command: "move_entities",
+        params: { ids: [id], delta } }));
+    }
+  } else if (tool === "select") {
+    const hits = await hitAt(pt, 8);
+    if (hits.length) {
+      const info = await postJSON("/api/query",
+        { query: "get_entity", params: { id: hits[0].id } });
+      if (info.ok) {
+        S.selected = { id: hits[0].id, bbox: info.bbox };
+        logHTML(`<span class="hint">selected ${esc(hits[0].id)} on layer ` +
+          `${esc(info.entity.layer)} — Delete to erase</span>` +
+          jsonBlock(info.entity, hits[0].id));
+      }
+    } else S.selected = null;
+  }
+  drawOverlay();
+}
+async function finishTool() {
+  if (S.tool === "pline" && S.pts.length >= 2) {
+    const verts = S.pts; S.pts = [];
+    await exec("draw_polyline", { vertices: verts });
+  } else if (S.tool === "station" && S.stationPicks.length) {
+    const values = await openForm("Annotate stationing", [
+      { key: "begin", label: "Begin station (e.g. 10+00)", value: "10+00" },
+      { key: "interval", label: "Interval (ft)", value: "100" },
+      { key: "tick", label: "Tick half-length (ft)", value: "10" },
+      { key: "height", label: "Text height (ft)", value: "8" },
+      { key: "offset", label: "Label offset (ft)", value: "16" }]);
+    if (values) {
+      const parseSta = s => s.includes("+")
+        ? parseFloat(s.split("+")[0]) * 100 + parseFloat(s.split("+")[1] || 0)
+        : parseFloat(s);
+      await exec("annotate_stationing", {
+        path_ids: S.stationPicks.map(sp => sp.id),
+        begin_station: parseSta(values.begin) || 0,
+        interval: parseFloat(values.interval) || 100,
+        tick_half_len: parseFloat(values.tick) || 10,
+        text_height: parseFloat(values.height) || 8,
+        label_offset: parseFloat(values.offset) || 16 });
+      S.stationPicks = [];
+    }
+  }
+  drawOverlay();
+}
+
+// --------------------------------------------------------------- overlay
+function seg(a, b, cls) {
+  return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" ` +
+         `class="${cls}"/>`;
+}
+function drawOverlay() {
+  const svg = $("ovl");
+  const img = $("view");
+  if (!S.view || !img.naturalWidth) { svg.innerHTML = ""; return; }
+  const nw = img.naturalWidth, nh = img.naturalHeight;
+  let out = "";
+  if (S.cursor && !["select", "pan"].includes(S.tool)) {
+    const c = spacePx(S.cursor);
+    out += seg([0, c[1]], [nw, c[1]], "ch") + seg([c[0], 0], [c[0], nh], "ch");
+  }
+  const px = S.pts.map(spacePx);
+  const cur = S.cursor ? spacePx(S.cursor) : null;
+  if (S.tool === "line" && px.length === 1 && cur) out += seg(px[0], cur, "rb");
+  if (S.tool === "pline" && px.length) {
+    for (let i = 1; i < px.length; i++) out += seg(px[i - 1], px[i], "rb");
+    if (cur) out += seg(px[px.length - 1], cur, "rb");
+  }
+  if (S.tool === "circle" && px.length === 1 && cur) {
+    const rp = dist(px[0], cur);
+    out += `<circle cx="${px[0][0]}" cy="${px[0][1]}" r="${rp}" class="rb"/>`;
+  }
+  if (S.tool === "arc") {
+    if (px.length === 1 && cur) out += seg(px[0], cur, "rb");
+    if (px.length === 2 && cur && S.cursor) {
+      const arc = arcFrom3(S.pts[0], S.pts[1], S.cursor);
+      if (arc) {
+        const s0 = ((arc.start % 360) + 360) % 360;
+        let s1 = ((arc.end % 360) + 360) % 360;
+        if (s1 <= s0) s1 += 360;
+        const pts = [];
+        for (let i = 0; i <= 32; i++) {
+          const a = (s0 + (s1 - s0) * i / 32) * Math.PI / 180;
+          pts.push(spacePx([arc.center[0] + arc.radius * Math.cos(a),
+                            arc.center[1] + arc.radius * Math.sin(a)]));
+        }
+        out += `<polyline points="${pts.map(p => p.join(",")).join(" ")}" ` +
+               `class="rb"/>`;
+      } else out += seg(px[0], cur, "rb");
+    }
+  }
+  if (S.tool === "move" && S.selected && px.length === 1 && cur) {
+    out += seg(px[0], cur, "rb");
+    if (S.selected.bbox && S.cursor) {
+      const d = [S.cursor[0] - S.pts[0][0], S.cursor[1] - S.pts[0][1]];
+      const a = spacePx([S.selected.bbox[0] + d[0], S.selected.bbox[1] + d[1]]);
+      const b = spacePx([S.selected.bbox[2] + d[0], S.selected.bbox[3] + d[1]]);
+      out += `<rect x="${Math.min(a[0], b[0])}" y="${Math.min(a[1], b[1])}" ` +
+             `width="${Math.abs(b[0] - a[0])}" ` +
+             `height="${Math.abs(b[1] - a[1])}" class="rb"/>`;
+    }
+  }
+  S.stationPicks.forEach(sp => {
+    const p = spacePx(sp.pt);
+    out += `<rect x="${p[0] - 4}" y="${p[1] - 4}" width="8" height="8" ` +
+           `class="mark"/>`;
+  });
+  if (S.selected && S.selected.bbox) {
+    const a = spacePx([S.selected.bbox[0], S.selected.bbox[1]]);
+    const b = spacePx([S.selected.bbox[2], S.selected.bbox[3]]);
+    out += `<rect x="${Math.min(a[0], b[0])}" y="${Math.min(a[1], b[1])}" ` +
+           `width="${Math.abs(b[0] - a[0])}" ` +
+           `height="${Math.abs(b[1] - a[1])}" class="sel"/>`;
+  }
+  svg.innerHTML = out;
+}
+
+// ----------------------------------------------------- stage interactions
+const stage = $("stage");
+let pan = null;
+stage.addEventListener("pointerdown", ev => {
+  if (ev.button === 1 || (ev.button === 0 && S.tool === "pan")) {
+    pan = { x: ev.clientX, y: ev.clientY,
+            bounds: S.view && S.view.bounds,
+            sl: $("viewwrap").scrollLeft, st: $("viewwrap").scrollTop };
+    stage.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  }
+});
+stage.addEventListener("pointermove", ev => {
+  const pt = evtSpace(ev);
+  if (pt) {
+    S.cursor = ["line", "pline"].includes(S.tool) ? orthoAdjust(pt, ev) : pt;
+    $("st-coord").textContent = fmtPt(pt);
+    drawOverlay();
+  }
+  if (pan) {
+    if (S.view && S.view.kind === "model") {
+      const t = `translate(${ev.clientX - pan.x}px, ${ev.clientY - pan.y}px)`;
+      $("view").style.transform = t; $("ovl").style.transform = t;
+    } else {
+      $("viewwrap").scrollLeft = pan.sl - (ev.clientX - pan.x);
+      $("viewwrap").scrollTop = pan.st - (ev.clientY - pan.y);
+    }
+  }
+});
+stage.addEventListener("pointerup", ev => {
+  if (pan) {
+    if (S.view && S.view.kind === "model" && pan.bounds) {
+      const r = $("view").getBoundingClientRect();
+      const b = pan.bounds;
+      const dx = (ev.clientX - pan.x) / r.width * (b[2] - b[0]);
+      const dy = (ev.clientY - pan.y) / r.height * (b[3] - b[1]);
+      $("view").style.transform = ""; $("ovl").style.transform = "";
+      if (dx || dy) {
+        S.modelBounds = [b[0] - dx, b[1] + dy, b[2] - dx, b[3] + dy];
+        updateCanvas();
+      }
+    }
+    pan = null;
+    return;
+  }
+  if (ev.button === 0 && S.view) {
+    const pt = evtSpace(ev);
+    if (pt) toolClick(pt, ev);
+  }
+});
+stage.addEventListener("dblclick", ev => { ev.preventDefault(); finishTool(); });
+stage.addEventListener("contextmenu", ev => { ev.preventDefault();
+                                              finishTool(); });
+stage.addEventListener("pointerleave", () => { S.cursor = null;
+  $("st-coord").textContent = ""; drawOverlay(); });
+
+// Wheel zoom: factor proportional to scroll delta (smooth on trackpads and
+// scroll wheels alike), anchored at the cursor. Model space gets instant CSS
+// feedback scaled about the cursor while the true re-render at the new
+// coordinate window catches up; sheets zoom the raster with scroll anchoring.
+let wheelTimer = null;
+const pend = { k: 1, x: 0, y: 0 };
+function applyPendingZoom() {
+  const o = `${pend.x}px ${pend.y}px`;
+  const t = pend.k === 1 ? "" : `scale(${pend.k})`;
+  const img = $("view"), ovl = $("ovl");
+  img.style.transformOrigin = o; ovl.style.transformOrigin = o;
+  img.style.transform = t; ovl.style.transform = t;
+}
+function clearPendingZoom() {
+  pend.k = 1;
+  $("view").style.transform = ""; $("ovl").style.transform = "";
+}
+$("viewwrap").addEventListener("wheel", ev => {
+  if (!S.view) return;
+  ev.preventDefault();
+  const delta = Math.max(-80, Math.min(80, ev.deltaY));
+  const f = Math.exp(delta * 0.002);  // >1 zooms out, <1 zooms in
+  if (f === 1) return;
+  if (S.view.kind === "model") {
+    const pt = evtSpace(ev);
+    const b = S.modelBounds || S.view.bounds;
+    S.modelBounds = [pt[0] - (pt[0] - b[0]) * f, pt[1] - (pt[1] - b[1]) * f,
+                     pt[0] + (b[2] - pt[0]) * f, pt[1] + (b[3] - pt[1]) * f];
+    const r = $("stage").getBoundingClientRect();
+    pend.k /= f;
+    pend.x = ev.clientX - r.left;
+    pend.y = ev.clientY - r.top;
+    applyPendingZoom();
+    applyZoom();
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(updateCanvas, 140);
+  } else {
+    const wrap = $("viewwrap");
+    const oldZoom = S.zoom || 1;
+    const newZoom = Math.max(0.3, Math.min(8, oldZoom / f));
+    if (newZoom === oldZoom) return;
+    const r = wrap.getBoundingClientRect();
+    const cx = ev.clientX - r.left + wrap.scrollLeft;
+    const cy = ev.clientY - r.top + wrap.scrollTop;
+    const ratio = newZoom / oldZoom;
+    S.zoom = newZoom;
+    applyZoom();
+    wrap.scrollLeft = cx * ratio - (ev.clientX - r.left);
+    wrap.scrollTop = cy * ratio - (ev.clientY - r.top);
+  }
+}, { passive: false });
+
+function applyZoom() {
+  const st = $("stage");
+  if (!S.zoom) { st.style.width = "calc(100% - 24px)";
+    $("zoompct").textContent =
+      S.space === "model" && S.modelBounds ? "zoom" : "fit"; }
+  else { st.style.width = (S.zoom * 100) + "%";
+         $("zoompct").textContent = Math.round(S.zoom * 100) + "%"; }
+}
+function zoomBtn(f) {
+  if (S.space === "model") {
+    const b = S.modelBounds || (S.view && S.view.bounds);
+    if (!b) return;
+    const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
+    S.modelBounds = [cx - (cx - b[0]) * f, cy - (cy - b[1]) * f,
+                     cx + (b[2] - cx) * f, cy + (b[3] - cy) * f];
+    updateCanvas(); applyZoom();
+  } else { S.zoom = Math.max(0.3, (S.zoom || 1) / f); applyZoom(); }
+}
+$("zin").onclick = () => zoomBtn(0.8);
+$("zout").onclick = () => zoomBtn(1.25);
+$("zfit").onclick = () => { S.zoom = 0; S.modelBounds = null; applyZoom();
+                            updateCanvas(); };
+$("zpng").onclick = () => window.open(imgURL(), "_blank");
+
+// ----------------------------------------------------------------- modal
+function openForm(title, fields) {
+  return new Promise(resolve => {
+    const modal = $("modal");
+    modal.innerHTML = `<h3>${esc(title)}</h3>` + fields.map((f, i) =>
+      `<div class="row"><label>${esc(f.label)}</label>` +
+      (f.options
+        ? `<select id="mf${i}">` + f.options.map(o =>
+            `<option${o === f.value ? " selected" : ""}>${esc(o)}</option>`)
+            .join("") + `</select>`
+        : `<input type="text" id="mf${i}" value="${esc(f.value)}">`) +
+      `</div>`).join("") +
+      `<div class="actions"><div class="zbtn" id="mcancel">Cancel</div>` +
+      `<div class="zbtn" id="mok">OK</div></div>`;
+    $("modal-bg").style.display = "flex";
+    const done = values => { $("modal-bg").style.display = "none";
+                             resolve(values); };
+    $("mok").onclick = () => done(Object.fromEntries(
+      fields.map((f, i) => [f.key, $("mf" + i).value])));
+    $("mcancel").onclick = () => done(null);
+    modal.onkeydown = ev => {
+      if (ev.key === "Enter") $("mok").click();
+      if (ev.key === "Escape") $("mcancel").click();
+      ev.stopPropagation();
+    };
+    $("mf0").focus();
+    if ($("mf0").select) $("mf0").select();
+  });
+}
+
+// ------------------------------------------------------------ command bar
+async function sendLine(line) {
+  logEcho(line);
+  const resp = await postJSON("/api/line", { line, space: S.space });
+  if (resp.kind === "noop") { if (resp.message) logHint(resp.message); }
+  else if (resp.kind === "error")
+    logHTML(`<span class="err">✗ ${esc(resp.message)}</span>`);
+  else if (resp.kind === "space") { S.space = resp.space;
+    logHint(resp.message); renderLTabs(); renderStatus(); updateCanvas(); }
+  else if (resp.kind === "help") {
+    if (resp.item)
+      logHTML(`<span class="ok">${esc(resp.item.name)}</span> ` +
+        `<span class="hint">(${esc(resp.item.kind)}): ` +
+        `${esc(resp.item.description)}</span>` +
+        jsonBlock(resp.item.example, "example") +
+        jsonBlock(resp.item.params_schema, "schema"));
+    else logHTML(`<span class="hint">` + resp.topics.map(t =>
+      `<b>${esc(t.name)}</b> — ${esc(t.description)}`).join("<br>") +
+      `</span>`);
+  } else if (resp.kind === "result") logResult(resp.result);
+}
+$("cmd").addEventListener("keydown", ev => {
+  ev.stopPropagation();
+  const input = $("cmd");
+  if (ev.key === "Enter") {
+    const line = input.value.trim();
+    if (!line) return;
+    S.history.push(line); S.hIdx = S.history.length; input.value = "";
+    sendLine(line);
+  } else if (ev.key === "ArrowUp") {
+    if (S.hIdx > 0) { S.hIdx--; input.value = S.history[S.hIdx]; }
+    ev.preventDefault();
+  } else if (ev.key === "ArrowDown") {
+    if (S.hIdx < S.history.length - 1) { S.hIdx++;
+      input.value = S.history[S.hIdx]; }
+    else { S.hIdx = S.history.length; input.value = ""; }
+    ev.preventDefault();
+  } else if (ev.key === "Tab") {
+    ev.preventDefault();
+    const parts = input.value.split(" ");
+    if (parts.length === 1 && parts[0]) {
+      const matches = S.names.filter(n =>
+        n.startsWith(parts[0].toLowerCase()));
+      if (matches.length === 1) input.value = matches[0] + " ";
+      else if (matches.length > 1) logHint(matches.join("  "));
+    }
+  } else if (ev.key === "Escape") { input.value = ""; input.blur(); }
+});
+$("run").onclick = () => {
+  const line = $("cmd").value.trim();
+  if (line) { S.history.push(line); S.hIdx = S.history.length;
+              $("cmd").value = ""; sendLine(line); }
+};
+
+// -------------------------------------------------------------- QAT etc.
+$("q-save").innerHTML = icon("save", 16);
+$("q-undo").innerHTML = icon("undo", 16);
+$("q-redo").innerHTML = icon("redo", 16);
+$("q-save").onclick = () => ribbonAct("save");
+$("q-undo").onclick = () => ribbonAct("undo");
+$("q-redo").onclick = () => ribbonAct("redo");
+$("tog-ortho").onclick = () => { S.ortho = !S.ortho;
+  $("tog-ortho").classList.toggle("on", S.ortho); };
+
+// ------------------------------------------------------- global keyboard
+const TOOL_KEYS = { v: "select", h: "pan", l: "line", p: "pline",
+                    c: "circle", a: "arc", t: "text", s: "station",
+                    m: "move", e: "erase", i: "insblock" };
+document.addEventListener("keydown", ev => {
+  if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" ||
+      ev.target.tagName === "SELECT") return;
+  const key = ev.key.toLowerCase();
+  if (ev.key === "F8") { ev.preventDefault(); $("tog-ortho").click(); }
+  else if (TOOL_KEYS[key] && !ev.metaKey && !ev.ctrlKey)
+    setTool(TOOL_KEYS[key]);
+  else if (ev.key === "Enter") finishTool();
+  else if (ev.key === "Escape") cancelTool();
+  else if ((ev.key === "Delete" || ev.key === "Backspace") && S.selected) {
+    postJSON("/api/execute", { command: "delete_entities",
+      params: { ids: [S.selected.id] } }).then(logResult);
+    S.selected = null;
+  }
+});
+
+// ------------------------------------------------------------------- SSE
+function connect() {
+  const es = new EventSource("/api/events");
+  es.onopen = () => { $("conn").textContent = "● live";
+                      $("conn").classList.remove("bad"); };
+  es.onmessage = ev => {
+    try { const { rev } = JSON.parse(ev.data);
+          if (rev !== S.rev) refresh(); } catch (e) {}
+  };
+  es.onerror = () => { $("conn").textContent = "○ reconnecting…";
+                       $("conn").classList.add("bad"); };
+}
+
+// ------------------------------------------------------------------ boot
+(async function boot() {
+  renderRibbon();
+  setTool("select");
+  const manifest = await getJSON("/api/manifest");
+  const names = new Set();
+  manifest.commands.concat(manifest.queries).forEach(i => names.add(i.name));
+  ["line","pline","arc","circle","text","insert","table","sheet","viewport",
+   "titleblock","erase","move","mklayer","layer","space","state","layers",
+   "sheets","blocks","styles","entities","extents","journal","help","dxf",
+   "pdf","save","undo","redo","station","xref","refs"].forEach(n =>
+    names.add(n));
+  S.names = [...names].sort();
+  await refresh();
+  connect();
+  logHint("RoadDraft ready. Ribbon tools are selectable (or keys " +
+    "V/H/L/P/C/A/T/S/M/E/I); click the canvas to draw. ORTHO and F8 " +
+    "constrain to horizontal/vertical. The command line speaks the full " +
+    "language — 'help' lists it.");
+})();
+</script>
+</body>
+</html>
