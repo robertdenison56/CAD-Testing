@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from roaddraft.core.geometry import ViewportTransform
-from roaddraft.document.entities import Entity, entity_from_dict
+from roaddraft.document.entities import (
+    Entity, as_point, as_positive, entity_from_dict,
+)
 
 # (width_in, height_in), landscape
 SHEET_SIZES = {
@@ -65,10 +67,12 @@ class Viewport:
 
     @classmethod
     def from_dict(cls, d):
-        return cls(id=d["id"], center_paper=list(d["center_paper"]),
-                   width_in=float(d["width_in"]), height_in=float(d["height_in"]),
-                   model_center=list(d["model_center"]),
-                   feet_per_inch=float(d["feet_per_inch"]),
+        return cls(id=d["id"], center_paper=as_point(d["center_paper"]),
+                   width_in=as_positive(d["width_in"], "width_in"),
+                   height_in=as_positive(d["height_in"], "height_in"),
+                   model_center=as_point(d["model_center"]),
+                   feet_per_inch=as_positive(d["feet_per_inch"],
+                                             "feet_per_inch"),
                    rotation_deg=float(d.get("rotation_deg", 0.0)))
 
 

@@ -19,6 +19,29 @@ VALIGN = ("bottom", "middle", "top")
 MAX_BLOCK_DEPTH = 5
 
 
+def as_point(value):
+    """Validate and coerce a [x, y] point. Raises ValueError on anything else
+    (including strings, which iterate as characters) so a bad modify_entity
+    payload becomes a teaching fault instead of stored corruption."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"expected a point [x, y], got {value!r}")
+    return [float(value[0]), float(value[1])]
+
+
+def as_positive(value, name):
+    value = float(value)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive, got {value}")
+    return value
+
+
+def _in_enum(value, allowed, name):
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of {list(allowed)}, "
+                         f"got {value!r}")
+    return value
+
+
 @dataclass
 class Entity:
     id: str = ""
@@ -71,7 +94,8 @@ class Line(Entity):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(start=list(d["start"]), end=list(d["end"]), **cls._base_kwargs(d))
+        return cls(start=as_point(d["start"]), end=as_point(d["end"]),
+                   **cls._base_kwargs(d))
 
     def bbox(self, doc):
         return geo.bbox_of_points([self.start, self.end])
@@ -95,7 +119,10 @@ class Polyline(Entity):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(vertices=[list(v) for v in d["vertices"]],
+        vertices = [as_point(v) for v in d["vertices"]]
+        if len(vertices) < 2:
+            raise ValueError("polyline needs at least 2 vertices")
+        return cls(vertices=vertices,
                    closed=bool(d.get("closed", False)), **cls._base_kwargs(d))
 
     def bbox(self, doc):
@@ -125,7 +152,8 @@ class Arc(Entity):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(center=list(d["center"]), radius=float(d["radius"]),
+        return cls(center=as_point(d["center"]),
+                   radius=as_positive(d["radius"], "radius"),
                    start_angle_deg=float(d["start_angle_deg"]),
                    end_angle_deg=float(d["end_angle_deg"]), **cls._base_kwargs(d))
 
@@ -153,7 +181,9 @@ class Circle(Entity):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(center=list(d["center"]), radius=float(d["radius"]), **cls._base_kwargs(d))
+        return cls(center=as_point(d["center"]),
+                   radius=as_positive(d["radius"], "radius"),
+                   **cls._base_kwargs(d))
 
     def bbox(self, doc):
         c, r = self.center, self.radius
@@ -185,10 +215,12 @@ class Text(Entity):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(position=list(d["position"]), content=str(d["content"]),
-                   height=float(d["height"]), style=d.get("style", "STANDARD"),
+        return cls(position=as_point(d["position"]), content=str(d["content"]),
+                   height=as_positive(d["height"], "height"),
+                   style=d.get("style", "STANDARD"),
                    rotation_deg=float(d.get("rotation_deg", 0.0)),
-                   halign=d.get("halign", "left"), valign=d.get("valign", "bottom"),
+                   halign=_in_enum(d.get("halign", "left"), HALIGN, "halign"),
+                   valign=_in_enum(d.get("valign", "bottom"), VALIGN, "valign"),
                    **cls._base_kwargs(d))
 
     def bbox(self, doc):
@@ -225,8 +257,8 @@ class BlockRef(Entity):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(block_name=d["block_name"], position=list(d["position"]),
-                   scale=float(d.get("scale", 1.0)),
+        return cls(block_name=d["block_name"], position=as_point(d["position"]),
+                   scale=as_positive(d.get("scale", 1.0), "scale"),
                    rotation_deg=float(d.get("rotation_deg", 0.0)), **cls._base_kwargs(d))
 
     def bbox(self, doc):
@@ -269,11 +301,19 @@ class Table(Entity):
 
     @classmethod
     def from_dict(cls, d):
-        return cls(position=list(d["position"]),
-                   columns=[{"header": c["header"], "width": float(c["width"])}
-                            for c in d["columns"]],
-                   rows=[[str(v) for v in r] for r in d.get("rows", [])],
-                   text_height=float(d.get("text_height", 0.12)),
+        columns = [{"header": str(c["header"]),
+                    "width": as_positive(c["width"], "column width")}
+                   for c in d["columns"]]
+        if not columns:
+            raise ValueError("table needs at least one column")
+        rows = [[str(v) for v in r] for r in d.get("rows", [])]
+        for i, row in enumerate(rows):
+            if len(row) != len(columns):
+                raise ValueError(f"rows[{i}] has {len(row)} cells but the "
+                                 f"table has {len(columns)} columns")
+        return cls(position=as_point(d["position"]), columns=columns, rows=rows,
+                   text_height=as_positive(d.get("text_height", 0.12),
+                                           "text_height"),
                    title=str(d.get("title", "")), style=d.get("style", "STANDARD"),
                    **cls._base_kwargs(d))
 

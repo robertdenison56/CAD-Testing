@@ -333,12 +333,22 @@ def modify_entity(doc: Document, p: dict):
         if immutable in changes and changes[immutable] != getattr(
                 entity, immutable if immutable == "id" else "TYPE"):
             raise CommandFault(f"entity {immutable} cannot be changed")
+    known = set(entity.to_dict()) | {"color", "linetype"}
+    unknown = set(changes) - known
+    if unknown:
+        raise CommandFault(
+            f"unknown fields for {entity.TYPE}: {sorted(unknown)}",
+            hint=f"editable fields: {sorted(known - {'id', 'type'})}")
     merged = {**entity.to_dict(), **changes}
     try:
         new_entity = entity_from_dict(merged)
     except (KeyError, ValueError, TypeError) as ex:
         raise CommandFault(f"invalid changes for {entity.TYPE} {eid}: {ex}",
                            hint=f"current fields: {sorted(entity.to_dict())}")
+    if isinstance(new_entity, BlockRef) \
+            and new_entity.block_name not in doc.blocks:
+        raise CommandFault(f"block {new_entity.block_name!r} does not exist",
+                           hint=f"available blocks: {sorted(doc.blocks)}")
     if new_entity.layer not in doc.layers:
         raise CommandFault(f"layer {new_entity.layer!r} does not exist",
                            hint=f"existing layers: {sorted(doc.layers)}")

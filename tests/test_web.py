@@ -207,7 +207,66 @@ def test_dark_theme_model_render(server):
 
 def test_state_includes_blocks(server):
     _, state = get(server, "/api/state")
-    assert "NORTH_ARROW" in json.loads(state)["blocks"]
+    parsed = json.loads(state)
+    assert "NORTH_ARROW" in parsed["blocks"]
+    assert "STANDARD" in parsed["text_styles"]
+
+
+def test_state_includes_property_choices(server):
+    """The properties panel needs linetypes and named colors from state."""
+    _, state = get(server, "/api/state")
+    parsed = json.loads(state)
+    assert "continuous" in parsed["linetypes"]
+    assert "dashed" in parsed["linetypes"]
+    assert parsed["colors"]["red"].startswith("#")
+    assert "grey" not in parsed["colors"]  # deduplicated alias
+    assert all("linetype" in layer for layer in parsed["layers"])
+
+
+def test_properties_panel_edit_flow(server):
+    """Layer/color/linetype changes as the properties panel sends them,
+    including clearing an override back to ByLayer with null."""
+    post(server, "/api/execute", {"command": "create_layer",
+                                  "params": {"name": "V-ROAD", "color": "red"}})
+    _, r = post(server, "/api/execute", {"command": "draw_line", "params": {
+        "space": "model", "start": [0, 0], "end": [100, 0]}})
+    eid = r["created"][0]
+    for changes in ({"layer": "V-ROAD"}, {"color": "cyan"},
+                    {"color": "#12AB34"}, {"linetype": "dashed"}):
+        _, r = post(server, "/api/execute", {"command": "modify_entity",
+            "params": {"id": eid, "changes": changes}})
+        assert r["ok"], r
+    _, info = post(server, "/api/query", {"query": "get_entity",
+                                          "params": {"id": eid}})
+    e = info["entity"]
+    assert (e["layer"], e["color"], e["linetype"]) == \
+        ("V-ROAD", "#12AB34", "dashed")
+    _, r = post(server, "/api/execute", {"command": "modify_entity",
+        "params": {"id": eid, "changes": {"color": None, "linetype": None}}})
+    assert r["ok"]
+    _, info = post(server, "/api/query", {"query": "get_entity",
+                                          "params": {"id": eid}})
+    assert "color" not in info["entity"]      # back to ByLayer
+    assert "linetype" not in info["entity"]
+
+
+def test_edit_text_full_flow_over_http(server):
+    """The GUI's edit path: place text, fetch it, modify it, fetch again."""
+    _, r = post(server, "/api/execute", {"command": "place_text", "params": {
+        "space": "model", "position": [100, 100], "content": "DRAFT NOTE",
+        "height": 8}})
+    eid = r["created"][0]
+    _, info = post(server, "/api/query", {"query": "get_entity",
+                                          "params": {"id": eid}})
+    assert info["entity"]["content"] == "DRAFT NOTE"
+    _, r = post(server, "/api/execute", {"command": "modify_entity",
+        "params": {"id": eid, "changes": {"content": "FINAL NOTE\nSEE SHEET 2",
+                                          "halign": "center"}}})
+    assert r["ok"]
+    _, info = post(server, "/api/query", {"query": "get_entity",
+                                          "params": {"id": eid}})
+    assert info["entity"]["content"] == "FINAL NOTE\nSEE SHEET 2"
+    assert info["entity"]["halign"] == "center"
 
 
 def test_state_includes_references(server, tmp_path):

@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from roaddraft.api.lines import route_line
 from roaddraft.api.session import Session
 from roaddraft.core import colors as colorlib
+from roaddraft.document.document import LINETYPES
 from roaddraft.render import mpl as mpl_render
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -92,9 +93,14 @@ class WebApp:
                     {"ref": s.id, "label": s.name} for s in doc.sheets.values()],
                 "current_layer": doc.settings["current_layer"],
                 "blocks": sorted(doc.blocks),
+                "text_styles": sorted(doc.text_styles),
+                "linetypes": list(LINETYPES),
+                "colors": {name: hexval for name, hexval
+                           in colorlib.NAMED_HEX.items() if name != "grey"},
                 "layers": [{
                     "name": layer.name,
                     "color": hexcolor(layer.color),
+                    "linetype": layer.linetype,
                     "visible": layer.visible,
                     "lineweight_mm": layer.lineweight_mm,
                     "description": layer.description,

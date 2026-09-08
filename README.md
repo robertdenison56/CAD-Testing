@@ -113,14 +113,33 @@ and a status bar with coordinate readout and an **ORTHO** toggle (F8). Model
 space renders on the AutoCAD dark canvas (black/white linework flips to
 light; sheets stay white paper) — toggle in View ▸ Display.
 
-- **Drawing tools** (ribbon or keys V/H/L/P/C/A/T/S/M/E/I): Select (hit-test
-  pick, Delete to erase), Pan, Line, Polyline, Circle (center+radius point),
-  3-point Arc, Text, **Station**, **Move** (entity → base point →
-  destination), **Erase** (click to delete), and **Insert Block** (pick from
-  the document's block library) — with crosshair, rubber-band previews,
-  Shift/ORTHO constraint, wheel zoom (true re-render at the new window, not
-  pixel scaling), and a live coordinate readout in feet/inches. Every click
-  emits the same journaled command an AI would send.
+- **Drawing tools** (ribbon or keys V/H/L/P/C/A/T/S/M/E/I/X): Select
+  (hit-test pick — the entity itself lights up with a glow traced along its
+  actual geometry, not a box; Delete to erase), Pan, Line, Polyline, Circle
+  (center+radius point), 3-point Arc, Text, **Station**, **Move** (entity →
+  base point → destination, with the true shape as the drag ghost),
+  **Erase** (click to delete), **Insert Block**
+  (pick from the document's block library), and **Edit Text** — with
+  crosshair, rubber-band previews, Shift/ORTHO constraint, wheel zoom (true
+  re-render at the new window, not pixel scaling), and a live coordinate
+  readout in feet/inches. Every click emits the same journaled command an AI
+  would send.
+- **Properties panel**: selecting an entity docks an AutoCAD-style
+  Properties palette under the Toolspace — Layer, Color (named colors, a
+  custom picker, or back to ByLayer), and Linetype dropdowns plus the
+  entity's own fields (line endpoints with live length/angle, circle/arc
+  center-radius-angles, text content/height/rotation/justification/style,
+  block position/scale/rotation, table title/text height). Each change
+  applies instantly and the panel re-syncs from the document.
+- **Editing**: double-click any entity with the Select tool (or select it and
+  press Enter) for the full in-place editor. Text gets
+  a full editor — multiline content, height, rotation, justification, style,
+  layer; tables get a cell editor (headers and rows as `A | B | C` lines);
+  everything else gets a generic Properties form covering every field,
+  including clearing color/linetype back to ByLayer. All edits flow through
+  the journaled `modify_entity` command, which validates geometry, enums,
+  positive dimensions, row/column consistency, and field names with teaching
+  errors — a bad edit can never corrupt the document.
 - **The Station tool** is the roadway feature: click the centerline elements
   in order (line–arc–line…), press Enter, set begin station/interval, and the
   `annotate_stationing` command walks the path and generates perpendicular

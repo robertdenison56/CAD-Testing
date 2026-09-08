@@ -39,11 +39,12 @@ class Reference:
 
     @classmethod
     def from_dict(cls, d):
+        from roaddraft.document.entities import as_point, as_positive
         return cls(id=d["id"], name=d["name"], path=d["path"],
                    space=d.get("space", "model"),
-                   offset=list(d.get("offset", [0, 0])),
+                   offset=as_point(d.get("offset", [0, 0])),
                    rotation_deg=float(d.get("rotation_deg", 0.0)),
-                   scale=float(d.get("scale", 1.0)),
+                   scale=as_positive(d.get("scale", 1.0), "scale"),
                    visible=bool(d.get("visible", True)))
 
 
