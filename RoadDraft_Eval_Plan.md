@@ -106,6 +106,7 @@ benchmarks/
   tasksets/d1-dev.json, d1-test.json, d1-variance.json   pinned manifests (committed) [E2]
   expert/<task_id>.journal.jsonl                          human playtest trajectories [E2]
   runs/<run_id>/summary.json, leaderboard.md              published runs only         [E4]
+  knowledge/manifest.json, caltrans-ppm/*.txt|*.json     reference standards behind the spec (Caltrans PPM text + page index; raw PDFs gitignored) [done]
 results/                                                   raw episode logs (gitignored)
 ```
 
@@ -245,6 +246,7 @@ Each of these changes `spec_hash` and therefore every task id. Batch them, decid
 6. Confirm **legibility is judged in paper space** at the deliverable scale, including model-space labels seen through the viewport.
 7. Review tolerances (0.005 ft, 1 second, 0.05 in) and the `_upright` west-heading gotcha already flagged in Phase 1.
 8. Task ids and any published number are tied to the frozen spec. **No leaderboard is published on `draft-v1`.**
+9. **Reconcile `draft-v1` with the Caltrans PPM**, now indexed under `benchmarks/knowledge/caltrans-ppm/` (README there lists each departure with page citations): BC/EC versus PC/PT wording, full annotation at 500-ft stations with single digits between versus every 100-ft station in `12+34.56` form, 0.14 in ticks with labels below the line versus 0.40 in ticks with labels on the left, PPM `TX` text sizes versus 0.10 in labels, and tangent distances beside bearings. Decide per item whether the neutral spec follows the PPM or keeps the genericized value, and record the citation next to the value in `spec_v1.py`.
 
 ## 4. The harness (`roaddraft.eval`)
 

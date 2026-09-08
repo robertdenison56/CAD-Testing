@@ -206,6 +206,8 @@ src/roaddraft/
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
 tests/         59 tests: geometry, commands, determinism, renders, DXF, web server
 examples/      demo_plan_sheet.py — a full sheet drafted through the tool surface
+benchmarks/    knowledge/ — reference standards behind the drafting spec (Caltrans PPM text + page index; see its README)
+scripts/       build_knowledge.py — rebuilds the knowledge base from the raw PDFs
 ```
 
 ## What this is not (yet)
