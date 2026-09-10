@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from roaddraft.core import geometry as geo
 
@@ -42,12 +42,72 @@ def _in_enum(value, allowed, name):
     return value
 
 
+ANCHOR_REQUIRED = ("alignment", "ref", "kind")
+ANCHOR_SIDES = ("left", "right")
+ANCHOR_ROTATIONS = ("along", "perpendicular", "horizontal")
+
+
+def _is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def as_anchor(value) -> Optional[Dict]:
+    """Validate an anchor record (provenance of a design-anchored entity).
+
+    Returns None for None, otherwise a plain dict copy. Required string keys:
+    alignment, ref, kind. Optional keys: station/offset/label_offset (number
+    or None), side (left|right|None), rotation (along|perpendicular|
+    horizontal|None), viewport (str|None), content_auto (bool). Anything
+    else raises ValueError('anchor: ...')."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"anchor: expected an object, got {value!r}")
+    out = {}
+    for key in ANCHOR_REQUIRED:
+        v = value.get(key)
+        if not isinstance(v, str) or not v:
+            raise ValueError(f"anchor: {key} must be a non-empty string, got {v!r}")
+        out[key] = v
+    for key, v in value.items():
+        if key in ANCHOR_REQUIRED:
+            continue
+        if key in ("station", "offset", "label_offset"):
+            if v is not None and not _is_number(v):
+                raise ValueError(f"anchor: {key} must be a number or null, got {v!r}")
+            out[key] = None if v is None else float(v)
+        elif key == "side":
+            if v is not None and v not in ANCHOR_SIDES:
+                raise ValueError(f"anchor: side must be one of {list(ANCHOR_SIDES)} or "
+                                 f"null, got {v!r}")
+            out[key] = v
+        elif key == "rotation":
+            if v is not None and v not in ANCHOR_ROTATIONS:
+                raise ValueError(f"anchor: rotation must be one of "
+                                 f"{list(ANCHOR_ROTATIONS)} or null, got {v!r}")
+            out[key] = v
+        elif key == "viewport":
+            if v is not None and not isinstance(v, str):
+                raise ValueError(f"anchor: viewport must be a string or null, got {v!r}")
+            out[key] = v
+        elif key == "content_auto":
+            if not isinstance(v, bool):
+                raise ValueError(f"anchor: content_auto must be true/false, got {v!r}")
+            out[key] = v
+        else:
+            raise ValueError(f"anchor: unknown key {key!r}; keys: alignment, ref, kind, "
+                             f"station, offset, side, label_offset, rotation, viewport, "
+                             f"content_auto")
+    return out
+
+
 @dataclass
 class Entity:
     id: str = ""
     layer: str = "0"
     color: Optional[str] = None
     linetype: Optional[str] = None
+    anchor: Optional[dict] = None  # design provenance (see as_anchor); sparse
 
     TYPE = "entity"
 
@@ -57,6 +117,8 @@ class Entity:
             d["color"] = self.color
         if self.linetype is not None:
             d["linetype"] = self.linetype
+        if self.anchor is not None:
+            d["anchor"] = dict(self.anchor)
         return d
 
     @staticmethod
@@ -66,6 +128,7 @@ class Entity:
             "layer": d.get("layer", "0"),
             "color": d.get("color"),
             "linetype": d.get("linetype"),
+            "anchor": as_anchor(d.get("anchor")),
         }
 
     def bbox(self, doc):
@@ -101,7 +164,7 @@ class Line(Entity):
         return geo.bbox_of_points([self.start, self.end])
 
     def transformed(self, fn, angle_delta_deg, scale):
-        return Line(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+        return Line(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor,
                     start=fn(self.start), end=fn(self.end))
 
 
@@ -131,7 +194,7 @@ class Polyline(Entity):
         return geo.bbox_of_points(self.vertices)
 
     def transformed(self, fn, angle_delta_deg, scale):
-        return Polyline(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+        return Polyline(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor,
                         vertices=[fn(v) for v in self.vertices], closed=self.closed)
 
 
@@ -161,7 +224,7 @@ class Arc(Entity):
         return geo.arc_bbox(self.center, self.radius, self.start_angle_deg, self.end_angle_deg)
 
     def transformed(self, fn, angle_delta_deg, scale):
-        return Arc(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+        return Arc(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor,
                    center=fn(self.center), radius=self.radius * scale,
                    start_angle_deg=self.start_angle_deg + angle_delta_deg,
                    end_angle_deg=self.end_angle_deg + angle_delta_deg)
@@ -190,7 +253,7 @@ class Circle(Entity):
         return (c[0] - r, c[1] - r, c[0] + r, c[1] + r)
 
     def transformed(self, fn, angle_delta_deg, scale):
-        return Circle(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+        return Circle(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor,
                       center=fn(self.center), radius=self.radius * scale)
 
 
@@ -233,7 +296,7 @@ class Text(Entity):
                              self.rotation_deg, self.halign, self.valign, wf)
 
     def transformed(self, fn, angle_delta_deg, scale):
-        return Text(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+        return Text(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor,
                     position=fn(self.position), content=self.content,
                     height=self.height * scale, style=self.style,
                     rotation_deg=self.rotation_deg + angle_delta_deg,
@@ -269,7 +332,7 @@ class BlockRef(Entity):
         return bb
 
     def transformed(self, fn, angle_delta_deg, scale):
-        return BlockRef(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+        return BlockRef(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor,
                         block_name=self.block_name, position=fn(self.position),
                         scale=self.scale * scale,
                         rotation_deg=self.rotation_deg + angle_delta_deg)
@@ -382,7 +445,7 @@ class Table(Entity):
 
     def transformed(self, fn, angle_delta_deg, scale):
         # Tables stay axis-aligned; rotation applies to position only.
-        return Table(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+        return Table(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor,
                      position=fn(self.position),
                      columns=[{"header": c["header"], "width": c["width"] * scale}
                               for c in self.columns],

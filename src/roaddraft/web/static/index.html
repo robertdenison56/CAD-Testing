@@ -351,7 +351,7 @@ const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
             state: null, view: null, modelBounds: null, tool: "select",
             pts: [], cursor: null, stationPicks: [], selected: null,
             ribbonTab: "Home", dpi: 130, frames: true, dark: true,
-            ortho: false, tsOpen: { layers: true, sheets: true, refs: true } };
+            ortho: false, tsOpen: { layers: true, sheets: true, refs: true, alignments: true } };
 
 const esc = s => String(s).replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -370,6 +370,8 @@ const ICONS = {
   arc: `<path d="M4 19 A14.5 14.5 0 0 1 20 7.5"/><circle class="f" cx="4" cy="19" r="1.6"/><circle class="f" cx="20" cy="7.5" r="1.6"/><circle class="f" cx="10.6" cy="11.7" r="1.3"/>`,
   text: `<path d="M6.5 20 L12 4.5 L17.5 20 M8.6 14.6 H15.4"/>`,
   station: `<path d="M3 17 H10 Q14.5 17 16.5 13 T21.5 7.5"/><path d="M6.2 14.6 V19.4 M10.4 14.6 V19.4 M15.1 10.4 L18.3 13.2"/>`,
+  alignment: `<path d="M3 19 H9.5 A7 7 0 0 0 16 14.5 L20.5 5"/><circle class="f" cx="3" cy="19" r="1.5"/><circle class="f" cx="20.5" cy="5" r="1.5"/><path d="M9.5 19 L16 14.5" stroke-dasharray="1.5 1.5"/>`,
+  label: `<path d="M4 6.5 H15 L20 12 L15 17.5 H4 Z"/><path d="M7.5 12 H12.5"/>`,
   move: `<path d="M12 4 V20 M4 12 H20 M12 4 l-2.2 2.2 M12 4 l2.2 2.2 M12 20 l-2.2-2.2 M12 20 l2.2-2.2 M4 12 l2.2-2.2 M4 12 l2.2 2.2 M20 12 l-2.2-2.2 M20 12 l-2.2 2.2"/>`,
   erase: `<path d="M9 20 H5 L3.2 18.1 a1.6 1.6 0 0 1 0-2.2 L13.2 5.4 a1.6 1.6 0 0 1 2.2 0 l5 5.2 a1.6 1.6 0 0 1 0 2.2 L13.6 20 H9 Z"/><path d="M9.6 9.2 L16.8 16.6"/>`,
   block: `<path d="M12 3 L20 7 V17 L12 21 L4 17 V7 Z"/><path d="M4 7 L12 11 L20 7 M12 11 V21"/>`,
@@ -519,7 +521,11 @@ const RIBBON = {
       { t: "big", icon: "circle", label: "Circle", tool: "circle" },
       { t: "big", icon: "arc", label: "Arc", tool: "arc" }] },
     { caption: "Create Design", items: [
-      { t: "big", icon: "station", label: "Station­ing", tool: "station" }] },
+      { t: "big", icon: "alignment", label: "Alignment", tool: "alignment" },
+      { t: "big", icon: "station", label: "Station­ing", tool: "station" },
+      { t: "stack", items: [
+        { icon: "alignment", label: "Draw Alignment", act: "drawalign" },
+        { icon: "label", label: "Label…", act: "label" }] }] },
     { caption: "Modify", items: [
       { t: "big", icon: "select", label: "Select", tool: "select" },
       { t: "big", icon: "move", label: "Move", tool: "move" },
@@ -542,6 +548,7 @@ const RIBBON = {
         { icon: "block", label: "Define Block…", act: "defblock" }] }] },
     { caption: "Reference", items: [
       { t: "big", icon: "xref", label: "Attach", act: "attachref" },
+      { t: "big", icon: "select", label: "Clip", tool: "refclip" },
       { t: "stack", items: [
         { icon: "reload", label: "Reload Refs", act: "reloadrefs" },
         { icon: "erase", label: "Detach…", act: "detachref" }] }] },
@@ -553,7 +560,10 @@ const RIBBON = {
   Annotate: [
     { caption: "Labels & Tables", items: [
       { t: "big", icon: "station", label: "Station Labels", tool: "station" },
-      { t: "big", icon: "table", label: "Add Table", act: "table" }] },
+      { t: "big", icon: "label", label: "Label", act: "label" },
+      { t: "big", icon: "table", label: "Curve Table", act: "curvetable" },
+      { t: "stack", items: [
+        { icon: "table", label: "Add Table", act: "table" }] }] },
     { caption: "Text", items: [
       { t: "big", icon: "text", label: "Text", tool: "text" },
       { t: "big", icon: "edittext", label: "Edit Text", tool: "edittext" }] },
@@ -570,7 +580,8 @@ const RIBBON = {
   Output: [
     { caption: "Export", items: [
       { t: "big", icon: "export", label: "DXF", act: "dxf" },
-      { t: "big", icon: "export", label: "PDF", act: "pdf" }] },
+      { t: "big", icon: "export", label: "PDF", act: "pdf" },
+      { t: "big", icon: "export", label: "LandXML", act: "landxml" }] },
     { caption: "Document", items: [
       { t: "big", icon: "save", label: "Save", act: "save" },
       { t: "big", icon: "journal", label: "Journal", act: "journal" }] },
@@ -683,16 +694,20 @@ async function ribbonAct(act) {
   else if (act === "attachref") {
     const v = await openForm("Attach reference (basefile)", [
       { key: "name", label: "Reference name", value: "SURVEY" },
-      { key: "path", label: "Path to .rdoc.json", value: "examples/output/demo.rdoc.json" },
+      { key: "path", label: "Path to .rdoc.json (relative to this file)",
+        value: "examples/output/demo.rdoc.json" },
       { key: "offset", label: "Offset x,y", value: "0,0" },
-      { key: "scale", label: "Scale", value: "1" }]);
+      { key: "scale", label: "Scale", value: "1" },
+      { key: "true_scale", label: "True scale (convert units)", value: "yes",
+        options: ["yes", "no"] }]);
     if (v) {
       const off = v.offset.split(",").map(Number);
       logResult(await postJSON("/api/execute", { command: "attach_reference",
         params: { name: v.name, path: v.path, space: S.space,
                   offset: off.length === 2 && off.every(n => !isNaN(n))
                           ? off : [0, 0],
-                  scale: parseFloat(v.scale) || 1 } }));
+                  scale: parseFloat(v.scale) || 1,
+                  true_scale: v.true_scale !== "no" } }));
     }
   }
   else if (act === "reloadrefs")
@@ -731,11 +746,59 @@ async function ribbonAct(act) {
     logResult(await postJSON("/api/query", { query: "save_journal",
       params: { path: slugProject() + ".journal.jsonl" } }));
   }
+  else if (act === "drawalign") {
+    const a = alignNames();
+    prefill(`drawalign ${a[0] || "NAME"} layer=` +
+            (S.state ? S.state.current_layer : "0"));
+  }
+  else if (act === "curvetable") {
+    const a = alignNames();
+    if (S.space === "model")
+      logHint("curve tables go on sheets — switch to a sheet tab (or " +
+              "Insert ▸ New Sheet), then run the prefilled command");
+    prefill(`curvetable 24,8.5 ${a[0] || "NAME"}`);
+  }
+  else if (act === "label") {
+    const a = alignNames();
+    if (!a.length) {
+      logHint("no alignments yet — create one with the Alignment tool (G) " +
+              "or: alignment NAME x,y x,y,R x,y begin_station=10+00");
+      return;
+    }
+    const v = await openForm("Place label", [
+      { key: "alignment", label: "Alignment", value: a[0], options: a },
+      { key: "anchor", label: "Anchor (PC-1, T-2, MC-1, 18+00@25L…)",
+        value: "PC-1" },
+      { key: "kind", label: "Kind", value: "(from anchor)",
+        options: ["(from anchor)", "station", "pc", "pt", "pi", "mc", "pcc",
+                  "prc", "bearing", "begin", "end", "equation", "curve_data",
+                  "custom"] },
+      { key: "content", label: "Content (custom / override)", value: "" },
+      { key: "side", label: "Side", value: "(default)",
+        options: ["(default)", "left", "right"] },
+      { key: "rotation", label: "Rotation", value: "along",
+        options: ["along", "perpendicular", "horizontal"] }]);
+    if (v) {
+      const params = { alignment: v.alignment, anchor: v.anchor.trim(),
+                       rotation: v.rotation };
+      if (v.kind !== "(from anchor)") params.kind = v.kind;
+      if (v.content.trim()) params.content = v.content;
+      if (v.side !== "(default)") params.side = v.side;
+      await exec("place_label", params);
+    }
+  }
+  else if (act === "landxml") {
+    logEcho("landxml");
+    logResult(await postJSON("/api/query",
+      { query: "export_landxml", params: {} }));
+  }
   else if (act === "zoomin") zoomBtn(0.8);
   else if (act === "zoomout") zoomBtn(1.25);
   else if (act === "zoomfit") { S.zoom = 0; S.modelBounds = null;
     applyZoom(); updateCanvas(); }
 }
+const alignNames = () => (S.state && S.state.alignments || [])
+  .map(a => a.name);
 const slugProject = () => (S.state ? S.state.project : "project")
   .replace(/[^A-Za-z0-9_-]+/g, "_");
 const spaceLabel = () => S.space === "model" ? "model" :
@@ -803,6 +866,56 @@ function renderToolspace() {
       });
     }));
 
+  tree.appendChild(tsSection("alignments", "Alignments",
+    (S.state.alignments || []).length, sec => {
+      const aligns = S.state.alignments || [];
+      if (!aligns.length) {
+        const d = document.createElement("div");
+        d.className = "tempty";
+        d.textContent = "no alignments — alignment NAME x,y x,y,R x,y " +
+                        "begin_station=10+00 (or the Alignment tool, G)";
+        sec.appendChild(d); return;
+      }
+      aligns.forEach(a => {
+        const row = document.createElement("div");
+        row.className = "trow";
+        row.title = `${a.name}: ${a.station_range}, ${a.length.toFixed(2)} ft, ` +
+          `${a.tangents} tangents, ${a.curves} curves, ${a.equations} ` +
+          `equations` + (a.profiles.length ? `, profiles ${a.profiles.join(", ")}`
+                                            : "") +
+          `\nclick to prefill alignment-mode stationing`;
+        const ic = document.createElement("span");
+        ic.style.color = "var(--dim)"; ic.innerHTML = icon("alignment", 13);
+        const nm = document.createElement("span");
+        nm.className = "lname";
+        nm.textContent = `${a.name} · ${a.station_range} · ${a.curves} curve` +
+                         (a.curves === 1 ? "" : "s");
+        row.append(ic, nm);
+        if (!a.drawn) {
+          const dr = document.createElement("span");
+          dr.className = "eye"; dr.textContent = "✎";
+          dr.title = "not drawn yet — click to draw on the current layer";
+          dr.onclick = async ev => { ev.stopPropagation();
+            logResult(await postJSON("/api/execute",
+              { command: "draw_alignment", params: { alignment: a.name,
+                layer: S.state.current_layer } })); };
+          row.appendChild(dr);
+        }
+        const x = document.createElement("span");
+        x.className = "x"; x.textContent = "✕"; x.title = "delete alignment";
+        x.onclick = async ev => { ev.stopPropagation();
+          if (confirm(`Delete alignment ${a.name}` +
+                      (a.profiles.length ? ` and its profiles` : "") + "?"))
+            logResult(await postJSON("/api/execute",
+              { command: "delete_alignment",
+                params: { name: a.name, cascade: true } })); };
+        row.appendChild(x);
+        row.onclick = () => { $("cmd").value = `station alignment=${a.name}`;
+                              $("cmd").focus(); };
+        sec.appendChild(row);
+      });
+    }));
+
   tree.appendChild(tsSection("refs", "References",
     (S.state.references || []).length, sec => {
       const refs = S.state.references || [];
@@ -811,29 +924,95 @@ function renderToolspace() {
         d.className = "tempty"; d.textContent = "none — Insert ▸ Attach";
         sec.appendChild(d); return;
       }
+      const modify = async (name, changes) => logResult(await postJSON(
+        "/api/execute", { command: "modify_reference",
+                          params: { name, changes } }));
       refs.forEach(ref => {
+        const key = "ref:" + ref.id;
+        const units = ref.units && ref.units.factor !== 1
+          ? `\ntrue scale ×${Number(ref.units.factor).toPrecision(6)} ` +
+            `(${ref.units.base} → ${ref.units.host})` : "";
+        const masks = (ref.masks || []).length;
         const row = document.createElement("div");
         row.className = "trow";
-        row.title = `${ref.path}\n${ref.entities} entities — ` +
-                    (ref.error || "loaded");
+        row.title = `${ref.path}\n→ ${ref.resolved_path}\n${ref.entities} ` +
+                    `entities — ${ref.error || "loaded"}${units}` +
+                    (ref.clip ? `\nclip boundary: ${ref.clip.length} points`
+                              : "") +
+                    (masks ? `\n${masks} clip mask(s)` : "") +
+                    `\nclick to show levels`;
         const eye = document.createElement("span");
         eye.className = "eye" + (ref.visible ? " on" : "");
         eye.textContent = ref.visible ? "●" : "○";
-        eye.onclick = async ev => { ev.stopPropagation();
-          logResult(await postJSON("/api/execute",
-            { command: "modify_reference", params: { name: ref.name,
-              changes: { visible: !ref.visible } } })); };
+        eye.title = "display on/off";
+        eye.onclick = ev => { ev.stopPropagation();
+          modify(ref.name, { visible: !ref.visible }); };
         const dot = document.createElement("span");
         dot.className = "status " + ref.status;
         const nm = document.createElement("span");
         nm.className = "lname"; nm.textContent = ref.name;
+        const gray = !!(ref.symbology && ref.symbology.gray);
+        const g = document.createElement("span");
+        g.className = "eye" + (gray ? " on" : "");
+        g.textContent = "◐"; g.title = "gray-out (symbology override)";
+        g.onclick = ev => { ev.stopPropagation();
+          modify(ref.name, { symbology: { ...(ref.symbology || {}),
+                                          gray: !gray } }); };
+        const clipped = !!(ref.clip || masks);
+        const c = document.createElement("span");
+        c.className = "eye" + (clipped ? " on" : "");
+        c.textContent = "▣";
+        c.title = clipped
+          ? "clipped — click to remove the clip boundary and masks"
+          : "not clipped — click to start the Clip tool";
+        c.onclick = ev => { ev.stopPropagation();
+          if (!clipped) setTool("refclip");
+          else if (confirm(`Remove the clip boundary and masks on ` +
+                           `${ref.name}?`))
+            modify(ref.name, { clip: null, masks: [] }); };
         const x = document.createElement("span");
         x.className = "x"; x.textContent = "✕"; x.title = "detach";
         x.onclick = async ev => { ev.stopPropagation();
           logResult(await postJSON("/api/execute",
             { command: "detach_reference", params: { name: ref.name } })); };
-        row.append(eye, dot, nm, x);
+        row.append(eye, dot, nm, g, c, x);
+        row.onclick = () => { S.tsOpen[key] = !S.tsOpen[key];
+                              renderToolspace(); };
         sec.appendChild(row);
+        if (!S.tsOpen[key]) return;
+        const levels = ref.levels || [];
+        if (!levels.length) {
+          const d = document.createElement("div");
+          d.className = "tempty"; d.style.paddingLeft = "44px";
+          d.textContent = ref.error || "no levels";
+          sec.appendChild(d); return;
+        }
+        levels.forEach(level => {  // per-attachment level display
+          const lrow = document.createElement("div");
+          lrow.className = "trow"; lrow.style.paddingLeft = "44px";
+          lrow.title = `${level.entities} entities` +
+            (level.visible_in_basefile ? "" : " — off in the basefile itself");
+          const le = document.createElement("span");
+          le.className = "eye" + (level.on ? " on" : "");
+          le.textContent = level.on ? "●" : "○";
+          le.title = "level display in this attachment";
+          const sw = document.createElement("span");
+          sw.className = "swatch";
+          sw.style.background =
+            ((S.state.colors || {})[level.color]) || level.color;
+          const ln = document.createElement("span");
+          ln.className = "lname"; ln.textContent = level.name;
+          if (!level.visible_in_basefile) ln.style.opacity = "0.5";
+          const cnt = document.createElement("span");
+          cnt.style.cssText = "color:var(--dim);font-size:11px";
+          cnt.textContent = level.entities;
+          lrow.append(le, sw, ln, cnt);
+          lrow.onclick = ev => { ev.stopPropagation();
+            const off = new Set(ref.levels_off || []);
+            if (level.on) off.add(level.name); else off.delete(level.name);
+            modify(ref.name, { levels_off: [...off] }); };
+          sec.appendChild(lrow);
+        });
       });
     }));
 }
@@ -897,11 +1076,15 @@ const TOOLS = {
   circle:  { hint: "click center, then a radius point" },
   arc:     { hint: "click start, a point on the arc, then end" },
   text:    { hint: "click the insertion point" },
-  station: { hint: "click centerline elements in order; Enter to configure" },
+  station: { hint: "click centerline elements in order (or none, for an " +
+                   "alignment); Enter to configure" },
+  alignment:{ hint: "click PIs in order (BEGIN … END); Enter to create" },
   move:    { hint: "click an entity, then base point, then destination" },
   erase:   { hint: "click an entity to erase it" },
   insblock:{ hint: "click the insertion point" },
   edittext:{ hint: "click a text or table to edit it" },
+  refclip: { hint: "click polygon vertices around the reference area; " +
+                   "Enter applies it as a clip boundary or mask" },
 };
 function setTool(key) {
   S.tool = key; S.pts = []; S.stationPicks = []; S.selected = null;
@@ -943,9 +1126,12 @@ async function exec(command, params) {
   logResult(await postJSON("/api/execute",
     { command, params: { space: S.space, ...params } }));
 }
-async function hitAt(pt, tolPx) {
+// withRefs: also locate elements of attached references (read-only picks).
+// Only the Select tool wants them; editing tools need host entities.
+async function hitAt(pt, tolPx, withRefs) {
   const r = await postJSON("/api/query", { query: "hit_test",
-    params: { space: S.space, point: pt, tolerance: tolPx * unitsPerPx() } });
+    params: { space: S.space, point: pt, tolerance: tolPx * unitsPerPx(),
+              include_references: !!withRefs } });
   return r.ok && r.hits.length ? r.hits : [];
 }
 async function toolClick(pt, ev) {
@@ -956,7 +1142,7 @@ async function toolClick(pt, ev) {
       const [a, b] = S.pts; S.pts = [];
       await exec("draw_line", { start: a, end: b });
     }
-  } else if (tool === "pline") {
+  } else if (tool === "pline" || tool === "alignment") {
     S.pts.push(orthoAdjust(pt, ev));
   } else if (tool === "circle") {
     S.pts.push(pt);
@@ -1037,53 +1223,133 @@ async function toolClick(pt, ev) {
         params: { ids: [id], delta } }));
     }
   } else if (tool === "select") {
-    const hits = await hitAt(pt, 8);
+    const hits = await hitAt(pt, 8, true);
     if (hits.length) {
       if (S.selected && S.selected.id === hits[0].id) return;  // already shown
       const info = await postJSON("/api/query",
         { query: "get_entity", params: { id: hits[0].id } });
       if (info.ok) {
-        S.selected = { id: hits[0].id, bbox: info.bbox, entity: info.entity };
+        S.selected = { id: hits[0].id, bbox: info.bbox, entity: info.entity,
+                       reference: info.reference || null };
         renderProps();
-        logHTML(`<span class="hint">selected ${esc(hits[0].id)} (` +
-          `${esc(info.entity.type)}) on layer ${esc(info.entity.layer)} — ` +
-          `edit in the Properties panel; Enter/double-click opens the full ` +
-          `editor, Delete erases</span>`);
+        if (info.reference)
+          logHTML(`<span class="hint">located ${esc(hits[0].id)} (` +
+            `${esc(info.entity.type)}) in reference ${esc(info.reference)}, ` +
+            `level ${esc(info.entity.layer)} — read-only; edit the basefile ` +
+            `and Reload Refs</span>`);
+        else
+          logHTML(`<span class="hint">selected ${esc(hits[0].id)} (` +
+            `${esc(info.entity.type)}) on layer ${esc(info.entity.layer)} — ` +
+            `edit in the Properties panel; Enter/double-click opens the full ` +
+            `editor, Delete erases</span>`);
       }
     } else { S.selected = null; renderProps(); }
+  } else if (tool === "refclip") {
+    S.pts.push(pt);
   }
   drawOverlay();
 }
 async function finishTool() {
   if (S.tool === "select" && S.selected) {
-    openEditorFor(S.selected.id);
+    if (S.selected.reference)
+      logHint(`${S.selected.id} belongs to reference ` +
+              `${S.selected.reference} (read-only)`);
+    else openEditorFor(S.selected.id);
+    return;
+  }
+  if (S.tool === "refclip") {
+    if (S.pts.length >= 3) await finishRefClip();
+    else logHint("a clip polygon needs at least 3 points");
     return;
   }
   if (S.tool === "pline" && S.pts.length >= 2) {
     const verts = S.pts; S.pts = [];
     await exec("draw_polyline", { vertices: verts });
-  } else if (S.tool === "station" && S.stationPicks.length) {
-    const values = await openForm("Annotate stationing", [
-      { key: "begin", label: "Begin station (e.g. 10+00)", value: "10+00" },
+  } else if (S.tool === "alignment" && S.pts.length >= 2) {
+    const pts = S.pts; S.pts = []; drawOverlay();
+    const layers = S.state ? S.state.layers.map(l => l.name) : ["0"];
+    const v = await openForm("Create alignment", [
+      { key: "name", label: "Name", value: `ALIGN-${alignNames().length + 1}` },
+      { key: "begin", label: "Begin station", value: "10+00" },
+      { key: "radius", label: "Curve radius at interior PIs (ft)",
+        value: "800" },
+      { key: "layer", label: "Draw on layer",
+        value: S.state ? S.state.current_layer : "0", options: layers },
+      { key: "draw", label: "Draw now", value: "yes", options: ["yes", "no"] }]);
+    if (v) {
+      const R = parseFloat(v.radius) || 0;
+      const pis = pts.map((p, i) =>
+        (i === 0 || i === pts.length - 1) ? p : [p[0], p[1], R]);
+      const r = await postJSON("/api/execute", { command: "create_alignment",
+        params: { name: v.name, begin_station: v.begin.trim() || "0", pis } });
+      logResult(r);
+      if (r.ok && v.draw === "yes")
+        logResult(await postJSON("/api/execute", { command: "draw_alignment",
+          params: { alignment: v.name, layer: v.layer } }));
+    }
+  } else if (S.tool === "station" &&
+             (S.stationPicks.length || alignNames().length)) {
+    const aligns = alignNames();
+    const fields = [];
+    if (aligns.length)
+      fields.push({ key: "alignment", label: "Alignment (design mode)",
+        value: S.stationPicks.length ? "(picked entities)" : aligns[0],
+        options: ["(picked entities)", ...aligns] });
+    fields.push(
+      { key: "begin", label: "Begin station (picked entities only)",
+        value: "10+00" },
       { key: "interval", label: "Interval (ft)", value: "100" },
       { key: "tick", label: "Tick half-length (ft)", value: "10" },
       { key: "height", label: "Text height (ft)", value: "8" },
-      { key: "offset", label: "Label offset (ft)", value: "16" }]);
+      { key: "offset", label: "Label offset (ft)", value: "16" });
+    const values = await openForm("Annotate stationing", fields);
     if (values) {
       const parseSta = s => s.includes("+")
         ? parseFloat(s.split("+")[0]) * 100 + parseFloat(s.split("+")[1] || 0)
         : parseFloat(s);
-      await exec("annotate_stationing", {
-        path_ids: S.stationPicks.map(sp => sp.id),
-        begin_station: parseSta(values.begin) || 0,
+      const common = {
         interval: parseFloat(values.interval) || 100,
         tick_half_len: parseFloat(values.tick) || 10,
         text_height: parseFloat(values.height) || 8,
-        label_offset: parseFloat(values.offset) || 16 });
+        label_offset: parseFloat(values.offset) || 16 };
+      const useAlign = values.alignment &&
+                       values.alignment !== "(picked entities)";
+      if (useAlign)
+        await exec("annotate_stationing", { alignment: values.alignment,
+                                            ...common });
+      else if (S.stationPicks.length)
+        await exec("annotate_stationing", {
+          path_ids: S.stationPicks.map(sp => sp.id),
+          begin_station: parseSta(values.begin) || 0, ...common });
+      else logHint("pick centerline entities first, or choose an alignment");
       S.stationPicks = [];
     }
   }
   drawOverlay();
+}
+
+// Reference clip tool: the picked polygon becomes a clip boundary (only the
+// basefile inside it shows) or an added clip mask (the basefile inside it is
+// hidden) on one attachment in the current space.
+async function finishRefClip() {
+  const refs = (S.state.references || []).filter(r => r.space === S.space);
+  if (!refs.length) {
+    logHint(`no reference is attached in ${spaceLabel()} — Insert ▸ Attach`);
+    S.pts = []; drawOverlay(); return;
+  }
+  const poly = S.pts.map(p => [p[0], p[1]]);
+  const v = await openForm("Reference clip", [
+    { key: "ref", label: "Reference", value: refs[0].name,
+      options: refs.map(r => r.name) },
+    { key: "kind", label: "Polygon is a", value: "clip boundary",
+      options: ["clip boundary", "clip mask (add)"] }]);
+  S.pts = []; drawOverlay();
+  if (!v) return;
+  const ref = refs.find(r => r.name === v.ref) || refs[0];
+  const changes = v.kind === "clip boundary"
+    ? { clip: poly } : { masks: [...(ref.masks || []), poly] };
+  logResult(await postJSON("/api/execute",
+    { command: "modify_reference", params: { name: ref.name, changes } }));
 }
 
 // --------------------------------------------------------------- editors
@@ -1102,7 +1368,8 @@ async function reselect(id) {
     { query: "get_entity", params: { id } });
   if (!S.selected || S.selected.id !== id) return;  // selection moved on
   S.selected = info.ok
-    ? { id, bbox: info.bbox, entity: info.entity } : null;
+    ? { id, bbox: info.bbox, entity: info.entity,
+        reference: info.reference || null } : null;
   drawOverlay(); renderProps();
 }
 
@@ -1343,6 +1610,36 @@ function renderProps() {
     body.appendChild(d);
   };
 
+  if (S.selected.reference) {
+    const unit = S.view && S.view.kind === "model" ? "ft" : "in";
+    $("props-id").textContent = `${e.type} ${S.selected.id}`;
+    sec("REFERENCE ELEMENT");
+    add(propRO("Attachment", S.selected.reference));
+    add(propRO("Level", e.layer));
+    add(propRO("Type", e.type));
+    if (e.type === "line") {
+      add(propRO("Start", fmtPt(e.start)));
+      add(propRO("End", fmtPt(e.end)));
+      add(propRO("Length", `${fmtNum(dist(e.start, e.end))} ${unit}`));
+    } else if (e.type === "circle") {
+      add(propRO("Center", fmtPt(e.center)));
+      add(propRO("Radius", `${fmtNum(e.radius)} ${unit}`));
+    } else if (e.type === "arc") {
+      add(propRO("Center", fmtPt(e.center)));
+      add(propRO("Radius", `${fmtNum(e.radius)} ${unit}`));
+      add(propRO("Angles", `${fmtNum(e.start_angle_deg)}° → ` +
+                           `${fmtNum(e.end_angle_deg)}°`));
+    } else if (e.type === "polyline") {
+      add(propRO("Vertices", String(e.vertices.length)));
+    } else if (e.type === "text") {
+      add(propRO("Contents", e.content));
+      add(propRO("Insertion", fmtPt(e.position)));
+    }
+    hint("read-only: this geometry lives in the basefile. Coordinates are " +
+         "host units after true scale, placement and clipping.");
+    return;
+  }
+
   sec("GENERAL");
   add(propSelect("Layer", e.layer,
     S.state ? S.state.layers.map(l => l.name) : [e.layer],
@@ -1514,9 +1811,11 @@ function drawOverlay() {
   const px = S.pts.map(spacePx);
   const cur = S.cursor ? spacePx(S.cursor) : null;
   if (S.tool === "line" && px.length === 1 && cur) out += seg(px[0], cur, "rb");
-  if (S.tool === "pline" && px.length) {
+  if (["pline", "refclip", "alignment"].includes(S.tool) && px.length) {
     for (let i = 1; i < px.length; i++) out += seg(px[i - 1], px[i], "rb");
     if (cur) out += seg(px[px.length - 1], cur, "rb");
+    if (S.tool === "refclip" && px.length >= 2)  // closing edge of the polygon
+      out += seg(cur || px[px.length - 1], px[0], "rb");
   }
   if (S.tool === "circle" && px.length === 1 && cur) {
     const rp = dist(px[0], cur);
@@ -1571,7 +1870,8 @@ stage.addEventListener("pointerdown", ev => {
 stage.addEventListener("pointermove", ev => {
   const pt = evtSpace(ev);
   if (pt) {
-    S.cursor = ["line", "pline"].includes(S.tool) ? orthoAdjust(pt, ev) : pt;
+    S.cursor = ["line", "pline", "alignment"].includes(S.tool)
+      ? orthoAdjust(pt, ev) : pt;
     $("st-coord").textContent = fmtPt(pt);
     drawOverlay();
   }
@@ -1610,7 +1910,8 @@ stage.addEventListener("dblclick", async ev => {
   ev.preventDefault();
   if (S.pts.length || S.stationPicks.length) {
     // the double-click's own two clicks each added a vertex; drop the dupe
-    if (S.tool === "pline" && S.pts.length >= 3) S.pts.pop();
+    if ((S.tool === "pline" || S.tool === "alignment") && S.pts.length >= 3)
+      S.pts.pop();
     finishTool();
     return;
   }
@@ -1803,7 +2104,8 @@ $("tog-ortho").onclick = () => { S.ortho = !S.ortho;
 // ------------------------------------------------------- global keyboard
 const TOOL_KEYS = { v: "select", h: "pan", l: "line", p: "pline",
                     c: "circle", a: "arc", t: "text", s: "station",
-                    m: "move", e: "erase", i: "insblock", x: "edittext" };
+                    m: "move", e: "erase", i: "insblock", x: "edittext",
+                    g: "alignment" };
 document.addEventListener("keydown", ev => {
   if ($("modal-bg").style.display === "flex") return;  // dialog owns the keys
   if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" ||
@@ -1815,6 +2117,11 @@ document.addEventListener("keydown", ev => {
   else if (ev.key === "Enter") finishTool();
   else if (ev.key === "Escape") cancelTool();
   else if ((ev.key === "Delete" || ev.key === "Backspace") && S.selected) {
+    if (S.selected.reference) {
+      logHint(`${S.selected.id} is a reference element — detach the ` +
+              `reference or edit the basefile instead`);
+      return;
+    }
     postJSON("/api/execute", { command: "delete_entities",
       params: { ids: [S.selected.id] } }).then(logResult);
     S.selected = null; drawOverlay(); renderProps();
@@ -1844,13 +2151,15 @@ function connect() {
   ["line","pline","arc","circle","text","insert","table","sheet","viewport",
    "titleblock","erase","move","mklayer","layer","space","state","layers",
    "sheets","blocks","styles","entities","extents","journal","help","dxf",
-   "pdf","save","undo","redo","station","xref","refs"].forEach(n =>
+   "pdf","save","undo","redo","station","xref","refs","alignment",
+   "drawalign","profile","label","curvetable","landxmlin","landxml","sta2xy",
+   "xy2sta","design","anchor","alignments"].forEach(n =>
     names.add(n));
   S.names = [...names].sort();
   await refresh();
   connect();
   logHint("RoadDraft ready. Ribbon tools are selectable (or keys " +
-    "V/H/L/P/C/A/T/S/M/E/I); click the canvas to draw. ORTHO and F8 " +
+    "V/H/L/P/C/A/T/S/M/E/I/G); click the canvas to draw. ORTHO and F8 " +
     "constrain to horizontal/vertical. The command line speaks the full " +
     "language — 'help' lists it.");
 })();

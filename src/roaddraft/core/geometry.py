@@ -184,3 +184,82 @@ class ViewportTransform:
             [cx - width_in / 2, cy + height_in / 2],
         ]
         return bbox_of_points([self.to_model(c) for c in corners])
+
+
+# --------------------------------------------------------------- polygons
+# Used by reference clip boundaries / masks (document/clip.py). Polygons are
+# lists of [x, y] points, implicitly closed; orientation does not matter.
+
+
+def polygon_edges(poly):
+    n = len(poly)
+    return [(poly[i], poly[(i + 1) % n]) for i in range(n)]
+
+
+def point_in_polygon(p, poly, tol=1e-9) -> bool:
+    """Even-odd (ray casting) point-in-polygon test. Points on an edge count
+    as inside."""
+    x, y = p[0], p[1]
+    inside = False
+    for a, b in polygon_edges(poly):
+        if dist_point_to_segment(p, a, b) <= tol:
+            return True
+        if (a[1] > y) != (b[1] > y):
+            xi = a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+            if xi > x:
+                inside = not inside
+    return inside
+
+
+def segment_intersection_params(a, b, c, d):
+    """(t, u) with a + t(b - a) == c + u(d - c), or None if parallel."""
+    rx, ry = b[0] - a[0], b[1] - a[1]
+    sx, sy = d[0] - c[0], d[1] - c[1]
+    den = rx * sy - ry * sx
+    if abs(den) <= 1e-15:
+        return None
+    qx, qy = c[0] - a[0], c[1] - a[1]
+    return (qx * sy - qy * sx) / den, (qx * ry - qy * rx) / den
+
+
+def segment_polygon_params(a, b, poly, eps=1e-9):
+    """Sorted parameters t strictly inside (0, 1) where segment ab crosses an
+    edge of the polygon."""
+    ts = []
+    for c, d in polygon_edges(poly):
+        r = segment_intersection_params(a, b, c, d)
+        if r is None:
+            continue
+        t, u = r
+        if -eps <= u <= 1.0 + eps and eps < t < 1.0 - eps:
+            ts.append(t)
+    return sorted(ts)
+
+
+def circle_segment_angles(center, radius, c, d, eps=1e-9):
+    """Angles (degrees in [0, 360)) where a circle meets segment cd."""
+    dx, dy = d[0] - c[0], d[1] - c[1]
+    fx, fy = c[0] - center[0], c[1] - center[1]
+    qa = dx * dx + dy * dy
+    if qa <= 1e-18:
+        return []
+    qb = 2.0 * (fx * dx + fy * dy)
+    qc = fx * fx + fy * fy - radius * radius
+    disc = qb * qb - 4.0 * qa * qc
+    if disc < 0.0:
+        return []
+    root = math.sqrt(disc)
+    out = []
+    for u in ((-qb - root) / (2.0 * qa), (-qb + root) / (2.0 * qa)):
+        if -eps <= u <= 1.0 + eps:
+            px, py = c[0] + u * dx, c[1] + u * dy
+            out.append(math.degrees(math.atan2(py - center[1], px - center[0])) % 360.0)
+    return out
+
+
+def circle_polygon_angles(center, radius, poly):
+    """Sorted angles (degrees) where a circle crosses the polygon's edges."""
+    out = []
+    for c, d in polygon_edges(poly):
+        out.extend(circle_segment_angles(center, radius, c, d))
+    return sorted(out)

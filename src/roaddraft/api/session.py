@@ -22,10 +22,14 @@ import jsonschema
 from jsonschema.exceptions import best_match
 
 from roaddraft.commands.bus import CommandBus
-from roaddraft.commands.schemas import NSTR, POS, STR, obj
+from roaddraft.commands.design_schemas import ANCHOR, KIND, POINT, ROTATION, SIDE, STATION
+from roaddraft.commands.schemas import NSTR, NUM, POS, SPACE, STR, obj
 from roaddraft.document.document import Document
 from roaddraft.render import dxf as dxf_render
 from roaddraft.render import mpl as mpl_render
+
+DESIGN_DATA_KINDS = ["alignments", "curves", "tangents", "equations", "anchors", "profiles",
+                     "pvis", "vcs"]
 
 BOUNDS = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4,
           "description": "[minx, miny, maxx, maxy]"}
@@ -53,7 +57,10 @@ QUERIES = {
         "example": {"sheet": "C-101"},
     },
     "get_entity": {
-        "description": "One entity by id, with its space and bounding box.",
+        "description": "One entity by id, with its space and bounding box. "
+                       "Reference elements are addressed as 'REFNAME:ID' (as "
+                       "returned by hit_test) and come back in host "
+                       "coordinates, read-only.",
         "schema": obj({"id": NSTR}, ["id"]),
         "example": {"id": "LN-001"},
     },
@@ -78,17 +85,23 @@ QUERIES = {
         "schema": obj({}), "example": {},
     },
     "list_references": {
-        "description": "All attached references (basefiles) with placement and "
-                       "load status.",
+        "description": "All attached references (basefiles) with placement, "
+                       "load status, resolved path, unit handling (true "
+                       "scale factor), per-level display, symbology and clip "
+                       "settings.",
         "schema": obj({}), "example": {},
     },
     "hit_test": {
-        "description": "Find entities near a point (screen picking). Returns "
-                       "nearest first, within tolerance (space units).",
+        "description": "Find entities near a point (screen picking / locate). "
+                       "Returns nearest first, within tolerance (space units). "
+                       "Elements of attached references are located too "
+                       "(id 'REFNAME:ID', reference=name, read_only=true) "
+                       "unless include_references is false.",
         "schema": obj({"space": NSTR, "point": {
                            "type": "array", "items": {"type": "number"},
                            "minItems": 2, "maxItems": 2},
-                       "tolerance": POS}, ["space", "point"]),
+                       "tolerance": POS, "include_references": BOOL},
+                      ["space", "point"]),
         "example": {"space": "model", "point": [1500.0, 1000.0],
                     "tolerance": 10.0},
     },
@@ -140,6 +153,55 @@ QUERIES = {
                        "replayable deterministically.",
         "schema": obj({"path": NSTR}, ["path"]),
         "example": {"path": "session.journal.jsonl"},
+    },
+    # ------------------------------------------------ design model (Phase 1)
+    "list_alignments": {
+        "description": "Every alignment in the design model: stations, length, "
+                       "curve/tangent/equation counts, bound profiles, and whether "
+                       "it has been drawn.",
+        "schema": obj({}), "example": {},
+    },
+    "station_to_xy": {
+        "description": "Model-space point at a display station (+ offset, right "
+                       "positive) on an alignment, with heading, bearing, and the "
+                       "element it lands on (an exact junction reads the ahead "
+                       "element).",
+        "schema": obj({"alignment": NSTR, "station": STATION, "offset": NUM,
+                       "region": {"type": "integer", "minimum": 1}}, ["station"]),
+        "example": {"alignment": "ALIGN-1", "station": "16+00", "offset": 12},
+    },
+    "xy_to_station": {
+        "description": "Perpendicular projection of a model-space point onto an "
+                       "alignment: station, offset (L/R), and the element.",
+        "schema": obj({"alignment": NSTR, "point": POINT}, ["point"]),
+        "example": {"alignment": "ALIGN-1", "point": [1300, 1012]},
+    },
+    "resolve_anchor": {
+        "description": "Dry run of place_label: where a label of this kind at this "
+                       "anchor would land (content, position, rotation, viewport) "
+                       "without placing it. Same faults as the command.",
+        "schema": obj({"alignment": NSTR, "anchor": ANCHOR, "kind": KIND, "space": SPACE,
+                       "viewport": NSTR, "side": SIDE, "label_offset": NUM,
+                       "rotation": ROTATION, "content": STR}, ["anchor"]),
+        "example": {"alignment": "ALIGN-1", "anchor": "PC-1"},
+    },
+    "get_design_data": {
+        "description": "Tabular design data: alignments, curves (Δ/R/T/L/E/M/C, "
+                       "bearings, PC/PI/PT/MC stations), tangents, station "
+                       "equations, named anchors, profiles, PVIs, vertical curves. "
+                       "Stations are raw + display text. Paginated (default 50).",
+        "schema": obj({"kind": {"enum": list(DESIGN_DATA_KINDS)}, "alignment": NSTR,
+                       "profile": NSTR, "start": {"type": "integer", "minimum": 0},
+                       "limit": {"type": "integer", "minimum": 1, "maximum": 500}},
+                      ["kind"]),
+        "example": {"kind": "curves", "alignment": "ALIGN-1"},
+    },
+    "export_landxml": {
+        "description": "Export the design model (alignments + profiles) as LandXML "
+                       "1.2 (USSurveyFoot); opens in Civil 3D / ORD.",
+        "schema": obj({"path": STR, "alignments": {"type": "array", "items": NSTR},
+                       "include_xml": BOOL, "include_base64": BOOL}),
+        "example": {},
     },
 }
 
@@ -218,6 +280,8 @@ class Session:
                        for s in doc.sheets.values()],
             "model_entity_count": len(doc.model_entities),
             "model_extents": doc.extents("model"),
+            "alignments": list(doc.design.alignments),
+            "profiles": list(doc.design.profiles),
             "journal_length": len(self.bus.journal),
         }}
 
@@ -244,12 +308,36 @@ class Session:
     def _q_get_entity(self, p):
         found = self.doc.find_entity(p["id"])
         if found is None:
+            element = self._reference_element(p["id"])
+            if element is not None:
+                return element
             raise _QueryFault(f"entity {p['id']!r} not found",
                               hint="ids are listed by get_model_state / "
-                                   "get_sheet_state")
+                                   "get_sheet_state; reference elements are "
+                                   "'REFNAME:ID' as returned by hit_test")
         space_key, entity = found
         return {"space": space_key, "entity": entity.to_dict(),
                 "bbox": entity.bbox(self.doc)}
+
+    def _reference_element(self, eid: str):
+        """A basefile element seen through an attachment, in host coordinates
+        (true-scaled, placed, symbology applied, clipped). Read-only."""
+        from roaddraft.document.references import reference_groups
+        name, sep, sub_id = eid.partition(":")
+        if not sep:
+            return None
+        for ref in self.doc.references.values():
+            if ref.name != name:
+                continue
+            for group_ref, base, prims in reference_groups(self.doc, ref.space):
+                if group_ref.id != ref.id:
+                    continue
+                for prim in prims:
+                    if prim.id == sub_id:
+                        return {"space": ref.space, "entity": prim.to_dict(),
+                                "bbox": prim.bbox(base), "reference": ref.name,
+                                "read_only": True}
+        return None
 
     def _q_get_extents(self, p):
         from roaddraft.document.references import extents_with_references
@@ -281,14 +369,9 @@ class Session:
                            for s in self.doc.sheets.values()]}
 
     def _q_list_references(self, p):
-        from roaddraft.document.references import resolve_reference
-        out = []
-        for ref in self.doc.references.values():
-            base, error = resolve_reference(self.doc, ref)
-            out.append({**ref.to_dict(),
-                        "status": "loaded" if base is not None else "error",
-                        "error": error,
-                        "entities": len(base.model_entities) if base else 0})
+        from roaddraft.document.references import describe_reference
+        out = [describe_reference(self.doc, ref)
+               for ref in self.doc.references.values()]
         return {"count": len(out), "references": out}
 
     def _q_hit_test(self, p):
@@ -297,7 +380,7 @@ class Session:
         if resolved is None:
             raise _QueryFault(f"space {p['space']!r} not found",
                               hint=f"valid spaces: {self.doc.space_refs()}")
-        _, entities = resolved
+        space_key, entities = resolved
         tol = p.get("tolerance", 5.0)
         hits = []
         for e in entities.values():
@@ -305,6 +388,15 @@ class Session:
             if d <= tol:
                 hits.append({"id": e.id, "type": e.TYPE, "layer": e.layer,
                              "distance": round(d, 4)})
+        if p.get("include_references", True):
+            from roaddraft.document.references import reference_groups
+            for ref, base, prims in reference_groups(self.doc, space_key):
+                for e in prims:
+                    d = entity_distance(base, e, p["point"])
+                    if d <= tol:
+                        hits.append({"id": f"{ref.name}:{e.id}", "type": e.TYPE,
+                                     "layer": e.layer, "distance": round(d, 4),
+                                     "reference": ref.name, "read_only": True})
         hits.sort(key=lambda h: h["distance"])
         return {"count": len(hits), "hits": hits[:5]}
 
@@ -354,6 +446,7 @@ class Session:
         path = Path(p["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.doc.to_dict(), indent=2))
+        self.doc._path = path.resolve()  # relative reference paths follow the host
         return self._file_result(path, False)
 
     def _q_save_journal(self, p):
@@ -364,6 +457,222 @@ class Session:
                   for entry in self.bus.journal]
         path.write_text("\n".join(lines) + "\n")
         return self._file_result(path, False)
+
+    # ------------------------------------------------- design model queries
+
+    def _alignment_q(self, p):
+        from roaddraft.commands import design_handlers as dh
+        from roaddraft.commands.handlers import CommandFault
+        try:
+            return dh._alignment(self.doc, p)
+        except CommandFault as fault:
+            raise _QueryFault(str(fault), hint=fault.hint)
+
+    @staticmethod
+    def _drawn(doc, name) -> bool:
+        return any(e.anchor and e.anchor.get("alignment") == name
+                   and e.anchor.get("kind") == "element"
+                   for e in doc.model_entities.values())
+
+    def _q_list_alignments(self, p):
+        rows = []
+        for a in self.doc.design.alignments.values():
+            st = a.stations()
+            rows.append({
+                "name": a.name, "description": a.description, "source": a.source,
+                "begin_station": a.begin_station, "begin_station_text": st.begin_text(),
+                "end_station": a.end_station, "end_station_text": st.end_text(),
+                "length": a.length, "curves": len(a.curves()), "tangents": len(a.tangents()),
+                "equations": len(a.equations),
+                "profiles": [pr.name for pr in self.doc.design.profiles_of(a.name)],
+                "drawn": self._drawn(self.doc, a.name)})
+        return {"count": len(rows), "alignments": rows}
+
+    def _q_station_to_xy(self, p):
+        from roaddraft.core.units import format_station
+        from roaddraft.design.angles import direction_to_azimuth, format_bearing
+        from roaddraft.design.errors import DesignError
+        a = self._alignment_q(p)
+        st = a.stations()
+        offset = float(p.get("offset", 0.0))
+        try:
+            raw = st.parse(p["station"], p.get("region"))
+            point, direction, idx = a.station_to_xy(raw, offset)
+            on_point, _, _ = a.station_to_xy(raw, 0.0)
+        except DesignError as e:
+            raise _QueryFault(str(e), hint=e.hint)
+        disp, region = st.to_display(raw)
+        az = direction_to_azimuth(direction)
+        return {"alignment": a.name, "point": point, "on_point": on_point, "station": raw,
+                "station_text": format_station(disp), "region": region, "offset": offset,
+                "direction_deg": direction, "azimuth_deg": az, "bearing": format_bearing(az),
+                "element_index": idx, "element_kind": a.elements[idx].kind,
+                "element_ref": a.element_ref(idx)}
+
+    def _q_xy_to_station(self, p):
+        from roaddraft.core.units import format_station
+        from roaddraft.design.errors import DesignError
+        a = self._alignment_q(p)
+        try:
+            r = a.xy_to_station(p["point"])
+        except DesignError as e:
+            raise _QueryFault(str(e), hint=e.hint)
+        disp, region = a.stations().to_display(r["station"])
+        off = r["offset"]
+        side = "ON" if abs(off) < 1e-9 else ("R" if off > 0 else "L")
+        idx = r["element_index"]
+        return {"alignment": a.name, "station": r["station"],
+                "station_text": format_station(disp), "region": region, "offset": off,
+                "distance": abs(off), "side": side, "on_point": r["on_point"],
+                "direction_deg": r["direction_deg"], "element_index": idx,
+                "element_kind": a.elements[idx].kind, "element_ref": a.element_ref(idx)}
+
+    def _q_resolve_anchor(self, p):
+        from roaddraft.commands import design_handlers as dh
+        from roaddraft.commands.handlers import CommandFault
+        from roaddraft.design.errors import DesignError
+        from roaddraft.design.labels import label_content
+        params = dict(p)
+        params.setdefault("space", "model")
+        try:
+            plan = dh.plan_label(self.doc, params)
+        except CommandFault as fault:
+            raise _QueryFault(str(fault), hint=fault.hint)
+        spec = plan["spec"]
+        if spec.content_auto:
+            auto = spec.content
+        else:
+            try:
+                auto = label_content(plan["alignment"], plan["anchor_point"], plan["kind"])
+            except DesignError:
+                auto = None
+        vp = plan["viewport"]
+        return {"anchor": plan["anchor"], "kind": plan["kind"], "content": spec.content,
+                "auto_content": auto, "space": plan["space_key"],
+                "viewport": vp.id if vp is not None else None, "position": plan["position"],
+                "rotation_deg": plan["rotation_deg"], "height": plan["height"],
+                "halign": spec.halign, "valign": spec.valign,
+                "anchor_point": list(spec.anchor_point), "direction_deg": spec.direction_deg}
+
+    def _design_rows(self, kind, aligns, profiles):
+        from roaddraft.core.units import format_station
+        from roaddraft.design.anchors import list_anchors
+        from roaddraft.design.horizontal import curve_data, tangent_data
+        from roaddraft.design.stations import equation_label
+        from roaddraft.design.vertical import vc_data
+        rows = []
+        if kind == "alignments":
+            for a in aligns:
+                st = a.stations()
+                d = a.to_dict()
+                d.pop("elements", None)
+                d.update(length=a.length, end_station=a.end_station,
+                         begin_station_text=st.begin_text(), end_station_text=st.end_text(),
+                         curves=len(a.curves()), tangents=len(a.tangents()),
+                         profiles=[pr.name for pr in self.doc.design.profiles_of(a.name)],
+                         drawn=self._drawn(self.doc, a.name))
+                rows.append(d)
+        elif kind == "curves":
+            for a in aligns:
+                rows.extend(curve_data(a, n) for n in range(1, len(a.curves()) + 1))
+        elif kind == "tangents":
+            for a in aligns:
+                rows.extend(tangent_data(a, n) for n in range(1, len(a.tangents()) + 1))
+        elif kind == "equations":
+            for a in aligns:
+                for n, eq in enumerate(a.equations, start=1):
+                    rows.append({"alignment": a.name, "index": n, "ref": f"EQ-{n}",
+                                 "raw_station": eq.raw_station, "back": eq.back,
+                                 "back_text": format_station(eq.back), "ahead": eq.ahead,
+                                 "ahead_text": format_station(eq.ahead),
+                                 "label": equation_label(eq)})
+        elif kind == "anchors":
+            for a in aligns:
+                for ap in list_anchors(a):
+                    rows.append({"alignment": a.name, "ref": ap.ref, "kind_hint": ap.kind_hint,
+                                 "station": ap.station, "station_text": ap.station_text,
+                                 "point": ap.point, "direction_deg": ap.direction_deg})
+        else:
+            for prof in profiles:
+                parent = self.doc.design.alignments.get(prof.alignment)
+                fmt = parent.stations().format if parent else format_station
+                if kind == "profiles":
+                    d = prof.to_dict()
+                    n = len(prof.pvis)
+                    s0, s1 = prof.station_range()
+                    d.update(pvis=n, curves=max(n - 2, 0),
+                             station_range_text=f"{fmt(s0)} to {fmt(s1)}")
+                    rows.append(d)
+                elif kind == "pvis":
+                    pv = prof.pvis
+                    for i, q in enumerate(pv):
+                        g_in = ((q.elevation - pv[i - 1].elevation)
+                                / (q.station - pv[i - 1].station) * 100.0) if i > 0 else None
+                        g_out = ((pv[i + 1].elevation - q.elevation)
+                                 / (pv[i + 1].station - q.station) * 100.0) \
+                            if i + 1 < len(pv) else None
+                        rows.append({"profile": prof.name, "alignment": prof.alignment,
+                                     "index": i + 1, "ref": f"PVI-{i + 1}",
+                                     "station": q.station, "station_text": fmt(q.station),
+                                     "elevation": q.elevation, "length": q.length,
+                                     "grade_in_pct": g_in, "grade_out_pct": g_out})
+                elif kind == "vcs":
+                    for n in range(1, max(len(prof.pvis) - 1, 0)):
+                        row = vc_data(prof, n)
+                        for key in ("pvi", "pvc", "pvt"):
+                            row[f"{key}_station_text"] = fmt(row[f"{key}_station"])
+                        row["high_low_station_text"] = (
+                            fmt(row["high_low"]["station"]) if row["high_low"] else None)
+                        rows.append(row)
+        return rows
+
+    def _q_get_design_data(self, p):
+        design = self.doc.design
+        kind = p["kind"]
+        if "alignment" in p:
+            aligns = [self._alignment_q(p)]
+        else:
+            aligns = list(design.alignments.values())
+        names = {a.name for a in aligns}
+        if "profile" in p:
+            if p["profile"] not in design.profiles:
+                raise _QueryFault(f"no profile named {p['profile']!r}",
+                                  hint=f"profiles: {list(design.profiles)}")
+            profiles = [design.profiles[p["profile"]]]
+        else:
+            profiles = [pr for pr in design.profiles.values()
+                        if "alignment" not in p or pr.alignment in names]
+        rows = self._design_rows(kind, aligns, profiles)
+        start = int(p.get("start", 0))
+        limit = int(p.get("limit", 50))
+        return {"kind": kind, "total": len(rows), "start": start, "limit": limit,
+                "rows": rows[start:start + limit]}
+
+    def _q_export_landxml(self, p):
+        from roaddraft.adapters.landxml import write_landxml
+        design = self.doc.design
+        aligns = list(design.alignments.values())
+        if "alignments" in p:
+            unknown = [n for n in p["alignments"] if n not in design.alignments]
+            if unknown:
+                raise _QueryFault(f"no alignment named {unknown[0]!r}",
+                                  hint=f"alignments: {list(design.alignments)}")
+            aligns = [design.alignments[n] for n in p["alignments"]]
+        if not aligns:
+            raise _QueryFault("no alignments to export",
+                              hint="create_alignment or import_landxml first")
+        names = {a.name for a in aligns}
+        profiles = [pr for pr in design.profiles.values() if pr.alignment in names]
+        xml = write_landxml(aligns, profiles, self.doc.meta.get("project_name", ""))
+        path = self._out_path(p.get("path"),
+                              f"{_slug(self.doc.meta['project_name'])}.xml")
+        path.write_text(xml)
+        result = self._file_result(path, p.get("include_base64", False))
+        result["alignments"] = [a.name for a in aligns]
+        result["profiles"] = [pr.name for pr in profiles]
+        if p.get("include_xml"):
+            result["xml"] = xml
+        return result
 
     # ------------------------------------------------------------- helpers
 
@@ -392,6 +701,7 @@ class Session:
     @classmethod
     def load(cls, path, out_dir=None) -> "Session":
         doc = Document.from_dict(json.loads(Path(path).read_text()))
+        doc._path = Path(path).resolve()  # relative reference paths resolve here
         return cls(_document=doc, out_dir=out_dir)
 
     @classmethod

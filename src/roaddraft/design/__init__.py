@@ -21,6 +21,15 @@ from roaddraft.design.angles import (
     signed_delta_deg,
     unit_vector,
 )
+from roaddraft.design.anchors import (
+    GRAMMAR_HINT,
+    AnchorPoint,
+    AnchorRef,
+    infer_kind,
+    list_anchors,
+    parse_anchor,
+    resolve_anchor,
+)
 from roaddraft.design.errors import DesignError
 from roaddraft.design.horizontal import (
     ANGLE_EPS,
@@ -42,6 +51,30 @@ from roaddraft.design.horizontal import (
     pis_from_elements,
     tangent_data,
     validate_continuity,
+)
+from roaddraft.design.labels import (
+    CURVE_COLUMNS,
+    DEFAULT_CURVE_COLUMNS,
+    DEFAULT_SIDE,
+    DEFAULT_VALIGN,
+    LABEL_KINDS,
+    MODEL_LABEL_OFFSET,
+    MODEL_TEXT_HEIGHT,
+    MODEL_TICK_HALF,
+    ROTATION_MODES,
+    SHEET_LABEL_OFFSET,
+    SHEET_TEXT_HEIGHT,
+    SIDES,
+    LabelSpec,
+    StationingPlan,
+    TickSpec,
+    compile_label,
+    curve_table_rows,
+    label_content,
+    offset_point,
+    sheet_pose,
+    stationing_plan,
+    upright,
 )
 from roaddraft.design.model import DesignModel
 from roaddraft.design.stations import (
@@ -70,6 +103,15 @@ __all__ = [
     "alignment_from_elements", "curve_data", "tangent_data", "junction_kind",
     # vertical
     "PVI", "Profile", "vc_data",
+    # anchors
+    "GRAMMAR_HINT", "AnchorRef", "AnchorPoint", "parse_anchor", "infer_kind", "resolve_anchor",
+    "list_anchors",
+    # labels
+    "LABEL_KINDS", "ROTATION_MODES", "SIDES", "DEFAULT_SIDE", "DEFAULT_VALIGN",
+    "MODEL_LABEL_OFFSET", "MODEL_TEXT_HEIGHT", "MODEL_TICK_HALF", "SHEET_LABEL_OFFSET",
+    "SHEET_TEXT_HEIGHT", "LabelSpec", "TickSpec", "StationingPlan", "upright", "offset_point",
+    "label_content", "compile_label", "sheet_pose", "stationing_plan", "CURVE_COLUMNS",
+    "DEFAULT_CURVE_COLUMNS", "curve_table_rows",
     # model
     "DesignModel",
 ]

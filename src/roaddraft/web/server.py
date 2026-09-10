@@ -111,20 +111,36 @@ class WebApp:
                             "viewports": len(s.viewports)}
                            for s in doc.sheets.values()],
                 "references": self._reference_state(doc),
+                "alignments": self._alignment_state(doc),
+                "profiles": [{"name": pr.name, "alignment": pr.alignment,
+                              "pvis": len(pr.pvis)}
+                             for pr in doc.design.profiles.values()],
                 "journal_length": len(self.session.bus.journal),
             }
 
     @staticmethod
     def _reference_state(doc):
-        from roaddraft.document.references import resolve_reference
+        from roaddraft.document.references import describe_reference
+        return [describe_reference(doc, ref) for ref in doc.references.values()]
+
+    @staticmethod
+    def _alignment_state(doc):
         out = []
-        for ref in doc.references.values():
-            base, error = resolve_reference(doc, ref)
-            out.append({"id": ref.id, "name": ref.name, "path": ref.path,
-                        "space": ref.space, "visible": ref.visible,
-                        "status": "loaded" if base is not None else "error",
-                        "error": error,
-                        "entities": len(base.model_entities) if base else 0})
+        for a in doc.design.alignments.values():
+            st = a.stations()
+            out.append({
+                "name": a.name,
+                "begin_station_text": st.begin_text(),
+                "end_station_text": st.end_text(),
+                "station_range": f"{st.begin_text()} to {st.end_text()}",
+                "length": a.length,
+                "curves": len(a.curves()), "tangents": len(a.tangents()),
+                "equations": len(a.equations), "source": a.source,
+                "profiles": [pr.name for pr in doc.design.profiles_of(a.name)],
+                "drawn": any(e.anchor and e.anchor.get("alignment") == a.name
+                             and e.anchor.get("kind") == "element"
+                             for e in doc.model_entities.values()),
+            })
         return out
 
     # -------------------------------------------------------------- render

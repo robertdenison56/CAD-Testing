@@ -37,6 +37,16 @@ Sheets:
            model_center=1700,1150 feet_per_inch=50
   titleblock C-101 project="SR 100" sheet_title="ROADWAY PLAN"
   space C-101 | space model             (where drawing commands go)
+Design (alignments, profiles, anchored labels):
+  alignment NAME x,y x,y,R x,y begin_station=10+00   (PIs: [x,y,R] interior)
+  drawalign NAME [layer=L]              station alignment=NAME [interval=100]
+  label PC-1 [NAME] [kind=pc side=right rotation=along content="..."]
+  curvetable 24,8.5 NAME                (on a sheet: space C-101 first)
+  profile NAME ALIGN sta,elev sta,elev,L ...   alignments
+  sta2xy 16+00 NAME [offset]            xy2sta 1300,1012 NAME
+  design curves|tangents|anchors|equations|profiles|pvis|vcs [NAME]
+  anchor PC-1 [NAME]                    (dry run of label)
+  landxmlin PATH                        landxml [PATH]   (import / export)
 Viewing & files:
   state [full] | entities [space] | extents [space] | blocks | styles | journal
   render [sheet] [dpi=N] [open]  |  rendermodel [open]
@@ -200,6 +210,10 @@ class Repl:
             self.do_simple_query("export_dxf", "path", args)
         elif low == "pdf":
             self.do_simple_query("export_pdf", "path", args)
+        elif low == "landxml":
+            self.do_simple_query("export_landxml", "path", args)
+        elif low == "alignments":
+            self.do_simple_query("list_alignments")
         elif low == "save":
             self.do_simple_query("save_document", "path", args)
         elif low == "opendoc" and args:

@@ -22,6 +22,7 @@ learned here transfer (PRD section 4):
 | Layer | Layer | Level |
 | Block | Block (INSERT) | Cell |
 | Text style | Text style | Text style |
+| Reference (basefile: path, placement, true scale, level display, symbology, clip) | Xref (XATTACH / XCLIP) | Reference attachment |
 | Command + aliases | Command line (`LINE`, `ERASE`…) | Key-in (`place line`…) |
 
 Design geometry lives in model space at real-world coordinates; annotation and
@@ -40,10 +41,27 @@ Beyond the 2D primitives, the bus carries roadway-semantic actions:
   formats stations ('12+34.56'), keeps labels upright, and marks PC/PT/PCC.
 - `attach_reference` / `detach_reference` / `modify_reference` /
   `reload_references` — external basefiles (AutoCAD xref / MicroStation
-  reference attachment): the host stores path + offset/rotation/scale, the
-  basefile's model geometry renders under every space and sheet viewport,
-  reloads from disk, exports to DXF on bound `<NAME>$<layer>` layers, and is
-  never copied into the host document.
+  reference attachment): the host stores path + offset/rotation/scale plus
+  display settings, the basefile's model geometry renders under every space
+  and sheet viewport, reloads from disk, exports to DXF on bound
+  `<NAME>$<layer>` layers, and is never copied into the host document.
+  The MicroStation reference dialog is covered: relative paths resolve
+  against the host file's folder; `true_scale` converts the basefile's
+  declared `model_units` into the host space's units (a metric survey lands
+  at the right size in a survey-foot host, 1"=50' on a sheet is
+  `scale: 1/600`); `levels_off` hides basefile levels per attachment;
+  `symbology` overrides color / linetype / lineweight or grays the whole
+  attachment out; `clip` (boundary polygon) and `masks` (mask polygons) clip
+  the geometry itself, so render, DXF, extents and `hit_test` agree.
+  `hit_test` locates reference elements (`SURVEY:LN-001`, read-only) and
+  `get_entity` reads them back in host coordinates.
+- **Design model (Phase 1)** — `create_alignment` / `modify_alignment` /
+  `delete_alignment`, `create_profile` / `delete_profile`, `draw_alignment`,
+  `place_label`, `place_curve_table`, `import_landxml`, plus
+  `annotate_stationing alignment=NAME`: alignments and profiles live in the
+  document as design data (not linework), and every tick, label, and table
+  drawn from them records the design anchor it came from. See
+  [Design model](#design-model-phase-1) below.
 
 ## The load-bearing decision: the command bus
 
@@ -64,14 +82,17 @@ Every state change is a named JSON command (PRD section 5.1):
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                      # 47 tests
+.venv/bin/pytest                      # 410 tests
 .venv/bin/python examples/demo_plan_sheet.py   # drafts a full plan sheet
+.venv/bin/python -m roaddraft.tasks 42         # generates a D1 task + reference solution
 ```
 
-The demo drafts C-101 (ANSI D): centerline with a 30° curve, pavement edges,
-station ticks/labels, PC/PT and bearing callouts, curve data table, north
-arrow, notes, filled title block — then renders PNG/PDF, exports DXF, and
-proves the journal replays byte-identically.
+The demo drafts C-101 (ANSI D) from a design-model alignment: centerline
+drawn from the alignment, pavement edges from station/offset queries,
+alignment-mode stationing (ticks, labels, PC/PT), anchored bearing and
+mid-curve callouts, the curve data table, north arrow, notes, filled title
+block — then renders PNG/PDF, exports DXF and LandXML, and proves the
+journal replays byte-identically (26 commands).
 
 ### Drive it as an agent (JSON in, JSON out)
 
@@ -95,6 +116,63 @@ Nothing is hidden from the model: full state (`get_document_state`), per-sheet
 state with what each viewport can see (`get_sheet_state`), entity lookups,
 extents, the journal, and the self-describing manifest (`list_commands`).
 
+## Design model (Phase 1)
+
+Roadway design lives in the document as **data**, separate from the linework
+drawn from it — the Civil 3D alignment / ORD geometry-model idea:
+
+```python
+s.execute("create_alignment", {"name": "ALIGN-1", "begin_station": "10+00",
+                               "pis": [[1000, 1000], [1814.359354, 1000, 800],
+                                       [2433.012702, 1357.179677]],
+                               "equations": [{"back": "20+00", "ahead": "25+00"}]})
+s.execute("create_profile", {"name": "PROF-1", "alignment": "ALIGN-1",
+                             "pvis": [[1000, 100], [2000, 120, 400], [2500, 90]]})
+s.execute("draw_alignment", {"alignment": "ALIGN-1", "layer": "V-ALIGN-CNTR"})
+s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1"})
+s.execute("place_label", {"space": "model", "anchor": "PC-1"})        # "PC 16+00.00"
+s.execute("place_label", {"space": "model", "anchor": "T-2"})         # bearing N 60°00'00" E
+s.execute("place_label", {"space": "C-101", "anchor": "MC-1", "kind": "curve_data"})
+s.execute("place_curve_table", {"space": "C-101", "position": [24, 8.5]})
+s.query("get_design_data", {"kind": "curves"})     # Δ, R, T, L, E, M, C, bearings, stations
+s.query("station_to_xy", {"station": "18+00", "offset": 25})
+s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
+```
+
+- **Alignments** are PI-based (`[x, y]` at BEGIN/END, `[x, y, R]` interior)
+  or built from CoordGeom elements; the engine compiles tangents and circular
+  curves, checks that curves fit their tangents, and carries a begin station
+  plus **station equations** (`STA 20+00 BK = STA 25+00 AH`, gaps and
+  overlaps). Every station in the API is a *display* station (`1600` or
+  `"16+00"`); results carry the raw value and the printed text.
+- **Profiles** are PVIs with symmetric parabolic vertical curves; the engine
+  validates fit/overlap and reports PVC/PVT, grades, A, K, and high/low points.
+- **Anchors** name design points: `BEGIN`, `END`, `PC-n`, `PT-n`, `PI-n`,
+  `MC-n`, `T-n`, `EQ-n`, or a station (`18+00`, `1800`), optionally with an
+  offset (`PC-1@16`, `18+00@25L`, right positive). `place_label` resolves the
+  anchor, infers the label kind (`station`, `pc`, `pt`, `pi`, `mc`, `pcc`,
+  `prc`, `bearing`, `begin`, `end`, `equation`, `curve_data`, `custom`),
+  writes the conventional wording, places the text on the conventional side
+  with the conventional offset, keeps it upright, and — on a sheet — maps it
+  through the viewport that shows the point. The text entity records an
+  `anchor` (`alignment`, `ref`, `kind`, `station`, `offset`, `side`,
+  `label_offset`, `rotation`, `viewport`, `content_auto`): the verifier's
+  contract. `resolve_anchor` is the dry run.
+- **Alignment-mode stationing** (`annotate_stationing alignment=NAME`) walks
+  the true stations through the equations, so ticks and labels are anchored
+  and equation-aware; the original entity-chain mode is unchanged.
+- **LandXML 1.2** in and out (`import_landxml`, `export_landxml`): alignments
+  with Line/Curve geometry and station equations, profiles with PVI/ParaCurve;
+  units (USSurveyFoot / foot / meter) are converted; spirals are rejected
+  with a teaching error.
+- **Tasks**: `python -m roaddraft.tasks SEED [--equations] [--curves N]`
+  generates a deterministic D1 plan-sheet task — a brief (design pre-seeded,
+  deliverable, DRAFT drafting spec), the verifier ground truth computed by
+  the same label functions, and the reference solution (15 commands) whose
+  document matches the truth exactly and whose journal replays. Task ids
+  pin the generator version and the spec hash. The AASHTO-derived standards
+  tables and the drafting spec are DRAFT, for PE review.
+
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
 ```bash
@@ -113,6 +191,14 @@ and a status bar with coordinate readout and an **ORTHO** toggle (F8). Model
 space renders on the AutoCAD dark canvas (black/white linework flips to
 light; sheets stay white paper) — toggle in View ▸ Display.
 
+- **Design tools**: the **Alignment** tool (key G) — click PIs in order, press
+  Enter, name it, give the interior PIs a radius, and it is created and drawn;
+  the **Toolspace ▸ Alignments** node lists every alignment with its station
+  range and curve count (draw / delete glyphs; click to prefill alignment-mode
+  stationing); the Station tool's dialog offers *design mode* by alignment;
+  **Annotate ▸ Label** opens the anchored-label form (alignment, anchor, kind,
+  side, rotation, content); **Curve Table** and **Output ▸ LandXML** are one
+  click.
 - **Drawing tools** (ribbon or keys V/H/L/P/C/A/T/S/M/E/I/X): Select
   (hit-test pick — the entity itself lights up with a glow traced along its
   actual geometry, not a box; Delete to erase), Pan, Line, Polyline, Circle
@@ -146,8 +232,11 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   ticks, upright '12+34.56' labels rotated along the alignment, and PC/PT/PCC
   labels at tangent-curve junctions.
 - **References panel**: attach basefiles (other RoadDraft documents) as
-  xrefs / reference attachments — toggle display, detach, reload; status
-  shown per attachment.
+  xrefs / reference attachments — toggle display, gray-out, detach, reload;
+  status, resolved path and true-scale factor per attachment; expand a row
+  for per-level display toggles. Insert ▸ Reference ▸ Clip picks a polygon
+  and applies it as a clip boundary or mask; the Select tool locates
+  reference elements read-only.
 - Model/sheet tabs, layer manager, log with teaching errors, exports
   (DXF/PDF/save/journal), and an AutoCAD-style command bar speaking the same
   grammar as the terminal REPL (`help` lists everything).
@@ -176,6 +265,16 @@ RD [C-101]> text 1,20.5 "GENERAL NOTES:" height=0.15
 RD [C-101]> titleblock C-101 project="SR 100" sheet_title="ROADWAY PLAN"
 RD [C-101]> render C-101 open
 RD [C-101]> journal session.jsonl        # a replayable expert trajectory
+RD [C-101]> space model
+RD [model]> alignment ALIGN-1 1000,1000 1814.359354,1000,800 2433.012702,1357.179677 begin_station=10+00
+RD [model]> drawalign ALIGN-1 layer=V-ALIGN-CNTR
+RD [model]> station alignment=ALIGN-1
+RD [model]> label PC-1
+RD [model]> label T-2 kind=bearing
+RD [model]> sta2xy 16+00 ALIGN-1        design curves        anchor MC-1
+RD [model]> space C-101
+RD [C-101]> curvetable 24,8.5 ALIGN-1
+RD [C-101]> landxml                      # export the design as LandXML
 ```
 
 `help` lists everything; `help <command>` prints any command's schema and
@@ -191,6 +290,7 @@ recorded trajectories, and the playtest rule holds: if a PE can't draft a
 - **DXF** — real layers/linetypes/lineweights, blocks, paper-space layouts,
   and viewports (scale and twist); opens in AutoCAD/Civil 3D and
   MicroStation. DXF is a render target — the JSON document is the truth.
+- **LandXML 1.2** (`export_landxml`) — alignments and profiles for Civil 3D / ORD.
 - **JSON snapshot** (`save_document`) and **journal** (`save_journal`).
 
 ## Layout
@@ -198,27 +298,37 @@ recorded trajectories, and the playtest rule holds: if a PE can't draft a
 ```
 src/roaddraft/
   core/        units (stations, US survey ft), colors, geometry + viewport transform
-  document/    entities, layers/styles/blocks, sheets/viewports, the Document
-  commands/    JSON schemas, handlers, the command bus (validate/apply/journal/undo)
+  design/      pure roadway math: alignments (PIs, curves, station equations),
+               profiles (PVIs, vertical curves), anchors, label placement/wording
+  adapters/    LandXML 1.2 reader/writer (stdlib XML only)
+  document/    entities (+ design anchors), layers/styles/blocks, sheets/viewports,
+               references (+ clipping), the Document (+ the design model)
+  commands/    JSON schemas, handlers (+ design_handlers), the command bus
   render/      shared title block template, matplotlib PNG/PDF, ezdxf DXF
   api/         Session (execute/query/manifest) + the shared command-line grammar
   cli/         the terminal REPL
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
-tests/         59 tests: geometry, commands, determinism, renders, DXF, web server
-examples/      demo_plan_sheet.py — a full sheet drafted through the tool surface
+  tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
+               ground truth, and the reference solution (python -m roaddraft.tasks)
+tests/         410 tests: geometry, design math, commands, determinism, LandXML,
+               renders, DXF, web server, tasks
+examples/      demo_plan_sheet.py — a full sheet drafted from the design model;
+               generate_task.py — task seed 42 end to end
 benchmarks/    knowledge/ — reference standards behind the drafting spec (Caltrans PPM text + page index; see its README)
 scripts/       build_knowledge.py — rebuilds the knowledge base from the raw PDFs
 ```
 
 ## What this is not (yet)
 
-Per the build plan's vertical-slice rule, this milestone is the CAD substrate
-(M0 + renderer/M1 slice + human-play early). Coming next, on top of this bus:
+Phase 1 (the design model, anchored labels, LandXML, and the D1 task
+generator) is in. Still to come, on top of this bus:
 
-- **Geometry core (Phase 1)**: alignments (tangent/curve/spiral), profiles,
-  stationing engine, LandXML I/O, the procedural task generator and
-  ground-truth label computer. Semantic anchors (`place_label(anchor="PC-3")`)
-  arrive with it — today's `place_text` is the coordinate-level primitive it
-  will compile down to.
-- **Verifier + session server + MCP mode (M2)**: rubric scoring and the
-  first agent episodes.
+- **Verifier + session server + MCP mode (M2)**: rubric scoring against the
+  ground truth (`roaddraft.verify`), the eval harness, and the first agent
+  episodes — see `RoadDraft_Eval_Plan.md`.
+- **Spirals** (`"spiral"` is reserved and rejected everywhere), asymmetric
+  vertical curves, **profile views** on sheets, station-offset labels, match
+  lines and multi-sheet sets (D2/D3).
+- **PE review** of the DRAFT standards tables and drafting spec before any
+  published task set; task ids carry the spec hash so corrections mint new
+  ids.

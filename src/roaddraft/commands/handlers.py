@@ -14,7 +14,11 @@ from roaddraft.document.document import LINETYPES, BlockDef, Document, Layer, Te
 from roaddraft.document.entities import (
     Arc, BlockRef, Circle, Line, Polyline, Table, Text, entity_from_dict,
 )
-from roaddraft.document.references import Reference, resolve_reference
+from roaddraft.document.entities import as_point, as_positive
+from roaddraft.document.references import (
+    Reference, as_levels, as_polygon, as_polygons, as_symbology,
+    resolve_reference, unit_factor_for,
+)
 from roaddraft.document.sheets import SHEET_SIZES, Sheet, Viewport
 
 
@@ -333,7 +337,7 @@ def modify_entity(doc: Document, p: dict):
         if immutable in changes and changes[immutable] != getattr(
                 entity, immutable if immutable == "id" else "TYPE"):
             raise CommandFault(f"entity {immutable} cannot be changed")
-    known = set(entity.to_dict()) | {"color", "linetype"}
+    known = set(entity.to_dict()) | {"color", "linetype", "anchor"}
     unknown = set(changes) - known
     if unknown:
         raise CommandFault(
@@ -621,6 +625,17 @@ def _offset_pt(p, angle_deg, dist):
 
 
 def annotate_stationing(doc: Document, p: dict):
+    if "alignment" in p and "path_ids" in p:
+        raise CommandFault("give either path_ids (entity-chain mode) or alignment (design "
+                           "mode), not both")
+    if "alignment" in p:
+        from roaddraft.commands import design_handlers
+        return design_handlers.annotate_stationing_alignment(doc, p)
+    if "path_ids" not in p:
+        raise CommandFault("path_ids is required in entity-chain mode",
+                           hint="or pass alignment=NAME for design-model stationing")
+    if "begin_station" not in p:
+        raise CommandFault("begin_station is required with path_ids")
     space_key, container = _space(doc, p["space"])
     tick_layer = _layer(doc, p)
     label_layer = p.get("label_layer", tick_layer)
@@ -694,6 +709,41 @@ def annotate_stationing(doc: Document, p: dict):
 # ------------------------------------------------------------- references
 
 
+def _reference_from_params(rid: str, space_key: str, p: dict) -> Reference:
+    try:
+        return Reference(
+            id=rid, name=p["name"], path=p["path"], space=space_key,
+            offset=as_point(p.get("offset", [0.0, 0.0])),
+            rotation_deg=float(p.get("rotation_deg", 0.0)),
+            scale=as_positive(p.get("scale", 1.0), "scale"),
+            visible=bool(p.get("visible", True)),
+            true_scale=bool(p.get("true_scale", True)),
+            levels_off=as_levels(p.get("levels_off")),
+            symbology=as_symbology(p.get("symbology")),
+            clip=None if p.get("clip") is None else as_polygon(p["clip"], "clip"),
+            masks=as_polygons(p.get("masks")))
+    except ValueError as ex:
+        raise CommandFault(str(ex))
+
+
+def _check_levels(ref: Reference, base: Document):
+    unknown = [name for name in ref.levels_off if name not in base.layers]
+    if unknown:
+        raise CommandFault(f"levels_off names {unknown} are not layers of "
+                           f"{ref.path}",
+                           hint=f"basefile levels: {sorted(base.layers)}")
+
+
+def _path_hint(doc: Document) -> str:
+    from pathlib import Path
+    host = getattr(doc, "_path", None)
+    if host is not None:
+        return (f"relative paths resolve against the host document's folder "
+                f"({Path(host).parent}), then the working directory")
+    return ("the host document has no path yet (save_document first), so "
+            "relative paths resolve against the working directory")
+
+
 def attach_reference(doc: Document, p: dict):
     name = p["name"]
     for ref in doc.references.values():
@@ -703,20 +753,25 @@ def attach_reference(doc: Document, p: dict):
                                     "different name")
     space_key, _ = _space(doc, p.get("space", "model"))
     rid = doc.new_id("reference")
-    ref = Reference(id=rid, name=name, path=p["path"], space=space_key,
-                    offset=list(p.get("offset", [0.0, 0.0])),
-                    rotation_deg=p.get("rotation_deg", 0.0),
-                    scale=p.get("scale", 1.0))
+    ref = _reference_from_params(rid, space_key, p)
     base, error = resolve_reference(doc, ref)
     if base is None:
         raise CommandFault(f"cannot attach reference: {error}",
                            hint="the path must point to a RoadDraft document "
-                                "JSON (saved with save_document)")
+                                "JSON (saved with save_document); "
+                                + _path_hint(doc))
+    _check_levels(ref, base)
+    unit_k, base_units, host_units, unit_warning = unit_factor_for(doc, ref, base)
     doc.references[rid] = ref
     count = len(base.model_entities)
     warnings = [] if count else [f"{name} has no model-space entities"]
+    if unit_warning:
+        warnings.append(unit_warning)
+    scale_note = (f"; true scale x{unit_k:.6g} ({base_units} -> {host_units})"
+                  if unit_k != 1.0 else "")
     return (f"reference {name!r} ({rid}) attached into "
-            f"{_space_label(doc, space_key)}: {count} entities from {ref.path}",
+            f"{_space_label(doc, space_key)}: {count} entities from {ref.path}"
+            f"{scale_note}",
             _diff(created=[rid]), warnings)
 
 
@@ -738,14 +793,18 @@ def detach_reference(doc: Document, p: dict):
             _diff(deleted=[ref.id]), [])
 
 
+REFERENCE_FIELDS = ("path", "offset", "rotation_deg", "scale", "visible",
+                    "true_scale", "levels_off", "symbology", "clip", "masks")
+
+
 def modify_reference(doc: Document, p: dict):
     ref = _find_reference(doc, p["name"])
-    allowed = {"path", "offset", "rotation_deg", "scale", "visible"}
     changes = p["changes"]
-    bad = set(changes) - allowed
+    bad = set(changes) - set(REFERENCE_FIELDS)
     if bad:
         raise CommandFault(f"cannot change {sorted(bad)} on a reference",
-                           hint=f"allowed fields: {sorted(allowed)}")
+                           hint=f"allowed fields: {list(REFERENCE_FIELDS)}")
+    notes = []
     if "offset" in changes:
         off = changes["offset"]
         if not (isinstance(off, list) and len(off) == 2
@@ -761,13 +820,44 @@ def modify_reference(doc: Document, p: dict):
         ref.scale = float(changes["scale"])
     if "visible" in changes:
         ref.visible = bool(changes["visible"])
+    if "true_scale" in changes:
+        if not isinstance(changes["true_scale"], bool):
+            raise CommandFault("true_scale must be true or false")
+        ref.true_scale = changes["true_scale"]
+    try:
+        if "symbology" in changes:
+            ref.symbology = as_symbology(changes["symbology"])
+            notes.append("symbology " + (", ".join(
+                f"{k}={v}" for k, v in sorted(ref.symbology.items()))
+                if ref.symbology else "cleared"))
+        if "clip" in changes:
+            ref.clip = None if changes["clip"] is None \
+                else as_polygon(changes["clip"], "clip")
+            notes.append("clip boundary cleared" if ref.clip is None
+                         else f"clip boundary set ({len(ref.clip)} points)")
+        if "masks" in changes:
+            ref.masks = as_polygons(changes["masks"])
+            notes.append(f"{len(ref.masks)} clip mask(s)")
+        if "levels_off" in changes:
+            ref.levels_off = as_levels(changes["levels_off"])
+    except ValueError as ex:
+        raise CommandFault(str(ex))
     if "path" in changes:
         ref.path = str(changes["path"])
         doc._ref_cache.pop(ref.id, None)
         base, error = resolve_reference(doc, ref)
         if base is None:
-            raise CommandFault(f"new path is not loadable: {error}")
-    return (f"reference {ref.name!r} updated: {', '.join(sorted(changes))}",
+            raise CommandFault(f"new path is not loadable: {error}",
+                               hint=_path_hint(doc))
+    if "levels_off" in changes:
+        base, _error = resolve_reference(doc, ref)
+        if base is not None:
+            _check_levels(ref, base)
+        notes.append(f"levels off: {ref.levels_off}" if ref.levels_off
+                     else "all levels on")
+    detail = f" ({'; '.join(notes)})" if notes else ""
+    return (f"reference {ref.name!r} updated: {', '.join(sorted(changes))}"
+            f"{detail}",
             _diff(modified=[ref.id]), [])
 
 

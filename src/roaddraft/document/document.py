@@ -5,7 +5,8 @@ model + sheet models).
 
 Fully JSON-serializable via to_dict/from_dict; that JSON is the state an AI
 agent sees. ID counters are stored in the document so command replay is
-deterministic.
+deterministic. The design model (alignments, profiles) rides along under
+"design" so snapshots, undo, journals, and saves cover it with no bus changes.
 """
 from __future__ import annotations
 
@@ -13,13 +14,14 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from roaddraft.core import geometry as geo
+from roaddraft.design.model import DesignModel
 from roaddraft.document.entities import (
     Circle, Entity, Polyline, Text, entity_from_dict,
 )
 from roaddraft.document.references import Reference
 from roaddraft.document.sheets import Sheet
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
 
 LINETYPES = ("continuous", "dashed", "center", "hidden", "dot", "phantom")
 
@@ -124,8 +126,10 @@ class Document:
         self.model_entities: Dict[str, Entity] = {}
         self.sheets: Dict[str, Sheet] = {}
         self.references: Dict[str, Reference] = {}
+        self.design: DesignModel = DesignModel()  # alignments + profiles (Phase 1)
         self.id_counters: Dict[str, int] = {}
         self._ref_cache: Dict[str, tuple] = {}  # transient, never serialized
+        self._path = None  # transient: file loaded from / last saved to
 
     @classmethod
     def new(cls, project_name: str = "Untitled") -> "Document":
@@ -199,6 +203,7 @@ class Document:
             "model": {"entities": {k: e.to_dict() for k, e in self.model_entities.items()}},
             "sheets": {k: s.to_dict() for k, s in self.sheets.items()},
             "references": {k: r.to_dict() for k, r in self.references.items()},
+            "design": self.design.to_dict(),
             "id_counters": dict(self.id_counters),
         }
 
@@ -218,5 +223,6 @@ class Document:
         doc.sheets = {k: Sheet.from_dict(sd) for k, sd in d.get("sheets", {}).items()}
         doc.references = {k: Reference.from_dict(rd)
                           for k, rd in d.get("references", {}).items()}
+        doc.design = DesignModel.from_dict(d.get("design", {}))
         doc.id_counters = {k: int(v) for k, v in d.get("id_counters", {}).items()}
         return doc

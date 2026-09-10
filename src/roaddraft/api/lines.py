@@ -26,6 +26,12 @@ REPL_ALIASES = {
     "station": "annotate_stationing", "xref": "attach_reference",
     "xdetach": "detach_reference", "xreload": "reload_references",
     "refs": "list_references", "hit": "hit_test",
+    # design model (Phase 1)
+    "alignment": "create_alignment", "drawalign": "draw_alignment",
+    "profile": "create_profile", "label": "place_label",
+    "curvetable": "place_curve_table", "landxmlin": "import_landxml",
+    "sta2xy": "station_to_xy", "xy2sta": "xy_to_station",
+    "design": "get_design_data", "anchor": "resolve_anchor",
 }
 
 POSITIONAL = {
@@ -41,6 +47,20 @@ POSITIONAL = {
     "attach_reference": ["name", "path"],
     "detach_reference": ["name"],
     "modify_reference": ["name"],
+    "create_alignment": ["name"],
+    "modify_alignment": ["name"],
+    "delete_alignment": ["name"],
+    "create_profile": ["name", "alignment"],
+    "delete_profile": ["name"],
+    "draw_alignment": ["alignment"],
+    "place_label": ["anchor", "alignment"],
+    "place_curve_table": ["position", "alignment"],
+    "import_landxml": ["path"],
+    "station_to_xy": ["station", "alignment", "offset"],
+    "xy_to_station": ["point", "alignment"],
+    "get_design_data": ["kind", "alignment"],
+    "resolve_anchor": ["anchor", "alignment"],
+    "export_landxml": ["path"],
 }
 
 VARIADIC = {  # commands whose positional args collect into one list param
@@ -48,6 +68,8 @@ VARIADIC = {  # commands whose positional args collect into one list param
     "delete_entities": "ids",
     "move_entities": "ids",
     "annotate_stationing": "path_ids",
+    "create_alignment": "pis",
+    "create_profile": "pvis",
 }
 
 FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param
@@ -57,7 +79,7 @@ FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param
 
 SPATIAL = {"draw_line", "draw_polyline", "draw_arc", "draw_circle", "place_text",
            "insert_block", "place_table", "annotate_stationing",
-           "attach_reference"}
+           "attach_reference", "place_label", "place_curve_table", "resolve_anchor"}
 
 # bare words that map straight to queries
 BUILTIN_QUERIES = {
@@ -67,6 +89,7 @@ BUILTIN_QUERIES = {
     "blocks": "list_blocks",
     "sheets": "list_sheets",
     "journal": "get_journal",
+    "alignments": "list_alignments",
 }
 
 
@@ -203,6 +226,9 @@ def route_line(session, line: str, current_space: str = "model") -> dict:
     if low == "pdf":
         return {"kind": "result", "result": session.query(
             "export_pdf", {"path": args[0]} if args else {})}
+    if low == "landxml":
+        return {"kind": "result", "result": session.query(
+            "export_landxml", {"path": args[0]} if args else {})}
     if low == "save":
         if not args:
             return {"kind": "error", "message": "usage: save PATH"}

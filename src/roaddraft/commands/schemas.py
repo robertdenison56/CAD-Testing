@@ -6,6 +6,7 @@ back in teaching errors when a call is invalid.
 """
 from __future__ import annotations
 
+from roaddraft.commands.design_schemas import DESIGN_EXAMPLES, DESIGN_SCHEMAS, STATION
 from roaddraft.document.document import LINETYPES
 from roaddraft.document.sheets import SHEET_SIZES
 
@@ -26,6 +27,11 @@ VALIGN = {"type": "string", "enum": ["bottom", "middle", "top"]}
 COLOR = {"type": "string",
          "description": "named CAD color (black, red, yellow, green, cyan, blue, "
                         "magenta, gray, white) or '#RRGGBB'"}
+POLYGON = {"type": "array", "items": POINT, "minItems": 3,
+           "description": "polygon: at least 3 [x, y] points, implicitly closed"}
+POLYGON_CLIP = {**POLYGON,
+                "description": "clip boundary polygon in host coordinates; only "
+                               "basefile geometry inside it displays"}
 
 
 def obj(props, required=(), extra=False):
@@ -149,9 +155,21 @@ SCHEMAS = {
     "annotate_stationing": obj(
         {"space": SPACE,
          "path_ids": {**IDS, "description": "line/polyline/arc entity ids forming "
-                                            "the centerline, in order along it"},
+                                            "the centerline, in order along it "
+                                            "(entity-chain mode)"},
+         "alignment": {**NSTR, "description": "design-model alignment name: true "
+                                              "stations, equations, and anchored "
+                                              "output (alternative to path_ids)"},
          "begin_station": {**NUM, "description": "station value (feet) at the "
-                                                 "start of the first element"},
+                                                 "start of the first element "
+                                                 "(entity-chain mode only)"},
+         "station_range": {"type": "array", "items": STATION, "minItems": 2,
+                           "maxItems": 2,
+                           "description": "alignment mode: only annotate between "
+                                          "these display stations"},
+         "include_equations": {"type": "boolean",
+                               "description": "alignment mode: label station "
+                                              "equations (default true)"},
          "interval": {**POS, "description": "tick spacing in feet (default 100)"},
          "tick_half_len": {**POS, "description": "tick half-length each side of "
                                                  "the path (default 10 ft)"},
@@ -166,14 +184,34 @@ SCHEMAS = {
                                           "junctions (default true)"},
          "connect_tolerance": {**POS, "description": "max gap between path "
                                                      "elements (default 1 ft)"}},
-        ["space", "path_ids", "begin_station"]),
+        ["space"]),
     "attach_reference": obj(
         {"name": {**NSTR, "description": "reference name, e.g. 'SURVEY'"},
          "path": {**NSTR, "description": "path to a RoadDraft document JSON "
-                                         "(saved with save_document)"},
+                                         "(saved with save_document); a "
+                                         "relative path resolves against the "
+                                         "host document's folder, then the "
+                                         "working directory"},
          "space": SPACE,
          "offset": {**POINT, "description": "placement offset in host units"},
-         "rotation_deg": NUM, "scale": POS},
+         "rotation_deg": NUM, "scale": POS,
+         "visible": {"type": "boolean"},
+         "true_scale": {"type": "boolean",
+                        "description": "convert the basefile's model_units "
+                                       "into the host space's units before "
+                                       "placement (default true; MicroStation "
+                                       "true scale)"},
+         "levels_off": {"type": "array", "items": NSTR,
+                        "description": "basefile layers (levels) hidden in "
+                                       "this attachment only"},
+         "symbology": {"type": "object",
+                       "description": "display overrides for the whole "
+                                      "attachment: color, linetype, "
+                                      "lineweight_mm, gray (true = gray-out)"},
+         "clip": POLYGON_CLIP,
+         "masks": {"type": "array", "items": POLYGON,
+                   "description": "clip mask polygons in host coordinates; "
+                                  "geometry inside a mask is hidden"}},
         ["name", "path"]),
     "detach_reference": obj({"name": {**NSTR, "description": "reference name "
                                                              "or id"}}, ["name"]),
@@ -181,7 +219,11 @@ SCHEMAS = {
         {"name": NSTR,
          "changes": {"type": "object", "minProperties": 1,
                      "description": "any of: path, offset, rotation_deg, scale, "
-                                    "visible"}},
+                                    "visible, true_scale, levels_off (list of "
+                                    "basefile layer names), symbology "
+                                    "({color, linetype, lineweight_mm, gray}), "
+                                    "clip (polygon in host coordinates, or "
+                                    "null to clear), masks (list of polygons)"}},
         ["name", "changes"]),
     "reload_references": obj({}),
     "undo": obj({}),
@@ -237,8 +279,15 @@ EXAMPLES = {
     "attach_reference": {"name": "SURVEY", "path": "survey_base.rdoc.json",
                          "space": "model"},
     "detach_reference": {"name": "SURVEY"},
-    "modify_reference": {"name": "SURVEY", "changes": {"visible": False}},
+    "modify_reference": {"name": "SURVEY", "changes": {
+        "levels_off": ["V-SURV-TOPO"], "symbology": {"gray": True},
+        "clip": [[900, 800], [2600, 800], [2600, 1100], [900, 1100]]}},
     "reload_references": {},
     "undo": {},
     "redo": {},
 }
+
+# Phase 1 design commands (alignments, profiles, anchored labels, curve
+# tables, LandXML): schemas and examples live in design_schemas.py.
+SCHEMAS.update(DESIGN_SCHEMAS)
+EXAMPLES.update(DESIGN_EXAMPLES)

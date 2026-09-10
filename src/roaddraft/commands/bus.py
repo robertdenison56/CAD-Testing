@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional
 import jsonschema
 from jsonschema.exceptions import best_match
 
+from roaddraft.commands import design_handlers as dh
 from roaddraft.commands import handlers as h
 from roaddraft.commands.schemas import EXAMPLES, SCHEMAS
 from roaddraft.document.document import Document
@@ -105,18 +106,76 @@ REGISTRY: List[CommandSpec] = [
                 h.fill_title_block,
                 {"c3d": ["ATTEDIT"], "ord": ["edit tags"]}),
     CommandSpec("annotate_stationing",
-                "The roadway stationing engine: walk a connected path of "
-                "line/polyline/arc entities (the centerline), draw perpendicular "
-                "station ticks at the interval, place '12+34.56' labels rotated "
-                "along the path, and label PC/PT/PCC at tangent-curve junctions.",
+                "The roadway stationing engine. Entity-chain mode (path_ids + "
+                "begin_station): walk connected line/polyline/arc entities. "
+                "Design mode (alignment=NAME): use the alignment's true stations "
+                "and equations and anchor every tick and label. Either way it "
+                "draws perpendicular ticks at the interval, '12+34.56' labels "
+                "rotated along the path, and PC/PT/PCC/PRC labels at junctions.",
                 h.annotate_stationing,
                 {"c3d": ["ADDALIGNMENTLABELS"], "ord": ["annotate stationing"]}),
+    CommandSpec("create_alignment",
+                "Create a horizontal alignment in the design model from PIs "
+                "([x, y] at BEGIN/END, [x, y, R] interior) or from CoordGeom "
+                "elements; optional begin station (display, '10+00') and station "
+                "equations. Alignments are pure design data: draw_alignment puts "
+                "linework in model space, annotate_stationing/place_label label it.",
+                dh.create_alignment,
+                {"c3d": ["CREATEALIGNMENTLAYOUT"], "ord": ["complex by pi"]}),
+    CommandSpec("modify_alignment",
+                "Change an alignment's PIs, begin station, equations, description, "
+                "or name (rename rewrites anchors and profile bindings). Entities "
+                "already drawn from it are not regenerated (a warning says so).",
+                dh.modify_alignment, {"c3d": ["EDITALIGNMENT"], "ord": ["alignment edit"]}),
+    CommandSpec("delete_alignment",
+                "Delete an alignment (cascade=true also deletes its profiles); "
+                "drawn entities keep their anchors.",
+                dh.delete_alignment,
+                {"c3d": ["DELETEALIGNMENT"], "ord": ["alignment delete"]}),
+    CommandSpec("create_profile",
+                "Create a vertical profile on an alignment from PVIs "
+                "([station, elevation] or [station, elevation, vc_length]; "
+                "stations are display stations).",
+                dh.create_profile,
+                {"c3d": ["CREATEPROFILELAYOUT"], "ord": ["profile complex by vpi"]}),
+    CommandSpec("delete_profile", "Delete a profile by name.", dh.delete_profile,
+                {"c3d": ["DELETEPROFILE"], "ord": ["profile delete"]}),
+    CommandSpec("draw_alignment",
+                "Draw an alignment's tangents and curves as anchored line/arc "
+                "entities in model space (replace=true redraws).",
+                dh.draw_alignment,
+                {"c3d": ["ALIGNMENTTOPOLYLINE"], "ord": ["alignment export geometry"]}),
+    CommandSpec("place_label",
+                "Place a design-anchored label: name a point on an alignment "
+                "(PC-1, T-2, '18+00@25L', ...) and a kind (station, pc, pt, pi, "
+                "mc, bearing, equation, curve_data, custom...); content, side, "
+                "offset, and rotation follow drafting convention unless "
+                "overridden. Works in model space or on a sheet through a "
+                "viewport. The text records its anchor for the verifier.",
+                dh.place_label,
+                {"c3d": ["ADDALIGNMENTSTAOFFLABEL"], "ord": ["place label"]}),
+    CommandSpec("place_curve_table",
+                "Place a curve data table (Δ, R, T, L, chord, bearings...) for an "
+                "alignment on a sheet, one row per curve, anchored to the "
+                "alignment.", dh.place_curve_table,
+                {"c3d": ["ADDALIGNMENTCURVETABLE"], "ord": ["place curve table"]}),
+    CommandSpec("import_landxml",
+                "Import LandXML 1.2 alignments (Line/Curve CoordGeom, station "
+                "equations) and profiles into the design model, from a file path "
+                "(read at execute time, so replay depends on the file) or inline "
+                "xml text.", dh.import_landxml,
+                {"c3d": ["LANDXMLIN"], "ord": ["import landxml"]}),
     CommandSpec("attach_reference",
                 "Attach an external RoadDraft document (basefile) as a reference "
                 "(AutoCAD: xref, MicroStation: reference attachment). The host "
-                "stores path + placement; the basefile's model geometry displays "
-                "under this document's own entities and in sheet viewports, and "
-                "reloads from disk — never copied in.",
+                "stores path + placement + display settings; the basefile's "
+                "model geometry displays under this document's own entities and "
+                "in sheet viewports, and reloads from disk — never copied in. "
+                "Relative paths resolve against the host document's folder. "
+                "true_scale converts the basefile's units into the host space's "
+                "(default on); levels_off, symbology (color/linetype/"
+                "lineweight_mm/gray), clip (boundary polygon) and masks (mask "
+                "polygons) control how it displays.",
                 h.attach_reference,
                 {"c3d": ["XATTACH", "XREF"], "ord": ["reference attach"]}),
     CommandSpec("detach_reference", "Detach a reference by name.",
@@ -124,8 +183,15 @@ REGISTRY: List[CommandSpec] = [
                 {"c3d": ["XREF"], "ord": ["reference detach"]}),
     CommandSpec("modify_reference",
                 "Change a reference's path, placement (offset/rotation/scale), "
-                "or visibility.", h.modify_reference,
-                {"ord": ["reference settings"]}),
+                "visibility, true_scale, per-attachment level display "
+                "(levels_off), symbology overrides (color, linetype, "
+                "lineweight_mm, gray=true for gray-out), clip boundary (clip: "
+                "polygon in host coordinates, null clears) or clip masks "
+                "(masks: list of polygons).", h.modify_reference,
+                {"c3d": ["XCLIP"],
+                 "ord": ["reference settings", "reference clip boundary",
+                         "reference clip mask", "reference levels",
+                         "reference presentation"]}),
     CommandSpec("reload_references",
                 "Re-read all referenced basefiles from disk on next use.",
                 h.reload_references, {"ord": ["reference reload"]}),
@@ -201,11 +267,11 @@ class CommandBus:
         try:
             message, diff, warnings = spec.handler(self.doc, params)
         except h.CommandFault as fault:
-            self.doc = Document.from_dict(snapshot)
+            self._restore(snapshot)
             return self._error(spec.name, "command_failed", str(fault),
                               hint=fault.hint, example=spec.example)
         except Exception as ex:  # defensive: never leave a half-applied command
-            self.doc = Document.from_dict(snapshot)
+            self._restore(snapshot)
             return self._error(spec.name, "internal_error",
                                f"{type(ex).__name__}: {ex}")
         self._push_undo(snapshot, spec.name)
@@ -219,6 +285,13 @@ class CommandBus:
                                "expected {'command': <name>, 'params': {...}}")
         return self.execute(call["command"], call.get("params") or {})
 
+    def _restore(self, snapshot: dict):
+        """Replace the document from a snapshot, keeping the transient host
+        path so relative reference paths still resolve after undo/redo."""
+        path = self.doc._path
+        self.doc = Document.from_dict(snapshot)
+        self.doc._path = path
+
     # --------------------------------------------------------- undo / redo
 
     def _push_undo(self, snapshot: dict, name: str):
@@ -231,7 +304,7 @@ class CommandBus:
             return self._error("undo", "nothing_to_undo", "nothing to undo")
         self._redo.append((self.doc.to_dict(), self._undo[-1][1]))
         snapshot, undone = self._undo.pop()
-        self.doc = Document.from_dict(snapshot)
+        self._restore(snapshot)
         return self._record("undo", {}, f"undid {undone}",
                             {"created": [], "modified": [], "deleted": []}, [])
 
@@ -240,7 +313,7 @@ class CommandBus:
             return self._error("redo", "nothing_to_redo", "nothing to redo")
         snapshot, redone = self._redo.pop()
         self._push_undo(self.doc.to_dict(), f"undo of {redone}")
-        self.doc = Document.from_dict(snapshot)
+        self._restore(snapshot)
         return self._record("redo", {}, f"redid {redone}",
                             {"created": [], "modified": [], "deleted": []}, [])
 

@@ -2,22 +2,104 @@
 
 A reference attaches another RoadDraft document (a "basefile", saved with
 save_document) into a space of the host document — typically a survey/topo/
-alignment base shown under every plan sheet. The host stores only the path and
-placement (offset/rotation/scale); entities are loaded from disk on demand and
-are never copied into the host, so basefile edits flow through on reload.
+alignment base shown under every plan sheet. The host stores only the path,
+the placement (offset/rotation/scale) and display settings; entities are
+loaded from disk on demand and are never copied into the host, so basefile
+edits flow through on reload.
 
-Loaded documents are cached on the host Document instance (transient, never
-serialized). Nested references are not resolved — one level deep.
+Display settings mirror MicroStation's reference dialog:
+
+- true_scale: the basefile's declared model_units are converted into the
+  host space's units (feet, metres, sheet inches) before placement.
+- levels_off: basefile layers (levels) hidden in this attachment only.
+- symbology: presentation overrides for the whole attachment (color,
+  linetype, lineweight_mm, or gray=true for gray-out).
+- clip / masks: a clip boundary polygon and clip mask polygons in host
+  coordinates. Clipping is geometric (document/clip.py), so renders, DXF
+  export, extents and hit-testing all agree on what is visible.
+
+Relative paths resolve against the host document's folder first (the file it
+was loaded from or last saved to), then the working directory — the way a
+MicroStation master file finds its references. Loaded documents are cached
+on the host Document instance (transient, never serialized). Nested
+references are not resolved — one level deep.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
+from roaddraft.core import colors as colorlib
 from roaddraft.core import geometry as geo
-from roaddraft.document.entities import expand_entities
+from roaddraft.core.units import normalize_unit, unit_factor
+from roaddraft.document.clip import clip_primitives
+from roaddraft.document.entities import as_point, as_positive, expand_entities
+
+GRAY_OUT_COLOR = "#9E9E9E"
+SYMBOLOGY_KEYS = ("color", "linetype", "lineweight_mm", "gray")
+
+
+# ------------------------------------------------------------- validation
+
+
+def as_polygon(value, name="clip"):
+    if not isinstance(value, (list, tuple)) or len(value) < 3:
+        raise ValueError(f"{name} must be a polygon: a list of at least 3 "
+                         f"[x, y] points")
+    return [as_point(p) for p in value]
+
+
+def as_polygons(value, name="masks"):
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{name} must be a list of polygons")
+    return [as_polygon(poly, f"{name}[{i}]") for i, poly in enumerate(value)]
+
+
+def as_levels(value):
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)) \
+            or not all(isinstance(v, str) and v for v in value):
+        raise ValueError("levels_off must be a list of layer (level) names")
+    return sorted(set(value))
+
+
+def as_symbology(value):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("symbology must be an object with any of: "
+                         + ", ".join(SYMBOLOGY_KEYS))
+    from roaddraft.document.document import LINETYPES  # avoids an import cycle
+    out = {}
+    for key, v in value.items():
+        if key == "color":
+            if not colorlib.is_valid(v):
+                raise ValueError(f"symbology: unknown color {v!r}")
+            out[key] = v
+        elif key == "linetype":
+            if v not in LINETYPES:
+                raise ValueError(f"symbology: linetype must be one of "
+                                 f"{list(LINETYPES)}, got {v!r}")
+            out[key] = v
+        elif key == "lineweight_mm":
+            out[key] = as_positive(v, "symbology.lineweight_mm")
+        elif key == "gray":
+            if not isinstance(v, bool):
+                raise ValueError("symbology: gray must be true or false")
+            if v:
+                out[key] = True
+        else:
+            raise ValueError(f"symbology: unknown key {key!r}; keys: "
+                             + ", ".join(SYMBOLOGY_KEYS))
+    return out
+
+
+# -------------------------------------------------------------- the record
 
 
 @dataclass
@@ -30,56 +112,154 @@ class Reference:
     rotation_deg: float = 0.0
     scale: float = 1.0
     visible: bool = True
+    true_scale: bool = True
+    levels_off: list = field(default_factory=list)
+    symbology: dict = field(default_factory=dict)
+    clip: Optional[list] = None
+    masks: list = field(default_factory=list)
 
     def to_dict(self):
         return {"id": self.id, "name": self.name, "path": self.path,
                 "space": self.space, "offset": list(self.offset),
                 "rotation_deg": self.rotation_deg, "scale": self.scale,
-                "visible": self.visible}
+                "visible": self.visible, "true_scale": self.true_scale,
+                "levels_off": list(self.levels_off),
+                "symbology": dict(self.symbology),
+                "clip": None if self.clip is None
+                else [list(p) for p in self.clip],
+                "masks": [[list(p) for p in poly] for poly in self.masks]}
 
     @classmethod
     def from_dict(cls, d):
-        from roaddraft.document.entities import as_point, as_positive
         return cls(id=d["id"], name=d["name"], path=d["path"],
                    space=d.get("space", "model"),
                    offset=as_point(d.get("offset", [0, 0])),
                    rotation_deg=float(d.get("rotation_deg", 0.0)),
                    scale=as_positive(d.get("scale", 1.0), "scale"),
-                   visible=bool(d.get("visible", True)))
+                   visible=bool(d.get("visible", True)),
+                   true_scale=bool(d.get("true_scale", True)),
+                   levels_off=as_levels(d.get("levels_off")),
+                   symbology=as_symbology(d.get("symbology")),
+                   clip=None if d.get("clip") is None
+                   else as_polygon(d["clip"], "clip"),
+                   masks=as_polygons(d.get("masks")))
+
+
+# ------------------------------------------------------------ resolution
+
+
+def resolve_reference_path(doc, ref: Reference) -> Path:
+    """Where a reference's path points. Absolute paths are used as given.
+    Relative paths are tried against the host document's folder first, then
+    the working directory; the first that exists wins, else the host-relative
+    candidate is reported."""
+    p = Path(ref.path).expanduser()
+    if p.is_absolute():
+        return p
+    candidates = []
+    host = getattr(doc, "_path", None)
+    if host is not None:
+        candidates.append(Path(host).parent / p)
+    candidates.append(Path.cwd() / p)
+    for c in candidates:
+        if c.exists():
+            return c
+    return candidates[0]
 
 
 def resolve_reference(doc, ref: Reference):
     """Load a reference's basefile. Returns (base_document, error) and caches
-    the result on the host document instance."""
+    the result on the host document instance, keyed by the resolved path so a
+    host that moves folders re-resolves automatically."""
     cache = doc._ref_cache
-    if ref.id in cache:
-        return cache[ref.id]
+    target = resolve_reference_path(doc, ref)
+    key = str(target)
+    hit = cache.get(ref.id)
+    if hit is not None and hit[0] == key:
+        return hit[1]
     from roaddraft.document.document import Document
     try:
-        data = json.loads(Path(ref.path).read_text())
+        data = json.loads(target.read_text())
         result = (Document.from_dict(data), None)
     except FileNotFoundError:
-        result = (None, f"file not found: {ref.path}")
+        where = "" if Path(ref.path).expanduser().is_absolute() \
+            else f" (looked in {target.parent})"
+        result = (None, f"file not found: {ref.path}{where}")
     except OSError as ex:
         result = (None, f"cannot read {ref.path}: {ex}")
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as ex:
         result = (None, f"not a valid RoadDraft document: {ex}")
-    cache[ref.id] = result
+    cache[ref.id] = (key, result)
     return result
 
 
-def reference_transform(ref: Reference):
+# ------------------------------------------------------------------ units
+
+
+def host_units(doc, space_key: str) -> str:
+    if space_key == "model":
+        return doc.meta.get("model_units") or "us_survey_ft"
+    return doc.meta.get("paper_units") or "inch"
+
+
+def unit_factor_for(doc, ref: Reference, base) -> Tuple[float, Optional[str], str, Optional[str]]:
+    """(factor, base_units, host_units, warning): the true-scale factor that
+    turns basefile model units into the units of the host space."""
+    hu = host_units(doc, ref.space)
+    bu = base.meta.get("model_units") if base is not None else None
+    if bu is None:
+        return 1.0, None, hu, (f"basefile declares no model_units; assuming "
+                               f"{hu} (no true scale applied)")
+    same = normalize_unit(bu) is not None \
+        and normalize_unit(bu) == normalize_unit(hu)
+    if not ref.true_scale:
+        warn = None if same else (f"basefile units {bu} differ from host "
+                                  f"{hu} and true_scale is off: geometry "
+                                  f"placed 1:1")
+        return 1.0, bu, hu, warn
+    try:
+        return unit_factor(bu, hu), bu, hu, None
+    except ValueError as ex:
+        return 1.0, bu, hu, f"cannot apply true scale: {ex}; geometry placed 1:1"
+
+
+# --------------------------------------------------------------- geometry
+
+
+def reference_transform(ref: Reference, unit_k: float = 1.0):
+    """host = offset + R(rotation) · (unit_k · scale · base)."""
+    k = ref.scale * unit_k
+
     def fn(p):
-        q = geo.rotate_point([p[0] * ref.scale, p[1] * ref.scale],
-                             ref.rotation_deg)
+        q = geo.rotate_point([p[0] * k, p[1] * k], ref.rotation_deg)
         return [ref.offset[0] + q[0], ref.offset[1] + q[1]]
     return fn
 
 
-def reference_groups(doc, space_key: str) -> List[Tuple[Reference, object, list]]:
+def apply_symbology(prims, symbology: dict):
+    """Bake attachment-wide display overrides into (already copied) primitives:
+    entity color/linetype overrides plus the render-time lineweight hook."""
+    if not symbology:
+        return prims
+    color = GRAY_OUT_COLOR if symbology.get("gray") else symbology.get("color")
+    for p in prims:
+        if color:
+            p.color = color
+        if "linetype" in symbology:
+            p.linetype = symbology["linetype"]
+        if "lineweight_mm" in symbology:
+            p._lw_mm = symbology["lineweight_mm"]
+    return prims
+
+
+def reference_groups(doc, space_key: str, include_hidden_levels: bool = False
+                     ) -> List[Tuple[Reference, object, list]]:
     """(ref, base_doc, primitives-in-host-coordinates) for each visible,
     loadable reference attached to the given space. A reference brings the
-    basefile's model-space geometry."""
+    basefile's model-space geometry, true-scaled into host units, placed,
+    with levels_off removed (unless include_hidden_levels, for exporters
+    that keep them on switched-off layers), symbology overrides applied,
+    and clipped to the clip boundary minus the masks."""
     groups = []
     for ref in doc.references.values():
         if ref.space != space_key or not ref.visible:
@@ -87,9 +267,16 @@ def reference_groups(doc, space_key: str) -> List[Tuple[Reference, object, list]
         base, _err = resolve_reference(doc, ref)
         if base is None:
             continue
+        unit_k = unit_factor_for(doc, ref, base)[0]
         prims = expand_entities(base, list(base.model_entities.values()))
-        fn = reference_transform(ref)
-        prims = [p.transformed(fn, ref.rotation_deg, ref.scale) for p in prims]
+        if ref.levels_off and not include_hidden_levels:
+            off = set(ref.levels_off)
+            prims = [p for p in prims if p.layer not in off]
+        fn = reference_transform(ref, unit_k)
+        prims = [p.transformed(fn, ref.rotation_deg, ref.scale * unit_k)
+                 for p in prims]
+        prims = apply_symbology(prims, ref.symbology)
+        prims = clip_primitives(prims, ref.clip, ref.masks)
         groups.append((ref, base, prims))
     return groups
 
@@ -107,3 +294,39 @@ def extents_with_references(doc, space_ref: str):
         for p in prims:
             bb = geo.bbox_union(bb, p.bbox(base))
     return bb
+
+
+# ------------------------------------------------------------ description
+
+
+def reference_levels(doc, ref: Reference, base) -> List[dict]:
+    """The basefile's layers (levels) with this attachment's display state."""
+    counts = {}
+    for e in base.model_entities.values():
+        counts[e.layer] = counts.get(e.layer, 0) + 1
+    off = set(ref.levels_off)
+    return [{"name": layer.name, "color": layer.color,
+             "visible_in_basefile": layer.visible,
+             "on": layer.name not in off,
+             "entities": counts.get(layer.name, 0)}
+            for layer in base.layers.values()]
+
+
+def describe_reference(doc, ref: Reference) -> dict:
+    """The reference record plus load status, resolved path, unit handling
+    and per-level display — what list_references and the GUI show."""
+    base, error = resolve_reference(doc, ref)
+    d = ref.to_dict()
+    d.update({
+        "status": "loaded" if base is not None else "error",
+        "error": error,
+        "entities": len(base.model_entities) if base else 0,
+        "resolved_path": str(resolve_reference_path(doc, ref)),
+        "path_is_relative": not Path(ref.path).expanduser().is_absolute(),
+        "levels": reference_levels(doc, ref, base) if base else [],
+        "units": None,
+    })
+    if base is not None:
+        k, bu, hu, warn = unit_factor_for(doc, ref, base)
+        d["units"] = {"base": bu, "host": hu, "factor": k, "warning": warn}
+    return d

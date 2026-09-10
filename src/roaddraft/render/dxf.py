@@ -136,18 +136,30 @@ def _ensure_layer(dxf, name, layer):
 def _export_references(space, dxf, doc, space_key):
     """Write referenced basefile geometry, bound onto '<REF>$<layer>' layers
     (references are flattened into the DXF; the JSON document keeps them live).
+    Geometry is true-scaled, clipped, and carries symbology overrides; levels
+    switched off in the attachment are still written, on layers that are
+    turned off, so the consumer can bring them back (MicroStation merge).
     """
     from roaddraft.document.entities import entity_from_dict
     from roaddraft.document.references import reference_groups
 
-    for ref, base, prims in reference_groups(doc, space_key):
+    for ref, base, prims in reference_groups(doc, space_key,
+                                             include_hidden_levels=True):
+        off = set(ref.levels_off)
         for layer in base.layers.values():
-            _ensure_layer(dxf, f"{ref.name}${layer.name}", layer)
+            bound = f"{ref.name}${layer.name}"
+            _ensure_layer(dxf, bound, layer)
+            if layer.name in off:
+                dxf.layers.get(bound).off()
         remapped = []
         for prim in prims:
             d = prim.to_dict()
             d["layer"] = f"{ref.name}${d.get('layer', '0')}"
-            remapped.append(entity_from_dict(d))
+            e = entity_from_dict(d)
+            lw = getattr(prim, "_lw_mm", None)
+            if lw:
+                e._lw_mm = lw
+            remapped.append(e)
         _add_entities(space, dxf, base, remapped)
 
 
