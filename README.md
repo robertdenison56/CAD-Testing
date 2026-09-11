@@ -176,6 +176,20 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   document matches the truth exactly and whose journal replays. Task ids
   pin the generator version and the spec hash. The AASHTO-derived standards
   tables and the drafting spec are DRAFT, for PE review.
+- **Annotation scales** (AutoCAD annotation scale / Civil 3D drawing scale):
+  the document carries a scale list (`1"=10'` … `1"=500'`, editable with
+  `add_annotation_scale` / `delete_annotation_scale`), a current scale, and
+  paper-unit defaults (0.10 in text, 0.20 in ticks, 0.32 in label offsets;
+  `set_annotation_defaults`). With `set_annotation_scale 50` on, stationing
+  and labels that omit sizes are drafted at paper size × scale (5 / 10 / 16 ft)
+  and stamped `annotative`; `set_annotation_scale 100` then re-sizes every
+  annotative model entity for the new plot scale — text heights from their
+  paper heights, ticks about their midpoints, design-anchored labels re-placed
+  at their paper offset through the design model, plain text about its
+  insertion point. `adopt=true` stamps pre-existing annotation; `off` restores
+  the fixed feet defaults. `create_viewport` warns when a viewport's plot
+  scale differs from the annotation scale; `list_annotation_scales` reports
+  the list and sizes. The GUI has the scale selector in the status bar.
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
@@ -279,6 +293,8 @@ RD [model]> sta2xy 16+00 ALIGN-1        design curves        anchor MC-1
 RD [model]> space C-101
 RD [C-101]> curvetable 24,8.5 ALIGN-1
 RD [C-101]> landxml                      # export the design as LandXML
+RD [C-101]> annoscale 100                # 1"=100': re-size annotative model annotation
+RD [C-101]> annoscales                   # the scale list, paper defaults, model sizes
 ```
 
 `help` lists everything; `help <command>` prints any command's schema and

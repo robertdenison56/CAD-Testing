@@ -47,6 +47,9 @@ Design (alignments, profiles, anchored labels):
   design curves|tangents|anchors|equations|profiles|pvis|vcs [NAME]
   anchor PC-1 [NAME]                    (dry run of label)
   landxmlin PATH                        landxml [PATH]   (import / export)
+Annotation scale (paper-size annotation at a plot scale):
+  annoscale 100 | annoscale 1:1200 | annoscale off     annoscales
+  annoadd 25 [name]  annodel 25   annopaper text_height_in=0.12 label_offset_in=0.35
 Viewing & files:
   state [full] | entities [space] | extents [space] | blocks | styles | journal
   render [sheet] [dpi=N] [open]  |  rendermodel [open]
@@ -214,6 +217,8 @@ class Repl:
             self.do_simple_query("export_landxml", "path", args)
         elif low == "alignments":
             self.do_simple_query("list_alignments")
+        elif low == "annoscales":
+            self.do_simple_query("list_annotation_scales")
         elif low == "save":
             self.do_simple_query("save_document", "path", args)
         elif low == "opendoc" and args:

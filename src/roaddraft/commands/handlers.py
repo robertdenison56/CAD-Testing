@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple
 from roaddraft.core import colors as colorlib
 from roaddraft.core import geometry as geo
 from roaddraft.core.units import format_station
+from roaddraft.document import annotation as anno
 from roaddraft.document.document import LINETYPES, BlockDef, Document, Layer, TextStyle
 from roaddraft.document.entities import (
     Arc, BlockRef, Circle, Line, Polyline, Table, Text, entity_from_dict,
@@ -263,11 +264,15 @@ def draw_circle(doc: Document, p: dict):
 
 def place_text(doc: Document, p: dict):
     style = _style(doc, p.get("style", doc.settings["current_text_style"]))
+    space_key, _ = _space(doc, p["space"])
+    # model-space text drafted with an annotation scale on is annotative
+    annotative = anno.text_record(doc, p["height"]) if space_key == "model" else None
     space_key, e = _add(doc, p["space"], "text", Text, {
         **_entity_common(doc, p), "position": list(p["position"]),
         "content": p["content"], "height": p["height"], "style": style,
         "rotation_deg": p.get("rotation_deg", 0.0),
-        "halign": p.get("halign", "left"), "valign": p.get("valign", "bottom")})
+        "halign": p.get("halign", "left"), "valign": p.get("valign", "bottom"),
+        "annotative": annotative})
     warnings = _annotation_warnings(doc, space_key, e)
     preview = e.content if len(e.content) <= 40 else e.content[:37] + "..."
     return (f"text {e.id} ({preview!r}) placed in {_space_label(doc, space_key)}",
@@ -337,7 +342,7 @@ def modify_entity(doc: Document, p: dict):
         if immutable in changes and changes[immutable] != getattr(
                 entity, immutable if immutable == "id" else "TYPE"):
             raise CommandFault(f"entity {immutable} cannot be changed")
-    known = set(entity.to_dict()) | {"color", "linetype", "anchor"}
+    known = set(entity.to_dict()) | {"color", "linetype", "anchor", "annotative"}
     unknown = set(changes) - known
     if unknown:
         raise CommandFault(
@@ -436,6 +441,12 @@ def create_viewport(doc: Document, p: dict):
                   rotation_deg=p.get("rotation_deg", 0.0))
     sheet.viewports.append(vp)
     warnings = []
+    scale = anno.current_scale(doc)
+    if scale is not None and abs(scale - vp.feet_per_inch) > 1e-9:
+        warnings.append(f"{vp.id} plots at {anno.format_scale(vp.feet_per_inch)} but the "
+                        f"annotation scale is {anno.scale_name(doc, scale)}; model annotation "
+                        f"will appear at {scale / vp.feet_per_inch:.2g}x its paper size "
+                        f"(set_annotation_scale {vp.feet_per_inch:g} to match)")
     if not geo.bbox_contains(sheet.usable_area(), vp.paper_bbox(), tol=1e-6):
         warnings.append(f"{vp.id} extends beyond the usable area "
                         f"(border margin / title strip) of sheet {sheet.name}")
@@ -646,10 +657,13 @@ def annotate_stationing(doc: Document, p: dict):
 
     begin = p["begin_station"]
     interval = p.get("interval", 100.0)
-    tick_half = p.get("tick_half_len", 10.0)
-    text_h = p.get("text_height", 8.0)
-    label_off = p.get("label_offset", 16.0)
+    sizes = anno.size_defaults(doc)  # annotation scale x paper defaults, or fixed feet
+    tick_half = p.get("tick_half_len", sizes["tick_half_len"])
+    text_h = p.get("text_height", sizes["text_height"])
+    label_off = p.get("label_offset", sizes["label_offset"])
     tol = p.get("connect_tolerance", 1.0)
+    tick_rec = anno.tick_record(doc, tick_half)
+    text_rec = anno.text_record(doc, text_h, label_off)
 
     pieces, kinds, ends = _chain_path(doc, p["path_ids"], tol)
     total = ends[-1] if ends else 0.0
@@ -671,13 +685,13 @@ def annotate_stationing(doc: Document, p: dict):
         add("line", Line, {
             "layer": tick_layer,
             "start": _offset_pt(pt, ang + 90.0, -tick_half),
-            "end": _offset_pt(pt, ang + 90.0, tick_half)})
+            "end": _offset_pt(pt, ang + 90.0, tick_half), "annotative": tick_rec})
         add("text", Text, {
             "layer": label_layer, "style": style,
             "position": _offset_pt(pt, ang + 90.0, label_off),
             "content": format_station(station), "height": text_h,
             "rotation_deg": _upright(ang), "halign": "center",
-            "valign": "bottom"})
+            "valign": "bottom", "annotative": text_rec})
         n_ticks += 1
         station += interval
 
@@ -696,7 +710,7 @@ def annotate_stationing(doc: Document, p: dict):
                 "position": _offset_pt(pt, ang - 90.0, label_off),
                 "content": f"{tag} {format_station(begin + d)}",
                 "height": text_h, "rotation_deg": _upright(ang),
-                "halign": "center", "valign": "top"})
+                "halign": "center", "valign": "top", "annotative": text_rec})
             n_junctions += 1
 
     message = (f"stationing annotated in {_space_label(doc, space_key)}: "

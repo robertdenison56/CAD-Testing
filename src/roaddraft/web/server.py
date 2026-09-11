@@ -111,6 +111,7 @@ class WebApp:
                             "viewports": len(s.viewports)}
                            for s in doc.sheets.values()],
                 "references": self._reference_state(doc),
+                "annotation": self._annotation_state(doc),
                 "alignments": self._alignment_state(doc),
                 "profiles": [{"name": pr.name, "alignment": pr.alignment,
                               "pvis": len(pr.pvis)}
@@ -122,6 +123,14 @@ class WebApp:
     def _reference_state(doc):
         from roaddraft.document.references import describe_reference
         return [describe_reference(doc, ref) for ref in doc.references.values()]
+
+    @staticmethod
+    def _annotation_state(doc):
+        from roaddraft.document import annotation as anno
+        scale = anno.current_scale(doc)
+        return {"scale": scale, "name": anno.scale_name(doc, scale),
+                "scales": anno.scale_list(doc), "paper": anno.paper_defaults(doc),
+                "model_sizes": anno.model_sizes(doc) or dict(anno.FIXED_MODEL_SIZES)}
 
     @staticmethod
     def _alignment_state(doc):

@@ -196,6 +196,12 @@ QUERIES = {
                       ["kind"]),
         "example": {"kind": "curves", "alignment": "ALIGN-1"},
     },
+    "list_annotation_scales": {
+        "description": "The annotation scale list, the current scale, the paper-unit "
+                       "defaults with their model equivalents, and how many model "
+                       "entities are annotative.",
+        "schema": obj({}), "example": {},
+    },
     "export_landxml": {
         "description": "Export the design model (alignments + profiles) as LandXML "
                        "1.2 (USSurveyFoot); opens in Civil 3D / ORD.",
@@ -282,6 +288,7 @@ class Session:
             "model_extents": doc.extents("model"),
             "alignments": list(doc.design.alignments),
             "profiles": list(doc.design.profiles),
+            "annotation_scale": doc.settings.get("annotation_scale"),
             "journal_length": len(self.bus.journal),
         }}
 
@@ -647,6 +654,17 @@ class Session:
         limit = int(p.get("limit", 50))
         return {"kind": kind, "total": len(rows), "start": start, "limit": limit,
                 "rows": rows[start:start + limit]}
+
+    def _q_list_annotation_scales(self, p):
+        from roaddraft.document import annotation as anno
+        doc = self.doc
+        scale = anno.current_scale(doc)
+        sizes = anno.model_sizes(doc)
+        return {"current": scale, "current_name": anno.scale_name(doc, scale),
+                "scales": anno.scale_list(doc), "paper": anno.paper_defaults(doc),
+                "model_sizes": sizes or dict(anno.FIXED_MODEL_SIZES),
+                "annotative_entities": sum(1 for e in doc.model_entities.values()
+                                           if e.annotative)}
 
     def _q_export_landxml(self, p):
         from roaddraft.adapters.landxml import write_landxml

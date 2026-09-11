@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional
 import jsonschema
 from jsonschema.exceptions import best_match
 
+from roaddraft.commands import annotation_handlers as ah
 from roaddraft.commands import design_handlers as dh
 from roaddraft.commands import handlers as h
 from roaddraft.commands.schemas import EXAMPLES, SCHEMAS
@@ -199,6 +200,25 @@ REGISTRY: List[CommandSpec] = [
     CommandSpec("reload_references",
                 "Re-read all referenced basefiles from disk on next use.",
                 h.reload_references, {"ord": ["reference reload"]}),
+    CommandSpec("set_annotation_scale",
+                "Set the current annotation scale (AutoCAD annotation scale / Civil 3D "
+                "drawing scale): annotation commands then size text, ticks and label "
+                "offsets from paper defaults (0.10 / 0.20 / 0.32 in) x the scale, stamp "
+                "what they draw as annotative, and this command re-sizes existing "
+                "annotative model annotation for the new plot scale (anchored labels are "
+                "re-placed through the design). null/'off' restores the fixed feet "
+                "defaults.", ah.set_annotation_scale,
+                {"c3d": ["CANNOSCALE"], "ord": ["active annotation scale"]}),
+    CommandSpec("add_annotation_scale", "Add a named plot scale to the document's scale "
+                "list.", ah.add_annotation_scale,
+                {"c3d": ["SCALELISTEDIT"], "ord": ["annotation scale add"]}),
+    CommandSpec("delete_annotation_scale", "Remove a plot scale from the scale list (not "
+                "the current one).", ah.delete_annotation_scale,
+                {"ord": ["annotation scale delete"]}),
+    CommandSpec("set_annotation_defaults",
+                "Set the paper-unit annotation defaults (text height, tick half-length, "
+                "label offset in inches) that the annotation scale converts to feet.",
+                ah.set_annotation_defaults, {"c3d": ["DIMSTYLE"], "ord": ["annotation settings"]}),
     CommandSpec("undo", "Revert the most recent command.", None,
                 {"c3d": ["U", "UNDO"], "ord": ["undo"]}),
     CommandSpec("redo", "Re-apply the most recently undone command.", None,

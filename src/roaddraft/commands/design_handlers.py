@@ -30,6 +30,7 @@ from roaddraft.design.labels import (
 )
 from roaddraft.design.stations import StationSystem, build_equations
 from roaddraft.design.vertical import PVI, Profile
+from roaddraft.document import annotation as anno
 from roaddraft.document.document import Document
 from roaddraft.document.entities import Arc, Line, Table, Text
 
@@ -360,18 +361,25 @@ def plan_label(doc: Document, p: dict) -> dict:
         ref = parse_anchor(p["anchor"])
         ap = resolve_anchor(align, ref)
         kind = p.get("kind") or infer_kind(ref)
+        scaled = anno.model_sizes(doc)  # None when the annotation scale is off
+        if space_key == "model":
+            model_offset = p.get("label_offset",
+                                 scaled["label_offset"] if scaled else None)
+        else:
+            model_offset = None
         spec = compile_label(
-            align, ap, kind, side=p.get("side"),
-            label_offset=p.get("label_offset") if space_key == "model" else None,
+            align, ap, kind, side=p.get("side"), label_offset=model_offset,
             rotation=p.get("rotation", "along"), content=p.get("content"),
             halign=p.get("halign"), valign=p.get("valign"))
     except DesignError as e:
         raise _fault(e)
     vp = None
+    annotative = None
     if space_key == "model":
         position, rotation_deg = spec.position, spec.rotation_deg
-        height = p.get("height", MODEL_TEXT_HEIGHT)
+        height = p.get("height", scaled["text_height"] if scaled else MODEL_TEXT_HEIGHT)
         recorded_offset = spec.label_offset
+        annotative = anno.text_record(doc, height, spec.label_offset)
     else:
         sheet = doc.sheets[space_key]
         vp = _pick_viewport(doc, sheet, p.get("viewport"), spec.anchor_point, ap, align)
@@ -383,7 +391,8 @@ def plan_label(doc: Document, p: dict) -> dict:
     record["label_offset"] = float(recorded_offset)
     return {"space_key": space_key, "container": container, "alignment": align, "spec": spec,
             "anchor_point": ap, "kind": kind, "viewport": vp, "position": position,
-            "rotation_deg": rotation_deg, "height": float(height), "anchor": record}
+            "rotation_deg": rotation_deg, "height": float(height), "anchor": record,
+            "annotative": annotative}
 
 
 def place_label(doc: Document, p: dict):
@@ -393,7 +402,8 @@ def place_label(doc: Document, p: dict):
     space_key, e = _add(doc, p["space"], "text", Text, {
         **_entity_common(doc, p), "position": plan["position"], "content": spec.content,
         "height": plan["height"], "style": style, "rotation_deg": plan["rotation_deg"],
-        "halign": spec.halign, "valign": spec.valign, "anchor": plan["anchor"]})
+        "halign": spec.halign, "valign": spec.valign, "anchor": plan["anchor"],
+        "annotative": plan["annotative"]})
     warnings = _annotation_warnings(doc, space_key, e)
     key = (spec.alignment, spec.ref, spec.kind)
     for other in plan["container"].values():
@@ -532,9 +542,10 @@ def annotate_stationing_alignment(doc: Document, p: dict):
                            hint=f"existing layers: {sorted(doc.layers)}")
     style = doc.settings["current_text_style"]
     interval = p.get("interval", 100.0)
-    tick_half = p.get("tick_half_len", 10.0)
-    text_h = p.get("text_height", 8.0)
-    label_off = p.get("label_offset", 16.0)
+    sizes = anno.size_defaults(doc)  # annotation scale x paper defaults, or fixed feet
+    tick_half = p.get("tick_half_len", sizes["tick_half_len"])
+    text_h = p.get("text_height", sizes["text_height"])
+    label_off = p.get("label_offset", sizes["label_offset"])
     station_range = None
     if "station_range" in p:
         try:
@@ -560,12 +571,14 @@ def annotate_stationing_alignment(doc: Document, p: dict):
     for item in plan.items:
         if isinstance(item, TickSpec):
             add("line", Line, {"layer": tick_layer, "start": item.start, "end": item.end,
-                               "anchor": item.anchor_record(align.name)})
+                               "anchor": item.anchor_record(align.name),
+                               "annotative": anno.tick_record(doc, tick_half)})
         else:
             add("text", Text, {"layer": label_layer, "style": style, "position": item.position,
                                "content": item.content, "height": text_h,
                                "rotation_deg": item.rotation_deg, "halign": item.halign,
-                               "valign": item.valign, "anchor": item.anchor_record(None)})
+                               "valign": item.valign, "anchor": item.anchor_record(None),
+                               "annotative": anno.text_record(doc, text_h, item.label_offset)})
     return (f"stationing annotated in model space from {align.name}: {plan.n_ticks} ticks @ "
             f"{interval:g} ft, {plan.n_junctions} PC/PT labels, {plan.n_equations} equation "
             f"labels, stations {plan.begin_text} to {plan.end_text}",

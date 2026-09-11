@@ -10,11 +10,13 @@ deterministic. The design model (alignments, profiles) rides along under
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from roaddraft.core import geometry as geo
 from roaddraft.design.model import DesignModel
+from roaddraft.document.annotation import default_settings as _annotation_defaults
 from roaddraft.document.entities import (
     Circle, Entity, Polyline, Text, entity_from_dict,
 )
@@ -119,7 +121,8 @@ class Document:
             "model_units": "us_survey_ft",
             "paper_units": "inch",
         }
-        self.settings = {"current_layer": "0", "current_text_style": "STANDARD"}
+        self.settings = {"current_layer": "0", "current_text_style": "STANDARD",
+                         **_annotation_defaults()}
         self.layers: Dict[str, Layer] = {}
         self.text_styles: Dict[str, TextStyle] = {}
         self.blocks: Dict[str, BlockDef] = {}
@@ -196,7 +199,7 @@ class Document:
         return {
             "schema_version": SCHEMA_VERSION,
             "meta": dict(self.meta),
-            "settings": dict(self.settings),
+            "settings": copy.deepcopy(self.settings),
             "layers": {k: v.to_dict() for k, v in self.layers.items()},
             "text_styles": {k: v.to_dict() for k, v in self.text_styles.items()},
             "blocks": {k: v.to_dict() for k, v in self.blocks.items()},
@@ -211,7 +214,7 @@ class Document:
     def from_dict(cls, d: dict) -> "Document":
         doc = cls()
         doc.meta = dict(d.get("meta", doc.meta))
-        doc.settings = dict(d.get("settings", doc.settings))
+        doc.settings = {**doc.settings, **copy.deepcopy(dict(d.get("settings", {})))}
         doc.layers = {k: Layer.from_dict(v) for k, v in d.get("layers", {}).items()}
         doc.text_styles = {k: TextStyle.from_dict(v)
                            for k, v in d.get("text_styles", {}).items()}

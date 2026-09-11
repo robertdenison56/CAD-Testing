@@ -255,6 +255,9 @@
            border: 1px solid var(--border); }
   .sttog.on { background: var(--accent2); color: #fff;
               border-color: var(--accent); }
+  #st-annoscale { background: transparent; color: var(--text); font: inherit;
+    font-size: 11px; border: 1px solid var(--dim); border-radius: 4px;
+    padding: 1px 4px; cursor: pointer; }
   #st-tool { color: var(--text); }
 
   /* ---------------------------------------------------------- modal */
@@ -336,6 +339,7 @@
   <div id="statusbar">
     <span id="st-coord"></span>
     <span class="sttog" id="tog-ortho" title="Constrain drawing to horizontal/vertical (F8)">ORTHO</span>
+    <select id="st-annoscale" title="Annotation scale"></select>
     <span id="st-tool"></span>
     <span class="grow" style="flex:1"></span>
     <span id="st-journal"></span>
@@ -1052,6 +1056,25 @@ function renderStatus() {
   $("st-entities").textContent =
     `entities: ${st.model_entity_count} model / ${sheetEnts} sheet`;
   $("prompt").textContent = `RD [${spaceLabel()}]>`;
+  const a = st.annotation || { scale: null, name: "off", scales: [] };
+  const on = a.scale !== null && a.scale !== undefined;
+  const same = (x, y) => Math.abs(x - y) < 1e-9;
+  const opts = [`<option value="off"${on ? "" : " selected"}>annotation: off</option>`]
+    .concat(a.scales.map(sc => `<option value="${sc.feet_per_inch}"` +
+      `${on && same(sc.feet_per_inch, a.scale) ? " selected" : ""}>` +
+      `${esc(sc.name)}</option>`));
+  if (on && !a.scales.some(sc => same(sc.feet_per_inch, a.scale)))
+    opts.push(`<option value="${a.scale}" selected>${esc(a.name)}</option>`);
+  $("st-annoscale").innerHTML = opts.join("");
+  const ms = a.model_sizes || {};
+  $("st-annoscale").title = on
+    ? `Annotation scale ${a.name}: text ${ms.text_height} ft, ticks ` +
+      `${ms.tick_half_len} ft, label offset ${ms.label_offset} ft (paper ` +
+      `${a.paper.text_height_in}/${a.paper.tick_half_len_in}/` +
+      `${a.paper.label_offset_in} in). Changing it re-sizes annotative ` +
+      `model annotation.`
+    : "Annotation scale off: fixed 8 ft text, 10 ft ticks, 16 ft offsets. " +
+      "Pick a plot scale to size annotation from paper units.";
 }
 async function refresh() {
   S.state = await getJSON("/api/state");
@@ -1306,13 +1329,15 @@ async function finishTool() {
       fields.push({ key: "alignment", label: "Alignment (design mode)",
         value: S.stationPicks.length ? "(picked entities)" : aligns[0],
         options: ["(picked entities)", ...aligns] });
+    const sz = (S.state && S.state.annotation && S.state.annotation.model_sizes)
+      || { text_height: 8, tick_half_len: 10, label_offset: 16 };
     fields.push(
       { key: "begin", label: "Begin station (picked entities only)",
         value: "10+00" },
       { key: "interval", label: "Interval (ft)", value: "100" },
-      { key: "tick", label: "Tick half-length (ft)", value: "10" },
-      { key: "height", label: "Text height (ft)", value: "8" },
-      { key: "offset", label: "Label offset (ft)", value: "16" });
+      { key: "tick", label: "Tick half-length (ft)", value: String(sz.tick_half_len) },
+      { key: "height", label: "Text height (ft)", value: String(sz.text_height) },
+      { key: "offset", label: "Label offset (ft)", value: String(sz.label_offset) });
     const values = await openForm("Annotate stationing", fields);
     if (values) {
       const parseSta = s => s.includes("+")
@@ -2111,6 +2136,13 @@ $("q-undo").onclick = () => ribbonAct("undo");
 $("q-redo").onclick = () => ribbonAct("redo");
 $("tog-ortho").onclick = () => { S.ortho = !S.ortho;
   $("tog-ortho").classList.toggle("on", S.ortho); };
+$("st-annoscale").onchange = async ev => {
+  const v = ev.target.value;
+  logEcho(`annoscale ${v}`);
+  logResult(await postJSON("/api/execute", { command: "set_annotation_scale",
+    params: { scale: v === "off" ? null : parseFloat(v) } }));
+  ev.target.blur();
+};
 
 // ------------------------------------------------------- global keyboard
 const TOOL_KEYS = { v: "select", h: "pan", l: "line", p: "pline",
@@ -2164,7 +2196,8 @@ function connect() {
    "sheets","blocks","styles","entities","extents","journal","help","dxf",
    "pdf","save","undo","redo","station","xref","refs","alignment",
    "drawalign","profile","label","curvetable","landxmlin","landxml","sta2xy",
-   "xy2sta","design","anchor","alignments"].forEach(n =>
+   "xy2sta","design","anchor","alignments","annoscale","annoscales","annoadd",
+   "annodel","annopaper"].forEach(n =>
     names.add(n));
   S.names = [...names].sort();
   await refresh();

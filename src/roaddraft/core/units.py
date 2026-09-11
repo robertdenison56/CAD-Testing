@@ -35,6 +35,11 @@ def parse_station(text: str) -> float:
     return -value if neg else value
 
 
+def format_plot_scale(feet_per_inch: float) -> str:
+    """``50 -> '1"=50\''`` (the annotation / viewport scale as drafters write it)."""
+    return f"1\"={float(feet_per_inch):g}'"
+
+
 def lineweight_points(lineweight_mm: float) -> float:
     """Convert a plotted lineweight in millimeters to printer points."""
     return lineweight_mm * 72.0 / 25.4

@@ -172,10 +172,13 @@ SCHEMAS = {
                                               "equations (default true)"},
          "interval": {**POS, "description": "tick spacing in feet (default 100)"},
          "tick_half_len": {**POS, "description": "tick half-length each side of "
-                                                 "the path (default 10 ft)"},
-         "text_height": {**POS, "description": "label height (default 8 ft)"},
+                                                 "the path (default 10 ft, or the "
+                                                 "annotation scale x 0.20 in)"},
+         "text_height": {**POS, "description": "label height (default 8 ft, or the "
+                                               "annotation scale x 0.10 in)"},
          "label_offset": {**NUM, "description": "label offset left of the path "
-                                                "(default 16 ft)"},
+                                                "(default 16 ft, or the annotation "
+                                                "scale x 0.32 in)"},
          "layer": {**NSTR, "description": "layer for ticks; default current"},
          "label_layer": {**NSTR, "description": "layer for labels; default same "
                                                 "as ticks"},
@@ -232,9 +235,36 @@ SCHEMAS = {
                                     "basefile layer names), symbology "
                                     "({color, linetype, lineweight_mm, gray}), "
                                     "clip (polygon in host coordinates, or "
-                                    "null to clear), masks (list of polygons)"}},
+                                    "null to clear), masks (list of polygons), "
+                                    "model ('model' or a basefile sheet), "
+                                    "nest_depth (0-5)"}},
         ["name", "changes"]),
     "reload_references": obj({}),
+    "set_annotation_scale": obj(
+        {"scale": {"type": ["string", "number", "null"],
+                   "description": "a scale-list name ('1\"=50\''), feet per inch (50), "
+                                  "'1:600', or null/'off' to turn annotation scaling off"},
+         "rescale": {"type": "boolean",
+                     "description": "re-size existing annotative model entities to the "
+                                    "new scale (default true)"},
+         "adopt": {"type": "boolean",
+                   "description": "also stamp un-scaled model texts and anchored ticks as "
+                                  "annotative at the new scale (default false)"}},
+        ["scale"]),
+    "add_annotation_scale": obj(
+        {"scale": {"type": ["string", "number"],
+                   "description": "feet per inch (25) or '1\"=25\'' or '1:300'"},
+         "name": {**STR, "description": "list name; default '1\"=25\''"}},
+        ["scale"]),
+    "delete_annotation_scale": obj({"scale": {"type": ["string", "number"],
+                                              "description": "list name or feet per inch"}},
+                                   ["scale"]),
+    "set_annotation_defaults": obj(
+        {"text_height_in": {**POS, "description": "label text height on paper (default 0.10)"},
+         "tick_half_len_in": {**POS, "description": "station tick half-length on paper "
+                                                    "(default 0.20)"},
+         "label_offset_in": {**POS, "description": "label offset from the line on paper "
+                                                   "(default 0.32)"}}),
     "undo": obj({}),
     "redo": obj({}),
 }
@@ -292,6 +322,10 @@ EXAMPLES = {
         "levels_off": ["V-SURV-TOPO"], "symbology": {"gray": True},
         "clip": [[900, 800], [2600, 800], [2600, 1100], [900, 1100]]}},
     "reload_references": {},
+    "set_annotation_scale": {"scale": "1\"=50'"},
+    "add_annotation_scale": {"scale": 25, "name": "1\"=25'"},
+    "delete_annotation_scale": {"scale": "1\"=25'"},
+    "set_annotation_defaults": {"text_height_in": 0.12, "label_offset_in": 0.35},
     "undo": {},
     "redo": {},
 }

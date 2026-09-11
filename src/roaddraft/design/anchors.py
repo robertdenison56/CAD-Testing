@@ -295,6 +295,33 @@ def resolve_anchor(alignment: Alignment, ref: AnchorRef) -> AnchorPoint:
                        element_index=idx, curve_index=curve_index, tangent_index=tangent_index)
 
 
+def resolve_record(alignment: Alignment, record: dict) -> AnchorPoint:
+    """Resolve a stored anchor record (``{"ref", "station", "offset", ...}``).
+
+    Named refs resolve by name; station refs use the recorded RAW station so
+    an equation overlap can never make the lookup ambiguous."""
+    offset = float(record.get("offset") or 0.0)
+    ref = parse_anchor(record["ref"])
+    ref.offset = offset
+    if ref.kind_hint != "station" or record.get("station") is None:
+        return resolve_anchor(alignment, ref)
+    raw = float(record["station"])
+    st = alignment.stations()
+    st.require_in_range(raw, alignment.name)
+    on_point, direction, idx = alignment.station_to_xy(raw, 0.0)
+    point = alignment.station_to_xy(raw, offset)[0] if offset else list(on_point)
+    element = alignment.elements[idx]
+    disp, region = st.to_display(raw)
+    return AnchorPoint(alignment=alignment.name, ref=format_station(disp), kind_hint="station",
+                       station=raw, station_text=format_station(disp), region=region,
+                       offset=offset, on_point=on_point, point=point,
+                       direction_deg=float(direction), element_index=idx,
+                       curve_index=(alignment.curve_index(idx)
+                                    if isinstance(element, CurveElement) else None),
+                       tangent_index=(alignment.tangent_index(idx)
+                                      if isinstance(element, TangentElement) else None))
+
+
 def list_anchors(alignment: Alignment) -> List[AnchorPoint]:
     """Every named anchor of an alignment (offset 0): BEGIN, END, PC/PI/PT/MC-n,
     T-n, EQ-n."""
@@ -307,4 +334,4 @@ def list_anchors(alignment: Alignment) -> List[AnchorPoint]:
 
 
 __all__ = ["AnchorRef", "AnchorPoint", "GRAMMAR_HINT", "parse_anchor", "infer_kind",
-           "resolve_anchor", "list_anchors"]
+           "resolve_anchor", "resolve_record", "list_anchors"]

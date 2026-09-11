@@ -32,6 +32,9 @@ REPL_ALIASES = {
     "curvetable": "place_curve_table", "landxmlin": "import_landxml",
     "sta2xy": "station_to_xy", "xy2sta": "xy_to_station",
     "design": "get_design_data", "anchor": "resolve_anchor",
+    # annotation scales
+    "annoscale": "set_annotation_scale", "annoadd": "add_annotation_scale",
+    "annodel": "delete_annotation_scale", "annopaper": "set_annotation_defaults",
 }
 
 POSITIONAL = {
@@ -61,6 +64,9 @@ POSITIONAL = {
     "get_design_data": ["kind", "alignment"],
     "resolve_anchor": ["anchor", "alignment"],
     "export_landxml": ["path"],
+    "set_annotation_scale": ["scale"],
+    "add_annotation_scale": ["scale", "name"],
+    "delete_annotation_scale": ["scale"],
 }
 
 VARIADIC = {  # commands whose positional args collect into one list param
@@ -90,6 +96,7 @@ BUILTIN_QUERIES = {
     "sheets": "list_sheets",
     "journal": "get_journal",
     "alignments": "list_alignments",
+    "annoscales": "list_annotation_scales",
 }
 
 
