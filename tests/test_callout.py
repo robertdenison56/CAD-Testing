@@ -145,6 +145,20 @@ def test_calling_out_a_pavement_edge_seen_through_a_reference(tmp_path):
     assert text.anchor is None                    # no design model here to anchor to
 
 
+def test_a_document_with_a_callout_survives_save_and_reload(tmp_path):
+    """The dataclasses do not validate on construction, only from_dict does, so
+    a handler writing a bad enum saves a file that cannot be opened again."""
+    s = model_session(tmp_path)
+    s.execute("place_callout", {"space": "model", "target": TARGET,
+                                "position": [1450.0, 900.0], "content": "EP 12' RT"})
+    path = tmp_path / "callout.rdoc.json"
+    assert s.query("save_document", {"path": str(path)})["ok"]
+    reopened = Session.load(path, out_dir=tmp_path)
+    assert reopened.doc.to_dict() == s.doc.to_dict()
+    text = [e for e in reopened.doc.model_entities.values() if isinstance(e, Text)][0]
+    assert text.valign == "middle" and text.content == "EP 12' RT"
+
+
 def test_callout_journal_replays(tmp_path):
     s = model_session(tmp_path)
     s.execute("place_callout", {"space": "model", "target": TARGET,

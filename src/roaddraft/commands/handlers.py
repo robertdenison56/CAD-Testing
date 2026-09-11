@@ -378,7 +378,7 @@ def place_callout(doc: Document, p: dict):
         created.append(head.id)
     _, text = _add(doc, space_key, "text", Text, {
         **common, "position": list(position), "content": p["content"], "height": height,
-        "style": style, "rotation_deg": 0.0, "halign": halign, "valign": "center",
+        "style": style, "rotation_deg": 0.0, "halign": halign, "valign": "middle",
         "annotative": anno.text_record(doc, height) if space_key == "model" else None})
     created.append(text.id)
 
