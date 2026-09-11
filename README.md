@@ -207,6 +207,40 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   scale differs from the annotation scale; `list_annotation_scales` reports
   the list and sizes. The GUI has the scale selector in the status bar.
 
+### Drive it as an agent — MCP mode (natural language)
+
+`roaddraft-mcp` serves the whole command surface to any MCP client as tools, so
+an agent can be told *"draft a 2,000 ft alignment from station 10+00 with a
+1,200 ft curve, then draw 12 ft pavement edges"* and work it out through the
+same bus a human uses. Register it with Claude Code:
+
+```bash
+claude mcp add roaddraft -- /ABSOLUTE/PATH/TO/.venv/bin/roaddraft-mcp
+```
+
+Point it at an existing document with `--doc` (this is how a sheet file with
+the model referenced in gets annotated):
+
+```bash
+claude mcp add roaddraft-sheets -- /ABSOLUTE/PATH/TO/.venv/bin/roaddraft-mcp --doc /path/to/SR-100.sheets.rdoc.json
+```
+
+- **70 tools**: 43 commands + 26 queries straight from `Session.manifest()` —
+  the same descriptions, JSON Schemas and worked examples the REPL and the web
+  GUI use, so there is no second copy to drift — plus `open_document`.
+- **Faults teach instead of failing**: a bad call comes back as a tool error
+  carrying the message, the hint, the schema and a valid example, so the model
+  corrects itself rather than guessing.
+- **Renders come back as images** (`render_sheet`, `render_model`), so an agent
+  can look at the sheet it just drew.
+- Everything still goes through the bus: validated, atomic, journaled,
+  undoable. An agent session leaves the same replayable journal a human one
+  does.
+- `--only` / `--exclude` trim the surface; `--list-tools` prints it.
+
+Protocol is newline-delimited JSON-RPC 2.0 on stdio, implemented on the
+standard library (the official MCP SDK needs Python 3.10 and this runs on 3.9).
+
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
 ```bash
@@ -359,9 +393,10 @@ scripts/       build_knowledge.py — rebuilds the knowledge base from the raw P
 Phase 1 (the design model, anchored labels, LandXML, and the D1 task
 generator) is in. Still to come, on top of this bus:
 
-- **Verifier + session server + MCP mode (M2)**: rubric scoring against the
-  ground truth (`roaddraft.verify`), the eval harness, and the first agent
-  episodes — see `RoadDraft_Eval_Plan.md`.
+- **Verifier + eval harness (M2/M3)**: rubric scoring against the ground truth
+  (`roaddraft.verify`), the harness, and scored agent episodes — see
+  `RoadDraft_Eval_Plan.md`. Parked until an agent can draft and annotate from
+  natural language at all; MCP mode (above) is the front door for that.
 - **Spirals** (`"spiral"` is reserved and rejected everywhere), asymmetric
   vertical curves, **profile views** on sheets, station-offset labels, match
   lines and multi-sheet sets (D2/D3).
