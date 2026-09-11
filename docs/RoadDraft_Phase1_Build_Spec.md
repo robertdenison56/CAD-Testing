@@ -238,16 +238,19 @@ class DesignModel:
 - `Entity` gains `anchor: Optional[dict] = None` (last field).
 - `_base_dict`: emit `"anchor"` only when not None (sparse, like color/linetype).
 - `_base_kwargs`: `"anchor": as_anchor(d.get("anchor"))`.
-- New validator `as_anchor(value)`: returns `None` for None; for a dict, requires string keys `alignment`, `ref`, `kind` (each non-empty); optional keys with types: `station` (number|None), `offset` (number|None), `side` ("left"|"right"|None), `label_offset` (number|None), `rotation` (`"along"|"perpendicular"|"horizontal"`|None), `viewport` (str|None), `content_auto` (bool). Any other key or wrong type → `ValueError("anchor: ...")`. Returns a plain dict copy.
+- New validator `as_anchor(value)`: returns `None` for None; for a dict, requires string keys `alignment`, `ref`, `kind` (each non-empty); optional keys with types: `station` (number|None), `offset` (number|None), `side` ("left"|"right"|None), `label_offset` (number|None), `rotation` (`"along"|"perpendicular"|"horizontal"`|None), `viewport` (str|None), `content_auto` (bool), `placed_by` (str|None). Any other key or wrong type → `ValueError("anchor: ...")`. Returns a plain dict copy.
 - Every `transformed()` (Line, Polyline, Arc, Circle, Text, BlockRef, Table) passes `anchor=self.anchor`.
 - Renderers ignore it (no changes).
 
 **Anchor record shape** (the verifier contract):
 ```json
 {"alignment": "ALIGN-1", "ref": "PC-1", "kind": "pc", "station": 1600.0, "offset": 0.0,
- "side": "right", "label_offset": 16.0, "rotation": "along", "viewport": null, "content_auto": true}
+ "side": "right", "label_offset": 16.0, "rotation": "along", "viewport": null,
+ "content_auto": true, "placed_by": "place_label"}
 ```
-Per producer:
+`placed_by` is provenance and is written by the bus, not by handlers or callers: after a command succeeds, `CommandBus._stamp_provenance` stamps every entity that command *created* whose anchor is set with the command's canonical name (`bus.ANCHOR_PRODUCERS` is the set a verifier trusts). Creation only — an anchor attached to an existing entity afterwards carries no provenance, while renaming, moving or re-layering an anchored label leaves its stamp alone.
+
+Per producer (each record also carries `placed_by` = the producing command):
 - `place_label` Text: all keys; `viewport` = viewport id on sheets else null; `label_offset` in the target space's units (feet in model, inches on sheets).
 - `annotate_stationing` (alignment mode) station Text: `{alignment, ref: "18+00.00", kind: "station", station, offset: 0.0, side: "left", label_offset, rotation: "along", viewport: null, content_auto: true}`; tick Line: `{alignment, ref: "18+00.00", kind: "tick", station, offset: 0.0}`; junction Text: `ref "PC-n"/"PT-n"`, `kind "pc"/"pt"/"pcc"/"prc"`, side right; equation Text: `ref "EQ-n"`, `kind "equation"`, side right.
 - `draw_alignment` Line/Arc: `{alignment, ref: "T-1" | "C-1", kind: "element", station: <raw start station>, offset: 0.0}`.
@@ -584,7 +587,7 @@ if "begin_station" not in p: raise CommandFault("begin_station is required with 
 — the rest of the function is byte-identical. `annotate_stationing_alignment` (in `design_handlers.py`): `begin_station` present → `CommandFault("alignment mode uses ALIGN-1's own stationing (begins 10+00.00); omit begin_station", hint="modify_alignment changes begin_station")`; `space` must be `"model"` (`"alignment-mode stationing draws in model space; use place_label for sheet labels"`); layers/style exactly as the entity mode; `station_range` parsed to raw; `plan = stationing_plan(...)`; materialise `plan.items` in order with the local `add()` closure pattern (Line for TickSpec on tick layer with tick anchor; Text for LabelSpec on label layer with anchor record); message `"stationing annotated in model space from ALIGN-1: 16 ticks @ 100 ft, 2 PC/PT labels, 1 equation labels, stations 10+00.00 to 30+18.88"`; warnings `[]`.
 
 ### 4.11 `modify_entity` (one-literal change, WP6)
-`known = set(entity.to_dict()) | {"color", "linetype", "anchor"}`. Setting `"anchor": null` clears it; a malformed anchor faults via `as_anchor`.
+`known = set(entity.to_dict()) | {"color", "linetype", "anchor"}`. Setting `"anchor": null` clears it; a malformed anchor faults via `as_anchor`. A `placed_by` inside the supplied anchor is dropped and the entity's existing one (if any) is kept, so `modify_entity` can neither claim provenance nor transfer it from another entity.
 
 ## 5. Queries (`api/session.py`, WP7)
 

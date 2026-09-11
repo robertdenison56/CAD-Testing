@@ -160,8 +160,15 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   with the conventional offset, keeps it upright, and — on a sheet — maps it
   through the viewport that shows the point. The text entity records an
   `anchor` (`alignment`, `ref`, `kind`, `station`, `offset`, `side`,
-  `label_offset`, `rotation`, `viewport`, `content_auto`): the verifier's
-  contract. `resolve_anchor` is the dry run.
+  `label_offset`, `rotation`, `viewport`, `content_auto`, `placed_by`): the
+  verifier's contract. `resolve_anchor` is the dry run.
+- **Anchor provenance**: the bus stamps `anchor.placed_by` with the command
+  that created the entity (`draw_alignment`, `annotate_stationing`,
+  `place_label`, `place_curve_table`), and nothing else writes it —
+  `modify_entity` drops a supplied `placed_by` and keeps the entity's own, so
+  an anchor bolted onto hand-placed text carries no provenance while a real
+  label survives a rename, a move or a layer fix. A verifier can then tell
+  drafted work from decorated work.
 - **Alignment-mode stationing** (`annotate_stationing alignment=NAME`) walks
   the true stations through the equations, so ticks and labels are anchored
   and equation-aware; the original entity-chain mode is unchanged.

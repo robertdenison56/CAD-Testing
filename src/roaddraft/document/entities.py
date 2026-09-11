@@ -84,8 +84,14 @@ def as_anchor(value) -> Optional[Dict]:
     Returns None for None, otherwise a plain dict copy. Required string keys:
     alignment, ref, kind. Optional keys: station/offset/label_offset (number
     or None), side (left|right|None), rotation (along|perpendicular|
-    horizontal|None), viewport (str|None), content_auto (bool). Anything
-    else raises ValueError('anchor: ...')."""
+    horizontal|None), viewport (str|None), content_auto (bool), placed_by
+    (str|None). Anything else raises ValueError('anchor: ...').
+
+    ``placed_by`` is provenance: the command bus stamps it with the name of
+    the command that created the entity, and nothing else writes it (see
+    CommandBus._stamp_provenance). An anchor a caller attached to an entity
+    by hand therefore carries none, which is what lets a verifier tell a
+    drafted label from a decorated one."""
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -121,10 +127,15 @@ def as_anchor(value) -> Optional[Dict]:
             if not isinstance(v, bool):
                 raise ValueError(f"anchor: content_auto must be true/false, got {v!r}")
             out[key] = v
+        elif key == "placed_by":
+            if v is not None and (not isinstance(v, str) or not v):
+                raise ValueError(f"anchor: placed_by must be a non-empty string or null, "
+                                 f"got {v!r}")
+            out[key] = v
         else:
             raise ValueError(f"anchor: unknown key {key!r}; keys: alignment, ref, kind, "
                              f"station, offset, side, label_offset, rotation, viewport, "
-                             f"content_auto")
+                             f"content_auto, placed_by")
     return out
 
 

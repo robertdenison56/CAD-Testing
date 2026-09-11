@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from roaddraft.commands.bus import ANCHOR_PRODUCERS
 from roaddraft.design.horizontal import Alignment
 from roaddraft.design.vertical import Profile
 from roaddraft.document.document import Document
@@ -98,14 +99,29 @@ def test_truth_label_count_equals_reference_entities():
     assert compute_ground_truth(task.brief).to_dict() == truth.to_dict()
 
 
-@pytest.mark.parametrize("seed", list(range(1, 21)))
-def test_reference_solution_zero_faults_zero_warnings_20_seeds(seed, tmp_path):
-    task = generate_task(seed)
-    session = session_for_task(task, out_dir=tmp_path)
-    journal = reference_solution(task, session)
-    assert journal and journal[0]["name"] == "set_meta"
-    assert session.reference_warnings == []
-    assert session.doc.meta["task_id"] == task.task_id
+def test_reference_solution_200_seeds_zero_faults_matches_truth_replays(tmp_path):
+    """E0's acceptance number: over 200 seeds the reference drafts a clean
+    sheet -- no fault, no warning, every truth label matched, the given design
+    untouched, every anchor bus-stamped -- and its journal replays to the same
+    document."""
+    for seed in range(1, 201):
+        task = generate_task(seed)
+        session = session_for_task(task, out_dir=tmp_path)
+        journal = reference_solution(task, session)
+        assert journal and journal[0]["name"] == "set_meta", seed
+        assert session.reference_warnings == [], seed
+        assert session.doc.meta["task_id"] == task.task_id, seed
+        m = match_truth(session.doc, task.truth)
+        assert m["matched"] == task.truth.counts["labels"], (seed, m)
+        assert not m["missing"] and not m["content_mismatch"], (seed, m)
+        assert not m["position_mismatch"] and not m["extra"], (seed, m)
+        assert session.doc.design.fingerprint() == task.truth.design_fingerprint, seed
+        anchored = list(session.doc.model_entities.values())
+        for sheet in session.doc.sheets.values():
+            anchored += list(sheet.entities.values())
+        stamps = {e.anchor.get("placed_by") for e in anchored if e.anchor}
+        assert stamps <= set(ANCHOR_PRODUCERS), (seed, stamps)
+        assert check_replay(session, tmp_path / f"ref-{seed}.journal.jsonl"), seed
 
 
 def test_reference_matches_truth_missing_empty_content_empty_position_empty(tmp_path):

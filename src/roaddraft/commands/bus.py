@@ -26,6 +26,13 @@ from roaddraft.document.document import Document
 
 UNDO_LIMIT = 100
 
+# The commands that place design-anchored work, and so the only provenance a
+# verifier trusts. The bus stamps anchor.placed_by on the entities a command
+# creates (_stamp_provenance), which makes provenance the bus's to write
+# rather than the handler's or the caller's.
+ANCHOR_PRODUCERS = ("draw_alignment", "annotate_stationing", "place_label",
+                    "place_curve_table")
+
 
 @dataclass
 class CommandSpec:
@@ -298,6 +305,7 @@ class CommandBus:
             self._restore(snapshot)
             return self._error(spec.name, "internal_error",
                                f"{type(ex).__name__}: {ex}")
+        self._stamp_provenance(spec.name, diff["created"])
         self._push_undo(snapshot, spec.name)
         self._redo.clear()
         return self._record(spec.name, params, message, diff, warnings)
@@ -308,6 +316,18 @@ class CommandBus:
             return self._error("?", "invalid_call",
                                "expected {'command': <name>, 'params': {...}}")
         return self.execute(call["command"], call.get("params") or {})
+
+    def _stamp_provenance(self, name: str, created: List[str]):
+        """Stamp ``anchor.placed_by`` with the command that created the entity.
+
+        Only creation stamps: an anchor attached to an existing entity later
+        carries no provenance (modify_entity cannot claim any, and preserves
+        what an entity was created with), and editing an anchored label -- a
+        rename, a move, a layer change -- leaves its stamp alone."""
+        for eid in created:
+            found = self.doc.find_entity(eid)
+            if found is not None and found[1].anchor is not None:
+                found[1].anchor["placed_by"] = name
 
     def _restore(self, snapshot: dict):
         """Replace the document from a snapshot, keeping the transient host

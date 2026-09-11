@@ -348,6 +348,15 @@ def modify_entity(doc: Document, p: dict):
         raise CommandFault(
             f"unknown fields for {entity.TYPE}: {sorted(unknown)}",
             hint=f"editable fields: {sorted(known - {'id', 'type'})}")
+    if isinstance(changes.get("anchor"), dict):
+        # Provenance is the bus's to write: a caller can neither claim it nor
+        # transfer it to another entity, so an anchor set here keeps whatever
+        # the entity was created with -- for a hand-anchored entity, nothing.
+        anchor = {k: v for k, v in changes["anchor"].items() if k != "placed_by"}
+        placed_by = (entity.anchor or {}).get("placed_by")
+        if placed_by is not None:
+            anchor["placed_by"] = placed_by
+        changes = {**changes, "anchor": anchor}  # p["changes"] is the journal's
     merged = {**entity.to_dict(), **changes}
     try:
         new_entity = entity_from_dict(merged)

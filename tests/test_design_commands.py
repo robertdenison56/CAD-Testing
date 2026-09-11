@@ -187,7 +187,8 @@ def test_draw_alignment_LN_AR_LN_arc_270_300_anchors_T1_C1_T2():
     assert ar.end_angle_deg == pytest.approx(300.0, abs=1e-6)
     assert ln1.anchor["ref"] == "T-1" and ar.anchor["ref"] == "C-1" and ln2.anchor["ref"] == "T-2"
     assert ar.anchor == {"alignment": "ALIGN-1", "ref": "C-1", "kind": "element",
-                         "station": pytest.approx(1600.0, abs=1e-6), "offset": 0.0}
+                         "station": pytest.approx(1600.0, abs=1e-6), "offset": 0.0,
+                         "placed_by": "draw_alignment"}
     assert ln1.layer == "V-ALIGN-CNTR"
     # default alignment when only one exists; missing layer faults
     assert s.execute("draw_alignment", {"layer": "NOPE"})["ok"] is False

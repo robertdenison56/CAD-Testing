@@ -54,8 +54,9 @@ def test_place_label_pc1_content_position_1600_984_anchor_record():
     assert a["station"] == pytest.approx(1600.0, abs=1e-6) and a["offset"] == 0.0
     assert a["side"] == "right" and a["label_offset"] == 16.0 and a["rotation"] == "along"
     assert a["viewport"] is None and a["content_auto"] is True
+    assert a["placed_by"] == "place_label"
     assert set(a) == {"alignment", "ref", "kind", "station", "offset", "side", "label_offset",
-                      "rotation", "viewport", "content_auto"}
+                      "rotation", "viewport", "content_auto", "placed_by"}
 
 
 def test_place_label_station_13_00_1300_1016():
@@ -238,7 +239,7 @@ def test_place_curve_table_row_and_anchor():
     assert e.rows == [["C-1", "18+14.36", "30°00'00\"", "LT", "800.00'", "214.36'", "418.88'",
                        "414.11'", "N 75°00'00\" E"]]
     assert e.anchor == {"alignment": "ALIGN-1", "ref": "CURVES", "kind": "curve_table",
-                        "content_auto": True}
+                        "content_auto": True, "placed_by": "place_curve_table"}
     assert e.layer == "V-ANNO-TABL" and e.position == [24.0, 8.5]
     r = s.execute("place_curve_table", {"space": "C-101", "position": [2.0, 20.0],
                                         "columns": ["curve", "radius"], "title": "CURVES",

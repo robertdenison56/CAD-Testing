@@ -23,7 +23,7 @@ Consequences for this plan:
 
 1. **The verifier is designed against the Phase 1 contracts, not the current code**: the anchor record (spec §2.7), `GroundTruth` (§7.3), `match_truth` (§7.5) and the reference solution (§7.6). Finishing Phase 1 stages 2–4 is work package E0 below; it gates E1.
 2. **The harness does not have to wait.** The episode loop, agents, logging, runner and CLI only need `Session` and a `Task` protocol, both of which exist or are fully specified. E2 can be built against a stub task while E0 lands.
-3. **Two small contract additions** are needed in Phase 1 for the anti-reward-hacking layer to hold (§3.5): a bus-stamped `placed_by` field on the anchor record, and `truth.design_fingerprint` enforcement. Both are one-line WP6/WP9 follow-ups and are listed in E0.
+3. **Two small contract additions** are needed in Phase 1 for the anti-reward-hacking layer to hold (§3.5): a bus-stamped `placed_by` field on the anchor record, and `truth.design_fingerprint` enforcement. Both are one-line WP6/WP9 follow-ups and are listed in E0. *(2026-09-10: `placed_by` has landed — see §3.5 item 3.)*
 
 PRD mapping: this plan is M2 (verifier), M3 (eval harness + trajectory logging), the Phase 2/3 leaderboard and writeup, the M4 `run_check` budget and dialect skins as harness features, and the M5 hooks (a Gymnasium-style adapter) without the training run itself.
 
@@ -183,7 +183,7 @@ Reward hacking is the failure mode that makes an RL environment worthless, so it
 
 1. **Anchors are required for text credit** (3.3 step 2). Right-looking `place_text` is worth zero. This is a deliberate benchmark rule, stated in the brief.
 2. **Anchor consistency** (3.3 step 5). A label's credit depends on its position and content agreeing with what its own anchor record implies, recomputed from the design model by the verifier. Spoofing an anchor without also computing the right pose is detected; computing the right pose by hand is just drafting.
-3. **Provenance.** Phase 1 spec §4.11 lets `modify_entity` set `anchor` on any entity. The Design-B proposal's answer is the right one: the bus stamps `anchor.placed_by` with the command name that created the entity, handlers overwrite any caller-supplied `placed_by`, and the verifier trusts only `place_label`, `annotate_stationing`, `place_curve_table`, `draw_alignment`. E0 adds this (one field in `as_anchor`, one line in the bus). Until it lands, the harness strips `anchor` from `modify_entity` changes and `audit.py` flags any journal entry that sets it.
+3. **Provenance.** Phase 1 spec §4.11 lets `modify_entity` set `anchor` on any entity. The Design-B proposal's answer is the right one: the bus stamps `anchor.placed_by` with the command name that created the entity, handlers overwrite any caller-supplied `placed_by`, and the verifier trusts only `place_label`, `annotate_stationing`, `place_curve_table`, `draw_alignment`. **Landed 2026-09-10**: `as_anchor` accepts `placed_by` (str|None); `CommandBus._stamp_provenance` stamps every entity a command *created* whose anchor is set, with that command's canonical name; `modify_entity` drops a caller-supplied `placed_by` and preserves the entity's existing one, so provenance can be neither claimed nor transferred. `bus.ANCHOR_PRODUCERS` is the trusted set the verifier imports rather than hardcoding. Creation-only stamping is deliberate: renaming an alignment rewrites its labels' anchors, and those labels must keep their provenance. `tests/test_anchor_provenance.py` covers it (10 tests). The harness therefore does **not** need to strip `anchor` from `modify_entity` changes; `audit.py` still reports the count.
 4. **Design integrity.** The fingerprint precondition (3.2). `create_alignment` / `modify_alignment` / `delete_alignment` / `import_landxml` are off the D1 whitelist anyway.
 5. **No truth leaks through `run_check`.** Findings carry the anchor triple and the code, never `expected`. The model already knows which anchors exist (`get_design_data("anchors")`), so this leaks nothing new; the value it must compute itself.
 6. **Duplicates count once; extras are free but must stay legible.** Spraying labels earns nothing and costs legibility.
@@ -239,7 +239,7 @@ Reward-hack probes: (a) all labels via `place_text` with correct strings → ≤
 Each of these changes `spec_hash` and therefore every task id. Batch them, decide once, then freeze `draft-v1` → `v1`.
 
 1. Add **D1-00 sheet setup** (weight 5, taken from D1-02 → 10 and D1-11 → 2, or as the PE prefers). Without it, a sheet with no viewport scores 0 on nine checks with no finding that says why.
-2. Add `placed_by` to the anchor record (§2.7) and the bus stamp (§3.5 item 3).
+2. ~~Add `placed_by` to the anchor record (§2.7) and the bus stamp (§3.5 item 3).~~ **Done 2026-09-10** — no decision left, but note it is a key on every anchor record and so is visible to agents through `get_entity`.
 3. Write the **hard-fail rule** into the spec text: "missing costs credit; a wrong value shown on the sheet is a hard fail; the effective score of a hard-failed sheet is 0".
 4. **Assign `mc` and `equation` labels to checks.** `labels.mc.required` is true and `required_label_kinds` includes `mc`, but no D1 check covers the C-n callouts, and equation labels are likewise uncovered. Proposal: D1-04 covers PC/PT/PCC/PRC and C-n; D1-03 covers station and equation labels.
 5. Confirm **credit rules for unanchored work**: geometry-matched linework and ticks earn credit; text and tables only through anchors.
@@ -411,7 +411,7 @@ Plan on the order of $500–1,000 for a four-model v0.1 with `d1-variance` at k 
 |---|---|---|
 | Spec is DRAFT; every fix changes task ids | Batch the §3.7 decisions, freeze v1 before E4, never publish on draft ids | Robert (PE review) |
 | Hard-fail semantics could feel harsh (one wrong cell = 0) | Keep it; report rubric score and hard-fail rate beside the headline so the information is not lost | §3.7 |
-| Anchor spoofing via `modify_entity` | `placed_by` stamp in E0; harness strips `anchor` until then | E0 |
+| Anchor spoofing via `modify_entity` | ~~`placed_by` stamp in E0~~ landed 2026-09-10; no harness stripping needed | done |
 | `mc` / `equation` labels uncovered by any check | Assign them (§3.7 item 4) before E1 | §3.7 |
 | Model non-determinism | k samples, paired comparisons, bootstrap CIs | E4 |
 | Cost | `d1-variance` first, cost cap, cached prefix, effort as a dimension | E3/E4 |

@@ -107,7 +107,9 @@ def test_resolve_anchor_dry_run_equals_place_label():
         assert e.position == pytest.approx(dry["position"], abs=1e-9)
         assert e.rotation_deg == pytest.approx(dry["rotation_deg"])
         assert (e.halign, e.valign, e.height) == (dry["halign"], dry["valign"], dry["height"])
-        assert e.anchor == dry["anchor"]
+        # the dry run is the same record minus provenance: only the bus stamps that
+        assert e.anchor == {**dry["anchor"], "placed_by": "place_label"}
+        assert "placed_by" not in dry["anchor"]
         assert dry["kind"] == e.anchor["kind"] and dry["space"] == ("SH-001" if "space" in params
                                                                      else "model")
         if e.anchor["content_auto"]:
