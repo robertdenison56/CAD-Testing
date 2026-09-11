@@ -261,6 +261,76 @@ def reference_transform(ref: Reference, unit_k: float = 1.0):
     return fn
 
 
+@dataclass
+class Placement:
+    """How a basefile's design coordinates sit in the host space.
+
+    Points are mapped so an agent can aim at what is *drawn*; stations,
+    lengths, radii and bearings are left as designed, because those are facts
+    about the road rather than about how this sheet displays it. ``rotation_deg``
+    and ``scale`` are reported so the difference is never hidden.
+    """
+
+    reference: Optional[str] = None      # attachment name, None for the host's own
+    rotation_deg: float = 0.0
+    scale: float = 1.0
+    offset: Tuple[float, float] = (0.0, 0.0)
+
+    @property
+    def is_identity(self) -> bool:
+        return (self.reference is None
+                or (abs(self.rotation_deg) < 1e-12 and abs(self.scale - 1.0) < 1e-12
+                    and abs(self.offset[0]) < 1e-12 and abs(self.offset[1]) < 1e-12))
+
+    def to_host(self, point):
+        q = geo.rotate_point([point[0] * self.scale, point[1] * self.scale],
+                             self.rotation_deg)
+        return [self.offset[0] + q[0], self.offset[1] + q[1]]
+
+    def to_base(self, point):
+        q = geo.rotate_point([point[0] - self.offset[0], point[1] - self.offset[1]],
+                             -self.rotation_deg)
+        return [q[0] / self.scale, q[1] / self.scale]
+
+    def to_dict(self) -> dict:
+        return {"reference": self.reference, "rotation_deg": self.rotation_deg,
+                "scale": self.scale, "offset": list(self.offset)}
+
+
+def design_placement(doc, ref: Reference, base) -> Placement:
+    """The placement of an attachment's design model in the host space."""
+    unit_k = unit_factor_for(doc, ref, base)[0]
+    return Placement(reference=ref.name, rotation_deg=float(ref.rotation_deg),
+                     scale=float(ref.scale) * unit_k,
+                     offset=(float(ref.offset[0]), float(ref.offset[1])))
+
+
+def reference_alignments(doc):
+    """``[(reference, basefile, alignment, placement)]`` for every alignment in
+    every attachment that loads. Nested references are not searched: an
+    alignment two files away is not something a sheet annotates."""
+    out = []
+    for ref in doc.references.values():
+        base, _error = resolve_reference(doc, ref)
+        if base is None:
+            continue
+        placement = design_placement(doc, ref, base)
+        for alignment in base.design.alignments.values():
+            out.append((ref, base, alignment, placement))
+    return out
+
+
+def find_reference_alignment(doc, qualified: str):
+    """``(alignment, placement)`` for ``"DESIGN:SR-100"``, else None."""
+    name, sep, alignment_name = str(qualified).partition(":")
+    if not sep:
+        return None
+    for ref, _base, alignment, placement in reference_alignments(doc):
+        if ref.name == name and alignment.name == alignment_name:
+            return alignment, placement
+    return None
+
+
 def apply_symbology(prims, symbology: dict):
     """Bake attachment-wide display overrides into (already copied) primitives:
     entity color/linetype overrides plus the render-time lineweight hook."""

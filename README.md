@@ -169,6 +169,19 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   an anchor bolted onto hand-placed text carries no provenance while a real
   label survives a rename, a move or a layer fix. A verifier can then tell
   drafted work from decorated work.
+- **Reading a referenced design** — a plan set keeps the design in one file and
+  the sheets in another that references it, so the sheet file owns no alignments
+  at all. `list_alignments include_references=true` lists them as
+  `DESIGN:SR-100`, and `station_to_xy`, `xy_to_station`, `resolve_anchor` and
+  `get_design_data` all accept that name, so "where is station 25+00" and "where
+  is the PC of the first curve" work from the sheet file. **Points come back in
+  host coordinates** — they land on the geometry as drawn even when the
+  attachment is moved, turned or scaled — while stations, lengths, radii and
+  bearings stay as designed, because those describe the road rather than this
+  sheet; a `placement` block reports the mapping so the difference is never
+  hidden. Reading is not owning: `draw_alignment`, `draw_offset`, `place_label`,
+  `modify_alignment` and `delete_alignment` all refuse a referenced alignment
+  and say to call it out instead.
 - **Finding things** (`find_entities`) selects by what something *is* — layer,
   type, design anchor, text content, a bounding box, or what a given sheet
   shows — instead of dumping the document and filtering downstream:
@@ -284,9 +297,8 @@ measured, not vocabulary.
 
 `python -m roaddraft.probes selftest` runs a scripted solution for every probe
 and checks that the untouched project fails, which is what keeps the checks
-honest. One probe (`pc-by-station`) is marked blocked: a referenced alignment
-is invisible to `list_alignments` / `station_to_xy` / `resolve_anchor`, so
-there is no way to ask where the PC is from a sheet file.
+honest. `pc-by-station` is the one that needs a *referenced* design: a PC is
+not an entity, so there is nothing to find — only a station to ask for.
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 

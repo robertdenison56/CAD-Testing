@@ -69,6 +69,13 @@ def _alignment(doc: Document, p: dict, key: str = "alignment") -> Alignment:
             f"alignment is required: the document has {len(aligns)} alignments "
             f"({', '.join(aligns)})", hint="run list_alignments")
     if name not in aligns:
+        if ":" in str(name):
+            raise CommandFault(
+                f"{name!r} is an alignment in an attached reference, and commands "
+                f"only work on this document's own design",
+                hint="queries read a referenced design (station_to_xy, resolve_anchor, "
+                     "get_design_data, find_entities); to draw or label it, call it "
+                     "out with place_callout, or bring the design into this document")
         raise CommandFault(f"no alignment named {name!r}", hint=f"alignments: {list(aligns)}")
     return aligns[name]
 

@@ -226,7 +226,15 @@ class RoadDraftMCP:
                     "curve, and roadway linework runs parallel a few feet apart, so a "
                     "hand-computed point usually lands on the wrong line rather than on "
                     "nothing. If you do pass a raw target point, read the warning that "
-                    "comes back -- it names what the tip actually touched.")}
+                    "comes back -- it names what the tip actually touched."
+                    "\n\n"
+                    "Some things are not entities at all -- a station, a PC, a point at "
+                    "an offset. Ask the design for those: list_alignments with "
+                    "include_references=true names a referenced alignment "
+                    "'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor "
+                    "and get_design_data all accept that name and answer in host "
+                    "coordinates. Commands do not: nothing can be drawn, labelled or "
+                    "anchored to an alignment this document does not own.")}
 
     def serve(self, stdin=None, stdout=None) -> None:
         """Read newline-delimited JSON-RPC from stdin until EOF."""

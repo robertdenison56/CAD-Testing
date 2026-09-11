@@ -46,9 +46,7 @@ def test_every_probe_has_a_prompt_and_either_a_solution_or_a_reason():
     for probe in tasks.PROBES:
         assert probe.prompt.strip() and probe.tags
         assert probe.solve or probe.blocked_on, probe.id
-    blocked = [p for p in tasks.PROBES if p.blocked_on]
-    assert [p.id for p in blocked] == ["pc-by-station"]
-    assert "station_to_xy" in blocked[0].blocked_on
+    assert not [p.id for p in tasks.PROBES if p.blocked_on]
 
 
 def test_the_curve_trap_fails_the_check(project):
@@ -162,13 +160,19 @@ def test_title_blocks_must_be_every_sheet_and_carry_the_right_values(project):
     assert not result.passed and "scale" in result.detail
 
 
-def test_the_blocked_probe_really_is_blocked(project):
-    """pc-by-station documents what design-data-through-references would unlock:
-    in a sheet file there is no way to ask where the PC is."""
+def test_pc_by_station_needs_the_referenced_design_and_now_has_it(project):
+    """This probe was blocked until queries could read a referenced design: a PC
+    is not an entity, so there is nothing to find -- only a station to ask for."""
     session = fresh(project)
-    assert session.query("list_alignments", {})["alignments"] == []
-    for query, params in (("station_to_xy", {"alignment": "SR-100", "station": "25+00"}),
-                          ("resolve_anchor", {"alignment": "SR-100", "anchor": "PC-1"}),
-                          ("get_design_data", {"kind": "curves", "alignment": "SR-100"})):
-        r = session.query(query, params)
-        assert not r["ok"] and "SR-100" in r["error"]["message"]
+    assert session.query("list_alignments", {})["alignments"] == []   # owns none
+    qualified = f"DESIGN:{fixture.ALIGNMENT}"
+    assert session.query("list_alignments", {"include_references": True})["count"] == 1
+    pc = session.query("resolve_anchor", {"alignment": qualified, "anchor": "PC-1"})
+    assert pc["ok"] and pc["station_text"] and pc["auto_content"].startswith("PC ")
+    # nothing in the drawing sits at the PC, which is why find_entities cannot do it
+    assert all(row["point"] != pc["point"]
+               for row in session.query("find_entities", {})["entities"])
+    # and the probe's own check agrees once the work is done
+    base = baseline(project)
+    tasks.get("pc-by-station").solve(session)
+    assert tasks.get("pc-by-station").check(base, session).passed

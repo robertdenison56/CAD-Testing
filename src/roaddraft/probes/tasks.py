@@ -132,6 +132,33 @@ def _closest(baseline: Session, wanted: List[str], tips) -> str:
             f"(needed {TOLERANCE_FT:.2f} ft)")
 
 
+def aimed_at_point(baseline: Session, submitted: Session, point, what: str,
+                   must_contain: Optional[str] = None) -> Result:
+    """Did the added linework put a tip on ``point``, and say the right thing?"""
+    added = added_entities(baseline, submitted)
+    if not added:
+        return Result(False, "nothing was added to the document")
+    texts = [e for e in added if isinstance(e, Text)]
+    if not texts:
+        return Result(False, "no text, so nothing is labelled")
+    tips = leader_tips(added)
+    if not tips:
+        return Result(False, f"no leader, so nothing points at {what}")
+    best = min((((tip[0] - point[0]) ** 2 + (tip[1] - point[1]) ** 2) ** 0.5, tip)
+               for tip in tips)
+    if best[0] > TOLERANCE_FT:
+        return Result(False, f"nearest leader tip is {best[0]:.2f} ft from {what} at "
+                             f"[{point[0]:.1f}, {point[1]:.1f}] (needed "
+                             f"{TOLERANCE_FT:.2f} ft)")
+    if must_contain and not any(must_contain in e.content for e in texts):
+        return Result(False, f"the leader is on {what} but no text reads "
+                             f"{must_contain!r}; found "
+                             f"{[e.content for e in texts][:3]}")
+    return Result(True, f"leader lands {best[0]:.2f} ft from {what}"
+                        + (f" and the text carries {must_contain!r}" if must_contain
+                           else ""))
+
+
 def callout_at(session: Session, eid: str, where="mid", content="EP", dy=-150.0):
     """The scripted solution: aim by entity, put the text clear of it."""
     if "V-ANNO-TEXT" not in session.doc.layers:
@@ -257,9 +284,31 @@ def _solve_title_blocks(session):
             "fields": {**TITLE_FIELDS, "sheet_title": f"ROADWAY PLAN {sheet.name}"}})
 
 
+def _pc_of_the_first_curve(session: Session) -> dict:
+    """Where the PC is, and how its station reads -- through the reference."""
+    r = session.query("resolve_anchor", {"alignment": f"DESIGN:{fixture.ALIGNMENT}",
+                                         "anchor": "PC-1"})
+    if not r["ok"]:
+        raise RuntimeError(r["error"]["message"])
+    return r
+
+
 def _check_pc_by_station(baseline, submitted):
-    wanted = targets(baseline, anchor={"kind": "element", "ref": "C-1"})
-    return aimed_at(baseline, submitted, wanted, "the PC of the first curve")
+    pc = _pc_of_the_first_curve(baseline)
+    return aimed_at_point(baseline, submitted, pc["point"],
+                          "the PC of the first curve", must_contain=pc["station_text"])
+
+
+def _solve_pc_by_station(session):
+    pc = _pc_of_the_first_curve(session)
+    if "V-ANNO-TEXT" not in session.doc.layers:
+        session.execute("create_layer", {"name": "V-ANNO-TEXT", "color": "black"})
+    r = session.execute("place_callout", {
+        "space": "model", "target": pc["point"],
+        "position": [pc["point"][0] + 200.0, pc["point"][1] - 200.0],
+        "content": pc["auto_content"], "layer": "V-ANNO-TEXT"})
+    if not r["ok"]:
+        raise RuntimeError(r["error"]["message"])
 
 
 PROBES: List[Probe] = [
@@ -300,11 +349,11 @@ PROBES: List[Probe] = [
     Probe(id="pc-by-station",
           prompt="Call out the PC of the first curve of SR-100 on sheet C-102, "
                  "labelled with its station.",
-          check=_check_pc_by_station,
-          blocked_on="design data through references: list_alignments, "
-                     "station_to_xy and resolve_anchor do not see a referenced "
-                     "alignment, so there is no way to ask where the PC is",
-          tags=["find", "station"]),
+          check=_check_pc_by_station, solve=_solve_pc_by_station,
+          tags=["find", "station", "reference-design"],
+          note="Needs the referenced design: resolve_anchor on 'DESIGN:SR-100' "
+               "gives the PC in host coordinates and the station text to write. "
+               "There is no entity at a PC, so the point is the only way in."),
 ]
 
 BY_ID = {probe.id: probe for probe in PROBES}

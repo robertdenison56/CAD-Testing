@@ -36,6 +36,54 @@ BOUNDS = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems
 BOOL = {"type": "boolean"}
 DPI = {"type": "number", "minimum": 30, "maximum": 600}
 
+#: Fields of a design-data row that are points, per kind. Points are mapped
+#: into host coordinates for a referenced design; stations, lengths, radii and
+#: bearings stay as designed.
+DESIGN_POINT_FIELDS = {
+    "alignments": ("pis",),
+    "curves": ("pc", "pi", "pt", "center"),
+    "tangents": ("start", "end", "mid_point"),
+    "anchors": ("point",),
+}
+
+#: Said once, wherever a referenced design is read.
+PLACED_NOTE = ("points are in host coordinates (where the reference draws them); "
+               "stations, lengths, radii and bearings are as designed in the basefile")
+
+
+def _place_point(placement, point):
+    if point is None or placement.is_identity:
+        return point
+    return placement.to_host(point)
+
+
+def _place_row(placement, row: dict, fields) -> dict:
+    """A design-data row with its point fields mapped into the host space."""
+    if placement.is_identity:
+        return row
+    out = dict(row)
+    for field_name in fields:
+        value = out.get(field_name)
+        if value is None:
+            continue
+        if field_name == "pis":
+            out[field_name] = [dict(pi, point=placement.to_host(pi["point"]))
+                               if isinstance(pi, dict) and "point" in pi
+                               else placement.to_host(pi) for pi in value]
+        else:
+            out[field_name] = placement.to_host(value)
+    return out
+
+
+def _placement_block(placement) -> dict:
+    """What to append to a result read through a reference, so the mapping and
+    its limits are visible rather than implied."""
+    block = placement.to_dict()
+    block["note"] = PLACED_NOTE
+    block["read_only"] = True
+    return block
+
+
 def _as_set(value):
     """``None`` -> no filter; a scalar or list -> a set of allowed values."""
     if value is None:
@@ -240,28 +288,37 @@ QUERIES = {
     "list_alignments": {
         "description": "Every alignment in the design model: stations, length, "
                        "curve/tangent/equation counts, bound profiles, and whether "
-                       "it has been drawn.",
-        "schema": obj({}), "example": {},
+                       "it has been drawn. include_references=true also lists the "
+                       "alignments inside attached basefiles, named "
+                       "'REFNAME:ALIGNMENT' and read-only -- in a sheet file whose "
+                       "design is referenced in, that is the only place they are.",
+        "schema": obj({"include_references": {"type": "boolean"}}),
+        "example": {"include_references": True},
     },
     "station_to_xy": {
         "description": "Model-space point at a display station (+ offset, right "
                        "positive) on an alignment, with heading, bearing, and the "
                        "element it lands on (an exact junction reads the ahead "
-                       "element).",
+                       "element). An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed.",
         "schema": obj({"alignment": NSTR, "station": STATION, "offset": NUM,
                        "region": {"type": "integer", "minimum": 1}}, ["station"]),
         "example": {"alignment": "ALIGN-1", "station": "16+00", "offset": 12},
     },
     "xy_to_station": {
         "description": "Perpendicular projection of a model-space point onto an "
-                       "alignment: station, offset (L/R), and the element.",
+                       "alignment: station, offset (L/R), and the element. The point "
+                       "is given in host coordinates. An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed.",
         "schema": obj({"alignment": NSTR, "point": POINT}, ["point"]),
         "example": {"alignment": "ALIGN-1", "point": [1300, 1012]},
     },
     "resolve_anchor": {
         "description": "Dry run of place_label: where a label of this kind at this "
                        "anchor would land (content, position, rotation, viewport) "
-                       "without placing it. Same faults as the command.",
+                       "without placing it. Same faults as the command. For a "
+                       "referenced alignment ('DESIGN:SR-100') it answers where the "
+                       "anchor is and what a label there would read, but not a label "
+                       "plan -- nothing can be anchored to an alignment this document "
+                       "does not own.",
         "schema": obj({"alignment": NSTR, "anchor": ANCHOR, "kind": KIND, "space": SPACE,
                        "viewport": NSTR, "side": SIDE, "label_offset": NUM,
                        "rotation": ROTATION, "content": STR}, ["anchor"]),
@@ -271,7 +328,7 @@ QUERIES = {
         "description": "Tabular design data: alignments, curves (Δ/R/T/L/E/M/C, "
                        "bearings, PC/PI/PT/MC stations), tangents, station "
                        "equations, named anchors, profiles, PVIs, vertical curves. "
-                       "Stations are raw + display text. Paginated (default 50).",
+                       "Stations are raw + display text. Paginated (default 50). ""An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed.",
         "schema": obj({"kind": {"enum": list(DESIGN_DATA_KINDS)}, "alignment": NSTR,
                        "profile": NSTR, "start": {"type": "integer", "minimum": 0},
                        "limit": {"type": "integer", "minimum": 1, "maximum": 500}},
@@ -692,11 +749,45 @@ class Session:
     # ------------------------------------------------- design model queries
 
     def _alignment_q(self, p):
+        return self._alignment_placed(p)[0]
+
+    def _alignment_placed(self, p, key: str = "alignment"):
+        """``(alignment, placement)``, accepting ``"DESIGN:SR-100"`` for an
+        alignment that lives in an attached basefile.
+
+        Queries read a referenced design; commands do not. Nothing can be
+        drawn, labelled or anchored to an alignment the host does not own --
+        this is how to ask *where* something is in a sheet file, not a way to
+        own it.
+        """
         from roaddraft.commands import design_handlers as dh
         from roaddraft.commands.handlers import CommandFault
+        from roaddraft.document.references import (
+            Placement, find_reference_alignment, reference_alignments,
+        )
+        name = p.get(key)
+        if isinstance(name, str) and ":" in name:
+            found = find_reference_alignment(self.doc, name)
+            if found is None:
+                known = [f"{ref.name}:{a.name}"
+                         for ref, _b, a, _pl in reference_alignments(self.doc)]
+                raise _QueryFault(
+                    f"no alignment {name!r} in any attached reference",
+                    hint=(f"referenced alignments: {known}" if known else
+                          "no attachment carries a design model; list_references "
+                          "shows what is attached"))
+            return found
         try:
-            return dh._alignment(self.doc, p)
+            return dh._alignment(self.doc, p, key), Placement()
         except CommandFault as fault:
+            if not self.doc.design.alignments:
+                extra = [f"{ref.name}:{a.name}"
+                         for ref, _b, a, _pl in reference_alignments(self.doc)]
+                if extra:
+                    raise _QueryFault(
+                        str(fault),
+                        hint=f"this document owns no alignments, but its references "
+                             f"carry {extra} -- name one of those to read its design")
             raise _QueryFault(str(fault), hint=fault.hint)
 
     @staticmethod
@@ -706,24 +797,34 @@ class Session:
                    for e in doc.model_entities.values())
 
     def _q_list_alignments(self, p):
-        rows = []
-        for a in self.doc.design.alignments.values():
-            st = a.stations()
-            rows.append({
-                "name": a.name, "description": a.description, "source": a.source,
-                "begin_station": a.begin_station, "begin_station_text": st.begin_text(),
-                "end_station": a.end_station, "end_station_text": st.end_text(),
-                "length": a.length, "curves": len(a.curves()), "tangents": len(a.tangents()),
-                "equations": len(a.equations),
-                "profiles": [pr.name for pr in self.doc.design.profiles_of(a.name)],
-                "drawn": self._drawn(self.doc, a.name)})
+        rows = [self._alignment_row(self.doc, a, a.name)
+                for a in self.doc.design.alignments.values()]
+        if p.get("include_references"):
+            from roaddraft.document.references import reference_alignments
+            for ref, base, alignment, placement in reference_alignments(self.doc):
+                row = self._alignment_row(base, alignment, f"{ref.name}:{alignment.name}")
+                row["reference"] = ref.name
+                row["read_only"] = True
+                row["placement"] = _placement_block(placement)
+                rows.append(row)
         return {"count": len(rows), "alignments": rows}
+
+    def _alignment_row(self, doc, a, name: str) -> dict:
+        st = a.stations()
+        return {
+            "name": name, "description": a.description, "source": a.source,
+            "begin_station": a.begin_station, "begin_station_text": st.begin_text(),
+            "end_station": a.end_station, "end_station_text": st.end_text(),
+            "length": a.length, "curves": len(a.curves()), "tangents": len(a.tangents()),
+            "equations": len(a.equations),
+            "profiles": [pr.name for pr in doc.design.profiles_of(a.name)],
+            "drawn": self._drawn(doc, a.name)}
 
     def _q_station_to_xy(self, p):
         from roaddraft.core.units import format_station
         from roaddraft.design.angles import direction_to_azimuth, format_bearing
         from roaddraft.design.errors import DesignError
-        a = self._alignment_q(p)
+        a, placement = self._alignment_placed(p)
         st = a.stations()
         offset = float(p.get("offset", 0.0))
         try:
@@ -734,7 +835,8 @@ class Session:
             raise _QueryFault(str(e), hint=e.hint)
         disp, region = st.to_display(raw)
         az = direction_to_azimuth(direction)
-        return {"alignment": a.name, "point": point, "on_point": on_point, "station": raw,
+        return {"alignment": a.name, "point": _place_point(placement, point),
+                "on_point": _place_point(placement, on_point), "station": raw,
                 "station_text": format_station(disp), "region": region, "offset": offset,
                 "direction_deg": direction, "azimuth_deg": az, "bearing": format_bearing(az),
                 "element_index": idx, "element_kind": a.elements[idx].kind,
@@ -743,9 +845,10 @@ class Session:
     def _q_xy_to_station(self, p):
         from roaddraft.core.units import format_station
         from roaddraft.design.errors import DesignError
-        a = self._alignment_q(p)
+        a, placement = self._alignment_placed(p)
+        point = p["point"] if placement.is_identity else placement.to_base(p["point"])
         try:
-            r = a.xy_to_station(p["point"])
+            r = a.xy_to_station(point)
         except DesignError as e:
             raise _QueryFault(str(e), hint=e.hint)
         disp, region = a.stations().to_display(r["station"])
@@ -754,7 +857,8 @@ class Session:
         idx = r["element_index"]
         return {"alignment": a.name, "station": r["station"],
                 "station_text": format_station(disp), "region": region, "offset": off,
-                "distance": abs(off), "side": side, "on_point": r["on_point"],
+                "distance": abs(off), "side": side,
+                "on_point": _place_point(placement, r["on_point"]),
                 "direction_deg": r["direction_deg"], "element_index": idx,
                 "element_kind": a.elements[idx].kind, "element_ref": a.element_ref(idx)}
 
@@ -765,6 +869,9 @@ class Session:
         from roaddraft.design.labels import label_content
         params = dict(p)
         params.setdefault("space", "model")
+        name = params.get("alignment")
+        if isinstance(name, str) and ":" in name:
+            return self._resolve_referenced_anchor(params)
         try:
             plan = dh.plan_label(self.doc, params)
         except CommandFault as fault:
@@ -784,6 +891,42 @@ class Session:
                 "rotation_deg": plan["rotation_deg"], "height": plan["height"],
                 "halign": spec.halign, "valign": spec.valign,
                 "anchor_point": list(spec.anchor_point), "direction_deg": spec.direction_deg}
+
+    def _resolve_referenced_anchor(self, p):
+        """Where a named point of a *referenced* alignment is, and what a label
+        there would read.
+
+        Deliberately not a label plan: nothing can be anchored to an alignment
+        this document does not own, so there is no position, viewport or height
+        to give -- only the design fact and the wording it implies.
+        """
+        from roaddraft.core.units import format_station
+        from roaddraft.design.anchors import parse_anchor, resolve_anchor
+        from roaddraft.design.errors import DesignError
+        from roaddraft.design.labels import label_content
+        alignment, placement = self._alignment_placed(p)
+        try:
+            ref = parse_anchor(p["anchor"])
+            point = resolve_anchor(alignment, ref)
+        except DesignError as e:
+            raise _QueryFault(str(e), hint=e.hint)
+        kind = p.get("kind") or point.kind_hint
+        try:
+            auto = label_content(alignment, point, kind)
+        except DesignError:
+            auto = None
+        return {"alignment": alignment.name, "anchor": point.ref, "kind": kind,
+                "auto_content": auto, "content": p.get("content", auto),
+                "station": point.station, "station_text": format_station(point.station)
+                if point.station is not None else None,
+                "offset": point.offset,
+                "point": _place_point(placement, point.point),
+                "anchor_point": _place_point(placement, point.on_point),
+                "direction_deg": point.direction_deg,
+                "placement": _placement_block(placement),
+                "labelling": "place_label cannot anchor to a referenced alignment; "
+                             "call it out with place_callout, or copy the design into "
+                             "this document first"}
 
     def _design_rows(self, kind, aligns, profiles):
         from roaddraft.core.units import format_station
@@ -860,8 +1003,11 @@ class Session:
     def _q_get_design_data(self, p):
         design = self.doc.design
         kind = p["kind"]
+        from roaddraft.document.references import Placement
+        placement = Placement()
         if "alignment" in p:
-            aligns = [self._alignment_q(p)]
+            one, placement = self._alignment_placed(p)
+            aligns = [one]
         else:
             aligns = list(design.alignments.values())
         names = {a.name for a in aligns}
@@ -874,10 +1020,15 @@ class Session:
             profiles = [pr for pr in design.profiles.values()
                         if "alignment" not in p or pr.alignment in names]
         rows = self._design_rows(kind, aligns, profiles)
+        fields = DESIGN_POINT_FIELDS.get(kind, ())
+        rows = [_place_row(placement, row, fields) for row in rows]
         start = int(p.get("start", 0))
         limit = int(p.get("limit", 50))
-        return {"kind": kind, "total": len(rows), "start": start, "limit": limit,
-                "rows": rows[start:start + limit]}
+        out = {"kind": kind, "total": len(rows), "start": start, "limit": limit,
+               "rows": rows[start:start + limit]}
+        if not placement.is_identity or placement.reference:
+            out["placement"] = _placement_block(placement)
+        return out
 
     def _q_list_annotation_scales(self, p):
         from roaddraft.document import annotation as anno
