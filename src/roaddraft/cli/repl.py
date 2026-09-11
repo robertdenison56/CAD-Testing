@@ -46,6 +46,7 @@ Design (alignments, profiles, anchored labels):
   sta2xy 16+00 NAME [offset]            xy2sta 1300,1012 NAME
   design curves|tangents|anchors|equations|profiles|pvis|vcs [NAME]
   anchor PC-1 [NAME]                    (dry run of label)
+  offset 12L 12R [alignment=NAME]       edge of pavement (right +; edge = offset)
   landxmlin PATH                        landxml [PATH]   (import / export)
 Annotation scale (paper-size annotation at a plot scale):
   annoscale 100 | annoscale 1:1200 | annoscale off     annoscales

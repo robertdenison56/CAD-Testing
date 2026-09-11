@@ -107,6 +107,19 @@ DESIGN_SCHEMAS = {
          "replace": {"type": "boolean",
                      "description": "delete this alignment's previously drawn "
                                     "elements first (default false)"}}),
+    "draw_offset": obj(
+        {"alignment": NSTR,
+         "offsets": {"type": "array", "minItems": 1,
+                     "items": {"type": ["number", "string"]},
+                     "description": "offset distances from the alignment, feet, right of "
+                                    "the direction of stationing positive; a string may "
+                                    "name the side ('12L', '12R'). A 24 ft pavement is "
+                                    "[-12, 12]; add [-14, 14] for 2 ft shoulders."},
+         "layer": NSTR, "color": COLOR, "linetype": LINETYPE,
+         "replace": {"type": "boolean",
+                     "description": "delete this alignment's previously drawn offsets at "
+                                    "the same distances first (default false)"}},
+        ["offsets"]),
     "place_label": obj(
         {"space": SPACE, "alignment": NSTR, "anchor": ANCHOR, "kind": KIND,
          "content": {**STR, "description": "explicit text; omit to auto-generate from "
@@ -154,6 +167,7 @@ DESIGN_EXAMPLES = {
                        "pvis": [[1000, 100], [2000, 120, 400], [3000, 90]]},
     "delete_profile": {"name": "PROF-1"},
     "draw_alignment": {"alignment": "ALIGN-1", "layer": "V-ALIGN-CNTR"},
+    "draw_offset": {"alignment": "ALIGN-1", "offsets": [-12, 12], "layer": "V-ROAD-EOP"},
     "place_label": {"space": "model", "alignment": "ALIGN-1", "anchor": "PC-1"},
     "place_curve_table": {"space": "C-101", "alignment": "ALIGN-1", "position": [24.0, 8.5]},
     "import_landxml": {"path": "survey/alignments.xml"},

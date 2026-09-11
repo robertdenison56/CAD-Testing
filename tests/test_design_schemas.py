@@ -1,6 +1,6 @@
 """WP3: design command schemas (commands/design_schemas.py).
 
-Checks the nine design command schemas/examples, that the re-declared
+Checks the ten design command schemas/examples, that the re-declared
 fragments stay byte-identical to commands/schemas.py, and that
 design_schemas never imports schemas.py (which imports it back).
 """
@@ -15,9 +15,9 @@ from jsonschema import Draft202012Validator
 from roaddraft.commands import design_schemas as ds
 from roaddraft.commands import schemas as base
 
-NINE = {"create_alignment", "modify_alignment", "delete_alignment", "create_profile",
-        "delete_profile", "draw_alignment", "place_label", "place_curve_table",
-        "import_landxml"}
+DESIGN_COMMANDS = {"create_alignment", "modify_alignment", "delete_alignment",
+                   "create_profile", "delete_profile", "draw_alignment", "draw_offset",
+                   "place_label", "place_curve_table", "import_landxml"}
 
 LABEL_KINDS_13 = ["station", "pc", "pt", "pi", "mc", "pcc", "prc", "bearing", "begin",
                   "end", "equation", "curve_data", "custom"]
@@ -50,12 +50,12 @@ def test_every_schema_closed_additionalProperties_false():
     assert ds.ELEMENT["additionalProperties"] is False
 
 
-def test_schema_and_example_keys_equal_the_nine_commands():
-    assert set(ds.DESIGN_SCHEMAS) == NINE
-    assert set(ds.DESIGN_EXAMPLES) == NINE
-    assert len(ds.DESIGN_SCHEMAS) == 9 and len(ds.DESIGN_EXAMPLES) == 9
-    # none of the nine collides with an existing base command
-    assert not (NINE & set(base.SCHEMAS) - NINE)
+def test_schema_and_example_keys_equal_the_ten_design_commands():
+    assert set(ds.DESIGN_SCHEMAS) == DESIGN_COMMANDS
+    assert set(ds.DESIGN_EXAMPLES) == DESIGN_COMMANDS
+    assert len(ds.DESIGN_SCHEMAS) == 10 and len(ds.DESIGN_EXAMPLES) == 10
+    # none of them collides with an existing base command
+    assert not (DESIGN_COMMANDS & set(base.SCHEMAS) - DESIGN_COMMANDS)
 
 
 # --- re-declared fragments must equal schemas.py's (drift guard) -----------
@@ -356,7 +356,7 @@ def test_design_schemas_imports_with_schemas_py_blocked():
         "sys.meta_path.insert(0, Block())\n"
         "import roaddraft.commands.design_schemas as ds\n"
         "assert 'roaddraft.commands.schemas' not in sys.modules, 'cycle'\n"
-        "assert len(ds.DESIGN_SCHEMAS) == 9 and len(ds.DESIGN_EXAMPLES) == 9\n"
+        "assert len(ds.DESIGN_SCHEMAS) == 10 and len(ds.DESIGN_EXAMPLES) == 10\n"
         "print('blocked-ok')\n")
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"

@@ -99,6 +99,19 @@ def _parse_offset(text: str, original) -> float:
     return value
 
 
+def parse_offset(value) -> float:
+    """``12`` / ``-12`` / ``"12L"`` / ``"12R"`` -> signed feet, right positive.
+
+    The form a drafter says out loud ("twelve feet left") reaches the engine as
+    ``"12L"``; a bare number is already signed.
+    """
+    if isinstance(value, bool):
+        raise _cannot(value, "an offset is a number or a string like '12L'")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return _parse_offset(value, value)
+
+
 def _parse_ref_text(text: str, original) -> AnchorRef:
     t = str(text).strip().upper()
     if not t:
@@ -333,5 +346,5 @@ def list_anchors(alignment: Alignment) -> List[AnchorPoint]:
     return [resolve_anchor(alignment, parse_anchor(r)) for r in refs]
 
 
-__all__ = ["AnchorRef", "AnchorPoint", "GRAMMAR_HINT", "parse_anchor", "infer_kind",
-           "resolve_anchor", "resolve_record", "list_anchors"]
+__all__ = ["AnchorRef", "AnchorPoint", "GRAMMAR_HINT", "parse_anchor", "parse_offset",
+           "infer_kind", "resolve_anchor", "resolve_record", "list_anchors"]

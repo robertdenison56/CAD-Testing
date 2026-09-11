@@ -32,6 +32,7 @@ REPL_ALIASES = {
     "curvetable": "place_curve_table", "landxmlin": "import_landxml",
     "sta2xy": "station_to_xy", "xy2sta": "xy_to_station",
     "design": "get_design_data", "anchor": "resolve_anchor",
+    "offset": "draw_offset", "edge": "draw_offset",
     # annotation scales
     "annoscale": "set_annotation_scale", "annoadd": "add_annotation_scale",
     "annodel": "delete_annotation_scale", "annopaper": "set_annotation_defaults",
@@ -76,6 +77,7 @@ VARIADIC = {  # commands whose positional args collect into one list param
     "annotate_stationing": "path_ids",
     "create_alignment": "pis",
     "create_profile": "pvis",
+    "draw_offset": "offsets",
 }
 
 FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param

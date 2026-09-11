@@ -19,7 +19,7 @@ from roaddraft.commands.handlers import (
 )
 from roaddraft.core import geometry as geo
 from roaddraft.core.units import parse_station
-from roaddraft.design.anchors import infer_kind, parse_anchor, resolve_anchor
+from roaddraft.design.anchors import infer_kind, parse_anchor, parse_offset, resolve_anchor
 from roaddraft.design.errors import DesignError
 from roaddraft.design.horizontal import (
     PI, Alignment, TangentElement, alignment_from_elements, compile_pis, elements_from_dicts,
@@ -28,6 +28,7 @@ from roaddraft.design.labels import (
     MODEL_TEXT_HEIGHT, SHEET_LABEL_OFFSET, SHEET_TEXT_HEIGHT, TickSpec, compile_label,
     curve_table_rows, sheet_pose, stationing_plan,
 )
+from roaddraft.design.offsets import offset_pieces
 from roaddraft.design.stations import StationSystem, build_equations
 from roaddraft.design.vertical import PVI, Profile
 from roaddraft.document import annotation as anno
@@ -46,6 +47,12 @@ def _fault(e: DesignError) -> CommandFault:
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _offset_text(value: float) -> str:
+    """``-12.0 -> "12.00' LT"`` -- the way a drafter reads an offset back."""
+    side = "RT" if value > 0 else ("LT" if value < 0 else "ON")
+    return f"{abs(value):.2f}' {side}"
 
 
 def _alignment(doc: Document, p: dict, key: str = "alignment") -> Alignment:
@@ -322,6 +329,69 @@ def draw_alignment(doc: Document, p: dict):
         created.append(e.id)
     return (f"{align.name} drawn on {common['layer']}: {_plural(n_lines, 'line')}, "
             f"{_plural(n_arcs, 'arc')}", _diff(created=created, deleted=deleted), warnings)
+
+
+def draw_offset(doc: Document, p: dict):
+    """Draw constant offsets of an alignment: pavement edges, shoulders, ROW."""
+    align = _alignment(doc, p)
+    common = _entity_common(doc, p)
+    warnings: List[str] = []
+    offsets: List[float] = []
+    for raw in p["offsets"]:
+        try:
+            value = parse_offset(raw)
+        except DesignError as e:
+            raise _fault(e)
+        if any(abs(value - seen) < 1e-9 for seen in offsets):
+            warnings.append(f"offset {_offset_text(value)} given twice; drawn once")
+            continue
+        offsets.append(value)
+
+    chains = []
+    for value in offsets:
+        try:
+            chains.append((value, offset_pieces(align, value)))
+        except DesignError as e:
+            raise _fault(e)
+
+    deleted: List[str] = []
+    for value, _pieces in chains:
+        existing = [eid for eid, e in doc.model_entities.items()
+                    if e.anchor and e.anchor.get("alignment") == align.name
+                    and e.anchor.get("kind") == "offset"
+                    and abs(float(e.anchor.get("offset") or 0.0) - value) < 1e-9]
+        if not existing:
+            continue
+        if p.get("replace"):
+            for eid in existing:
+                del doc.model_entities[eid]
+            deleted += existing
+        else:
+            warnings.append(f"offset {_offset_text(value)} of {align.name} already drawn "
+                            f"({', '.join(existing)}); pass replace=true to redraw")
+
+    created: List[str] = []
+    n_lines = n_arcs = 0
+    for value, pieces in chains:
+        for piece in pieces:
+            anchor = {"alignment": align.name, "ref": piece.ref, "kind": "offset",
+                      "station": piece.station, "offset": piece.offset}
+            if piece.kind == "tangent":
+                _, e = _add(doc, "model", "line", Line, {
+                    **common, "start": list(piece.start), "end": list(piece.end),
+                    "anchor": anchor})
+                n_lines += 1
+            else:
+                _, e = _add(doc, "model", "arc", Arc, {
+                    **common, "center": list(piece.center), "radius": float(piece.radius),
+                    "start_angle_deg": piece.start_angle_deg,
+                    "end_angle_deg": piece.end_angle_deg, "anchor": anchor})
+                n_arcs += 1
+            created.append(e.id)
+    text = ", ".join(_offset_text(v) for v, _ in chains)
+    return (f"{align.name} offset {text} drawn on {common['layer']}: "
+            f"{_plural(n_lines, 'line')}, {_plural(n_arcs, 'arc')}",
+            _diff(created=created, deleted=deleted), warnings)
 
 
 # ----------------------------------------------------------------- labels

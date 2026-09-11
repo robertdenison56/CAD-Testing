@@ -169,6 +169,15 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   an anchor bolted onto hand-placed text carries no provenance while a real
   label survives a rename, a move or a layer fix. A verifier can then tell
   drafted work from decorated work.
+- **Constant offsets** (`draw_offset offsets=[-12, 12]`) draw pavement edges,
+  shoulders and right of way as anchored lines and arcs. Offsets are feet, right
+  of the direction of stationing positive (`"12L"` says the side out loud), so a
+  24 ft pavement is `[-12, 12]`. The offset is exact, not a polyline
+  approximation: tangents shift sideways keeping direction and length, curves
+  keep their center and change radius (`R + offset × sign`, so a 800 ft left
+  curve offsets to 812 ft outside / 788 ft inside), and because the radial
+  lines at the PC and PT are shared the pieces meet end to end with no fillet.
+  An offset that reaches the center of a curve is a teaching error.
 - **Alignment-mode stationing** (`annotate_stationing alignment=NAME`) walks
   the true stations through the equations, so ticks and labels are anchored
   and equation-aware; the original entity-chain mode is unchanged.

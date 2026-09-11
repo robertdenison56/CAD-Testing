@@ -30,8 +30,8 @@ UNDO_LIMIT = 100
 # verifier trusts. The bus stamps anchor.placed_by on the entities a command
 # creates (_stamp_provenance), which makes provenance the bus's to write
 # rather than the handler's or the caller's.
-ANCHOR_PRODUCERS = ("draw_alignment", "annotate_stationing", "place_label",
-                    "place_curve_table")
+ANCHOR_PRODUCERS = ("draw_alignment", "draw_offset", "annotate_stationing",
+                    "place_label", "place_curve_table")
 
 
 @dataclass
@@ -153,6 +153,16 @@ REGISTRY: List[CommandSpec] = [
                 "entities in model space (replace=true redraws).",
                 dh.draw_alignment,
                 {"c3d": ["ALIGNMENTTOPOLYLINE"], "ord": ["alignment export geometry"]}),
+    CommandSpec("draw_offset",
+                "Draw constant offsets of an alignment as anchored lines and arcs: "
+                "pavement edges, shoulders, right of way. Offsets are feet, right of "
+                "the direction of stationing positive ('12L' says the side out loud), "
+                "so a 24 ft pavement is offsets [-12, 12]. Tangents shift sideways; "
+                "curves keep their center and change radius, so the chain meets end to "
+                "end exactly.",
+                dh.draw_offset,
+                {"c3d": ["CREATEOFFSETALIGNMENT", "OFFSET"],
+                 "ord": ["single offset entire element", "offset element"]}),
     CommandSpec("place_label",
                 "Place a design-anchored label: name a point on an alignment "
                 "(PC-1, T-2, '18+00@25L', ...) and a kind (station, pc, pt, pi, "

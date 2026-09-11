@@ -31,11 +31,13 @@ def anchor_of(s: Session, r: dict, n: int = 0) -> dict:
     return e.anchor
 
 
-def test_the_four_producers_stamp_their_own_name():
+def test_every_producer_stamps_its_own_name():
     s = design_session()
     stamps = {}
     r = s.execute("draw_alignment", {"alignment": "ALIGN-1", "layer": "V-ANNO-TEXT"})
     stamps["draw_alignment"] = anchor_of(s, r)["placed_by"]
+    r = s.execute("draw_offset", {"alignment": "ALIGN-1", "offsets": [-12, 12]})
+    stamps["draw_offset"] = anchor_of(s, r)["placed_by"]
     r = s.execute("place_label", {"space": "model", "anchor": "PC-1"})
     stamps["place_label"] = anchor_of(s, r)["placed_by"]
     r = s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1",
