@@ -98,9 +98,17 @@ SCHEMAS = {
         ["space", "position", "content", "height"]),
     "place_callout": obj(
         {**_ENTITY_COMMON,
-         "target": {**POINT, "description": "the point the leader points at -- a point "
-                                            "on the thing being called out (hit_test "
-                                            "finds it, including through a reference)"},
+         "target": {**POINT, "description": "an explicit point for the leader to point "
+                                            "at; prefer target_entity, which cannot "
+                                            "miss"},
+         "target_entity": {**NSTR,
+                           "description": "what to point at, by id (find_entities and "
+                                          "hit_test return them; reference elements are "
+                                          "'DESIGN:LN-004'). The engine computes a point "
+                                          "on it, so a curve is aimed at correctly. Give "
+                                          "exactly one of target / target_entity."},
+         "at": {"description": "where along target_entity: start|mid|end or a fraction "
+                               "0-1 (default mid)"},
          "position": {**POINT, "description": "where the text sits, clear of the geometry"},
          "content": NSTR,
          "height": {**POS, "description": "text height in space units (feet in model, "
@@ -112,7 +120,7 @@ SCHEMAS = {
          "arrow": {"type": "boolean", "description": "arrowhead at the target (default true)"},
          "arrow_size": {**POS, "description": "arrowhead length (default: the text height)"},
          "style": NSTR},
-        ["space", "target", "position", "content"]),
+        ["space", "position", "content"]),
     "insert_block": obj(
         {**_ENTITY_COMMON, "block_name": NSTR, "position": POINT,
          "scale": POS, "rotation_deg": NUM},
@@ -305,7 +313,7 @@ EXAMPLES = {
     "draw_arc": {"space": "model", "center": [1600.0, 1800.0], "radius": 800.0,
                  "start_angle_deg": -90.0, "end_angle_deg": -60.0},
     "draw_circle": {"space": "model", "center": [1250.0, 980.0], "radius": 24.0},
-    "place_callout": {"space": "model", "target": [1300.0, 988.0],
+    "place_callout": {"space": "model", "target_entity": "DESIGN:LN-004", "at": "mid",
                       "position": [1200.0, 900.0], "content": "EP 12' RT",
                       "layer": "V-ANNO-TEXT"},
     "place_text": {"space": "SH-001", "position": [17.0, 20.5],

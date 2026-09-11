@@ -211,7 +211,22 @@ class RoadDraftMCP:
                     "each one validates its params and explains what was wrong, every "
                     "change is journaled and undoable. Start with get_document_state "
                     "to see what is in the document, list_commands for the full "
-                    "surface, and render_sheet or render_model to look at your work.")}
+                    "surface, and render_sheet or render_model to look at your work."
+                    "\n\n"
+                    "To annotate something, find it before you point at it. In a sheet "
+                    "file the design usually lives in a referenced basefile, so the "
+                    "document owns no geometry of its own; find_entities searches the "
+                    "attachments too. Filter by what a thing IS -- layer, type, or its "
+                    "design anchor -- rather than dumping the document: "
+                    "find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, "
+                    "visible_on: 'C-102'} is the pavement edges that sheet shows. Then "
+                    "pass the id straight to place_callout as target_entity, and the "
+                    "engine puts the leader tip on the geometry. Do not compute the "
+                    "point yourself: the midpoint of a curve's endpoints is not on the "
+                    "curve, and roadway linework runs parallel a few feet apart, so a "
+                    "hand-computed point usually lands on the wrong line rather than on "
+                    "nothing. If you do pass a raw target point, read the warning that "
+                    "comes back -- it names what the tip actually touched.")}
 
     def serve(self, stdin=None, stdout=None) -> None:
         """Read newline-delimited JSON-RPC from stdin until EOF."""

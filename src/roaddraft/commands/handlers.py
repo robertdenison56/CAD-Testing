@@ -339,9 +339,34 @@ def place_callout(doc: Document, p: dict):
     geometry that has no design model of its own, including geometry seen
     through a reference."""
     from roaddraft.design.labels import MODEL_TEXT_HEIGHT, SHEET_TEXT_HEIGHT
+    from roaddraft.document.locate import nearest_entity, point_at, resolve_entity
 
     space_key, _container = _space(doc, p["space"])
-    target = as_point(p["target"])
+    warnings: List[str] = []
+    if ("target" in p) == ("target_entity" in p):
+        raise CommandFault(
+            "give exactly one of target (a point) or target_entity (what to point at)",
+            hint="target_entity is the reliable one: name the entity and the engine "
+                 "computes a point on it, curves included. find_entities and hit_test "
+                 "return the ids.")
+    if "target_entity" in p:
+        eid = p["target_entity"]
+        found = resolve_entity(doc, eid)
+        if found is None:
+            raise CommandFault(f"no entity {eid!r} to point at",
+                               hint="find_entities and hit_test return ids; elements of "
+                                    "an attached reference are 'REFNAME:ID'")
+        entity, owner, _ref, entity_space = found
+        if entity_space != space_key:
+            raise CommandFault(
+                f"{eid} is in {entity_space}, but the callout goes in {space_key}",
+                hint=f"place the callout in {entity_space}, or point at something there")
+        try:
+            target, _direction = point_at(owner, entity, p.get("at", "mid"))
+        except ValueError as ex:
+            raise CommandFault(str(ex), hint="at is start|mid|end or a fraction 0-1")
+    else:
+        target = as_point(p["target"])
     position = as_point(p["position"])
     if space_key == "model":
         sizes = anno.size_defaults(doc)
@@ -364,6 +389,25 @@ def place_callout(doc: Document, p: dict):
             [position[0] + landing, position[1]]
     halign = "left" if from_left else "right"
 
+    if "target" in p:
+        # A point typed by hand can miss, and roadway linework runs parallel 8 to
+        # 12 ft apart, so a miss usually lands on the *wrong* line rather than on
+        # nothing. Report what the tip actually touched either way.
+        nearest = nearest_entity(doc, space_key, target)
+        reach = max(height, arrow_size)
+        if nearest is None:
+            warnings.append(f"nothing in {_space_label(doc, space_key)} to point at")
+        elif nearest[1] > reach:
+            warnings.append(
+                f"the leader points at empty space: the nearest entity {nearest[0]} is "
+                f"{nearest[1]:.2f} away from [{target[0]:.2f}, {target[1]:.2f}] "
+                f"(within {reach:.2f} counts as on it); pass target_entity to aim at "
+                f"something exactly")
+        else:
+            warnings.append(
+                f"the leader tip lands on {_describe_target(doc, nearest[0])}; pass "
+                f"target_entity instead of a point if that is not what you meant")
+
     created: List[str] = []
     _, leader = _add(doc, space_key, "line", Line, {
         **common, "start": list(target), "end": elbow})
@@ -382,10 +426,29 @@ def place_callout(doc: Document, p: dict):
         "annotative": anno.text_record(doc, height) if space_key == "model" else None})
     created.append(text.id)
 
-    warnings = _annotation_warnings(doc, space_key, text)
+    warnings += _annotation_warnings(doc, space_key, text)
     preview = p["content"] if len(p["content"]) <= 40 else p["content"][:37] + "..."
     return (f"callout {text.id} ({preview!r}) placed in {_space_label(doc, space_key)}",
             _diff(created=created), warnings)
+
+
+def _describe_target(doc: Document, eid: str) -> str:
+    """What a leader tip actually touched, in the terms the plan uses."""
+    from roaddraft.document.locate import resolve_entity
+    found = resolve_entity(doc, eid)
+    if found is None:
+        return eid
+    entity = found[0]
+    parts = [f"{eid} ({entity.TYPE} on {entity.layer}"]
+    anchor = entity.anchor or {}
+    if anchor.get("alignment"):
+        offset = anchor.get("offset")
+        if isinstance(offset, (int, float)) and not isinstance(offset, bool) and offset:
+            parts.append(f", {abs(offset):.2f}' {'RT' if offset > 0 else 'LT'} of "
+                         f"{anchor['alignment']}")
+        else:
+            parts.append(f", {anchor.get('kind', 'part')} of {anchor['alignment']}")
+    return "".join(parts) + ")"
 
 
 def _arrow_head(tip, tail, size: float) -> List[List[float]]:

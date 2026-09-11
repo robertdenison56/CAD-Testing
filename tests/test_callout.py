@@ -159,6 +159,84 @@ def test_a_document_with_a_callout_survives_save_and_reload(tmp_path):
     assert text.valign == "middle" and text.content == "EP 12' RT"
 
 
+def test_aiming_by_entity_beats_aiming_by_hand_on_a_curve():
+    """target_entity is the fix for the trap: the engine puts the leader tip on
+    the arc, where averaging its endpoints would miss by the sagitta."""
+    from roaddraft.document.entities import entity_distance
+    s = model_session()
+    s.execute("create_alignment", {"name": "SR-100", "begin_station": "10+00",
+                                   "pis": A_PIS})
+    s.execute("draw_offset", {"offsets": [12], "layer": "V-ANNO-TEXT"})
+    arc = next(e for e in s.doc.model_entities.values() if e.TYPE == "arc")
+    r = s.execute("place_callout", {"space": "model", "target_entity": arc.id,
+                                    "at": "mid", "position": [2600.0, 700.0],
+                                    "content": "EP"})
+    assert r["ok"], r
+    leader = parts(s, r)[0]
+    assert entity_distance(s.doc, arc, leader.start) < 1e-6
+    assert not r["warnings"]
+    # start and end land on it too, and differ
+    tips = []
+    for where in ("start", "end"):
+        r = s.execute("place_callout", {"space": "model", "target_entity": arc.id,
+                                        "at": where, "position": [2600.0, 700.0],
+                                        "content": "EP"})
+        tip = parts(s, r)[0].start
+        assert entity_distance(s.doc, arc, tip) < 1e-6
+        tips.append(tip)
+    assert tips[0] != tips[1]
+
+
+def test_callout_needs_exactly_one_of_target_and_target_entity():
+    s = model_session()
+    r = s.execute("place_callout", {"space": "model", "position": [0, 0], "content": "A"})
+    assert not r["ok"] and "exactly one" in r["error"]["message"]
+    assert "target_entity" in r["error"]["hint"]
+    r = s.execute("place_callout", {"space": "model", "target": TARGET,
+                                    "target_entity": "LN-001", "position": [0, 0],
+                                    "content": "A"})
+    assert not r["ok"] and "exactly one" in r["error"]["message"]
+
+
+def test_callout_faults_on_an_id_that_is_not_there_or_in_another_space():
+    s = model_session()
+    s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"})
+    r = s.execute("place_callout", {"space": "model", "target_entity": "LN-404",
+                                    "position": [0, 0], "content": "A"})
+    assert not r["ok"] and "no entity 'LN-404'" in r["error"]["message"]
+    assert "REFNAME:ID" in r["error"]["hint"]
+    drawn = s.execute("draw_line", {"space": "C-101", "start": [1, 1], "end": [2, 2]})
+    r = s.execute("place_callout", {"space": "model",
+                                    "target_entity": drawn["created"][0],
+                                    "position": [0, 0], "content": "A"})
+    assert not r["ok"] and "but the callout goes in" in r["error"]["message"]
+
+
+def test_a_leader_into_empty_space_says_so():
+    """A hand-typed point that misses renders without complaint otherwise."""
+    s = model_session()
+    s.execute("create_alignment", {"name": "SR-100", "begin_station": "10+00",
+                                   "pis": A_PIS})
+    s.execute("draw_offset", {"offsets": [12], "layer": "V-ANNO-TEXT"})
+    # 88 ft below the edge, in a document that has nothing else in it yet
+    r = s.execute("place_callout", {"space": "model", "target": [1300.0, 900.0],
+                                    "position": [1450.0, 800.0], "content": "EP"})
+    assert r["ok"] and r["warnings"]
+    assert "points at empty space" in r["warnings"][0]
+    assert "88.00 away" in r["warnings"][0] and "target_entity" in r["warnings"][0]
+    # on the edge itself: it says what it landed on, so a wrong line is visible
+    r = s.execute("place_callout", {"space": "model", "target": [1300.0, 988.0],
+                                    "position": [1450.0, 900.0], "content": "EP"})
+    assert r["ok"] and "lands on" in r["warnings"][0]
+    assert "12.00' RT of SR-100" in r["warnings"][0]
+    # aiming by entity never trips it
+    edge = next(e for e in s.doc.model_entities.values()
+                if e.anchor and e.anchor.get("kind") == "offset")
+    r = s.execute("place_callout", {"space": "model", "target_entity": edge.id,
+                                    "position": [1450.0, 800.0], "content": "EP"})
+    assert r["ok"] and not r["warnings"]
+
+
 def test_callout_journal_replays(tmp_path):
     s = model_session(tmp_path)
     s.execute("place_callout", {"space": "model", "target": TARGET,

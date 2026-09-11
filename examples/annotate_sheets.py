@@ -11,14 +11,17 @@ step is awkward for a script it is awkward for a model too:
 
   1. open the sheet file            open_document
   2. what sheets are there          list_sheets
-  3. what does each one show        get_sheet_state -> viewport visible_model_bbox
-  4. what is in the reference       get_model_state include_references=true
+  3. which edges does each show     find_entities(anchor={kind, offset},
+                                                 visible_on=<sheet>)
      (the design lives in the basefile, so the host owns no geometry; the
       anchors travel through the attachment, so a pavement edge announces
       itself as kind "offset" at +/- 12 ft of SR-100)
-  5. call out one edge per sheet    place_callout
-  6. fill every title block         fill_title_block
-  7. look at the result             render_sheet
+  4. call one out                   place_callout(target_entity=..., at="mid")
+     (naming the entity rather than a point: the engine puts the leader tip
+      on the geometry, which matters on a curve, where the midpoint of the
+      endpoints is 15.5 ft off the arc)
+  5. fill every title block         fill_title_block
+  6. look at the result             render_sheet
 
 Run:  python examples/make_sheet_project.py && python examples/annotate_sheets.py
 """
@@ -50,17 +53,6 @@ def check(result: dict) -> dict:
     return result
 
 
-def midpoint(entity: dict):
-    if entity["type"] == "line":
-        s, e = entity["start"], entity["end"]
-        return [(s[0] + e[0]) / 2.0, (s[1] + e[1]) / 2.0]
-    return None
-
-
-def inside(point, bbox) -> bool:
-    return bbox[0] <= point[0] <= bbox[2] and bbox[1] <= point[1] <= bbox[3]
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default=str(OUT))
@@ -76,47 +68,36 @@ def main(argv=None):
     print(f"opened {path.name}: {len(sheets)} sheets, "
           f"{len(s.doc.model_entities)} entities of its own")
 
-    # 4. the design is referenced, so ask the attachment what it shows
-    state = check(s.query("get_model_state", {"include_references": True}))
-    edges = [e for e in state["entities"]
-             if e.get("anchor", {}).get("kind") == "offset"
-             and abs(e["anchor"]["offset"]) == EDGE_OFFSET]
-    print(f"reference shows {state['count']} entities, "
-          f"{len(edges)} of them pavement edge at +/-{EDGE_OFFSET:g} ft")
-
     if CALLOUT_LAYER not in s.doc.layers:
         check(s.execute("create_layer", {"name": CALLOUT_LAYER, "color": "black"}))
 
     placed = 0
     for sheet in sheets:
-        # 3. what stretch of model does this sheet show?
-        detail = check(s.query("get_sheet_state", {"sheet": sheet["name"]}))["sheet"]
-        window = detail["viewports"][0]["visible_model_bbox"]
-
-        # 5. call out the first edge whose midpoint falls in this sheet's window
-        for edge in edges:
-            target = midpoint(edge)
-            if target is None or not inside(target, window):
-                continue
+        # 3. the design is referenced, so ask for the edges this sheet shows.
+        # One call: the filter and the viewport window are the engine's job.
+        found = check(s.query("find_entities", {
+            "anchor": {"kind": "offset", "offset": [-EDGE_OFFSET, EDGE_OFFSET]},
+            "visible_on": sheet["name"], "limit": 1}))
+        if not found["entities"]:
+            print(f"  {sheet['name']}: no pavement edge in view")
+        else:
+            edge = found["entities"][0]
             anchor = edge["anchor"]
             side = "RT" if anchor["offset"] > 0 else "LT"
-            # put the text clear of the pavement, on the same side as the edge
+            # 4. name the entity; the engine puts the leader tip on it
             drop = 120.0 if anchor["offset"] > 0 else -120.0
             check(s.execute("place_callout", {
-                "space": "model", "target": target,
-                "position": [target[0] + 150.0, target[1] - drop],
+                "space": "model", "target_entity": edge["id"], "at": "mid",
+                "position": [edge["point"][0] + 150.0, edge["point"][1] - drop],
                 "content": f"EDGE OF PAVEMENT {abs(anchor['offset']):.0f}' {side} "
                            f"OF {anchor['alignment']}",
                 "layer": CALLOUT_LAYER}))
             print(f"  {sheet['name']}: callout on {edge['id']} "
-                  f"({anchor['ref']}, {abs(anchor['offset']):.0f}' {side}) at "
-                  f"[{target[0]:,.1f}, {target[1]:,.1f}]")
+                  f"({edge['type']}, {anchor['ref']}, {abs(anchor['offset']):.0f}' "
+                  f"{side}) of {found['total']} edges in view")
             placed += 1
-            break
-        else:
-            print(f"  {sheet['name']}: no pavement edge midpoint in view")
 
-        # 6. and its title block
+        # 5. and its title block
         check(s.execute("fill_title_block", {
             "sheet": sheet["name"],
             "fields": {**TITLE_BLOCK, "sheet_title": f"ROADWAY PLAN {sheet['name']}"}}))

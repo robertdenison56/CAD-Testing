@@ -36,6 +36,31 @@ BOUNDS = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems
 BOOL = {"type": "boolean"}
 DPI = {"type": "number", "minimum": 30, "maximum": 600}
 
+def _as_set(value):
+    """``None`` -> no filter; a scalar or list -> a set of allowed values."""
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple, set)):
+        return {v for v in value}
+    return {value}
+
+
+def _anchor_matches(anchor, wanted: dict) -> bool:
+    """Every named anchor field must match one of the values asked for."""
+    if not anchor:
+        return False
+    for key, value in wanted.items():
+        allowed = _as_set(value)
+        actual = anchor.get(key)
+        if isinstance(actual, (int, float)) and not isinstance(actual, bool):
+            if not any(isinstance(a, (int, float)) and not isinstance(a, bool)
+                       and abs(float(a) - float(actual)) < 1e-9 for a in allowed):
+                return False
+        elif actual not in allowed:
+            return False
+    return True
+
+
 QUERIES = {
     "get_document_state": {
         "description": "Document state. detail='summary' (default) for counts and "
@@ -54,6 +79,58 @@ QUERIES = {
         "schema": obj({"bounds": BOUNDS,
                        "include_references": {"type": "boolean"}}),
         "example": {"include_references": True},
+    },
+    "find_entities": {
+        "description": "Find entities by what they are rather than where they are: "
+                       "layer, type, anchor (alignment / kind / ref / offset), text "
+                       "content, a bounding box, or what a given sheet shows. Any "
+                       "filter takes one value or a list of values (match any). "
+                       "Searches attached references too, so it is how to locate "
+                       "geometry in a sheet file whose design is referenced in. Each "
+                       "row carries a point that is ON the entity, ready to pass to "
+                       "place_callout as target_entity or target.",
+        "schema": obj({
+            "space": {**NSTR, "description": "space to search (default 'model')"},
+            "layer": {"description": "layer name, or a list of them"},
+            "type": {"description": "line|polyline|arc|circle|text|blockref|table, "
+                                    "or a list"},
+            "anchor": {"type": "object",
+                       "description": "match the design anchor: any of alignment, "
+                                      "kind (element|offset|station|tick|pc|pt|...), "
+                                      "ref, offset. Each takes one value or a list, "
+                                      "so {kind: 'offset', offset: [-12, 12]} finds "
+                                      "both pavement edges."},
+            "content_contains": {**NSTR,
+                                 "description": "text entities whose content contains "
+                                                "this (case-insensitive)"},
+            "bounds": BOUNDS,
+            "visible_on": {**NSTR,
+                           "description": "sheet name: keep only model entities inside "
+                                          "what that sheet's viewports show"},
+            "include_references": {"type": "boolean",
+                                   "description": "search attachments too (default true)"},
+            "detail": {"type": "string", "enum": ["summary", "full"],
+                       "description": "summary (default) is id, type, layer, a point on "
+                                      "the entity, its length and anchor; full adds the "
+                                      "whole entity"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 500,
+                      "description": "rows to return (default 50)"},
+            "start": {"type": "integer", "minimum": 0,
+                      "description": "skip this many matches (paging)"},
+        }),
+        "example": {"anchor": {"kind": "offset", "offset": [-12, 12]},
+                    "visible_on": "C-102"},
+    },
+    "point_on_entity": {
+        "description": "A point that is genuinely ON an entity, and the direction it "
+                       "runs there: where='start'|'mid'|'end' or a fraction from 0 to 1. "
+                       "Use it instead of computing a point from an arc's center and "
+                       "angles -- the midpoint of a curve's endpoints is not on the "
+                       "curve. Works on reference elements ('DESIGN:AR-003').",
+        "schema": obj({"id": NSTR,
+                       "where": {"description": "start|mid|end, or a fraction 0-1"}},
+                      ["id"]),
+        "example": {"id": "DESIGN:AR-003", "where": "mid"},
     },
     "get_sheet_state": {
         "description": "One sheet: size, usable area, title block fields, "
@@ -325,6 +402,130 @@ class Session:
         for ref, base, prims in reference_groups(self.doc, space_key):
             found += [(prim, base, ref.name) for prim in prims]
         return found
+
+    def _q_find_entities(self, p):
+        from roaddraft.core import geometry as geo
+        from roaddraft.document.locate import entity_length, representative_point
+
+        space_ref = p.get("space", "model")
+        resolved = self.doc.resolve_space(space_ref)
+        if resolved is None:
+            raise _QueryFault(f"space {space_ref!r} not found",
+                              hint=f"valid spaces: {self.doc.space_refs()}")
+        space_key, own = resolved
+        candidates = [(e, self.doc, None) for e in own.values()]
+        if p.get("include_references", True):
+            candidates += self._reference_elements(space_key)
+
+        bounds = tuple(p["bounds"]) if "bounds" in p else None
+        if "visible_on" in p:
+            window = self._visible_window(p["visible_on"])
+            bounds = window if bounds is None else (
+                max(bounds[0], window[0]), max(bounds[1], window[1]),
+                min(bounds[2], window[2]), min(bounds[3], window[3]))
+
+        layers = _as_set(p.get("layer"))
+        types = _as_set(p.get("type"))
+        anchor_filter = p.get("anchor") or {}
+        contains = (p.get("content_contains") or "").lower()
+
+        matches = []
+        for entity, owner, ref in candidates:
+            if layers is not None and entity.layer not in layers:
+                continue
+            if types is not None and entity.TYPE not in types:
+                continue
+            if anchor_filter and not _anchor_matches(entity.anchor, anchor_filter):
+                continue
+            if contains:
+                content = getattr(entity, "content", None)
+                if not isinstance(content, str) or contains not in content.lower():
+                    continue
+            if bounds is not None:
+                bb = entity.bbox(owner)
+                if bb is None or not geo.bbox_intersects(bb, bounds):
+                    continue
+            matches.append((entity, owner, ref))
+
+        total = len(matches)
+        start = int(p.get("start", 0))
+        limit = int(p.get("limit", 50))
+        page = matches[start:start + limit]
+        full = p.get("detail") == "full"
+
+        rows = []
+        for entity, owner, ref in page:
+            eid = f"{ref}:{entity.id}" if ref else entity.id
+            row = {"id": eid, "type": entity.TYPE, "layer": entity.layer}
+            try:
+                row["point"] = [round(v, 4) for v in representative_point(owner, entity)]
+            except ValueError:
+                pass
+            length = entity_length(owner, entity)
+            if length is not None:
+                row["length"] = round(length, 4)
+            if entity.anchor:
+                row["anchor"] = dict(entity.anchor)
+            content = getattr(entity, "content", None)
+            if isinstance(content, str):
+                row["content"] = content if len(content) <= 60 else content[:57] + "..."
+            if ref:
+                row["reference"] = ref
+                row["read_only"] = True
+            if full:
+                row["entity"] = entity.to_dict()
+                row["bbox"] = entity.bbox(owner)
+            rows.append(row)
+
+        out = {"space": space_key, "total": total, "count": len(rows), "entities": rows}
+        if start + len(rows) < total:
+            out["more"] = {"start": start + len(rows), "remaining": total - start - len(rows)}
+        return out
+
+    def _visible_window(self, sheet_ref: str):
+        """The model region a sheet's viewports show (union)."""
+        sheet = self._sheet(sheet_ref)
+        boxes = [vp.transform().visible_model_bbox(vp.width_in, vp.height_in)
+                 for vp in sheet.viewports]
+        if not boxes:
+            raise _QueryFault(f"sheet {sheet.name} has no viewport",
+                              hint="create_viewport first, or drop visible_on")
+        from roaddraft.core import geometry as geo
+        window = boxes[0]
+        for box in boxes[1:]:
+            window = geo.bbox_union(window, box)
+        return window
+
+    def _q_point_on_entity(self, p):
+        from roaddraft.document.locate import entity_length, point_at
+        eid = p["id"]
+        found = self.doc.find_entity(eid)
+        if found is not None:
+            owner, entity = self.doc, found[1]
+            space_key, ref = found[0], None
+        else:
+            from roaddraft.document.locate import resolve_entity
+            element = resolve_entity(self.doc, eid)
+            if element is None:
+                raise _QueryFault(f"entity {eid!r} not found",
+                                  hint="find_entities and hit_test return ids; "
+                                       "reference elements are 'REFNAME:ID'")
+            entity, owner, ref, space_key = element
+        try:
+            point, direction = point_at(owner, entity, p.get("where", "mid"))
+        except ValueError as ex:
+            raise _QueryFault(str(ex), hint="where is start|mid|end or a fraction 0-1")
+        out = {"id": eid, "space": space_key, "type": entity.TYPE,
+               "where": p.get("where", "mid"),
+               "point": [round(v, 6) for v in point],
+               "direction_deg": None if direction is None else round(direction, 6)}
+        length = entity_length(owner, entity)
+        if length is not None:
+            out["length"] = round(length, 6)
+        if ref:
+            out["reference"] = ref
+            out["read_only"] = True
+        return out
 
     def _q_get_sheet_state(self, p):
         sheet = self._sheet(p["sheet"])

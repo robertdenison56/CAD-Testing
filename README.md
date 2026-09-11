@@ -169,15 +169,26 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   an anchor bolted onto hand-placed text carries no provenance while a real
   label survives a rename, a move or a layer fix. A verifier can then tell
   drafted work from decorated work.
-- **Callouts** (`place_callout target=[x,y] position=[x,y] content="..."`) place
-  an arrowhead, a leader, a shoulder and text as ordinary entities — the way a
-  drafter annotates geometry that has no design model of its own, including
-  geometry seen through a reference. `hit_test` finds the point to aim at and
-  `get_entity` reads it back in host coordinates; `get_model_state
-  include_references=true` lists everything the attachments show, read-only and
-  addressed `DESIGN:LN-004`, with the basefile's anchors intact — so a pavement
-  edge announces itself as `kind: "offset"` at ±12 ft of `SR-100` and the
-  callout can say so.
+- **Finding things** (`find_entities`) selects by what something *is* — layer,
+  type, design anchor, text content, a bounding box, or what a given sheet
+  shows — instead of dumping the document and filtering downstream:
+  `{anchor: {kind: "offset", offset: [-12, 12]}, visible_on: "C-102"}` is the
+  pavement edges that sheet displays. It searches attachments too, so it is how
+  to locate geometry in a sheet file whose design is referenced in, and the
+  basefile's anchors travel through, so a pavement edge announces itself as
+  ±12 ft of `SR-100`. Every row carries **a point that is on the entity**;
+  `point_on_entity` gives the same for `start`/`mid`/`end` or any fraction,
+  with the direction it runs there.
+- **Callouts** (`place_callout target_entity="DESIGN:AR-003" at="mid"`) place an
+  arrowhead, a leader, a shoulder and text as ordinary entities — the way a
+  drafter annotates geometry that has no design model of its own. Name the
+  entity and the engine computes the tip; that matters most on curves, where
+  the midpoint of an arc's endpoints sits 15.5 ft off the arc on the demo
+  alignment. A raw `target=[x,y]` still works, and the result says what the tip
+  actually landed on (`DESIGN:AR-007 (arc on V-ROAD-SHLD, 20.00' LT of
+  SR-100)`) — worth reading, because roadway linework runs parallel a few feet
+  apart, so a hand-computed point that misses usually lands on the *wrong* line
+  rather than on nothing.
 - **Constant offsets** (`draw_offset offsets=[-12, 12]`) draw pavement edges,
   shoulders and right of way as anchored lines and arcs. Offsets are feet, right
   of the direction of stationing positive (`"12L"` says the side out loud), so a
@@ -249,6 +260,33 @@ claude mcp add roaddraft-sheets -- /ABSOLUTE/PATH/TO/.venv/bin/roaddraft-mcp --d
 
 Protocol is newline-delimited JSON-RPC 2.0 on stdio, implemented on the
 standard library (the official MCP SDK needs Python 3.10 and this runs on 3.9).
+
+### Find-probes — can an agent locate the right thing?
+
+`roaddraft.probes` is a small set of capability probes for exactly the skill an
+agent needs before anything else: finding the object it was asked about and
+putting the work on it. Deliberately *not* the scored benchmark in
+`RoadDraft_Eval_Plan.md` — no rubric, no spec hash, no task ids.
+
+```bash
+python -m roaddraft.probes list
+python -m roaddraft.probes setup edge-curve-c102 --out /tmp/probe --force
+python -m roaddraft.probes score edge-curve-c102 --doc /tmp/probe/SR-100.sheets.rdoc.json
+```
+
+`setup` writes a fresh copy of the SR-100 project, prints the instruction to
+give the model and the `claude mcp add` line that points at it; `score` grades
+the document the model leaves behind. Scoring diffs against the untouched
+fixture and asks one question — did the work land within 1 ft of the thing it
+was supposed to land on — so a callout composed by hand out of `draw_line` and
+`place_text` scores exactly like one from `place_callout`. Aim is what is being
+measured, not vocabulary.
+
+`python -m roaddraft.probes selftest` runs a scripted solution for every probe
+and checks that the untouched project fails, which is what keeps the checks
+honest. One probe (`pc-by-station`) is marked blocked: a referenced alignment
+is invisible to `list_alignments` / `station_to_xy` / `resolve_anchor`, so
+there is no way to ask where the PC is from a sheet file.
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
