@@ -32,7 +32,7 @@ REPL_ALIASES = {
     "curvetable": "place_curve_table", "landxmlin": "import_landxml",
     "sta2xy": "station_to_xy", "xy2sta": "xy_to_station",
     "design": "get_design_data", "anchor": "resolve_anchor",
-    "offset": "draw_offset", "edge": "draw_offset",
+    "offset": "draw_offset", "edge": "draw_offset", "callout": "place_callout",
     # annotation scales
     "annoscale": "set_annotation_scale", "annoadd": "add_annotation_scale",
     "annodel": "delete_annotation_scale", "annopaper": "set_annotation_defaults",
@@ -86,6 +86,7 @@ FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param
 }
 
 SPATIAL = {"draw_line", "draw_polyline", "draw_arc", "draw_circle", "place_text",
+           "place_callout",
            "insert_block", "place_table", "annotate_stationing",
            "attach_reference", "place_label", "place_curve_table", "resolve_anchor"}
 

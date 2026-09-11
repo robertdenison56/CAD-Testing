@@ -96,6 +96,23 @@ SCHEMAS = {
                                           "(feet in model, inches on sheets)"},
          "style": NSTR, "rotation_deg": NUM, "halign": HALIGN, "valign": VALIGN},
         ["space", "position", "content", "height"]),
+    "place_callout": obj(
+        {**_ENTITY_COMMON,
+         "target": {**POINT, "description": "the point the leader points at -- a point "
+                                            "on the thing being called out (hit_test "
+                                            "finds it, including through a reference)"},
+         "position": {**POINT, "description": "where the text sits, clear of the geometry"},
+         "content": NSTR,
+         "height": {**POS, "description": "text height in space units (feet in model, "
+                                          "inches on sheets); defaults to the annotation "
+                                          "scale in model space, 0.10 in on a sheet"},
+         "landing": {"type": "number", "minimum": 0,
+                     "description": "horizontal shoulder at the text (default 2.5 x "
+                                    "height; 0 for none)"},
+         "arrow": {"type": "boolean", "description": "arrowhead at the target (default true)"},
+         "arrow_size": {**POS, "description": "arrowhead length (default: the text height)"},
+         "style": NSTR},
+        ["space", "target", "position", "content"]),
     "insert_block": obj(
         {**_ENTITY_COMMON, "block_name": NSTR, "position": POINT,
          "scale": POS, "rotation_deg": NUM},
@@ -288,6 +305,9 @@ EXAMPLES = {
     "draw_arc": {"space": "model", "center": [1600.0, 1800.0], "radius": 800.0,
                  "start_angle_deg": -90.0, "end_angle_deg": -60.0},
     "draw_circle": {"space": "model", "center": [1250.0, 980.0], "radius": 24.0},
+    "place_callout": {"space": "model", "target": [1300.0, 988.0],
+                      "position": [1200.0, 900.0], "content": "EP 12' RT",
+                      "layer": "V-ANNO-TEXT"},
     "place_text": {"space": "SH-001", "position": [17.0, 20.5],
                    "content": "ROADWAY PLAN", "height": 0.25, "halign": "center"},
     "insert_block": {"space": "SH-001", "block_name": "NORTH_ARROW",

@@ -334,6 +334,74 @@ def move_entities(doc: Document, p: dict):
             _diff(modified=moved), [])
 
 
+def place_callout(doc: Document, p: dict):
+    """Text with a leader pointing at something -- the way a drafter annotates
+    geometry that has no design model of its own, including geometry seen
+    through a reference."""
+    from roaddraft.design.labels import MODEL_TEXT_HEIGHT, SHEET_TEXT_HEIGHT
+
+    space_key, _container = _space(doc, p["space"])
+    target = as_point(p["target"])
+    position = as_point(p["position"])
+    if space_key == "model":
+        sizes = anno.size_defaults(doc)
+        height = float(p.get("height", sizes["text_height"] or MODEL_TEXT_HEIGHT))
+    else:
+        height = float(p.get("height", SHEET_TEXT_HEIGHT))
+    if height <= 0:
+        raise CommandFault(f"height must be positive, got {height}")
+    landing = float(p.get("landing", 2.5 * height))
+    if landing < 0:
+        raise CommandFault(f"landing must be zero or positive, got {landing}")
+    arrow_size = float(p.get("arrow_size", height))
+    style = _style(doc, p.get("style", doc.settings["current_text_style"]))
+    common = _entity_common(doc, p)
+
+    # The text sits away from the target: the landing runs from the text back
+    # toward it, so the callout reads left to right on either side.
+    from_left = target[0] <= position[0]
+    elbow = [position[0] - landing, position[1]] if from_left else \
+            [position[0] + landing, position[1]]
+    halign = "left" if from_left else "right"
+
+    created: List[str] = []
+    _, leader = _add(doc, space_key, "line", Line, {
+        **common, "start": list(target), "end": elbow})
+    created.append(leader.id)
+    if landing > 0:
+        _, shoulder = _add(doc, space_key, "line", Line, {
+            **common, "start": elbow, "end": list(position)})
+        created.append(shoulder.id)
+    if p.get("arrow", True) and arrow_size > 0:
+        _, head = _add(doc, space_key, "polyline", Polyline, {
+            **common, "vertices": _arrow_head(target, elbow, arrow_size), "closed": True})
+        created.append(head.id)
+    _, text = _add(doc, space_key, "text", Text, {
+        **common, "position": list(position), "content": p["content"], "height": height,
+        "style": style, "rotation_deg": 0.0, "halign": halign, "valign": "center",
+        "annotative": anno.text_record(doc, height) if space_key == "model" else None})
+    created.append(text.id)
+
+    warnings = _annotation_warnings(doc, space_key, text)
+    preview = p["content"] if len(p["content"]) <= 40 else p["content"][:37] + "..."
+    return (f"callout {text.id} ({preview!r}) placed in {_space_label(doc, space_key)}",
+            _diff(created=created), warnings)
+
+
+def _arrow_head(tip, tail, size: float) -> List[List[float]]:
+    """A closed triangle at ``tip``, pointing away from ``tail``."""
+    dx, dy = tip[0] - tail[0], tip[1] - tail[1]
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        ux, uy = 1.0, 0.0
+    else:
+        ux, uy = dx / length, dy / length
+    base = [tip[0] - ux * size, tip[1] - uy * size]
+    half = size * 0.18
+    return [list(tip), [base[0] - uy * half, base[1] + ux * half],
+            [base[0] + uy * half, base[1] - ux * half]]
+
+
 def modify_entity(doc: Document, p: dict):
     eid = p["id"]
     changes = p["changes"]

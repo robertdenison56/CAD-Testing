@@ -169,6 +169,15 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   an anchor bolted onto hand-placed text carries no provenance while a real
   label survives a rename, a move or a layer fix. A verifier can then tell
   drafted work from decorated work.
+- **Callouts** (`place_callout target=[x,y] position=[x,y] content="..."`) place
+  an arrowhead, a leader, a shoulder and text as ordinary entities — the way a
+  drafter annotates geometry that has no design model of its own, including
+  geometry seen through a reference. `hit_test` finds the point to aim at and
+  `get_entity` reads it back in host coordinates; `get_model_state
+  include_references=true` lists everything the attachments show, read-only and
+  addressed `DESIGN:LN-004`, with the basefile's anchors intact — so a pavement
+  edge announces itself as `kind: "offset"` at ±12 ft of `SR-100` and the
+  callout can say so.
 - **Constant offsets** (`draw_offset offsets=[-12, 12]`) draw pavement edges,
   shoulders and right of way as anchored lines and arcs. Offsets are feet, right
   of the direction of stationing positive (`"12L"` says the side out loud), so a

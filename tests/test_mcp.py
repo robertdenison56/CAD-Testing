@@ -180,9 +180,11 @@ def test_only_and_exclude_trim_the_surface():
 
 def test_tool_definitions_filter_is_reusable_for_a_whitelist():
     session = Session()
-    assert len(tool_definitions(session)) == 70
+    manifest = session.manifest()
+    total = len(manifest["commands"]) + len(manifest["queries"]) + 1  # + open_document
+    assert len(tool_definitions(session)) == total
     assert len(tool_definitions(session, only=["draw_line"])) == 1
-    assert len(tool_definitions(session, exclude=["draw_line"])) == 69
+    assert len(tool_definitions(session, exclude=["draw_line"])) == total - 1
 
 
 def test_serve_reads_newline_delimited_json_and_survives_bad_input():

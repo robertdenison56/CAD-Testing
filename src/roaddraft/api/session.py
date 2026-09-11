@@ -46,9 +46,14 @@ QUERIES = {
     },
     "get_model_state": {
         "description": "All model-space entities as JSON, optionally filtered to "
-                       "a bounding box (feet).",
-        "schema": obj({"bounds": BOUNDS}),
-        "example": {},
+                       "a bounding box (feet). include_references=true also lists "
+                       "what the attachments show, read-only, in host coordinates "
+                       "and addressed 'REFNAME:ID' -- which is how to find "
+                       "geometry to annotate in a sheet file whose design is "
+                       "referenced in.",
+        "schema": obj({"bounds": BOUNDS,
+                       "include_references": {"type": "boolean"}}),
+        "example": {"include_references": True},
     },
     "get_sheet_state": {
         "description": "One sheet: size, usable area, title block fields, "
@@ -294,14 +299,32 @@ class Session:
 
     def _q_get_model_state(self, p):
         from roaddraft.core import geometry as geo
-        entities = list(self.doc.model_entities.values())
+        entities = [(e, self.doc, None) for e in self.doc.model_entities.values()]
+        if p.get("include_references"):
+            entities += self._reference_elements("model")
         if "bounds" in p:
             b = tuple(p["bounds"])
-            entities = [e for e in entities
-                        if e.bbox(self.doc) is not None
-                        and geo.bbox_intersects(e.bbox(self.doc), b)]
-        return {"count": len(entities),
-                "entities": [e.to_dict() for e in entities]}
+            entities = [(e, owner, ref) for e, owner, ref in entities
+                        if e.bbox(owner) is not None
+                        and geo.bbox_intersects(e.bbox(owner), b)]
+        out = []
+        for entity, _owner, ref in entities:
+            d = entity.to_dict()
+            if ref is not None:
+                d["id"] = f"{ref}:{d['id']}"
+                d["reference"] = ref
+                d["read_only"] = True
+            out.append(d)
+        return {"count": len(out), "entities": out}
+
+    def _reference_elements(self, space_key: str):
+        """``[(primitive, basefile, reference name)]`` for everything the
+        attachments in ``space_key`` display, in host coordinates."""
+        from roaddraft.document.references import reference_groups
+        found = []
+        for ref, base, prims in reference_groups(self.doc, space_key):
+            found += [(prim, base, ref.name) for prim in prims]
+        return found
 
     def _q_get_sheet_state(self, p):
         sheet = self._sheet(p["sheet"])

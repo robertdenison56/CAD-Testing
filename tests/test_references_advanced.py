@@ -425,3 +425,41 @@ def test_attach_sheet_model_of_basefile(tmp_path):
     doc_path = tmp_path / "host.rdoc.json"
     s.query("save_document", {"path": str(doc_path)})
     assert Session.load(doc_path).doc.to_dict() == s.doc.to_dict()
+
+
+def test_get_model_state_can_list_what_a_reference_shows(tmp_path):
+    """Annotating a sheet file means finding geometry that lives in the
+    basefile; hit_test probes one point, this enumerates the lot."""
+    base = Session(project_name="design", out_dir=tmp_path)
+    base.execute("create_alignment", {"name": "SR-100", "begin_station": "10+00",
+                                      "pis": [[1000, 1000], [1814.359354, 1000, 800],
+                                              [2433.012702, 1357.179677]]})
+    base.execute("draw_offset", {"offsets": [-12, 12]})
+    base_path = tmp_path / "design.rdoc.json"
+    base.query("save_document", {"path": str(base_path)})
+
+    host = Session(project_name="plans", out_dir=tmp_path)
+    host.query("save_document", {"path": str(tmp_path / "plans.rdoc.json")})
+    assert host.execute("attach_reference", {"name": "DESIGN", "space": "model",
+                                             "path": "design.rdoc.json"})["ok"]
+
+    plain = host.query("get_model_state", {})
+    assert plain["count"] == 0            # the host owns nothing of its own
+
+    r = host.query("get_model_state", {"include_references": True})
+    assert r["count"] == 6
+    ids = [e["id"] for e in r["entities"]]
+    assert all(i.startswith("DESIGN:") for i in ids)
+    assert all(e["read_only"] is True and e["reference"] == "DESIGN"
+               for e in r["entities"])
+    # the anchors travel through, so an agent can tell what each piece is
+    edges = [e for e in r["entities"] if e["anchor"]["kind"] == "offset"]
+    assert len(edges) == 6
+    assert {e["anchor"]["offset"] for e in edges} == {-12.0, 12.0}
+    # and the ids read back through get_entity in host coordinates
+    assert host.query("get_entity", {"id": ids[0]})["read_only"] is True
+
+    # bounds filter the referenced geometry too
+    near = host.query("get_model_state", {"include_references": True,
+                                          "bounds": [990, 980, 1100, 1020]})
+    assert 0 < near["count"] < 6

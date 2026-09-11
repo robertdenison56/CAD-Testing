@@ -83,6 +83,16 @@ REGISTRY: List[CommandSpec] = [
                 "Place a text annotation. Height is in space units: feet in model "
                 "space, inches on sheets. Supports \\n for multi-line.",
                 h.place_text, {"c3d": ["TEXT", "MTEXT"], "ord": ["place text"]}),
+    CommandSpec("place_callout",
+                "Text with a leader pointing at something: the way a drafter annotates "
+                "geometry that carries no design model of its own -- a pavement edge, a "
+                "utility, anything seen through a reference. hit_test finds the point to "
+                "aim at (referenced entities included) and get_entity reads it back in "
+                "host coordinates. Leader, landing, arrowhead and text are drawn as "
+                "ordinary entities on the current or given layer.",
+                h.place_callout,
+                {"c3d": ["MLEADER", "QLEADER", "LEADER"],
+                 "ord": ["place note", "place callout"]}),
     CommandSpec("insert_block", "Insert a block/cell reference.", h.insert_block,
                 {"c3d": ["INSERT"], "ord": ["place cell"]}),
     CommandSpec("place_table",
