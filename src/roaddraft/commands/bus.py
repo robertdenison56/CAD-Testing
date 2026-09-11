@@ -175,7 +175,9 @@ REGISTRY: List[CommandSpec] = [
                 "true_scale converts the basefile's units into the host space's "
                 "(default on); levels_off, symbology (color/linetype/"
                 "lineweight_mm/gray), clip (boundary polygon) and masks (mask "
-                "polygons) control how it displays.",
+                "polygons) control how it displays; model picks the "
+                "basefile's design model or one of its sheets; nest_depth "
+                "shows the basefile's own references (live nesting).",
                 h.attach_reference,
                 {"c3d": ["XATTACH", "XREF"], "ord": ["reference attach"]}),
     CommandSpec("detach_reference", "Detach a reference by name.",
@@ -186,8 +188,10 @@ REGISTRY: List[CommandSpec] = [
                 "visibility, true_scale, per-attachment level display "
                 "(levels_off), symbology overrides (color, linetype, "
                 "lineweight_mm, gray=true for gray-out), clip boundary (clip: "
-                "polygon in host coordinates, null clears) or clip masks "
-                "(masks: list of polygons).", h.modify_reference,
+                "polygon in host coordinates, null clears), clip masks "
+                "(masks: list of polygons), model (design model or a "
+                "basefile sheet) or nest_depth (live nesting).",
+                h.modify_reference,
                 {"c3d": ["XCLIP"],
                  "ord": ["reference settings", "reference clip boundary",
                          "reference clip mask", "reference levels",

@@ -303,3 +303,125 @@ def test_manifest_aliases_and_web_state(tmp_path):
     assert {lv["name"]: lv["on"] for lv in state["levels"]} == {
         "0": True, "V-SURV-TOPO": True, "V-SURV-TREE": False}
     assert state["units"]["factor"] == 1.0 and state["resolved_path"].endswith("base.rdoc.json")
+
+
+# ---------------------------------------------------------- nesting
+
+
+def simple_doc(path, layer, color, end, references=()):
+    """A one-line basefile on one layer, optionally referencing others by a
+    path relative to its own folder (saved first so that path resolves)."""
+    d = Session(project_name=path.stem, out_dir=str(path.parent))
+    d.execute("create_layer", {"name": layer, "color": color})
+    d.execute("draw_line", {"space": "model", "start": [0, 0], "end": end,
+                            "layer": layer})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    d.query("save_document", {"path": str(path)})
+    for name, rel, offset in references:
+        r = d.execute("attach_reference", {"name": name, "path": rel,
+                                           "offset": offset})
+        assert r["ok"], r
+    d.query("save_document", {"path": str(path)})
+    return path
+
+
+def test_live_nesting_depth_levels_and_cycle_guard(tmp_path):
+    proj = tmp_path / "proj"
+    simple_doc(proj / "util.rdoc.json", "U-WATER", "blue", [100, 0])
+    survey = simple_doc(proj / "survey.rdoc.json", "V-SURV", "green", [500, 0],
+                        references=[("UTIL", "util.rdoc.json", [1000, 50])])
+    s = Session(out_dir=str(tmp_path))
+    r = s.execute("attach_reference", {"name": "SURVEY", "path": str(survey),
+                                       "offset": [10000, 0]})
+    assert r["ok"]
+    # nest depth 0 (default): the basefile's own reference stays hidden
+    assert hits(s, [11050, 50]) == []
+    assert s.query("get_extents", {"space": "model"})["extents"][2] == 10500
+    info = s.query("list_references")["references"][0]
+    assert info["nest_depth"] == 0 and info["nested"] == [
+        {"name": "UTIL", "path": "util.rdoc.json", "space": "model",
+         "status": "loaded"}]
+    # live nesting one level deep: placed through both transforms
+    r = s.execute("modify_reference", {"name": "SURVEY",
+                                       "changes": {"nest_depth": 1}})
+    assert r["ok"] and "nest depth 1" in r["message"]
+    found = hits(s, [11050, 50])
+    assert found and found[0]["id"] == "SURVEY:UTIL:LN-001"
+    assert found[0]["layer"] == "UTIL$U-WATER"
+    e = s.query("get_entity", {"id": "SURVEY:UTIL:LN-001"})
+    assert e["ok"] and e["entity"]["end"] == [11100, 50]
+    assert e["entity"]["color"] == "blue"  # nested layer symbology baked in
+    assert s.query("get_extents", {"space": "model"})["extents"][2] == 11100
+    # nested levels are listed and can be switched off per attachment
+    levels = {lv["name"]: lv for lv in
+              s.query("list_references")["references"][0]["levels"]}
+    assert levels["UTIL$U-WATER"]["nested"] == "UTIL"
+    assert levels["UTIL$U-WATER"]["on"] and levels["V-SURV"]["on"]
+    r = s.execute("modify_reference", {"name": "SURVEY",
+                                       "changes": {"levels_off": ["UTIL$U-WATER"]}})
+    assert r["ok"] and hits(s, [11050, 50]) == []
+    assert hits(s, [10250, 0])[0]["id"] == "SURVEY:LN-001"
+    r = s.execute("modify_reference", {"name": "SURVEY",
+                                       "changes": {"levels_off": ["UTIL$NOPE"]}})
+    assert not r["ok"] and "UTIL$U-WATER" in r["error"]["hint"]
+    s.execute("modify_reference", {"name": "SURVEY", "changes": {"levels_off": []}})
+    # DXF: nested geometry lands on a doubly-bound layer
+    out = tmp_path / "host.dxf"
+    s.query("export_dxf", {"path": str(out)})
+    msp_layers = {e.dxf.layer for e in ezdxf.readfile(out).modelspace()}
+    assert {"SURVEY$V-SURV", "SURVEY$UTIL$U-WATER"} <= msp_layers
+    # a circular attachment (util -> survey) is skipped, never recursed
+    u = Session.load(proj / "util.rdoc.json")
+    assert u.execute("attach_reference", {"name": "BACK",
+                                          "path": "survey.rdoc.json"})["ok"]
+    u.query("save_document", {"path": str(proj / "util.rdoc.json")})
+    s.execute("reload_references", {})
+    s.execute("modify_reference", {"name": "SURVEY", "changes": {"nest_depth": 5}})
+    ids = {h["id"] for h in hits(s, [11050, 50])}
+    assert ids == {"SURVEY:UTIL:LN-001"}
+    assert s.query("get_extents", {"space": "model"})["extents"][2] == 11100
+    for bad in (-1, 9, "2", True):
+        assert not s.execute("modify_reference", {"name": "SURVEY",
+                                                  "changes": {"nest_depth": bad}})["ok"]
+
+
+def test_attach_sheet_model_of_basefile(tmp_path):
+    std = Session(project_name="Standards", out_dir=str(tmp_path))
+    std.execute("create_sheet", {"name": "KEY-MAP", "size": "ANSI_B"})
+    std.execute("place_text", {"space": "KEY-MAP", "position": [3.0, 4.0],
+                               "content": "KEY MAP", "height": 0.25})
+    std.execute("draw_line", {"space": "model", "start": [0, 0], "end": [9, 9]})
+    path = tmp_path / "std.rdoc.json"
+    std.query("save_document", {"path": str(path)})
+    s = Session(out_dir=str(tmp_path))
+    s.execute("create_sheet", {"name": "C-101"})
+    r = s.execute("attach_reference", {"name": "STD", "path": str(path),
+                                       "space": "C-101", "model": "KEY-MAP",
+                                       "offset": [10, 5]})
+    assert r["ok"] and "true scale" not in r["message"]  # inches into inches
+    assert "1 entities" in r["message"]
+    tx = s.query("get_entity", {"id": "STD:TX-001"})
+    assert tx["ok"] and tx["entity"]["position"] == [13.0, 9.0]
+    assert tx["space"] == "SH-001"
+    # the sheet model's border came along (left border x=0.5 -> host 10.5)
+    border = s.query("hit_test", {"space": "C-101", "point": [10.5, 8.0],
+                                  "tolerance": 0.05})["hits"]
+    assert border and border[0]["reference"] == "STD"
+    # the basefile's design model is not part of a sheet-model attachment
+    assert not s.query("get_entity", {"id": "STD:LN-001"})["ok"]
+    info = s.query("list_references")["references"][0]
+    assert info["model"] == "KEY-MAP" and info["units"]["base"] == "inch"
+    # the same sheet into model space converts paper inches to survey feet
+    r = s.execute("attach_reference", {"name": "STD-M", "path": str(path),
+                                       "space": "model", "model": "KEY-MAP"})
+    assert r["ok"] and "true scale x0.08333" in r["message"]
+    r = s.execute("attach_reference", {"name": "BAD", "path": str(path),
+                                       "model": "NOPE"})
+    assert not r["ok"] and "KEY-MAP" in r["error"]["hint"]
+    r = s.execute("modify_reference", {"name": "STD", "changes": {"model": "NOPE"}})
+    assert not r["ok"] and "KEY-MAP" in r["error"]["hint"]
+    r = s.execute("modify_reference", {"name": "STD", "changes": {"model": "model"}})
+    assert r["ok"] and s.query("get_entity", {"id": "STD:LN-001"})["ok"]
+    doc_path = tmp_path / "host.rdoc.json"
+    s.query("save_document", {"path": str(doc_path)})
+    assert Session.load(doc_path).doc.to_dict() == s.doc.to_dict()

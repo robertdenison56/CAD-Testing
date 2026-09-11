@@ -699,7 +699,10 @@ async function ribbonAct(act) {
       { key: "offset", label: "Offset x,y", value: "0,0" },
       { key: "scale", label: "Scale", value: "1" },
       { key: "true_scale", label: "True scale (convert units)", value: "yes",
-        options: ["yes", "no"] }]);
+        options: ["yes", "no"] },
+      { key: "model", label: "Basefile model (model or a sheet name)",
+        value: "model" },
+      { key: "nest_depth", label: "Nest depth (0 = no nesting)", value: "0" }]);
     if (v) {
       const off = v.offset.split(",").map(Number);
       logResult(await postJSON("/api/execute", { command: "attach_reference",
@@ -707,7 +710,10 @@ async function ribbonAct(act) {
                   offset: off.length === 2 && off.every(n => !isNaN(n))
                           ? off : [0, 0],
                   scale: parseFloat(v.scale) || 1,
-                  true_scale: v.true_scale !== "no" } }));
+                  true_scale: v.true_scale !== "no",
+                  model: v.model.trim() || "model",
+                  nest_depth: Math.max(0, Math.min(5,
+                    parseInt(v.nest_depth, 10) || 0)) } }));
     }
   }
   else if (act === "reloadrefs")
@@ -935,8 +941,12 @@ function renderToolspace() {
         const masks = (ref.masks || []).length;
         const row = document.createElement("div");
         row.className = "trow";
+        const nested = (ref.nested || []).length;
         row.title = `${ref.path}\n→ ${ref.resolved_path}\n${ref.entities} ` +
                     `entities — ${ref.error || "loaded"}${units}` +
+                    (ref.model !== "model" ? `\nsheet model ${ref.model}` : "") +
+                    (nested ? `\n${nested} nested reference(s), nest depth ` +
+                              `${ref.nest_depth}` : "") +
                     (ref.clip ? `\nclip boundary: ${ref.clip.length} points`
                               : "") +
                     (masks ? `\n${masks} clip mask(s)` : "") +
@@ -1002,6 +1012,7 @@ function renderToolspace() {
             ((S.state.colors || {})[level.color]) || level.color;
           const ln = document.createElement("span");
           ln.className = "lname"; ln.textContent = level.name;
+          if (level.nested) ln.title = `level of nested reference ${level.nested}`;
           if (!level.visible_in_basefile) ln.style.opacity = "0.5";
           const cnt = document.createElement("span");
           cnt.style.cssText = "color:var(--dim);font-size:11px";

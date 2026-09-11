@@ -54,7 +54,11 @@ Beyond the 2D primitives, the bus carries roadway-semantic actions:
   attachment out; `clip` (boundary polygon) and `masks` (mask polygons) clip
   the geometry itself, so render, DXF, extents and `hit_test` agree.
   `hit_test` locates reference elements (`SURVEY:LN-001`, read-only) and
-  `get_entity` reads them back in host coordinates.
+  `get_entity` reads them back in host coordinates. `model` attaches the
+  basefile's design model or one of its sheet models (border and title
+  block included); `nest_depth` turns on live nesting, so the basefile's own
+  references display too (`SURVEY:UTIL:LN-001`, levels `UTIL$layer`), with
+  circular attachments skipped.
 - **Design model (Phase 1)** — `create_alignment` / `modify_alignment` /
   `delete_alignment`, `create_profile` / `delete_profile`, `draw_alignment`,
   `place_label`, `place_curve_table`, `import_landxml`, plus

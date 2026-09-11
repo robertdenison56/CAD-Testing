@@ -211,7 +211,16 @@ SCHEMAS = {
          "clip": POLYGON_CLIP,
          "masks": {"type": "array", "items": POLYGON,
                    "description": "clip mask polygons in host coordinates; "
-                                  "geometry inside a mask is hidden"}},
+                                  "geometry inside a mask is hidden"},
+         "model": {**NSTR, "description": "which basefile model to attach: "
+                                          "'model' (its design model, default) "
+                                          "or one of its sheet names/ids "
+                                          "(paper inches, border and title "
+                                          "block included)"},
+         "nest_depth": {"type": "integer", "minimum": 0, "maximum": 5,
+                        "description": "live nesting: also display the "
+                                       "basefile's own references this many "
+                                       "levels deep (default 0 = none)"}},
         ["name", "path"]),
     "detach_reference": obj({"name": {**NSTR, "description": "reference name "
                                                              "or id"}}, ["name"]),

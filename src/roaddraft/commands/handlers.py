@@ -16,8 +16,8 @@ from roaddraft.document.entities import (
 )
 from roaddraft.document.entities import as_point, as_positive
 from roaddraft.document.references import (
-    Reference, as_levels, as_polygon, as_polygons, as_symbology,
-    resolve_reference, unit_factor_for,
+    Reference, as_levels, as_nest_depth, as_polygon, as_polygons,
+    as_symbology, reference_levels, resolve_reference, unit_factor_for,
 )
 from roaddraft.document.sheets import SHEET_SIZES, Sheet, Viewport
 
@@ -721,17 +721,27 @@ def _reference_from_params(rid: str, space_key: str, p: dict) -> Reference:
             levels_off=as_levels(p.get("levels_off")),
             symbology=as_symbology(p.get("symbology")),
             clip=None if p.get("clip") is None else as_polygon(p["clip"], "clip"),
-            masks=as_polygons(p.get("masks")))
+            masks=as_polygons(p.get("masks")),
+            model=str(p.get("model", "model")),
+            nest_depth=as_nest_depth(p.get("nest_depth", 0)))
     except ValueError as ex:
         raise CommandFault(str(ex))
 
 
-def _check_levels(ref: Reference, base: Document):
-    unknown = [name for name in ref.levels_off if name not in base.layers]
+def _check_model(ref: Reference, base: Document):
+    if base.resolve_space(ref.model) is None:
+        raise CommandFault(f"basefile {ref.path} has no model {ref.model!r}",
+                           hint=f"models in the basefile: {base.space_refs()} "
+                                f"('model' is its design model)")
+
+
+def _check_levels(doc: Document, ref: Reference, base: Document):
+    known = [lv["name"] for lv in reference_levels(doc, ref, base)]
+    unknown = [name for name in ref.levels_off if name not in known]
     if unknown:
-        raise CommandFault(f"levels_off names {unknown} are not layers of "
+        raise CommandFault(f"levels_off names {unknown} are not levels of "
                            f"{ref.path}",
-                           hint=f"basefile levels: {sorted(base.layers)}")
+                           hint=f"levels of this attachment: {known}")
 
 
 def _path_hint(doc: Document) -> str:
@@ -760,10 +770,11 @@ def attach_reference(doc: Document, p: dict):
                            hint="the path must point to a RoadDraft document "
                                 "JSON (saved with save_document); "
                                 + _path_hint(doc))
-    _check_levels(ref, base)
+    _check_model(ref, base)
+    _check_levels(doc, ref, base)
     unit_k, base_units, host_units, unit_warning = unit_factor_for(doc, ref, base)
     doc.references[rid] = ref
-    count = len(base.model_entities)
+    count = len(base.resolve_space(ref.model)[1])
     warnings = [] if count else [f"{name} has no model-space entities"]
     if unit_warning:
         warnings.append(unit_warning)
@@ -794,7 +805,8 @@ def detach_reference(doc: Document, p: dict):
 
 
 REFERENCE_FIELDS = ("path", "offset", "rotation_deg", "scale", "visible",
-                    "true_scale", "levels_off", "symbology", "clip", "masks")
+                    "true_scale", "levels_off", "symbology", "clip", "masks",
+                    "model", "nest_depth")
 
 
 def modify_reference(doc: Document, p: dict):
@@ -840,8 +852,15 @@ def modify_reference(doc: Document, p: dict):
             notes.append(f"{len(ref.masks)} clip mask(s)")
         if "levels_off" in changes:
             ref.levels_off = as_levels(changes["levels_off"])
+        if "nest_depth" in changes:
+            ref.nest_depth = as_nest_depth(changes["nest_depth"])
+            notes.append(f"nest depth {ref.nest_depth}")
     except ValueError as ex:
         raise CommandFault(str(ex))
+    if "model" in changes:
+        if not isinstance(changes["model"], str) or not changes["model"]:
+            raise CommandFault("model must be 'model' or a sheet name/id")
+        ref.model = changes["model"]
     if "path" in changes:
         ref.path = str(changes["path"])
         doc._ref_cache.pop(ref.id, None)
@@ -849,10 +868,11 @@ def modify_reference(doc: Document, p: dict):
         if base is None:
             raise CommandFault(f"new path is not loadable: {error}",
                                hint=_path_hint(doc))
-    if "levels_off" in changes:
+    if "model" in changes or "levels_off" in changes:
         base, _error = resolve_reference(doc, ref)
         if base is not None:
-            _check_levels(ref, base)
+            _check_model(ref, base)
+            _check_levels(doc, ref, base)
         notes.append(f"levels off: {ref.levels_off}" if ref.levels_off
                      else "all levels on")
     detail = f" ({'; '.join(notes)})" if notes else ""

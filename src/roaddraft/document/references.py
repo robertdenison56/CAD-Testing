@@ -17,6 +17,12 @@ Display settings mirror MicroStation's reference dialog:
 - clip / masks: a clip boundary polygon and clip mask polygons in host
   coordinates. Clipping is geometric (document/clip.py), so renders, DXF
   export, extents and hit-testing all agree on what is visible.
+- model: which basefile model to attach — its design model ("model") or one
+  of its sheet models by name/id (paper inches, border and title block
+  included; its viewports are not resolved).
+- nest_depth: live nesting — also display the basefile's own references,
+  this many levels deep. Nested elements are addressed 'REF:NESTED:id' and
+  their levels appear as 'NESTED$layer'; circular attachments are skipped.
 
 Relative paths resolve against the host document's folder first (the file it
 was loaded from or last saved to), then the working directory — the way a
@@ -39,6 +45,7 @@ from roaddraft.document.entities import as_point, as_positive, expand_entities
 
 GRAY_OUT_COLOR = "#9E9E9E"
 SYMBOLOGY_KEYS = ("color", "linetype", "lineweight_mm", "gray")
+MAX_NEST_DEPTH = 5
 
 
 # ------------------------------------------------------------- validation
@@ -66,6 +73,14 @@ def as_levels(value):
             or not all(isinstance(v, str) and v for v in value):
         raise ValueError("levels_off must be a list of layer (level) names")
     return sorted(set(value))
+
+
+def as_nest_depth(value):
+    if isinstance(value, bool) or not isinstance(value, int) \
+            or not 0 <= value <= MAX_NEST_DEPTH:
+        raise ValueError(f"nest_depth must be an integer from 0 to "
+                         f"{MAX_NEST_DEPTH}, got {value!r}")
+    return value
 
 
 def as_symbology(value):
@@ -117,6 +132,8 @@ class Reference:
     symbology: dict = field(default_factory=dict)
     clip: Optional[list] = None
     masks: list = field(default_factory=list)
+    model: str = "model"
+    nest_depth: int = 0
 
     def to_dict(self):
         return {"id": self.id, "name": self.name, "path": self.path,
@@ -127,7 +144,8 @@ class Reference:
                 "symbology": dict(self.symbology),
                 "clip": None if self.clip is None
                 else [list(p) for p in self.clip],
-                "masks": [[list(p) for p in poly] for poly in self.masks]}
+                "masks": [[list(p) for p in poly] for poly in self.masks],
+                "model": self.model, "nest_depth": self.nest_depth}
 
     @classmethod
     def from_dict(cls, d):
@@ -142,7 +160,9 @@ class Reference:
                    symbology=as_symbology(d.get("symbology")),
                    clip=None if d.get("clip") is None
                    else as_polygon(d["clip"], "clip"),
-                   masks=as_polygons(d.get("masks")))
+                   masks=as_polygons(d.get("masks")),
+                   model=str(d.get("model", "model")),
+                   nest_depth=as_nest_depth(d.get("nest_depth", 0)))
 
 
 # ------------------------------------------------------------ resolution
@@ -180,7 +200,9 @@ def resolve_reference(doc, ref: Reference):
     from roaddraft.document.document import Document
     try:
         data = json.loads(target.read_text())
-        result = (Document.from_dict(data), None)
+        base = Document.from_dict(data)
+        base._path = target  # its own relative references resolve from here
+        result = (base, None)
     except FileNotFoundError:
         where = "" if Path(ref.path).expanduser().is_absolute() \
             else f" (looked in {target.parent})"
@@ -206,7 +228,10 @@ def unit_factor_for(doc, ref: Reference, base) -> Tuple[float, Optional[str], st
     """(factor, base_units, host_units, warning): the true-scale factor that
     turns basefile model units into the units of the host space."""
     hu = host_units(doc, ref.space)
-    bu = base.meta.get("model_units") if base is not None else None
+    bu = None
+    if base is not None:
+        bu = base.meta.get("model_units") if ref.model == "model" \
+            else base.meta.get("paper_units")
     if bu is None:
         return 1.0, None, hu, (f"basefile declares no model_units; assuming "
                                f"{hu} (no true scale applied)")
@@ -252,29 +277,99 @@ def apply_symbology(prims, symbology: dict):
     return prims
 
 
-def reference_groups(doc, space_key: str, include_hidden_levels: bool = False
+def space_primitives(doc, space_ref: str):
+    """(space_key, expanded primitives) of one model of a document: its design
+    model, or a sheet model with its drawn border and title block."""
+    resolved = doc.resolve_space(space_ref)
+    if resolved is None:
+        return None
+    key, entities = resolved
+    ents = list(entities.values())
+    if key != "model":
+        from roaddraft.render.titleblock import title_block_entities
+        ents = title_block_entities(doc.sheet_by_ref(key)) + ents
+    return key, expand_entities(doc, ents)
+
+
+def _transform_all(prims, fn, rotation_deg, k):
+    out = []
+    for p in prims:
+        t = p.transformed(fn, rotation_deg, k)
+        lw = getattr(p, "_lw_mm", None)
+        if lw:
+            t._lw_mm = lw
+        out.append(t)
+    return out
+
+
+def _bake_nested(nested_doc, prims, prefix: str):
+    """Nested primitives arrive in their document's layer names. Relabel them
+    'PREFIX$layer' and bake that layer's color/linetype/lineweight in, so
+    they render and export without the nested layer table; layers switched
+    off in the nested document are dropped."""
+    out = []
+    for p in prims:
+        layer = nested_doc.layers.get(p.layer)
+        if layer is not None:
+            if not layer.visible:
+                continue
+            if p.color is None:
+                p.color = layer.color
+            if p.linetype is None:
+                p.linetype = layer.linetype
+            if getattr(p, "_lw_mm", None) is None:
+                p._lw_mm = layer.lineweight_mm
+        p.layer = f"{prefix}${p.layer}"
+        out.append(p)
+    return out
+
+
+def reference_groups(doc, space_key: str, include_hidden_levels: bool = False,
+                     nest_depth: Optional[int] = None, _visited=None
                      ) -> List[Tuple[Reference, object, list]]:
     """(ref, base_doc, primitives-in-host-coordinates) for each visible,
     loadable reference attached to the given space. A reference brings the
-    basefile's model-space geometry, true-scaled into host units, placed,
-    with levels_off removed (unless include_hidden_levels, for exporters
-    that keep them on switched-off layers), symbology overrides applied,
-    and clipped to the clip boundary minus the masks."""
+    chosen basefile model's geometry (plus its own references, nest_depth
+    levels deep), true-scaled into host units, placed, with levels_off
+    removed (unless include_hidden_levels, for exporters that keep them on
+    switched-off layers), symbology overrides applied, and clipped to the
+    clip boundary minus the masks.
+
+    nest_depth overrides each reference's own setting while descending;
+    _visited holds the resolved paths already on the nesting stack so a
+    circular attachment is skipped instead of recursing forever."""
     groups = []
+    visited = set(_visited or ())
+    host = getattr(doc, "_path", None)
+    if host is not None:
+        visited.add(str(host))
     for ref in doc.references.values():
         if ref.space != space_key or not ref.visible:
             continue
         base, _err = resolve_reference(doc, ref)
         if base is None:
             continue
+        target = str(resolve_reference_path(doc, ref))
+        if target in visited:
+            continue  # circular nesting
+        space = space_primitives(base, ref.model)
+        if space is None:
+            continue
+        base_key, prims = space
+        depth = ref.nest_depth if nest_depth is None else nest_depth
+        if depth > 0:
+            for nref, nbase, nprims in reference_groups(
+                    base, base_key, include_hidden_levels,
+                    nest_depth=depth - 1, _visited=visited | {target}):
+                for p in nprims:
+                    p.id = f"{nref.name}:{p.id}"
+                prims += _bake_nested(nbase, nprims, nref.name)
         unit_k = unit_factor_for(doc, ref, base)[0]
-        prims = expand_entities(base, list(base.model_entities.values()))
         if ref.levels_off and not include_hidden_levels:
             off = set(ref.levels_off)
             prims = [p for p in prims if p.layer not in off]
         fn = reference_transform(ref, unit_k)
-        prims = [p.transformed(fn, ref.rotation_deg, ref.scale * unit_k)
-                 for p in prims]
+        prims = _transform_all(prims, fn, ref.rotation_deg, ref.scale * unit_k)
         prims = apply_symbology(prims, ref.symbology)
         prims = clip_primitives(prims, ref.clip, ref.masks)
         groups.append((ref, base, prims))
@@ -299,17 +394,36 @@ def extents_with_references(doc, space_ref: str):
 # ------------------------------------------------------------ description
 
 
+def _model_entities(base, ref: Reference):
+    resolved = base.resolve_space(ref.model)
+    return [] if resolved is None else list(resolved[1].values())
+
+
 def reference_levels(doc, ref: Reference, base) -> List[dict]:
-    """The basefile's layers (levels) with this attachment's display state."""
+    """The basefile's layers (levels) with this attachment's display state.
+    With live nesting, the nested references' levels follow as
+    'NESTED$layer' rows tagged with the nested reference's name."""
     counts = {}
-    for e in base.model_entities.values():
+    for e in _model_entities(base, ref):
         counts[e.layer] = counts.get(e.layer, 0) + 1
     off = set(ref.levels_off)
-    return [{"name": layer.name, "color": layer.color,
-             "visible_in_basefile": layer.visible,
-             "on": layer.name not in off,
-             "entities": counts.get(layer.name, 0)}
-            for layer in base.layers.values()]
+    levels = [{"name": layer.name, "color": layer.color,
+               "visible_in_basefile": layer.visible,
+               "on": layer.name not in off,
+               "entities": counts.get(layer.name, 0)}
+              for layer in base.layers.values()]
+    if ref.nest_depth > 0:
+        resolved = base.resolve_space(ref.model)
+        if resolved is not None:
+            target = str(resolve_reference_path(doc, ref))
+            for nref, nbase, _prims in reference_groups(
+                    base, resolved[0], nest_depth=ref.nest_depth - 1,
+                    _visited={target}):
+                for lv in reference_levels(base, nref, nbase):
+                    name = f"{nref.name}${lv['name']}"
+                    levels.append({**lv, "name": name, "on": name not in off,
+                                   "nested": nref.name})
+    return levels
 
 
 def describe_reference(doc, ref: Reference) -> dict:
@@ -320,7 +434,11 @@ def describe_reference(doc, ref: Reference) -> dict:
     d.update({
         "status": "loaded" if base is not None else "error",
         "error": error,
-        "entities": len(base.model_entities) if base else 0,
+        "entities": len(_model_entities(base, ref)) if base else 0,
+        "nested": [{"name": r.name, "path": r.path, "space": r.space,
+                    "status": "loaded" if resolve_reference(base, r)[0]
+                    is not None else "error"}
+                   for r in base.references.values()] if base else [],
         "resolved_path": str(resolve_reference_path(doc, ref)),
         "path_is_relative": not Path(ref.path).expanduser().is_absolute(),
         "levels": reference_levels(doc, ref, base) if base else [],
