@@ -32,13 +32,13 @@ references are not resolved — one level deep.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from roaddraft.core import colors as colorlib
 from roaddraft.core import geometry as geo
+from roaddraft.document import fileformat
 from roaddraft.core.units import normalize_unit, unit_factor
 from roaddraft.document.clip import clip_primitives
 from roaddraft.document.entities import as_point, as_positive, expand_entities
@@ -199,8 +199,7 @@ def resolve_reference(doc, ref: Reference):
         return hit[1]
     from roaddraft.document.document import Document
     try:
-        data = json.loads(target.read_text())
-        base = Document.from_dict(data)
+        base = Document.from_dict(fileformat.read_document(target))
         base._path = target  # its own relative references resolve from here
         result = (base, None)
     except FileNotFoundError:
@@ -209,7 +208,7 @@ def resolve_reference(doc, ref: Reference):
         result = (None, f"file not found: {ref.path}{where}")
     except OSError as ex:
         result = (None, f"cannot read {ref.path}: {ex}")
-    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as ex:
+    except (KeyError, ValueError, TypeError) as ex:
         result = (None, f"not a valid RoadDraft document: {ex}")
     cache[ref.id] = (key, result)
     return result

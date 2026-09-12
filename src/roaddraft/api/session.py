@@ -24,6 +24,7 @@ from jsonschema.exceptions import best_match
 from roaddraft.commands.bus import CommandBus
 from roaddraft.commands.design_schemas import ANCHOR, KIND, POINT, ROTATION, SIDE, STATION
 from roaddraft.commands.schemas import NSTR, NUM, POS, SPACE, STR, obj
+from roaddraft.document import fileformat
 from roaddraft.document.document import Document
 from roaddraft.render import dxf as dxf_render
 from roaddraft.render import mpl as mpl_render
@@ -274,9 +275,12 @@ QUERIES = {
         "example": {},
     },
     "save_document": {
-        "description": "Save the document snapshot as JSON.",
+        "description": "Save the document. A path with no RoadDraft extension "
+                       "gets '.rdraft', the application document; '.rdoc.json' "
+                       "is the same JSON under the interchange name. The saved "
+                       "path is returned.",
         "schema": obj({"path": NSTR}, ["path"]),
-        "example": {"path": "project.rdoc.json"},
+        "example": {"path": "project.rdraft"},
     },
     "save_journal": {
         "description": "Save the command journal (baseline + commands) as JSONL; "
@@ -731,9 +735,7 @@ class Session:
         return self._file_result(path, False)
 
     def _q_save_document(self, p):
-        path = Path(p["path"])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.doc.to_dict(), indent=2))
+        path = fileformat.write_document(p["path"], self.doc.to_dict())
         self.doc._path = path.resolve()  # relative reference paths follow the host
         return self._file_result(path, False)
 
@@ -1093,7 +1095,9 @@ class Session:
 
     @classmethod
     def load(cls, path, out_dir=None) -> "Session":
-        doc = Document.from_dict(json.loads(Path(path).read_text()))
+        """Open a saved document. The file shape is read from its content, so
+        a .rdraft, a .rdoc.json and a renamed file all open the same way."""
+        doc = Document.from_dict(fileformat.read_document(path))
         doc._path = Path(path).resolve()  # relative reference paths resolve here
         return cls(_document=doc, out_dir=out_dir)
 

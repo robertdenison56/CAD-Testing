@@ -374,7 +374,7 @@ The server is stdlib-only (no framework), binds to 127.0.0.1, serves the same
 `/render/<ref>.png` (with pixel→coordinate metadata headers) — so it doubles
 as the first slice of the M2 session server: an agent can drive the same HTTP
 surface a human sees. Open a saved document with
-`roaddraft-web project.rdoc.json`.
+`roaddraft-web project.rdraft`.
 
 ### Drive it as a human — terminal REPL (PRD 5.4)
 
@@ -420,7 +420,27 @@ recorded trajectories, and the playtest rule holds: if a PE can't draft a
   and viewports (scale and twist); opens in AutoCAD/Civil 3D and
   MicroStation. DXF is a render target — the JSON document is the truth.
 - **LandXML 1.2** (`export_landxml`) — alignments and profiles for Civil 3D / ORD.
-- **JSON snapshot** (`save_document`) and **journal** (`save_journal`).
+- **The document itself** (`save_document`) and its **journal** (`save_journal`).
+
+### The document file
+
+A drawing is `Document.to_dict()` serialized as JSON. Two file shapes carry it:
+
+| | | |
+|---|---|---|
+| `.rdraft` | the application document | what a person saves, sends and (once the desktop build lands) double-clicks — the extension RoadDraft registers with the OS as its own filetype |
+| `.rdoc.json` | the open interchange form | plain JSON, diffable in git; task fixtures, probe fixtures and `examples/output/` stay here |
+
+They hold identical bytes today, and a reader picks between them by **content,
+not extension** — so a renamed or extension-less file still opens, and either
+shape can be attached as a reference from the other. `save_document` appends
+`.rdraft` to a path that carries neither, and returns the path it wrote.
+
+They are separate names because the application document is meant to grow a zip
+container (document + journal + embedded references + thumbnail, so a project
+travels as one file) while the interchange form is not: a container would cost
+the line-by-line diffs the fixtures rely on. Every read and write goes through
+`document/fileformat.py`, so that change lands in one file.
 
 ## Layout
 

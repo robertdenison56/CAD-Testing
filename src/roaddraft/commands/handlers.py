@@ -922,7 +922,8 @@ def attach_reference(doc: Document, p: dict):
     if base is None:
         raise CommandFault(f"cannot attach reference: {error}",
                            hint="the path must point to a RoadDraft document "
-                                "JSON (saved with save_document); "
+                                "(.rdraft or .rdoc.json, saved with "
+                                "save_document); "
                                 + _path_hint(doc))
     _check_model(ref, base)
     _check_levels(doc, ref, base)

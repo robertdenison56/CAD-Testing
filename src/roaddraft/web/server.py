@@ -319,7 +319,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="roaddraft-web",
         description="RoadDraft GUI: browser front end over the AI tool surface")
-    parser.add_argument("document", nargs="?", help="saved document JSON to open")
+    parser.add_argument("document", nargs="?",
+                        help="saved document to open (.rdraft or .rdoc.json)")
     parser.add_argument("--project", default="Untitled",
                         help="project name for a new document")
     parser.add_argument("--out-dir", default=None,

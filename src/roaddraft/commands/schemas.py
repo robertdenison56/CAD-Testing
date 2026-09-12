@@ -215,11 +215,11 @@ SCHEMAS = {
         ["space"]),
     "attach_reference": obj(
         {"name": {**NSTR, "description": "reference name, e.g. 'SURVEY'"},
-         "path": {**NSTR, "description": "path to a RoadDraft document JSON "
-                                         "(saved with save_document); a "
-                                         "relative path resolves against the "
-                                         "host document's folder, then the "
-                                         "working directory"},
+         "path": {**NSTR, "description": "path to a RoadDraft document "
+                                         "(.rdraft or .rdoc.json, saved with "
+                                         "save_document); a relative path "
+                                         "resolves against the host document's "
+                                         "folder, then the working directory"},
          "space": SPACE,
          "offset": {**POINT, "description": "placement offset in host units"},
          "rotation_deg": NUM, "scale": POS,
@@ -343,7 +343,7 @@ EXAMPLES = {
         "sheet_number": "C-101", "scale": "1\" = 50'"}},
     "annotate_stationing": {"space": "model", "path_ids": ["LN-001", "AR-001"],
                             "begin_station": 1000.0, "interval": 100},
-    "attach_reference": {"name": "SURVEY", "path": "survey_base.rdoc.json",
+    "attach_reference": {"name": "SURVEY", "path": "survey_base.rdraft",
                          "space": "model"},
     "detach_reference": {"name": "SURVEY"},
     "modify_reference": {"name": "SURVEY", "changes": {

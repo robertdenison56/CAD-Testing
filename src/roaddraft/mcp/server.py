@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Sequence
 
 from roaddraft import __version__
 from roaddraft.api.session import Session
+from roaddraft.document.fileformat import DocumentFormatError
 
 #: Revision of the MCP spec this server implements. The client's requested
 #: version is echoed back when it sends one: only the stable core (initialize,
@@ -43,14 +44,14 @@ SERVER_INFO = {"name": "roaddraft", "title": "RoadDraft CAD engine",
 #: Session-level tools that are not bus commands.
 EXTRA_TOOLS = {
     "open_document": {
-        "description": "Open a RoadDraft document (.rdoc.json) as the working "
-                       "document, replacing the current one. Relative reference "
-                       "paths in the file resolve from its own folder, so a sheet "
-                       "file finds the model it references.",
+        "description": "Open a RoadDraft document (.rdraft, or .rdoc.json) as "
+                       "the working document, replacing the current one. Relative "
+                       "reference paths in the file resolve from its own folder, "
+                       "so a sheet file finds the model it references.",
         "inputSchema": {"type": "object", "additionalProperties": False,
                         "required": ["path"],
                         "properties": {"path": {"type": "string", "minLength": 1,
-                                                "description": "path to the .rdoc.json"}}},
+                                                "description": "path to the document file"}}},
     },
 }
 
@@ -143,12 +144,14 @@ class RoadDraftMCP:
             return self._tool_error(f"unknown tool {name!r}")
         path = arguments.get("path")
         if not isinstance(path, str) or not path:
-            return self._tool_error("open_document needs a path to a .rdoc.json")
+            return self._tool_error("open_document needs a path to a document file")
         try:
             self.session = Session.load(path, out_dir=self.session.out_dir)
         except FileNotFoundError:
             return self._tool_error(f"no such document: {path}")
-        except Exception as ex:  # malformed JSON, failed validation
+        except DocumentFormatError as ex:  # not a document, or malformed JSON
+            return self._tool_error(f"cannot open {path}: {ex}")
+        except Exception as ex:  # failed validation
             return self._tool_error(f"cannot open {path}: {type(ex).__name__}: {ex}")
         summary = self.session.query("get_document_state", {})
         return {"content": [_text({"ok": True, "opened": str(Path(path).resolve()),
@@ -302,7 +305,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roaddraft-mcp",
         description="Serve the RoadDraft command surface to an agent over MCP (stdio).")
-    parser.add_argument("--doc", help="open this .rdoc.json as the working document")
+    parser.add_argument("--doc", help="open this document (.rdraft or .rdoc.json) "
+                                      "as the working document")
     parser.add_argument("--out-dir", help="where renders and exports are written "
                                           "(default ./renders)")
     parser.add_argument("--project", default="Untitled",
