@@ -96,8 +96,9 @@ Every state change is a named JSON command (PRD section 5.1):
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                      # 410 tests
+.venv/bin/pytest                      # 582 tests
 .venv/bin/python examples/demo_plan_sheet.py   # drafts a full plan sheet
+.venv/bin/python examples/caltrans_l2/build_all.py  # rebuilds a real Caltrans sheet
 .venv/bin/python -m roaddraft.tasks 42         # generates a D1 task + reference solution
 ```
 
@@ -107,6 +108,19 @@ alignment-mode stationing (ticks, labels, PC/PT), anchored bearing and
 mid-curve callouts, the curve data table, north arrow, notes, filled title
 block — then renders PNG/PDF, exports DXF and LandXML, and proves the
 journal replays byte-identically (26 commands).
+
+### A real plan sheet, rebuilt
+
+`examples/caltrans_l2/` recreates a published Caltrans plan sheet — 03-3H5404
+sheet 6, "LAYOUT", Route 70 PM 46.0/47.0 — as the two-file plan set the
+platform is built around: a design model file that owns the `SR70` alignment,
+the roadway linework, the stationing and the existing ground, and a sheet file
+that owns **no geometry at all** and composes sheet L-2 over a clipped
+reference to it at 1"=50' with a 6.457° view twist. Its four curves are
+rebuilt from the sheet's own CURVE DATA table and BC/EC stations, so the plan's
+every printed station comes back out of the design model; its fourteen
+station-and-offset callouts are aimed through that model rather than at typed
+points. See [examples/caltrans_l2/README.md](examples/caltrans_l2/README.md).
 
 ### Drive it as an agent (JSON in, JSON out)
 
@@ -533,18 +547,24 @@ src/roaddraft/
   design/      pure roadway math: alignments (PIs, curves, station equations),
                profiles (PVIs, vertical curves), anchors, label placement/wording
   adapters/    LandXML 1.2 reader/writer (stdlib XML only)
-  document/    entities (+ design anchors), layers/styles/blocks, sheets/viewports,
-               references (+ clipping), the Document (+ the design model)
-  commands/    JSON schemas, handlers (+ design_handlers), the command bus
-  render/      shared title block template, matplotlib PNG/PDF, ezdxf DXF
+  document/    entities (+ design anchors, dimensions), layers/styles/blocks,
+               sheets/viewports, references (+ clipping), the Document (+ the
+               design model), dimgeom (how a dimension is drawn),
+               fileformat (what a drawing is on disk: .rdraft / .rdoc.json)
+  commands/    JSON schemas, handlers (+ design_, annotation_, dimension_handlers),
+               the command bus
+  render/      shared border/title block templates (standard, Caltrans plan
+               sheet, none), matplotlib PNG/PDF, ezdxf DXF
   api/         Session (execute/query/manifest) + the shared command-line grammar
   cli/         the terminal REPL
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
   tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
                ground truth, and the reference solution (python -m roaddraft.tasks)
-tests/         410 tests: geometry, design math, commands, determinism, LandXML,
-               renders, DXF, web server, tasks
+tests/         582 tests: geometry, design math, commands, dimensions,
+               determinism, LandXML, renders, DXF, web server, tasks
 examples/      demo_plan_sheet.py — a full sheet drafted from the design model;
+               caltrans_l2/ — a published Caltrans plan sheet rebuilt as a
+               model file + a sheet file that references it;
                generate_task.py — task seed 42 end to end
 benchmarks/    knowledge/ — reference standards behind the drafting spec (Caltrans PPM text + page index; see its README)
 scripts/       build_knowledge.py — rebuilds the knowledge base from the raw PDFs
