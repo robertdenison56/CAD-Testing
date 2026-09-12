@@ -13,7 +13,7 @@ from roaddraft.core.units import format_station
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import LINETYPES, BlockDef, Document, Layer, TextStyle
 from roaddraft.document.entities import (
-    Arc, BlockRef, Circle, Line, Polyline, Table, Text, entity_from_dict,
+    Arc, BlockRef, Circle, Dimension, Line, Polyline, Table, Text, entity_from_dict,
 )
 from roaddraft.document.entities import as_point, as_positive
 from roaddraft.document.references import (
@@ -109,7 +109,7 @@ def _annotation_warnings(doc: Document, space_key: str, entity) -> List[str]:
         warnings.append(f"{entity.id} extends beyond the {sheet.width_in}x"
                         f"{sheet.height_in} in sheet extents")
     for other in sheet.entities.values():
-        if other.id == entity.id or not isinstance(other, (Text, Table)):
+        if other.id == entity.id or not isinstance(other, (Text, Table, Dimension)):
             continue
         ob = other.bbox(doc)
         if ob is not None and geo.bbox_intersects(bb, ob):
@@ -455,16 +455,7 @@ def _describe_target(doc: Document, eid: str) -> str:
 
 def _arrow_head(tip, tail, size: float) -> List[List[float]]:
     """A closed triangle at ``tip``, pointing away from ``tail``."""
-    dx, dy = tip[0] - tail[0], tip[1] - tail[1]
-    length = math.hypot(dx, dy)
-    if length < 1e-9:
-        ux, uy = 1.0, 0.0
-    else:
-        ux, uy = dx / length, dy / length
-    base = [tip[0] - ux * size, tip[1] - uy * size]
-    half = size * 0.18
-    return [list(tip), [base[0] - uy * half, base[1] + ux * half],
-            [base[0] + uy * half, base[1] - ux * half]]
+    return geo.arrow_head(tip, tail, size)
 
 
 def modify_entity(doc: Document, p: dict):
@@ -505,7 +496,7 @@ def modify_entity(doc: Document, p: dict):
                            hint=f"existing layers: {sorted(doc.layers)}")
     _color_ok(new_entity.color)
     _linetype_ok(new_entity.linetype)
-    if isinstance(new_entity, (Text, Table)):
+    if isinstance(new_entity, (Text, Table, Dimension)):
         _style(doc, new_entity.style)
     _, container = doc.resolve_space(space_key)
     container[eid] = new_entity
@@ -773,10 +764,7 @@ def _path_eval(pieces: List[_Piece], d: float):
 
 def _upright(angle_deg: float) -> float:
     """Fold a label rotation into (-90, 90] so text never reads upside down."""
-    a = angle_deg % 360.0
-    if 90.0 < a <= 270.0:
-        a -= 180.0
-    return ((a + 180.0) % 360.0) - 180.0
+    return geo.upright(angle_deg)
 
 
 def _offset_pt(p, angle_deg, dist):

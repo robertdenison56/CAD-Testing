@@ -7,7 +7,9 @@ back in teaching errors when a call is invalid.
 from __future__ import annotations
 
 from roaddraft.commands.design_schemas import DESIGN_EXAMPLES, DESIGN_SCHEMAS, STATION
+from roaddraft.core.units import LENGTH_FORMATS
 from roaddraft.document.document import LINETYPES
+from roaddraft.document.entities import DIM_ARROWS, DIM_KINDS
 from roaddraft.document.sheets import SHEET_SIZES, TITLE_BLOCK_TEMPLATES
 
 POINT = {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
@@ -121,6 +123,88 @@ SCHEMAS = {
          "arrow_size": {**POS, "description": "arrowhead length (default: the text height)"},
          "style": NSTR},
         ["space", "position", "content"]),
+    "place_dimension": obj(
+        {**_ENTITY_COMMON,
+         "kind": {"type": "string", "enum": list(DIM_KINDS),
+                  "description": "linear (measured along one axis), aligned (the true "
+                                 "distance between two points), angular (the angle at "
+                                 "a vertex), radius, diameter, or arc_length"},
+         "line_point": {**POINT,
+                        "description": "where the dimension line goes -- the point a "
+                                       "drafter drags to. It also settles what is being "
+                                       "measured: clear above or below a pair of points "
+                                       "is a horizontal dimension and out to the side a "
+                                       "vertical one; on an angular dimension it picks "
+                                       "which of the four angles between the rays is "
+                                       "meant; on a radius or diameter it is where the "
+                                       "text sits (inside the circle draws across it, "
+                                       "outside draws a leader)"},
+         "p1": {**POINT, "description": "first measured point (angular: a point out "
+                                        "along the first ray; radius/diameter: the point "
+                                        "on the circle the arrow touches, default: "
+                                        "toward line_point)"},
+         "p2": {**POINT, "description": "second measured point (arc_length: the far end, "
+                                        "measured counter-clockwise from p1)"},
+         "center": {**POINT, "description": "angular: the vertex. radius/diameter/"
+                                            "arc_length: the centre of the circle"},
+         "radius": {**POS, "description": "radius of the circle being measured; or give "
+                                          "of_entity"},
+         "of_entity": {**NSTR,
+                       "description": "measure this entity: a line/polyline/arc end to "
+                                      "end (linear, aligned), or an arc/circle's own "
+                                      "geometry (radius, diameter, arc_length). Ids come "
+                                      "from find_entities and hit_test; reference "
+                                      "elements are 'SURVEY:LN-001'"},
+         "from_entity": {**NSTR, "description": "measure from a point on this entity "
+                                                "(angular: one of the two lines whose "
+                                                "intersection is the vertex)"},
+         "to_entity": {**NSTR, "description": "measure to a point on this entity "
+                                              "(angular: the other line)"},
+         "from_at": {"description": "where on from_entity: start|mid|end or a fraction "
+                                    "0-1 (default mid)"},
+         "to_at": {"description": "where on to_entity: start|mid|end or a fraction 0-1 "
+                                  "(default mid)"},
+         "rotation_deg": {**NUM,
+                          "description": "linear: the direction measured along (0 = "
+                                         "horizontal, 90 = vertical). Omit and the "
+                                         "engine reads it off line_point"},
+         "text": {**STR, "description": "override the measured value ('' hides the text "
+                                        "entirely); omit to let the number follow the "
+                                        "geometry"},
+         "prefix": {**STR, "description": "before the number; defaults to the kind's own "
+                                          "(R=, \u00d8, L=)"},
+         "suffix": {**STR, "description": "after the number, e.g. ' TYP'"},
+         "unit_format": {"type": "string", "enum": list(LENGTH_FORMATS),
+                         "description": "feet (120.00'), feet_inches (12'-6\") or "
+                                        "decimal (no unit mark). Default: feet in model "
+                                        "space, decimal on a sheet. An angular dimension "
+                                        "reads DMS (28\u00b015'30\") unless this is "
+                                        "'decimal'"},
+         "precision": {"type": "integer", "minimum": 0, "maximum": 6,
+                       "description": "decimals in the number (default 2)"},
+         "arrow": {"type": "string", "enum": list(DIM_ARROWS),
+                   "description": "terminator: arrow (default), tick (the oblique civil "
+                                  "slash), dot, or none"},
+         "arrow_size": {**POS, "description": "arrowhead length (default 1.2 x the text "
+                                              "height)"},
+         "text_gap": {**POS, "description": "gap between the dimension line and the text "
+                                            "(default 0.5 x the text height)"},
+         "extension_offset": {**POS, "description": "gap between the measured point and "
+                                                    "its extension line (default 0.6 x "
+                                                    "the text height)"},
+         "extension_beyond": {**POS, "description": "how far an extension line runs past "
+                                                    "the dimension line (default 1.0 x "
+                                                    "the text height)"},
+         "text_height": {**POS, "description": "text height in space units; defaults to "
+                                               "the annotation scale in model space, "
+                                               "0.10 in on a sheet"},
+         "style": NSTR,
+         "measure_scale": {**POS,
+                           "description": "multiplier from drawn length to reported "
+                                          "length (AutoCAD DIMLFAC). 1 by default; on a "
+                                          "sheet, set it to the viewport's plot scale "
+                                          "(50 for 1\"=50') to dimension in model feet"}},
+        ["space", "kind", "line_point"]),
     "insert_block": obj(
         {**_ENTITY_COMMON, "block_name": NSTR, "position": POINT,
          "scale": POS, "rotation_deg": NUM},
@@ -324,6 +408,9 @@ EXAMPLES = {
                       "layer": "V-ANNO-TEXT"},
     "place_text": {"space": "SH-001", "position": [17.0, 20.5],
                    "content": "ROADWAY PLAN", "height": 0.25, "halign": "center"},
+    "place_dimension": {"space": "model", "kind": "linear", "from_entity": "LN-002",
+                        "to_entity": "LN-003", "line_point": [1250.0, 880.0],
+                        "layer": "V-ANNO-DIMS"},
     "insert_block": {"space": "SH-001", "block_name": "NORTH_ARROW",
                      "position": [31.5, 19.0], "scale": 1.0},
     "place_table": {"space": "SH-001", "position": [26.0, 8.0], "title": "CURVE DATA",

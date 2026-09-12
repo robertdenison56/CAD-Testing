@@ -35,6 +35,43 @@ def parse_station(text: str) -> float:
     return -value if neg else value
 
 
+LENGTH_FORMATS = ("feet", "feet_inches", "decimal")
+
+
+def format_length(value: float, unit_format: str = "feet", precision: int = 2) -> str:
+    """Format a measured length the way a drafter writes it.
+
+    ``feet`` -> ``120.00'`` (the plan-view default), ``feet_inches`` ->
+    ``12'-6"`` (structures and details; trailing zeros on the inches are
+    trimmed, and 11.999 in carries into the next foot), ``decimal`` ->
+    ``120.00`` with no unit mark, for sheet inches or a caller-supplied suffix.
+    """
+    if unit_format not in LENGTH_FORMATS:
+        raise ValueError(f"unit_format must be one of {list(LENGTH_FORMATS)}, "
+                         f"got {unit_format!r}")
+    p = max(int(precision), 0)
+    v = float(value)
+    if unit_format == "decimal":
+        return f"{v:.{p}f}"
+    if unit_format == "feet":
+        return f"{v:.{p}f}'"
+    sign = "-" if v < 0 else ""
+    v = abs(v)
+    feet = int(v)
+    inches = (v - feet) * 12.0
+    text = f"{inches:.{p}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    if not text:
+        text = "0"
+    if float(text) >= 12.0:  # rounding carried into the next foot
+        feet += 1
+        text = "0"
+    if feet == 0 and text != "0":
+        return f"{sign}{text}\""
+    return f"{sign}{feet}'-{text}\""
+
+
 def format_plot_scale(feet_per_inch: float) -> str:
     """``50 -> '1"=50\''`` (the annotation / viewport scale as drafters write it)."""
     return f"1\"={float(feet_per_inch):g}'"

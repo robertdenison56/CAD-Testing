@@ -24,6 +24,7 @@ from jsonschema.exceptions import best_match
 from roaddraft.commands.bus import CommandBus
 from roaddraft.commands.design_schemas import ANCHOR, KIND, POINT, ROTATION, SIDE, STATION
 from roaddraft.commands.schemas import NSTR, NUM, POS, SPACE, STR, obj
+from roaddraft.core.units import LENGTH_FORMATS
 from roaddraft.document import fileformat
 from roaddraft.document.document import Document
 from roaddraft.render import dxf as dxf_render
@@ -141,8 +142,8 @@ QUERIES = {
         "schema": obj({
             "space": {**NSTR, "description": "space to search (default 'model')"},
             "layer": {"description": "layer name, or a list of them"},
-            "type": {"description": "line|polyline|arc|circle|text|blockref|table, "
-                                    "or a list"},
+            "type": {"description": "line|polyline|arc|circle|text|blockref|table|"
+                                    "dimension, or a list"},
             "anchor": {"type": "object",
                        "description": "match the design anchor: any of alignment, "
                                       "kind (element|offset|station|tick|pc|pt|...), "
@@ -180,6 +181,30 @@ QUERIES = {
                        "where": {"description": "start|mid|end, or a fraction 0-1"}},
                       ["id"]),
         "example": {"id": "DESIGN:AR-003", "where": "mid"},
+    },
+    "measure": {
+        "description": "Measure without drawing (AutoCAD DIST / MEASUREGEOM): the "
+                       "distance, dx/dy, bearing and azimuth between two points, or one "
+                       "entity's own length, radius and sweep. 'from' and 'to' each take "
+                       "a point or an entity id (with from_at/to_at: start|mid|end or a "
+                       "fraction), so a curve is measured from a point genuinely on it. "
+                       "The formatted reading is the same string place_dimension would "
+                       "draw, which makes it the way to check a dimension before or "
+                       "after placing it.",
+        "schema": obj({
+            "from": {"description": "a point [x, y] or an entity id"},
+            "to": {"description": "a point [x, y] or an entity id"},
+            "from_at": {"description": "where on the 'from' entity (default mid)"},
+            "to_at": {"description": "where on the 'to' entity (default mid)"},
+            "entity": {**NSTR,
+                       "description": "measure this entity on its own: length, and for "
+                                      "an arc or circle its centre, radius and sweep"},
+            "unit_format": {"type": "string", "enum": list(LENGTH_FORMATS),
+                            "description": "feet (default), feet_inches or decimal"},
+            "precision": {"type": "integer", "minimum": 0, "maximum": 6},
+        }),
+        "example": {"from": "LN-002", "to": "LN-003", "from_at": "start",
+                    "to_at": "start"},
     },
     "get_sheet_state": {
         "description": "One sheet: size, usable area, title block fields, "
@@ -587,6 +612,78 @@ class Session:
             out["reference"] = ref
             out["read_only"] = True
         return out
+
+    def _q_measure(self, p):
+        from roaddraft.core import geometry as geo
+        from roaddraft.core.units import format_length
+        from roaddraft.design.angles import direction_of, format_bearing, format_dms
+        from roaddraft.document.entities import Arc, Circle
+
+        fmt = p.get("unit_format", "feet")
+        precision = int(p.get("precision", 2))
+        if "entity" in p:
+            entity, owner, ref, space_key = self._locate(p["entity"])
+            from roaddraft.document.locate import entity_length, point_at
+            out = {"entity": p["entity"], "space": space_key, "type": entity.TYPE}
+            length = entity_length(owner, entity)
+            if length is not None:
+                out["length"] = round(length, 6)
+                out["text"] = format_length(length, fmt, precision)
+                out["start"] = [round(v, 6) for v in point_at(owner, entity, "start")[0]]
+                out["end"] = [round(v, 6) for v in point_at(owner, entity, "end")[0]]
+            if isinstance(entity, (Arc, Circle)):
+                out["center"] = [round(v, 6) for v in entity.center]
+                out["radius"] = round(entity.radius, 6)
+                out["diameter"] = round(2.0 * entity.radius, 6)
+            if isinstance(entity, Arc):
+                start, end = geo.arc_sweep(entity.start_angle_deg, entity.end_angle_deg)
+                out["sweep_deg"] = round(end - start, 6)
+                out["sweep"] = format_dms(end - start)
+            if ref:
+                out["reference"] = ref
+                out["read_only"] = True
+            return out
+        if "from" not in p or "to" not in p:
+            raise _QueryFault("measure needs 'from' and 'to', or a single 'entity'",
+                              hint="each of from/to is a point [x, y] or an entity id; "
+                                   "from_at/to_at say where on the entity")
+        a = self._measure_point(p, "from", "from_at")
+        b = self._measure_point(p, "to", "to_at")
+        distance = geo.distance(a, b)
+        direction = direction_of(a, b)
+        return {"from": [round(v, 6) for v in a], "to": [round(v, 6) for v in b],
+                "distance": round(distance, 6),
+                "text": format_length(distance, fmt, precision),
+                "dx": round(b[0] - a[0], 6), "dy": round(b[1] - a[1], 6),
+                "direction_deg": round(direction, 6),
+                "azimuth_deg": round((90.0 - direction) % 360.0, 6),
+                "bearing": format_bearing((90.0 - direction) % 360.0)}
+
+    def _measure_point(self, p, key, at_key):
+        """One end of a measurement: a literal point, or a place on an entity."""
+        from roaddraft.document.locate import point_at
+        value = p[key]
+        if isinstance(value, (list, tuple)):
+            if len(value) != 2:
+                raise _QueryFault(f"{key} must be a point [x, y] or an entity id, "
+                                  f"got {value!r}")
+            return [float(value[0]), float(value[1])]
+        entity, owner, _ref, _space = self._locate(str(value))
+        try:
+            return point_at(owner, entity, p.get(at_key, "mid"))[0]
+        except ValueError as ex:
+            raise _QueryFault(str(ex),
+                              hint=f"{at_key} is start|mid|end or a fraction 0-1")
+
+    def _locate(self, eid: str):
+        """``(entity, owning document, reference name or None, space)``."""
+        from roaddraft.document.locate import resolve_entity
+        element = resolve_entity(self.doc, eid)
+        if element is None:
+            raise _QueryFault(f"entity {eid!r} not found",
+                              hint="find_entities and hit_test return ids; reference "
+                                   "elements are 'REFNAME:ID'")
+        return element
 
     def _q_get_sheet_state(self, p):
         sheet = self._sheet(p["sheet"])

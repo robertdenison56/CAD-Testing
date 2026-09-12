@@ -10,7 +10,7 @@ from ezdxf.enums import TextEntityAlignment
 
 from roaddraft.core import colors as colorlib
 from roaddraft.document.entities import (
-    Arc, BlockRef, Circle, Line, Polyline, Table, Text,
+    Arc, BlockRef, Circle, Dimension, Line, Polyline, Table, Text,
 )
 
 LINETYPE_MAP = {
@@ -76,7 +76,11 @@ def _attribs(dxf, e):
 
 def _add_entities(space, dxf, doc, entities):
     for e in entities:
-        if isinstance(e, Table):
+        if isinstance(e, (Table, Dimension)):
+            # Compound entities are exploded rather than mapped onto DXF's own
+            # TABLE/DIMENSION: the JSON document stays canonical (PRD section 3)
+            # and the exported drawing plots exactly as RoadDraft renders it,
+            # instead of being re-drawn by the consumer's dimension style.
             _add_entities(space, dxf, doc, e.primitives(doc))
             continue
         attribs = _attribs(dxf, e)

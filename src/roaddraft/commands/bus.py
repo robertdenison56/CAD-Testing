@@ -20,6 +20,7 @@ from jsonschema.exceptions import best_match
 
 from roaddraft.commands import annotation_handlers as ah
 from roaddraft.commands import design_handlers as dh
+from roaddraft.commands import dimension_handlers as dim
 from roaddraft.commands import handlers as h
 from roaddraft.commands.schemas import EXAMPLES, SCHEMAS
 from roaddraft.document.document import Document
@@ -93,6 +94,22 @@ REGISTRY: List[CommandSpec] = [
                 h.place_callout,
                 {"c3d": ["MLEADER", "QLEADER", "LEADER"],
                  "ord": ["place note", "place callout"]}),
+    CommandSpec("place_dimension",
+                "Measure the drawing and say so on it: linear, aligned, angular, "
+                "radius, diameter or arc_length. The document stores the measurement "
+                "-- the points, the arc, and where the dimension line was dragged to "
+                "-- and derives extension lines, dimension line, arrowheads and the "
+                "number from it, so the text cannot drift from the geometry and the "
+                "annotation scale re-sizes the annotation without moving the "
+                "measurement. Name what to measure (of_entity for one entity end to "
+                "end or a curve's own geometry, from_entity/to_entity for two, two "
+                "lines for the angle between them) or give the points outright; "
+                "line_point settles which measurement was meant.",
+                dim.place_dimension,
+                {"c3d": ["DIM", "DIMLINEAR", "DIMALIGNED", "DIMANGULAR", "DIMRADIUS",
+                         "DIMDIAMETER", "DIMARC"],
+                 "ord": ["place dimension", "dimension element", "dimension linear",
+                         "dimension angle", "dimension radius"]}),
     CommandSpec("insert_block", "Insert a block/cell reference.", h.insert_block,
                 {"c3d": ["INSERT"], "ord": ["place cell"]}),
     CommandSpec("place_table",

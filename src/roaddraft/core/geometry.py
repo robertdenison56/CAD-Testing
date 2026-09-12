@@ -103,6 +103,44 @@ def arc_bbox(center, radius, start_deg, end_deg):
     return bbox_of_points(pts)
 
 
+def upright(angle_deg):
+    """Fold a rotation into (-90, 90] so text never reads upside down."""
+    a = angle_deg % 360.0
+    if 90.0 < a <= 270.0:
+        a -= 180.0
+    return ((a + 180.0) % 360.0) - 180.0
+
+
+# --------------------------------------------------------------- arrowheads
+
+ARROW_HALF_RATIO = 0.18  # half-width of an arrowhead as a fraction of its length
+
+
+def arrow_head(tip, tail, size, half_ratio=ARROW_HALF_RATIO):
+    """Vertices of a closed triangle at ``tip``, pointing away from ``tail``."""
+    dx, dy = tip[0] - tail[0], tip[1] - tail[1]
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        ux, uy = 1.0, 0.0
+    else:
+        ux, uy = dx / length, dy / length
+    base = [tip[0] - ux * size, tip[1] - uy * size]
+    half = size * half_ratio
+    return [list(tip), [base[0] - uy * half, base[1] + ux * half],
+            [base[0] + uy * half, base[1] - ux * half]]
+
+
+def line_intersection(a, b, c, d):
+    """Intersection of the infinite lines a-b and c-d, or None when parallel."""
+    r = (b[0] - a[0], b[1] - a[1])
+    s = (d[0] - c[0], d[1] - c[1])
+    denom = r[0] * s[1] - r[1] * s[0]
+    if abs(denom) < 1e-12:
+        return None
+    t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / denom
+    return [a[0] + r[0] * t, a[1] + r[1] * t]
+
+
 # ------------------------------------------------------------------- text
 
 TEXT_WIDTH_RATIO = 0.7  # estimated glyph width as a fraction of text height

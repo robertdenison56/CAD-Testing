@@ -59,6 +59,16 @@ Beyond the 2D primitives, the bus carries roadway-semantic actions:
   block included); `nest_depth` turns on live nesting, so the basefile's own
   references display too (`SURVEY:UTIL:LN-001`, levels `UTIL$layer`), with
   circular attachments skipped.
+- `place_dimension` — dimensioning: `linear` (along one axis), `aligned`
+  (the true distance between two points), `angular`, `radius`, `diameter`
+  and `arc_length`. What the document stores is the *measurement* — the
+  points, the arc, and where the dimension line was dragged to — so the
+  number is derived, never typed: move a measured point and the text
+  follows. Name what to measure rather than computing points (`of_entity`
+  for one entity end to end or a curve's own centre/radius,
+  `from_entity`/`to_entity` for two, two lines for the angle between them),
+  and reference geometry works as a target. See
+  [Dimensioning](#dimensioning) below.
 - **Design model (Phase 1)** — `create_alignment` / `modify_alignment` /
   `delete_alignment`, `create_profile` / `delete_profile`, `draw_alignment`,
   `place_label`, `place_curve_table`, `import_landxml`, plus
@@ -239,6 +249,66 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   the fixed feet defaults. `create_viewport` warns when a viewport's plot
   scale differs from the annotation scale; `list_annotation_scales` reports
   the list and sizes. The GUI has the scale selector in the status bar.
+
+## Dimensioning
+
+A dimension is a measurement, not a picture of one. `place_dimension` stores
+what is being measured and derives the linework — extension lines, dimension
+line, arrowheads, the number — every time it is drawn, which is what keeps
+the text and the geometry from drifting apart:
+
+```python
+s.execute("place_dimension", {"space": "model", "kind": "linear",
+                              "from_entity": "LN-003", "to_entity": "LN-005",
+                              "line_point": [1450, 1000], "layer": "V-ANNO-DIMS"})
+# -> linear dimension DM-001 ("24.00'") placed in model space, measured vertically
+s.execute("modify_entity", {"id": "DM-001", "changes": {"p2": [1450, 1020]}})
+# -> the dimension now reads 32.00'
+```
+
+**What to measure.** Give the points (`p1`/`p2`, `center`, `radius`), or name
+the geometry and let the engine find them: `of_entity` dimensions a line,
+polyline or arc end to end, or reads an arc/circle's own centre and radius;
+`from_entity`/`to_entity` (with `from_at`/`to_at`: `start|mid|end` or a
+fraction) measure between points that are genuinely *on* each entity, curves
+included; and two lines handed to an angular dimension are intersected for
+the vertex. Ids come from `find_entities` and `hit_test`, so geometry seen
+through a reference attachment (`SURVEY:LN-001`) can be dimensioned like
+anything else.
+
+**`line_point` is where the dimension line goes** — the point a drafter
+drags to — and it is also how the command says which measurement was meant,
+exactly as dragging does in AutoCAD: clear above or below a pair of points is
+a horizontal dimension and out to the side a vertical one (two points
+separated along one axis only are simply measured that way); on an angular
+dimension it picks which of the four angles between the rays is being called
+out; on a radius or diameter it is where the text sits, inside the circle
+drawing across it and outside drawing a leader.
+
+**Appearance** follows the annotation scale. One number — the text height —
+sizes the whole dimension: arrowheads, text gap and extension line offsets
+default to fixed multiples of it (AutoCAD's DIMASZ / DIMGAP / DIMEXO /
+DIMEXE), and each can be overridden. `set_annotation_scale` re-sizes the
+annotation for a new plot scale *without moving the measured points*, so the
+reading never changes. Text sits above the dimension line and reads left to
+right; arrowheads sit inside the extension lines and flip outside, with a
+warning, when the text will not fit. `arrow` selects `arrow`, `tick` (the
+oblique civil slash), `dot` or `none`.
+
+**The number** reads `120.00'` by default, `12'-6"` with
+`unit_format: "feet_inches"`, or bare with `decimal`; an angular dimension
+reads DMS (`28°15'30"`). `prefix`/`suffix` wrap it (radius, diameter and arc
+length come with `R=`, `Ø` and `L=`), `precision` sets the decimals, and
+`text` overrides the value outright (`""` hides it). `measure_scale` is
+AutoCAD's DIMLFAC: on a sheet, set it to the viewport's plot scale to
+dimension in model feet — which is exactly what the viewport transform does
+for you when a model-space dimension is shown on paper, so the same
+dimension reads `24.00'` in model space and through a 1"=50' viewport.
+
+**`measure`** is the read-only half (AutoCAD's DIST / MEASUREGEOM): the
+distance, dx/dy, bearing and azimuth between two points or entities, or one
+entity's own length, radius and sweep — formatted with the same string
+`place_dimension` would draw.
 
 ### Drive it as an agent — MCP mode (natural language)
 

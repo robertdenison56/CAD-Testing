@@ -29,7 +29,7 @@ LINETYPES = ("continuous", "dashed", "center", "hidden", "dot", "phantom")
 
 ID_PREFIXES = {
     "line": "LN", "polyline": "PL", "arc": "AR", "circle": "CI",
-    "text": "TX", "blockref": "BR", "table": "TB",
+    "text": "TX", "blockref": "BR", "table": "TB", "dimension": "DM",
     "sheet": "SH", "viewport": "VP", "reference": "RF",
 }
 

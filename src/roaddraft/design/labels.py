@@ -15,6 +15,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
+from roaddraft.core import geometry as geo
 from roaddraft.core.units import format_station
 from roaddraft.design.anchors import AnchorPoint
 from roaddraft.design.angles import direction_to_azimuth, format_bearing
@@ -110,12 +111,8 @@ class StationingPlan:
 
 
 def upright(angle_deg: float) -> float:
-    """Fold a rotation into (-90, 90] so text never reads upside down
-    (identical to the stationing engine's ``_upright``)."""
-    a = angle_deg % 360.0
-    if 90.0 < a <= 270.0:
-        a -= 180.0
-    return ((a + 180.0) % 360.0) - 180.0
+    """Fold a rotation into (-90, 90] so text never reads upside down."""
+    return geo.upright(angle_deg)
 
 
 def offset_point(p: Sequence[float], angle_deg: float, dist: float) -> List[float]:

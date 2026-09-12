@@ -353,7 +353,8 @@
 const $ = id => document.getElementById(id);
 const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
             state: null, view: null, modelBounds: null, tool: "select",
-            pts: [], cursor: null, stationPicks: [], selected: null,
+            pts: [], cursor: null, stationPicks: [], dimPick: null,
+            dimBusy: false, selected: null,
             ribbonTab: "Home", dpi: 130, frames: true, dark: true,
             ortho: false, tsOpen: { layers: true, sheets: true, refs: true, alignments: true } };
 
@@ -376,6 +377,7 @@ const ICONS = {
   station: `<path d="M3 17 H10 Q14.5 17 16.5 13 T21.5 7.5"/><path d="M6.2 14.6 V19.4 M10.4 14.6 V19.4 M15.1 10.4 L18.3 13.2"/>`,
   alignment: `<path d="M3 19 H9.5 A7 7 0 0 0 16 14.5 L20.5 5"/><circle class="f" cx="3" cy="19" r="1.5"/><circle class="f" cx="20.5" cy="5" r="1.5"/><path d="M9.5 19 L16 14.5" stroke-dasharray="1.5 1.5"/>`,
   label: `<path d="M4 6.5 H15 L20 12 L15 17.5 H4 Z"/><path d="M7.5 12 H12.5"/>`,
+  dim: `<path d="M4.5 4 V20 M19.5 4 V20 M4.5 12 H19.5"/><path class="f" d="M4.5 12 L8 10.4 V13.6 Z M19.5 12 L16 10.4 V13.6 Z"/>`,
   move: `<path d="M12 4 V20 M4 12 H20 M12 4 l-2.2 2.2 M12 4 l2.2 2.2 M12 20 l-2.2-2.2 M12 20 l2.2-2.2 M4 12 l2.2-2.2 M4 12 l2.2 2.2 M20 12 l-2.2-2.2 M20 12 l-2.2 2.2"/>`,
   erase: `<path d="M9 20 H5 L3.2 18.1 a1.6 1.6 0 0 1 0-2.2 L13.2 5.4 a1.6 1.6 0 0 1 2.2 0 l5 5.2 a1.6 1.6 0 0 1 0 2.2 L13.6 20 H9 Z"/><path d="M9.6 9.2 L16.8 16.6"/>`,
   block: `<path d="M12 3 L20 7 V17 L12 21 L4 17 V7 Z"/><path d="M4 7 L12 11 L20 7 M12 11 V21"/>`,
@@ -541,6 +543,7 @@ const RIBBON = {
     { caption: "Layers", items: [{ t: "layerctl" }] },
     { caption: "Annotation", items: [
       { t: "big", icon: "text", label: "Text", tool: "text" },
+      { t: "big", icon: "dim", label: "Dimen­sion", tool: "dim" },
       { t: "big", icon: "table", label: "Table", act: "table" },
       { t: "stack", items: [
         { icon: "edittext", label: "Edit Text", tool: "edittext" }] }] },
@@ -568,6 +571,10 @@ const RIBBON = {
       { t: "big", icon: "table", label: "Curve Table", act: "curvetable" },
       { t: "stack", items: [
         { icon: "table", label: "Add Table", act: "table" }] }] },
+    { caption: "Dimensions", items: [
+      { t: "big", icon: "dim", label: "Linear", tool: "dim" },
+      { t: "big", icon: "dim", label: "Aligned", tool: "dimaligned" },
+      { t: "big", icon: "circle", label: "Radius", tool: "dimradius" }] },
     { caption: "Text", items: [
       { t: "big", icon: "text", label: "Text", tool: "text" },
       { t: "big", icon: "edittext", label: "Edit Text", tool: "edittext" }] },
@@ -1094,7 +1101,8 @@ async function refresh() {
   renderToolspace(); renderLTabs(); renderStatus(); renderRibbon();
 }
 function setSpace(ref) {
-  S.space = ref; S.pts = []; S.stationPicks = []; S.selected = null;
+  S.space = ref; S.pts = []; S.stationPicks = []; S.dimPick = null;
+  S.selected = null;
   renderProps();
   if (S.state) { renderLTabs(); renderToolspace(); renderStatus(); }
   updateCanvas();
@@ -1117,16 +1125,24 @@ const TOOLS = {
   erase:   { hint: "click an entity to erase it" },
   insblock:{ hint: "click the insertion point" },
   edittext:{ hint: "click a text or table to edit it" },
+  dim:     { hint: "click the two points to measure between, then where the " +
+                   "dimension line goes (above or below measures across, " +
+                   "out to the side measures up and down)" },
+  dimaligned:{ hint: "click the two points to measure between, then where the " +
+                     "dimension line goes — measures the true distance" },
+  dimradius:{ hint: "click an arc or circle, then where the R= text goes " +
+                    "(inside it draws across, outside draws a leader)" },
   refclip: { hint: "click polygon vertices around the reference area; " +
                    "Enter applies it as a clip boundary or mask" },
 };
 function setTool(key) {
-  S.tool = key; S.pts = []; S.stationPicks = []; S.selected = null;
+  S.tool = key; S.pts = []; S.stationPicks = []; S.dimPick = null;
+  S.dimBusy = false; S.selected = null;
   renderRibbon(); drawOverlay(); renderProps();
   $("st-tool").textContent = `${key.toUpperCase()}: ${TOOLS[key].hint}`;
 }
 function cancelTool() {
-  S.pts = []; S.stationPicks = []; S.selected = null;
+  S.pts = []; S.stationPicks = []; S.dimPick = null; S.selected = null;
   drawOverlay(); renderProps();
 }
 function orthoAdjust(pt, ev) {
@@ -1204,6 +1220,28 @@ async function toolClick(pt, ev) {
       await exec("place_text", { position: pt, content: values.content,
         height: parseFloat(values.height) || 0.15,
         rotation_deg: parseFloat(values.rotation) || 0 });
+  } else if (tool === "dim" || tool === "dimaligned") {
+    S.pts.push(pt);
+    if (S.pts.length === 3) {
+      const [p1, p2, line_point] = S.pts; S.pts = [];
+      await exec("place_dimension", {
+        kind: tool === "dim" ? "linear" : "aligned", p1, p2, line_point });
+    }
+  } else if (tool === "dimradius") {
+    if (!S.dimPick) {
+      if (S.dimBusy) return;           // the pick is still out for a hit test
+      S.dimBusy = true;
+      try {
+        const hits = await hitAt(pt, 10, true);
+        const hit = hits.find(h => ["arc", "circle"].includes(h.type));
+        if (!hit) { logHint("no arc or circle within tolerance"); return; }
+        S.dimPick = hit.id;
+        logHint(`${hit.id} — now click where the R= text goes`);
+      } finally { S.dimBusy = false; }
+      return;
+    }
+    const of_entity = S.dimPick; S.dimPick = null;
+    await exec("place_dimension", { kind: "radius", of_entity, line_point: pt });
   } else if (tool === "insblock") {
     const blocks = S.state ? S.state.blocks : ["NORTH_ARROW"];
     const values = await openForm("Insert block", [
@@ -1874,6 +1912,31 @@ function drawOverlay() {
         out += `<polyline points="${pts.map(p => p.join(",")).join(" ")}" ` +
                `class="rb"/>`;
       } else out += seg(px[0], cur, "rb");
+    }
+  }
+  if (["dim", "dimaligned"].includes(S.tool) && px.length && cur) {
+    out += seg(px[0], px.length > 1 ? px[1] : cur, "rb");
+    if (px.length === 2) {
+      // the dimension line follows the cursor, the same way the engine reads
+      // line_point: along the pair for an aligned dimension, across one axis
+      // for a linear one (the axis that separates the points, or the one the
+      // cursor is dragged clear of)
+      const [a, b] = px, m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      let on;
+      if (S.tool === "dimaligned") {
+        const len = dist(a, b) || 1;
+        const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+        const d = [cur[0] - m[0], cur[1] - m[1]];
+        const along = d[0] * u[0] + d[1] * u[1];     // slide across only
+        const off = [d[0] - u[0] * along, d[1] - u[1] * along];
+        on = q => [q[0] + off[0], q[1] + off[1]];
+      } else {
+        const dx = Math.abs(b[0] - a[0]), dy = Math.abs(b[1] - a[1]);
+        const horizontal = dx < 1e-9 ? false : dy < 1e-9 ? true :
+          Math.abs(cur[1] - m[1]) >= Math.abs(cur[0] - m[0]);
+        on = q => horizontal ? [q[0], cur[1]] : [cur[0], q[1]];
+      }
+      out += seg(on(a), on(b), "rb") + seg(a, on(a), "rb") + seg(b, on(b), "rb");
     }
   }
   if (S.tool === "move" && S.selected && px.length === 1 && cur) {

@@ -19,7 +19,7 @@ from roaddraft.design.errors import DesignError
 from roaddraft.design.labels import LABEL_KINDS, compile_label
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import Document
-from roaddraft.document.entities import Line, Text
+from roaddraft.document.entities import Dimension, Line, Text
 
 
 # ---------------------------------------------------------------- helpers
@@ -91,6 +91,18 @@ def rescale_entities(doc: Document, scale: float) -> List[str]:
             _replace_label(doc, e, rec, scale)
             e.height = height_in * scale
             e.annotative = dict(rec, scale=scale, height_in=height_in)
+        elif isinstance(e, Dimension):
+            height_in = float(rec.get("height_in", e.text_height / old))
+            # every size a dimension has is derived from its text height, so one
+            # factor re-sizes the annotation; the measured points do not move
+            factor = (height_in * scale) / e.text_height if e.text_height else 1.0
+            e.text_height = height_in * scale
+            for key in ("arrow_size", "text_gap", "extension_offset",
+                        "extension_beyond"):
+                value = getattr(e, key)
+                if value is not None:
+                    setattr(e, key, value * factor)
+            e.annotative = dict(rec, scale=scale, height_in=height_in)
         elif isinstance(e, Line):
             length = math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1])
             half_in = float(rec.get("half_len_in", length / 2.0 / old))
@@ -121,6 +133,9 @@ def adopt_entities(doc: Document, scale: float) -> List[str]:
             if e.anchor and e.anchor.get("label_offset") is not None:
                 rec["offset_in"] = float(e.anchor["label_offset"]) / scale
             e.annotative = rec
+            adopted.append(eid)
+        elif isinstance(e, Dimension):
+            e.annotative = {"scale": scale, "height_in": e.text_height / scale}
             adopted.append(eid)
         elif isinstance(e, Line) and e.anchor and e.anchor.get("kind") == "tick":
             length = math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1])

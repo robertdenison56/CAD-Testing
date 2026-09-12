@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from roaddraft.core import geometry as geo
+from roaddraft.core.units import LENGTH_FORMATS
 
 HALIGN = ("left", "center", "right")
 VALIGN = ("bottom", "middle", "top")
@@ -39,6 +40,29 @@ def _in_enum(value, allowed, name):
     if value not in allowed:
         raise ValueError(f"{name} must be one of {list(allowed)}, "
                          f"got {value!r}")
+    return value
+
+
+def _as_size(value, name):
+    """A dimension size override: a positive length, in space units."""
+    value = float(value)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive (or null for the default), "
+                         f"got {value}")
+    return value
+
+
+def _as_precision(value):
+    value = int(value)
+    if not 0 <= value <= 6:
+        raise ValueError(f"precision must be 0 to 6 decimals, got {value}")
+    return value
+
+
+def _as_nonzero(value, name):
+    value = float(value)
+    if value == 0:
+        raise ValueError(f"{name} must not be zero")
     return value
 
 
@@ -495,8 +519,148 @@ class Table(Entity):
                      text_height=self.text_height * scale, title=self.title, style=self.style)
 
 
+DIM_KINDS = ("linear", "aligned", "angular", "radius", "diameter", "arc_length")
+DIM_ARROWS = ("arrow", "tick", "dot", "none")
+#: Geometry each kind needs before it can be drawn (``line_point`` always).
+DIM_REQUIRED = {
+    "linear": ("p1", "p2"),
+    "aligned": ("p1", "p2"),
+    "angular": ("center", "p1", "p2"),
+    "radius": ("center", "radius", "p1"),
+    "diameter": ("center", "radius", "p1"),
+    "arc_length": ("center", "radius", "p1", "p2"),
+}
+
+
+@dataclass
+class Dimension(Entity):
+    """A measurement, not a picture of one.
+
+    The entity stores what is being measured -- the points, the arc, and
+    ``line_point``, the place the dimension line was dragged to -- and derives
+    extension lines, the dimension line, arrowheads and the number from them
+    (see ``document.dimgeom``). Move a measured point and the text follows.
+
+    Which fields carry meaning depends on ``kind`` (see ``DIM_REQUIRED``):
+    ``linear``/``aligned`` measure between ``p1`` and ``p2``; ``angular``
+    measures the angle at ``center`` between the rays to ``p1`` and ``p2``;
+    ``radius``/``diameter`` measure a circle at ``center`` with ``p1`` on it;
+    ``arc_length`` measures counter-clockwise from ``p1`` to ``p2``.
+
+    ``arrow_size``/``text_gap``/``extension_offset``/``extension_beyond``
+    default to fixed multiples of ``text_height`` when left null, so one
+    number sizes the whole dimension. ``measure_scale`` is AutoCAD's DIMLFAC:
+    the multiplier from drawn length to reported length, which is how a
+    dimension drawn on a sheet reports model feet (and what the viewport
+    transform maintains when model geometry is shown on paper).
+    """
+    kind: str = "linear"
+    p1: list = field(default_factory=lambda: [0.0, 0.0])
+    p2: Optional[list] = None
+    center: Optional[list] = None
+    radius: Optional[float] = None
+    line_point: list = field(default_factory=lambda: [0.0, 0.0])
+    rotation_deg: Optional[float] = None  # linear: measured direction, null = infer
+    text_height: float = 0.12
+    style: str = "STANDARD"
+    text_override: Optional[str] = None  # null = the measurement; "" = no text
+    prefix: Optional[str] = None  # null = the kind's own (R=, Ø, L=)
+    suffix: str = ""
+    unit_format: str = "feet"
+    precision: int = 2
+    arrow: str = "arrow"
+    arrow_size: Optional[float] = None
+    text_gap: Optional[float] = None
+    extension_offset: Optional[float] = None
+    extension_beyond: Optional[float] = None
+    measure_scale: float = 1.0
+
+    TYPE = "dimension"
+
+    FIELDS = ("kind", "p1", "p2", "center", "radius", "line_point", "rotation_deg",
+              "text_height", "style", "text_override", "prefix", "suffix",
+              "unit_format", "precision", "arrow", "arrow_size", "text_gap",
+              "extension_offset", "extension_beyond", "measure_scale")
+
+    def to_dict(self):
+        d = self._base_dict()
+        for name in self.FIELDS:
+            value = getattr(self, name)
+            d[name] = list(value) if isinstance(value, list) else value
+        return d
+
+    @classmethod
+    def from_dict(cls, d):
+        kind = _in_enum(d.get("kind", "linear"), DIM_KINDS, "kind")
+        fields = {
+            "kind": kind,
+            "line_point": as_point(d.get("line_point", [0.0, 0.0])),
+            "text_height": as_positive(d.get("text_height", 0.12), "text_height"),
+            "style": d.get("style", "STANDARD"),
+            "suffix": str(d.get("suffix", "")),
+            "unit_format": _in_enum(d.get("unit_format", "feet"), LENGTH_FORMATS,
+                                    "unit_format"),
+            "precision": _as_precision(d.get("precision", 2)),
+            "arrow": _in_enum(d.get("arrow", "arrow"), DIM_ARROWS, "arrow"),
+            "measure_scale": _as_nonzero(d.get("measure_scale", 1.0), "measure_scale"),
+        }
+        for name in ("p1", "p2", "center"):
+            value = d.get(name)
+            fields[name] = None if value is None else as_point(value)
+        for name in ("arrow_size", "text_gap", "extension_offset", "extension_beyond"):
+            value = d.get(name)
+            fields[name] = None if value is None else _as_size(value, name)
+        radius = d.get("radius")
+        fields["radius"] = None if radius is None else as_positive(radius, "radius")
+        rotation = d.get("rotation_deg")
+        fields["rotation_deg"] = None if rotation is None else float(rotation)
+        for name in ("text_override", "prefix"):
+            value = d.get(name)
+            fields[name] = None if value is None else str(value)
+        if fields["p1"] is None:
+            fields["p1"] = [0.0, 0.0]
+        missing = [name for name in DIM_REQUIRED[kind] if fields.get(name) is None]
+        if missing:
+            raise ValueError(f"a {kind} dimension needs {', '.join(DIM_REQUIRED[kind])}; "
+                             f"missing {', '.join(missing)}")
+        return cls(**fields, **cls._base_kwargs(d))
+
+    def primitives(self, doc) -> List[Entity]:
+        """Expand to Line/Polyline/Arc/Circle/Text primitives (same space)."""
+        from roaddraft.document import dimgeom
+        return dimgeom.primitives(self, doc)
+
+    def bbox(self, doc):
+        bb = None
+        for prim in self.primitives(doc):
+            bb = geo.bbox_union(bb, prim.bbox(doc))
+        return bb
+
+    def transformed(self, fn, angle_delta_deg, scale):
+        def scaled(value):
+            return None if value is None else value * scale
+
+        return Dimension(
+            id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+            anchor=self.anchor, annotative=self.annotative, kind=self.kind,
+            p1=fn(self.p1), p2=None if self.p2 is None else fn(self.p2),
+            center=None if self.center is None else fn(self.center),
+            radius=scaled(self.radius), line_point=fn(self.line_point),
+            rotation_deg=None if self.rotation_deg is None
+            else self.rotation_deg + angle_delta_deg,
+            text_height=self.text_height * scale, style=self.style,
+            text_override=self.text_override, prefix=self.prefix, suffix=self.suffix,
+            unit_format=self.unit_format, precision=self.precision, arrow=self.arrow,
+            arrow_size=scaled(self.arrow_size), text_gap=scaled(self.text_gap),
+            extension_offset=scaled(self.extension_offset),
+            extension_beyond=scaled(self.extension_beyond),
+            # the drawing shrinks onto paper; the number it reports must not
+            measure_scale=(self.measure_scale / scale if scale else self.measure_scale))
+
+
 ENTITY_TYPES = {
-    cls.TYPE: cls for cls in (Line, Polyline, Arc, Circle, Text, BlockRef, Table)
+    cls.TYPE: cls
+    for cls in (Line, Polyline, Arc, Circle, Text, BlockRef, Table, Dimension)
 }
 
 
@@ -532,7 +696,7 @@ def entity_distance(doc, entity: Entity, p) -> float:
     if isinstance(entity, (Text, Table)):
         bb = entity.bbox(doc)
         return geo.dist_point_to_bbox(p, bb) if bb else float("inf")
-    if isinstance(entity, BlockRef):
+    if isinstance(entity, (BlockRef, Dimension)):
         prims = expand_entities(doc, [entity])
         if not prims:
             return float("inf")
@@ -564,7 +728,7 @@ def expand_entities(doc, entities, depth: int = 0) -> List[Entity]:
                 t = prim.transformed(fn, rot, s)
                 t.id = f"{e.id}:{prim.id}"
                 out.append(t)
-        elif isinstance(e, Table):
+        elif isinstance(e, (Table, Dimension)):
             out.extend(e.primitives(doc))
         else:
             out.append(e)
