@@ -392,6 +392,7 @@ const ICONS = {
   zoomin: `<circle cx="10.5" cy="10.5" r="6.8"/><path d="M15.6 15.6 L21 21 M10.5 7.8 v5.4 M7.8 10.5 h5.4"/>`,
   zoomout: `<circle cx="10.5" cy="10.5" r="6.8"/><path d="M15.6 15.6 L21 21 M7.8 10.5 h5.4"/>`,
   export: `<path d="M13.5 3.5 H7 a1.6 1.6 0 0 0-1.6 1.6 V19 A1.6 1.6 0 0 0 7 20.6 h10 a1.6 1.6 0 0 0 1.6-1.6 V8.5 Z M13.5 3.5 v5 h5.1"/><path d="M9 14.8 h6.2 M15.2 14.8 l-2.4-2.4 M15.2 14.8 l-2.4 2.4"/>`,
+  print: `<path d="M7 9 V3.5 h10 V9"/><path d="M5 9 h14 a1.6 1.6 0 0 1 1.6 1.6 v4.8 A1.6 1.6 0 0 1 19 17 h-2 M7 17 H5 a1.6 1.6 0 0 1-1.6-1.6 v-4.8 A1.6 1.6 0 0 1 5 9 Z"/><path d="M7 13.5 h10 v7 H7 Z"/>`,
   save: `<path d="M5 3.5 H16 L20.5 8 V19 a1.5 1.5 0 0 1-1.5 1.5 H5 A1.5 1.5 0 0 1 3.5 19 V5 A1.5 1.5 0 0 1 5 3.5 Z"/><path d="M7.5 3.5 V9 H15 V3.5 M7 20.5 V14 h10 v6.5"/>`,
   journal: `<path d="M8 5 h13 M8 10 h13 M8 15 h13 M8 20 h13"/><circle class="f" cx="4" cy="5" r="1.1"/><circle class="f" cx="4" cy="10" r="1.1"/><circle class="f" cx="4" cy="15" r="1.1"/><circle class="f" cx="4" cy="20" r="1.1"/>`,
   layers: `<path d="M12 3 L21 8 L12 13 L3 8 Z"/><path d="M4.8 11.4 L12 15.4 L19.2 11.4 M4.8 15.2 L12 19.2 L19.2 15.2"/>`,
@@ -589,6 +590,8 @@ const RIBBON = {
     { caption: "Display", items: [{ t: "displayctl" }] },
   ],
   Output: [
+    { caption: "Print", items: [
+      { t: "big", icon: "print", label: "Print…", act: "print" }] },
     { caption: "Export", items: [
       { t: "big", icon: "export", label: "DXF", act: "dxf" },
       { t: "big", icon: "export", label: "PDF", act: "pdf" },
@@ -750,6 +753,49 @@ async function ribbonAct(act) {
     : "titleblock C-101 project=\"PROJECT\"");
   else if (act === "newlayer")
     prefill("mklayer V-NEW color=red linetype=continuous lineweight_mm=0.35");
+  else if (act === "print") {
+    const onSheet = S.space !== "model";
+    const sheets = (S.state && S.state.sheets || []).map(s => s.name);
+    const current = "current: " + (onSheet ? spaceLabel() : "model space");
+    const v = await openForm("Print to PDF", [
+      { key: "what", label: "Print", value: current,
+        options: [current, "model space", "all sheets"].concat(sheets) },
+      { key: "paper", label: "Paper",
+        value: onSheet ? "(same as sheet)" : "ANSI_D",
+        options: ["(same as sheet)", "ANSI_A", "ANSI_B", "ANSI_C", "ANSI_D",
+                  "ARCH_D", "ARCH_E"] },
+      { key: "orientation", label: "Orientation", value: "landscape",
+        options: ["landscape", "portrait"] },
+      { key: "scale", label: "Scale (fit · 1:2 · 50% · ft/in in model)",
+        value: "fit" },
+      { key: "area", label: "Model area",
+        value: S.modelBounds ? "current view" : "extents",
+        options: ["current view", "extents"] },
+      { key: "monochrome", label: "Monochrome", value: "no",
+        options: ["no", "yes"] }]);
+    if (!v) return;
+    const params = {};
+    if (v.what === current) params.space = onSheet ? S.space : "model";
+    else if (v.what === "model space") params.space = "model";
+    else if (v.what !== "all sheets") params.space = v.what;
+    if (v.paper !== "(same as sheet)") params.paper = v.paper;
+    if (v.orientation !== "landscape") params.orientation = v.orientation;
+    const scale = (v.scale || "").trim();
+    if (scale && scale.toLowerCase() !== "fit")
+      params.scale = isNaN(Number(scale)) ? scale : Number(scale);
+    if (params.space === "model" && v.area === "current view" && S.modelBounds)
+      params.bounds = S.modelBounds;
+    if (v.monochrome === "yes") params.monochrome = true;
+    logEcho("print " + JSON.stringify(params));
+    const r = await postJSON("/api/query", { query: "print_pdf", params });
+    if (!r.ok) { logResult(r); return; }
+    logHTML(`<span class="ok">printed ${r.page_count} page` +
+      `${r.page_count === 1 ? "" : "s"}${r.monochrome ? ", monochrome" : ""}` +
+      `</span>` + (r.pages || []).map(pg =>
+        `<br><span class="hint">${esc(pg.space)} → ${esc(pg.paper)} ` +
+        `(${pg.paper_in[0]} × ${pg.paper_in[1]} in) at ${esc(pg.scale)}</span>`)
+        .join("") + `<br><span class="hint">→ ${esc(r.path)}</span>`);
+  }
   else if (act === "dxf" || act === "pdf") {
     logEcho(act);
     logResult(await postJSON("/api/query",
@@ -2217,7 +2263,10 @@ document.addEventListener("keydown", ev => {
   if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" ||
       ev.target.tagName === "SELECT") return;
   const key = ev.key.toLowerCase();
-  if (ev.key === "F8") { ev.preventDefault(); $("tog-ortho").click(); }
+  if (key === "p" && (ev.metaKey || ev.ctrlKey)) {
+    ev.preventDefault(); ribbonAct("print");
+  }
+  else if (ev.key === "F8") { ev.preventDefault(); $("tog-ortho").click(); }
   else if (TOOL_KEYS[key] && !ev.metaKey && !ev.ctrlKey)
     setTool(TOOL_KEYS[key]);
   else if (ev.key === "Enter") finishTool();
@@ -2257,7 +2306,7 @@ function connect() {
   ["line","pline","arc","circle","text","insert","table","sheet","viewport",
    "titleblock","erase","move","mklayer","layer","space","state","layers",
    "sheets","blocks","styles","entities","extents","journal","help","dxf",
-   "pdf","save","undo","redo","station","xref","refs","alignment",
+   "pdf","print","plot","save","undo","redo","station","xref","refs","alignment",
    "drawalign","profile","label","curvetable","landxmlin","landxml","sta2xy",
    "xy2sta","design","anchor","alignments","annoscale","annoscales","annoadd",
    "annodel","annopaper"].forEach(n =>

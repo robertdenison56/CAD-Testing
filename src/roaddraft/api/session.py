@@ -26,7 +26,9 @@ from roaddraft.commands.design_schemas import ANCHOR, KIND, POINT, ROTATION, SID
 from roaddraft.commands.schemas import NSTR, NUM, POS, SPACE, STR, obj
 from roaddraft.core.units import LENGTH_FORMATS
 from roaddraft.document import fileformat
+from roaddraft.document.annotation import DEFAULT_SCALES, format_scale, parse_scale
 from roaddraft.document.document import Document
+from roaddraft.document.sheets import SHEET_SIZES
 from roaddraft.render import dxf as dxf_render
 from roaddraft.render import mpl as mpl_render
 
@@ -37,6 +39,19 @@ BOUNDS = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems
           "description": "[minx, miny, maxx, maxy]"}
 BOOL = {"type": "boolean"}
 DPI = {"type": "number", "minimum": 30, "maximum": 600}
+PAPER = {"type": "string", "enum": ["sheet"] + sorted(SHEET_SIZES),
+         "description": "paper to print on. 'sheet' (the default for a sheet) "
+                        "keeps the sheet's own size; model space needs a named "
+                        "paper and defaults to ANSI_D"}
+ORIENTATION = {"type": "string", "enum": ["landscape", "portrait"],
+               "description": "turns a named paper; a sheet printed on its own "
+                              "size keeps its own orientation"}
+PRINT_SCALE = {"type": ["number", "string"],
+               "description": "'fit' (default) fits the page. On a sheet: "
+                              "printed inches per sheet inch -- 1 / '1:1' full "
+                              "size, 0.5 / '1:2' / '50%' a half-size set. In "
+                              "model space: feet per inch -- 50, '1\"=50\'' "
+                              "or '1:600'"}
 
 #: Fields of a design-data row that are points, per kind. Points are mapped
 #: into host coordinates for a referenced design; stations, lengths, radii and
@@ -299,6 +314,39 @@ QUERIES = {
                        "sheets": {"type": "array", "items": NSTR, "minItems": 1}}),
         "example": {},
     },
+    "print_pdf": {
+        "description": "Print (plot) to PDF with page setup -- the PLOT dialog, "
+                       "where export_pdf is a batch dump. Prints one space "
+                       "(space='model' or a sheet), a set of sheets, or every "
+                       "sheet, onto the paper you choose at the scale you "
+                       "choose: fit-to-page, a half-size set (scale='1:2' on a "
+                       "sheet), or an exact plot scale in model space "
+                       "(scale=50 is 1\"=50'). Also margins, portrait/landscape "
+                       "and monochrome. A print that would not fit the paper "
+                       "fails with the scale that would. Returns the path and "
+                       "what each page was plotted at.",
+        "schema": obj({"space": SPACE,
+                       "sheets": {"type": "array", "items": NSTR, "minItems": 1,
+                                  "description": "several sheets in one job; "
+                                                 "omit space and sheets to "
+                                                 "print every sheet"},
+                       "path": STR, "paper": PAPER, "orientation": ORIENTATION,
+                       "scale": PRINT_SCALE,
+                       "bounds": {**BOUNDS,
+                                  "description": "model-space window to print "
+                                                 "(plot 'Window'); defaults to "
+                                                 "the extents"},
+                       "margin_in": {"type": "number", "minimum": 0,
+                                     "description": "unprintable margin on all "
+                                                    "four sides (default 0)"},
+                       "monochrome": {**BOOL,
+                                      "description": "plot every color black"},
+                       "scale_lineweights": {**BOOL,
+                                             "description": "shrink lineweights "
+                                                            "with the plot scale "
+                                                            "(off, as in CAD)"}}),
+        "example": {"space": "model", "paper": "ANSI_D", "scale": 50},
+    },
     "save_document": {
         "description": "Save the document. A path with no RoadDraft extension "
                        "gets '.rdraft', the application document; '.rdoc.json' "
@@ -382,6 +430,62 @@ QUERIES = {
 
 def _slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "untitled"
+
+
+_RATIO_RE = re.compile(r"^1\s*:\s*(\d+(?:\.\d+)?)$")
+_PERCENT_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*%$")
+_FIT_TOL_IN = 1e-6   # a plot that overruns by less than this still fits
+
+
+def _is_fit(value) -> bool:
+    return isinstance(value, str) and value.strip().lower() == "fit"
+
+
+def _paper_scale(value) -> float:
+    """Printed inches per sheet inch, from 0.5, '1:2', '50%', 'half' or '1:1'.
+    (Model space scales in feet per inch instead -- annotation.parse_scale.)"""
+    if isinstance(value, bool):
+        raise ValueError(f"plot scale must be a number or '1:2', not {value!r}")
+    if isinstance(value, (int, float)):
+        scale = float(value)
+    else:
+        text = str(value).strip().lower()
+        ratio, percent = _RATIO_RE.match(text), _PERCENT_RE.match(text)
+        if text in ("half", "half size", "half-size"):
+            scale = 0.5
+        elif text in ("full", "full size", "full-size"):
+            scale = 1.0
+        elif ratio and float(ratio.group(1)) > 0:
+            scale = 1.0 / float(ratio.group(1))
+        elif percent:
+            scale = float(percent.group(1)) / 100.0
+        else:
+            raise ValueError(f"cannot read plot scale {value!r}; use 'fit', 1, "
+                             f"0.5, '1:2' or '50%'")
+    if scale <= 0:
+        raise ValueError("plot scale must be positive")
+    return scale
+
+
+def _paper_scale_text(scale: float) -> str:
+    if abs(scale - 1.0) < 1e-9:
+        return "1:1 (full size)"
+    if abs(scale - 0.5) < 1e-9:
+        return "1:2 (half size)"
+    return f"1:{1 / scale:.4g}" if scale < 1 else f"{scale:.4g}:1"
+
+
+def _round_up(value: float, places: int = 2) -> float:
+    """Round away from zero so a suggested scale always still fits."""
+    factor = 10 ** places
+    return int(value * factor + 0.999999) / factor
+
+
+def _next_standard_scale(feet_per_inch: float):
+    """The smallest standard plot scale no tighter than this one, so a print
+    that does not fit can be sent to a real drawing scale."""
+    return next((s for s in sorted(DEFAULT_SCALES) if s >= feet_per_inch - 1e-9),
+                None)
 
 
 class Session:
@@ -830,6 +934,152 @@ class Session:
                               f"{_slug(self.doc.meta['project_name'])}.pdf")
         mpl_render.export_pdf(self.doc, path, sheets)
         return self._file_result(path, False)
+
+    def _q_print_pdf(self, p):
+        if "space" in p and "sheets" in p:
+            raise _QueryFault(
+                "print one space or a list of sheets, not both",
+                hint="space='model' or space='C-101' prints one; "
+                     "sheets=['C-101', 'C-102'] prints a set; omit both to "
+                     "print every sheet")
+        space = p.get("space")
+        if space == "model":
+            targets = ["model"]
+        elif space is not None:
+            targets = [self._sheet(space)]
+        elif "sheets" in p:
+            targets = [self._sheet(ref) for ref in p["sheets"]]
+        else:
+            targets = list(self.doc.sheets.values())
+            if not targets:
+                raise _QueryFault(
+                    "no sheets to print",
+                    hint="create one with create_sheet, or print the design "
+                         "itself with space='model'")
+        if "bounds" in p and targets != ["model"]:
+            raise _QueryFault(
+                "bounds is a model-space window; a sheet prints whole",
+                hint="print the design with space='model' and bounds=[x0, y0, "
+                     "x1, y1], or drop bounds to print the sheet")
+
+        setups = [self._page_setup(target, p) for target in targets]
+        project = _slug(self.doc.meta["project_name"])
+        if targets == ["model"]:
+            default_name = f"{project}-model-print.pdf"
+        elif len(targets) == 1:
+            default_name = f"{_slug(targets[0].name)}-print.pdf"
+        else:
+            default_name = f"{project}-print.pdf"
+        path = self._out_path(p.get("path"), default_name)
+        mpl_render.print_pdf(self.doc, path, [page for page, _ in setups])
+        result = self._file_result(path, False)
+        result["page_count"] = len(setups)
+        result["pages"] = [described for _, described in setups]
+        result["monochrome"] = bool(p.get("monochrome", False))
+        return result
+
+    def _page_setup(self, target, p):
+        """Resolve one page of a print job -- the paper, the scale that fits on
+        it, and a plain description of both. A requested scale that would run
+        off the paper faults with the scale that would not."""
+        orientation = p.get("orientation", "landscape")
+        margin = p.get("margin_in", 0.0)
+        mono = bool(p.get("monochrome", False))
+        scale = p.get("scale", "fit")
+        wanted_paper = p.get("paper")
+        is_model = target == "model"
+
+        if is_model and wanted_paper == "sheet":
+            raise _QueryFault(
+                "paper='sheet' has no sheet to take a size from",
+                hint="model space prints on a named paper, e.g. paper='ANSI_D'; "
+                     f"sizes: {sorted(SHEET_SIZES)}")
+        if is_model or (wanted_paper and wanted_paper != "sheet"):
+            paper_name = wanted_paper or "ANSI_D"
+            paper = mpl_render.paper_size(paper_name, orientation)
+        else:                                   # the sheet's own paper, as drawn
+            paper_name = target.size
+            paper = (target.width_in, target.height_in)
+        area = mpl_render.printable_area(paper, margin)
+        if area[0] <= 0 or area[1] <= 0:
+            raise _QueryFault(
+                f"a {margin:g} in margin leaves no printable area on "
+                f"{paper[0]:g} x {paper[1]:g} in paper",
+                hint="use a smaller margin_in or a bigger paper")
+
+        if is_model:
+            bounds = mpl_render.model_window(self.doc, p.get("bounds"))
+            width_ft, height_ft = bounds[2] - bounds[0], bounds[3] - bounds[1]
+            fitted = max(width_ft / area[0], height_ft / area[1])
+            if _is_fit(scale):
+                feet_per_inch = fitted
+            else:
+                try:
+                    feet_per_inch = parse_scale(scale)
+                except ValueError as ex:
+                    raise _QueryFault(
+                        str(ex),
+                        hint="model space plots at feet per inch: 50, "
+                             "'1\"=50\'', '1:600' -- or 'fit'")
+                printed = (width_ft / feet_per_inch, height_ft / feet_per_inch)
+                if (printed[0] > area[0] + _FIT_TOL_IN
+                        or printed[1] > area[1] + _FIT_TOL_IN):
+                    standard = _next_standard_scale(fitted)
+                    raise _QueryFault(
+                        f"{width_ft:.1f} x {height_ft:.1f} ft at "
+                        f"{format_scale(feet_per_inch)} needs {printed[0]:.2f} x "
+                        f"{printed[1]:.2f} in, but {paper_name} gives "
+                        f"{area[0]:.2f} x {area[1]:.2f} in",
+                        hint=f"use scale='fit' (about "
+                             f"{format_scale(_round_up(fitted))})"
+                             + (f", scale={standard:g} ({format_scale(standard)})"
+                                if standard else "")
+                             + ", a bigger paper, or a smaller bounds window")
+            page = {"kind": "model", "bounds": bounds, "paper": paper,
+                    "feet_per_inch": feet_per_inch, "mono": mono}
+            return page, {
+                "space": "model", "paper": paper_name,
+                "paper_in": [round(v, 4) for v in paper],
+                "scale": format_scale(round(feet_per_inch, 4)),
+                "feet_per_inch": round(feet_per_inch, 6),
+                "window_ft": [round(v, 3) for v in bounds],
+                "printed_in": [round(width_ft / feet_per_inch, 3),
+                               round(height_ft / feet_per_inch, 3)]}
+
+        sheet = target
+        content = (sheet.width_in, sheet.height_in)
+        fitted = mpl_render.fit_scale(content, area)
+        if _is_fit(scale):
+            paper_scale = fitted
+        else:
+            try:
+                paper_scale = _paper_scale(scale)
+            except ValueError as ex:
+                raise _QueryFault(
+                    str(ex),
+                    hint="a sheet plots at printed inches per sheet inch: 1 "
+                         "(full size), 0.5 / '1:2' (half size), '50%' -- or "
+                         "'fit'")
+            printed = (content[0] * paper_scale, content[1] * paper_scale)
+            if (printed[0] > area[0] + _FIT_TOL_IN
+                    or printed[1] > area[1] + _FIT_TOL_IN):
+                raise _QueryFault(
+                    f"sheet {sheet.name} ({content[0]:g} x {content[1]:g} in) at "
+                    f"{_paper_scale_text(paper_scale)} needs {printed[0]:.2f} x "
+                    f"{printed[1]:.2f} in, but {paper_name} gives "
+                    f"{area[0]:.2f} x {area[1]:.2f} in",
+                    hint=f"use scale='fit' (about "
+                         f"{_paper_scale_text(fitted)}), a bigger paper, or a "
+                         f"smaller margin_in")
+        page = {"kind": "sheet", "sheet": sheet, "paper": paper,
+                "scale": paper_scale, "mono": mono,
+                "lw_scale": paper_scale if p.get("scale_lineweights") else 1.0}
+        return page, {
+            "space": sheet.name, "paper": paper_name,
+            "paper_in": [round(v, 4) for v in paper],
+            "scale": _paper_scale_text(paper_scale),
+            "printed_in": [round(content[0] * paper_scale, 3),
+                           round(content[1] * paper_scale, 3)]}
 
     def _q_save_document(self, p):
         path = fileformat.write_document(p["path"], self.doc.to_dict())

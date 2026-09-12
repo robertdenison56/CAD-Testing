@@ -26,6 +26,7 @@ REPL_ALIASES = {
     "station": "annotate_stationing", "xref": "attach_reference",
     "xdetach": "detach_reference", "xreload": "reload_references",
     "refs": "list_references", "hit": "hit_test",
+    "print": "print_pdf", "plot": "print_pdf",
     # design model (Phase 1)
     "alignment": "create_alignment", "drawalign": "draw_alignment",
     "profile": "create_profile", "label": "place_label",
@@ -47,6 +48,7 @@ POSITIONAL = {
     "place_text": ["position", "content"],
     "insert_block": ["block_name", "position"],
     "create_sheet": ["name"],
+    "print_pdf": ["space"],
     "create_layer": ["name"],
     "set_current_layer": ["name"],
     "delete_sheet": ["sheet"],
@@ -170,6 +172,17 @@ def build_params(name: str, args: list, current_space: str):
     return params, unexpected
 
 
+def print_params(args: list, current_space: str):
+    """Params for a ``print`` line. With nothing said about what to print it
+    prints the space you are in; ``print all`` prints every sheet."""
+    params, unexpected = build_params("print_pdf", args, current_space)
+    if params.get("space") in ("all", "sheets"):
+        params.pop("space")
+    elif "space" not in params and "sheets" not in params:
+        params["space"] = current_space
+    return params, unexpected
+
+
 def route_line(session, line: str, current_space: str = "model") -> dict:
     """Execute one human command line against a session.
 
@@ -239,6 +252,13 @@ def route_line(session, line: str, current_space: str = "model") -> dict:
     if low == "pdf":
         return {"kind": "result", "result": session.query(
             "export_pdf", {"path": args[0]} if args else {})}
+    if low in ("print", "plot"):
+        params, unexpected = print_params(args, current_space)
+        if unexpected:
+            return {"kind": "error",
+                    "message": f"unexpected arguments {unexpected}; "
+                               f"try: help print_pdf"}
+        return {"kind": "result", "result": session.query("print_pdf", params)}
     if low == "landxml":
         return {"kind": "result", "result": session.query(
             "export_landxml", {"path": args[0]} if args else {})}

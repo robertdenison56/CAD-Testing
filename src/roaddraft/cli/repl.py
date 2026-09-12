@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 
-from roaddraft.api.lines import REPL_ALIASES, build_params
+from roaddraft.api.lines import REPL_ALIASES, build_params, print_params
 from roaddraft.api.session import QUERIES, Session
 
 HELP = """RoadDraft REPL - same tool surface the AI uses.
@@ -54,6 +54,9 @@ Annotation scale (paper-size annotation at a plot scale):
 Viewing & files:
   state [full] | entities [space] | extents [space] | blocks | styles | journal
   render [sheet] [dpi=N] [open]  |  rendermodel [open]
+  print [model|SHEET|all] [paper=ANSI_B scale=1:2|50|fit orientation=portrait \\
+        monochrome=true margin_in=0.25 bounds=x0,y0,x1,y1] [open]
+        (plot with page setup: prints the current space by default)
   dxf [path] | pdf [path] | save PATH | journal PATH | opendoc PATH
 Other:
   help [command] | undo | redo | quit
@@ -162,6 +165,26 @@ class Repl:
         else:
             print_result(result)
 
+    def do_print(self, args):
+        args = list(args)
+        want_open = "open" in args
+        if want_open:
+            args.remove("open")
+        params, unexpected = print_params(args, self.space)
+        for token in unexpected:
+            print(f"  ! unexpected argument {token!r}")
+        result = self.session.query("print_pdf", params)
+        if not result["ok"]:
+            print_result(result)
+            return
+        for page in result["pages"]:
+            print(f"  {page['space']} -> {page['paper']} "
+                  f"({page['paper_in'][0]:g} x {page['paper_in'][1]:g} in) "
+                  f"at {page['scale']}")
+        print(f"  printed {result['page_count']} page(s) -> {result['path']}")
+        if want_open:
+            _open_file(result["path"])
+
     def do_simple_query(self, qname, key=None, args=()):
         params = {key: args[0]} if key and args else {}
         result = self.session.query(qname, params)
@@ -214,6 +237,8 @@ class Repl:
             self.do_simple_query("export_dxf", "path", args)
         elif low == "pdf":
             self.do_simple_query("export_pdf", "path", args)
+        elif low in ("print", "plot"):
+            self.do_print(args)
         elif low == "landxml":
             self.do_simple_query("export_landxml", "path", args)
         elif low == "alignments":

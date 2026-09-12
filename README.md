@@ -380,7 +380,7 @@ not an entity, so there is nothing to find — only a station to ask for.
 **Civil 3D-style workspace**: a ribbon (Home / Insert / Annotate / View /
 Output) whose panels carry Civil 3D's groupings — Palettes, Draw, Create
 Design, Modify, Layers, Annotation; Block, Reference, Sheet; Labels & Tables;
-Navigate, Display; Export, Document — each command with its own SVG icon and
+Navigate, Display; Print, Export, Document — each command with its own SVG icon and
 a highlighted selected state; a **Toolspace** tree (Layers / Sheets /
 References, Prospector-style); a quick-access bar (save/undo/redo);
 AutoCAD-style **Model/layout tabs at bottom-left**; the docked command line;
@@ -434,6 +434,10 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   for per-level display toggles. Insert ▸ Reference ▸ Clip picks a polygon
   and applies it as a clip boundary or mask; the Select tool locates
   reference elements read-only.
+- **Output ▸ Print…** (or Ctrl/Cmd+P) opens the plot dialog over `print_pdf`:
+  what to print (the space you are in, model space, one sheet, all sheets),
+  paper, orientation, scale, whether a model print takes the current view or
+  the extents, and monochrome. The log says what each page was plotted at.
 - Model/sheet tabs, layer manager, log with teaching errors, exports
   (DXF/PDF/save/journal), and an AutoCAD-style command bar speaking the same
   grammar as the terminal REPL (`help` lists everything).
@@ -471,6 +475,8 @@ RD [model]> label T-2 kind=bearing
 RD [model]> sta2xy 16+00 ALIGN-1        design curves        anchor MC-1
 RD [model]> space C-101
 RD [C-101]> curvetable 24,8.5 ALIGN-1
+RD [C-101]> print paper=ANSI_B scale=1:2 open   # half-size check print of this sheet
+RD [C-101]> print model paper=ANSI_D scale=50   # the design at 1"=50'
 RD [C-101]> landxml                      # export the design as LandXML
 RD [C-101]> annoscale 100                # 1"=100': re-size annotative model annotation
 RD [C-101]> annoscales                   # the scale list, paper defaults, model sizes
@@ -485,7 +491,14 @@ recorded trajectories, and the playtest rule holds: if a PE can't draft a
 
 - **PNG** — sheets render at true paper size (WYSIWYG text heights); the
   vision observation for agents. `render_model` renders design space.
-- **PDF** — multi-sheet plan set at paper size.
+- **PDF** — two ways out. `export_pdf` dumps every sheet at its own paper
+  size; `print_pdf` is the **plot dialog**: print one space (a sheet or a
+  window of model space), a set of sheets, or the lot, onto the paper you
+  choose at the scale you choose — fit-to-page, a half-size set
+  (`scale="1:2"` on a D sheet lands exactly on ANSI_B), or a true plot scale
+  in model space (`scale=50` is 1"=50'), with margins, portrait/landscape and
+  monochrome. A plot that would run off the paper fails with the scale that
+  would fit, and the result says what each page was plotted at.
 - **DXF** — real layers/linetypes/lineweights, blocks, paper-space layouts,
   and viewports (scale and twist); opens in AutoCAD/Civil 3D and
   MicroStation. DXF is a render target — the JSON document is the truth.
