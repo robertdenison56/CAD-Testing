@@ -17,7 +17,7 @@ learned here transfer (PRD section 4):
 | RoadDraft | AutoCAD / Civil 3D | MicroStation / ORD |
 |---|---|---|
 | Model space (US survey feet) | Model space | Design model |
-| Sheet (inches) + border/title block | Paper-space layout | Sheet model |
+| Sheet (inches) + border/title block (`standard`, `caltrans`, `none`) | Paper-space layout | Sheet model |
 | Viewport (scale = feet/inch, view twist) | Layout viewport (MVIEW) | Referenced view / named boundary |
 | Layer | Layer | Level |
 | Block | Block (INSERT) | Cell |

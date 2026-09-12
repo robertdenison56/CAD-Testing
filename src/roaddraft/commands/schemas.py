@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from roaddraft.commands.design_schemas import DESIGN_EXAMPLES, DESIGN_SCHEMAS, STATION
 from roaddraft.document.document import LINETYPES
-from roaddraft.document.sheets import SHEET_SIZES
+from roaddraft.document.sheets import SHEET_SIZES, TITLE_BLOCK_TEMPLATES
 
 POINT = {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
          "description": "[x, y]"}
@@ -147,6 +147,12 @@ SCHEMAS = {
         {"name": {**NSTR, "description": "sheet name, e.g. 'C-101'"},
          "size": {"type": "string", "enum": sorted(SHEET_SIZES)},
          "width_in": POS, "height_in": POS,
+         "title_block_template": {
+             "type": "string", "enum": sorted(TITLE_BLOCK_TEMPLATES),
+             "description": "border and title block drawing: 'standard' "
+                            "(default), 'caltrans' (Caltrans plan sheet: left "
+                            "binding strip, plot strip, Dist/COUNTY/ROUTE "
+                            "block), or 'none' to draw your own"},
          "title_block_fields": {"type": "object", "additionalProperties": SCALAR}},
         ["name"]),
     "delete_sheet": obj({"sheet": NSTR}, ["sheet"]),

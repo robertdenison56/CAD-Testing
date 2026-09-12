@@ -25,7 +25,11 @@ SHEET_SIZES = {
     "ARCH_E": (48.0, 36.0),
 }
 
+# Border / title block drawings available to a sheet (render/titleblock.py).
+TITLE_BLOCK_TEMPLATES = ("standard", "caltrans", "none")
+
 BORDER_MARGIN_IN = 0.5
+CALTRANS_BIND_IN = 1.904    # left binding strip on the Caltrans plan border
 TITLE_STRIP_H_IN = 1.25
 
 # Field keys the standard title-block template displays.
@@ -89,9 +93,15 @@ class Sheet:
     entities: Dict[str, Entity] = field(default_factory=dict)
 
     def usable_area(self):
-        """Paper rect inside the border and above the title strip:
-        (x0, y0, x1, y1) in inches."""
+        """Paper rect the drawing may occupy: inside the border and clear of
+        the title block. (x0, y0, x1, y1) in inches."""
         m = BORDER_MARGIN_IN
+        if (self.title_block_template or "").lower() == "caltrans":
+            # the binding strip is on the left; the title block floats over
+            # the top right corner of the plan area, as it does on real plans
+            return (CALTRANS_BIND_IN, m, self.width_in - m, self.height_in - m)
+        if (self.title_block_template or "").lower() == "none":
+            return (m, m, self.width_in - m, self.height_in - m)
         return (m, m + TITLE_STRIP_H_IN, self.width_in - m, self.height_in - m)
 
     def paper_bbox(self):

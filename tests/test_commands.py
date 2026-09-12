@@ -311,3 +311,52 @@ def test_replay_determinism(tmp_path):
     # journal is plain JSON all the way down
     for line in journal_path.read_text().splitlines():
         json.loads(line)
+
+
+def test_title_block_templates():
+    """create_sheet picks the border drawing; the document remembers it and
+    the renderers all draw from the one place."""
+    from roaddraft.render.titleblock import title_block_entities
+
+    s = make_session()
+    assert s.execute("create_sheet", {"name": "A"})["ok"]
+    assert s.doc.sheet_by_ref("A").title_block_template == "standard"
+
+    r = s.execute("create_sheet", {"name": "L-2", "size": "ANSI_D",
+                                   "title_block_template": "caltrans"})
+    assert r["ok"] and "caltrans" in r["message"]
+    sheet = s.doc.sheet_by_ref("L-2")
+    assert sheet.title_block_template == "caltrans"
+    # the binding strip is on the left, and nothing is reserved at the bottom
+    assert sheet.usable_area() == (1.904, 0.5, 33.5, 21.5)
+
+    s.execute("fill_title_block", {"sheet": "L-2", "fields": {
+        "dist": "03", "county": "But", "route": "70", "post_miles": "46.0/47.0",
+        "sheet_number": "6", "total_sheets": "179", "sheet_title": "LAYOUT",
+        "scale": "1\" = 50'", "sheet_id": "L-2", "seal_name": "J. KUSZ"}})
+    drawn = {e.content for e in title_block_entities(sheet)
+             if getattr(e, "content", None)}
+    for value in ("03", "But", "70", "46.0/47.0", "6", "179", "LAYOUT", "L-2"):
+        assert value in drawn, value
+    assert "Dist" in drawn and "COUNTY" in drawn      # the grid captions
+
+    r = s.execute("create_sheet", {"name": "N", "title_block_template": "none"})
+    assert r["ok"]
+    assert title_block_entities(s.doc.sheet_by_ref("N")) == []
+    assert s.doc.sheet_by_ref("N").usable_area() == (0.5, 0.5, 33.5, 21.5)
+
+
+def test_title_block_template_must_be_known():
+    s = make_session()
+    r = s.execute("create_sheet", {"name": "X", "title_block_template": "acme"})
+    assert not r["ok"] and "acme" in r["error"]["message"]
+
+
+def test_title_block_template_survives_a_round_trip(tmp_path):
+    from roaddraft.api.session import Session
+
+    s = make_session(tmp_path)
+    s.execute("create_sheet", {"name": "L-2", "title_block_template": "caltrans"})
+    path = s.query("save_document", {"path": str(tmp_path / "plans.rdraft")})["path"]
+    again = Session.load(path, out_dir=str(tmp_path))
+    assert again.doc.sheet_by_ref("L-2").title_block_template == "caltrans"

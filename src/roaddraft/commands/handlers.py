@@ -20,7 +20,9 @@ from roaddraft.document.references import (
     Reference, as_levels, as_nest_depth, as_polygon, as_polygons,
     as_symbology, reference_levels, resolve_reference, unit_factor_for,
 )
-from roaddraft.document.sheets import SHEET_SIZES, Sheet, Viewport
+from roaddraft.document.sheets import (
+    SHEET_SIZES, TITLE_BLOCK_TEMPLATES, Sheet, Viewport,
+)
 
 
 class CommandFault(Exception):
@@ -540,14 +542,21 @@ def create_sheet(doc: Document, p: dict):
     else:
         size = "ANSI_D"
         width, height = SHEET_SIZES[size]
+    template = p.get("title_block_template", "standard")
+    if template not in TITLE_BLOCK_TEMPLATES:
+        raise CommandFault(
+            f"unknown title block template {template!r}",
+            hint=f"templates: {', '.join(sorted(TITLE_BLOCK_TEMPLATES))}")
     sid = doc.new_id("sheet")
     sheet = Sheet(id=sid, name=name, size=size, width_in=width, height_in=height,
+                  title_block_template=template,
                   title_block_fields={k: str(v) for k, v in
                                       p.get("title_block_fields", {}).items()})
     doc.sheets[sid] = sheet
     ua = sheet.usable_area()
-    return (f"sheet {name!r} ({sid}, {size} {width}x{height} in) created; usable "
-            f"drawing area x {ua[0]}-{ua[2]}, y {ua[1]}-{ua[3]} in",
+    return (f"sheet {name!r} ({sid}, {size} {width}x{height} in, {template} title "
+            f"block) created; usable drawing area x {ua[0]}-{ua[2]}, "
+            f"y {ua[1]}-{ua[3]} in",
             _diff(created=[sid]), [])
 
 
