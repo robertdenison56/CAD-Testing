@@ -177,3 +177,79 @@ def test_draw_offset_journal_replays(tmp_path):
     path = tmp_path / "offset.journal.jsonl"
     assert s.query("save_journal", {"path": str(path)})["ok"]
     assert Session.replay_journal(path).doc.to_dict() == s.doc.to_dict()
+
+
+# ------------------------------------------------- station_range (leg by leg)
+
+
+def _chain_points(s, ids):
+    """Both ends of every drawn piece, in model coordinates."""
+    out = []
+    for eid in ids:
+        e = s.query("get_entity", {"id": eid})["entity"]
+        if e["type"] == "line":
+            out += [tuple(e["start"]), tuple(e["end"])]
+        else:
+            c, r = e["center"], e["radius"]
+            for a in (e["start_angle_deg"], e["end_angle_deg"]):
+                out.append((c[0] + r * math.cos(math.radians(a)),
+                            c[1] + r * math.sin(math.radians(a))))
+    return out
+
+
+@pytest.mark.parametrize("lo,hi,pieces", [
+    ("11+00", "14+00", 1),      # inside the first tangent
+    ("15+00", "18+00", 2),      # tangent, then part of the curve
+    ("17+00", "19+00", 1),      # inside the curve only
+    ("11+00", "24+00", 3),      # across all three elements
+])
+def test_draw_offset_station_range_trims_the_chain(lo, hi, pieces):
+    """A trimmed offset still lands exactly where station_to_xy says it does,
+    on curves as well as tangents, and its pieces still meet end to end."""
+    s = session_A()
+    r = s.execute("draw_offset", {"offsets": [15], "layer": "V-ROAD-EOP",
+                                  "station_range": [lo, hi]})
+    assert r["ok"] and len(r["created"]) == pieces
+    assert f"from {lo}" in r["message"] and f"to {hi}" in r["message"]
+    ends = _chain_points(s, r["created"])
+    for station in (lo, hi):
+        want = s.query("station_to_xy", {"station": station, "offset": 15})["point"]
+        assert min(math.dist(p, want) for p in ends) < TOL
+    # every piece carries the station it starts at, inside the window
+    for eid in r["created"]:
+        anchor = s.doc.model_entities[eid].anchor
+        assert anchor["kind"] == "offset" and anchor["offset"] == 15
+        assert s.doc.design.alignments["ALIGN-1"].stations().parse(lo) - TOL \
+            <= anchor["station"] <= s.doc.design.alignments["ALIGN-1"].stations().parse(hi)
+
+
+def test_draw_offset_leg_by_leg_does_not_collide():
+    """Two windows of the same offset are two legs of one edge, not a redraw."""
+    s = session_A()
+    west = s.execute("draw_offset", {"offsets": [-12], "layer": "V-ROAD-EOP",
+                                     "station_range": ["10+00", "13+00"]})
+    east = s.execute("draw_offset", {"offsets": [-12], "layer": "V-ROAD-EOP",
+                                     "station_range": ["14+00", "16+00"]})
+    assert west["ok"] and east["ok"]
+    assert east["warnings"] == []
+    # overlapping the first window is a redraw, and says so
+    again = s.execute("draw_offset", {"offsets": [-12], "layer": "V-ROAD-EOP",
+                                      "station_range": ["10+00", "12+00"]})
+    assert "already drawn" in again["warnings"][0]
+    replaced = s.execute("draw_offset", {"offsets": [-12], "layer": "V-ROAD-EOP",
+                                         "station_range": ["10+00", "13+00"],
+                                         "replace": True})
+    assert replaced["ok"] and replaced["deleted"] and not replaced["warnings"]
+    # the east leg was never in the window, so it survived
+    assert set(east["created"]) <= set(s.doc.model_entities)
+
+
+def test_offset_pieces_station_range_matches_the_untrimmed_chain():
+    s = session_A()
+    align = s.doc.design.alignments["ALIGN-1"]
+    whole = offset_length(align, 15)
+    begin = float(align.begin_station)
+    part = offset_length(align, 15, (begin, begin + align.length / 2)) \
+        + offset_length(align, 15, (begin + align.length / 2, begin + align.length))
+    assert part == pytest.approx(whole, abs=1e-9)
+    assert offset_pieces(align, 15, (begin, begin)) == []

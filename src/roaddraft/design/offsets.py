@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from roaddraft.design.angles import right_normal
 from roaddraft.design.errors import DesignError
 from roaddraft.design.horizontal import Alignment, CurveElement, TangentElement
+
+STATION_EPS = 1e-6
 
 
 @dataclass
@@ -72,39 +74,74 @@ def offset_radius(curve: CurveElement, offset: float) -> float:
     return r
 
 
-def offset_pieces(alignment: Alignment, offset: float) -> List[OffsetPiece]:
+def _lerp(a, b, t: float) -> List[float]:
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+
+
+def offset_pieces(alignment: Alignment, offset: float,
+                  station_range: Optional[Tuple[float, float]] = None
+                  ) -> List[OffsetPiece]:
     """The offset chain of ``alignment`` at ``offset`` feet (right positive).
 
     One piece per source element, in stationing order. An offset of 0 returns
     the alignment's own geometry.
+
+    ``station_range`` (RAW stations) cuts the chain to that window, which is
+    how an offset stops at an intersection: an element that falls outside is
+    dropped, one that straddles an end is trimmed there. A trimmed piece keeps
+    the ref of the element it came from and carries its own start station and
+    length, so a pavement edge drawn leg by leg is still anchored leg by leg.
     """
     begin = float(alignment.begin_station)
+    lo = hi = None
+    if station_range is not None:
+        lo, hi = sorted((float(station_range[0]), float(station_range[1])))
     pieces: List[OffsetPiece] = []
     for i, el in enumerate(alignment.elements):
         ref = alignment.element_ref(i)
         station = begin + float(el.start_dist)
+        span = float(el.length)
+        t0, t1 = 0.0, 1.0
+        if lo is not None:
+            if span <= 0 or station + span <= lo + STATION_EPS \
+                    or station >= hi - STATION_EPS:
+                continue
+            t0 = max(0.0, (lo - station) / span)
+            t1 = min(1.0, (hi - station) / span)
+            if t1 - t0 <= 1e-12:
+                continue
         if isinstance(el, TangentElement):
+            start = _lerp(el.start, el.end, t0)
+            end = _lerp(el.start, el.end, t1)
             pieces.append(OffsetPiece(
-                kind="tangent", ref=ref, element_index=i, station=station, offset=offset,
-                length=float(el.length),
-                start=shift(el.start, el.direction_deg, offset),
-                end=shift(el.end, el.direction_deg, offset),
+                kind="tangent", ref=ref, element_index=i,
+                station=station + span * t0, offset=offset,
+                length=span * (t1 - t0),
+                start=shift(start, el.direction_deg, offset),
+                end=shift(end, el.direction_deg, offset),
                 direction_deg=float(el.direction_deg)))
         else:
             r = offset_radius(el, offset)
-            s, e = el.ccw_angles()
+            # the sweep from the PC runs CCW on a left curve, CW on a right one
+            phi0 = el.phi0_deg
+            a0 = phi0 + el.sign * el.delta_deg * t0
+            a1 = phi0 + el.sign * el.delta_deg * t1
+            s, e = (a0, a1) if el.direction == "L" else (a1, a0)
+            delta = el.delta_deg * (t1 - t0)
             pieces.append(OffsetPiece(
-                kind="curve", ref=ref, element_index=i, station=station, offset=offset,
-                length=r * math.radians(el.delta_deg),
+                kind="curve", ref=ref, element_index=i,
+                station=station + span * t0, offset=offset,
+                length=r * math.radians(delta),
                 center=list(el.center), radius=r, start_angle_deg=s, end_angle_deg=e,
-                direction=el.direction, delta_deg=float(el.delta_deg)))
+                direction=el.direction, delta_deg=delta))
     return pieces
 
 
-def offset_length(alignment: Alignment, offset: float) -> float:
+def offset_length(alignment: Alignment, offset: float,
+                  station_range: Optional[Tuple[float, float]] = None) -> float:
     """Total length of the offset chain (longer than the alignment outside a
     left curve, shorter inside it)."""
-    return sum(p.length for p in offset_pieces(alignment, offset))
+    return sum(p.length for p in offset_pieces(alignment, offset, station_range))
 
 
 __all__ = ["OffsetPiece", "shift", "offset_radius", "offset_pieces", "offset_length"]

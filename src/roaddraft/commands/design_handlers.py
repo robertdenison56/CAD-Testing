@@ -354,19 +354,41 @@ def draw_offset(doc: Document, p: dict):
             continue
         offsets.append(value)
 
+    st = align.stations()
+    window = None
+    if "station_range" in p:
+        try:
+            window = (st.parse(p["station_range"][0]), st.parse(p["station_range"][1]))
+        except DesignError as e:
+            raise _fault(e)
+        window = (min(window), max(window))
+
     chains = []
     for value in offsets:
         try:
-            chains.append((value, offset_pieces(align, value)))
+            chains.append((value, offset_pieces(align, value, window)))
         except DesignError as e:
             raise _fault(e)
+    if window is not None and not any(pieces for _v, pieces in chains):
+        raise CommandFault(
+            f"stations {st.format(window[0])} to {st.format(window[1])} are outside "
+            f"{align.name} ({st.begin_text()} to {st.end_text()})",
+            hint="station_range is a window on this alignment's own stations")
+
+    def _in_window(entity) -> bool:
+        """Does an already-drawn piece fall in the window being redrawn?"""
+        if window is None:
+            return True
+        station = entity.anchor.get("station")
+        return station is None or window[0] - 1e-6 <= station < window[1]
 
     deleted: List[str] = []
     for value, _pieces in chains:
         existing = [eid for eid, e in doc.model_entities.items()
                     if e.anchor and e.anchor.get("alignment") == align.name
                     and e.anchor.get("kind") == "offset"
-                    and abs(float(e.anchor.get("offset") or 0.0) - value) < 1e-9]
+                    and abs(float(e.anchor.get("offset") or 0.0) - value) < 1e-9
+                    and _in_window(e)]
         if not existing:
             continue
         if p.get("replace"):
@@ -396,7 +418,9 @@ def draw_offset(doc: Document, p: dict):
                 n_arcs += 1
             created.append(e.id)
     text = ", ".join(_offset_text(v) for v, _ in chains)
-    return (f"{align.name} offset {text} drawn on {common['layer']}: "
+    where = (f" from {st.format(window[0])} to {st.format(window[1])}"
+             if window is not None else "")
+    return (f"{align.name} offset {text} drawn on {common['layer']}{where}: "
             f"{_plural(n_lines, 'line')}, {_plural(n_arcs, 'arc')}",
             _diff(created=created, deleted=deleted), warnings)
 

@@ -186,7 +186,9 @@ REGISTRY: List[CommandSpec] = [
                 "the direction of stationing positive ('12L' says the side out loud), "
                 "so a 24 ft pavement is offsets [-12, 12]. Tangents shift sideways; "
                 "curves keep their center and change radius, so the chain meets end to "
-                "end exactly.",
+                "end exactly. station_range draws only part of the chain, which is how "
+                "an edge or a curb line stops short of an intersection and picks up "
+                "again on the far leg.",
                 dh.draw_offset,
                 {"c3d": ["CREATEOFFSETALIGNMENT", "OFFSET"],
                  "ord": ["single offset entire element", "offset element"]}),

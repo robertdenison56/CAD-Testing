@@ -115,10 +115,16 @@ DESIGN_SCHEMAS = {
                                     "the direction of stationing positive; a string may "
                                     "name the side ('12L', '12R'). A 24 ft pavement is "
                                     "[-12, 12]; add [-14, 14] for 2 ft shoulders."},
+         "station_range": {"type": "array", "items": STATION, "minItems": 2,
+                           "maxItems": 2,
+                           "description": "draw only between these display stations: "
+                                          "how a pavement edge stops at an intersection "
+                                          "and picks up again on the far leg"},
          "layer": NSTR, "color": COLOR, "linetype": LINETYPE,
          "replace": {"type": "boolean",
                      "description": "delete this alignment's previously drawn offsets at "
-                                    "the same distances first (default false)"}},
+                                    "the same distances first (default false); with a "
+                                    "station_range, only the pieces inside it"}},
         ["offsets"]),
     "place_label": obj(
         {"space": SPACE, "alignment": NSTR, "anchor": ANCHOR, "kind": KIND,
