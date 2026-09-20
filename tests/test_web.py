@@ -6,7 +6,7 @@ import pytest
 
 from roaddraft.api.lines import route_line
 from roaddraft.api.session import Session
-from roaddraft.web.server import create_server
+from roaddraft.web.server import STATIC_DIR, create_server
 
 
 # ------------------------------------------------------------- route_line
@@ -279,3 +279,94 @@ def test_state_includes_references(server, tmp_path):
     _, state = get(server, "/api/state")
     refs = json.loads(state)["references"]
     assert refs and refs[0]["name"] == "BASE" and refs[0]["status"] == "loaded"
+
+
+def draw(server, command, **params):
+    """Create one entity and hand back its id."""
+    _, r = post(server, "/api/execute",
+                {"command": command, "params": {"space": "model", **params}})
+    assert r["ok"], r
+    return r["created"][0]
+
+
+def entity_of(server, eid):
+    _, info = post(server, "/api/query", {"query": "get_entity",
+                                          "params": {"id": eid}})
+    assert info["ok"], info
+    return info["entity"], info["bbox"]
+
+
+def grip(server, eid, changes):
+    """A grip edit: the change set a dragged grip hands modify_entity."""
+    _, r = post(server, "/api/execute", {"command": "modify_entity",
+                                         "params": {"id": eid,
+                                                    "changes": changes}})
+    assert r["ok"], r
+    return entity_of(server, eid)
+
+
+def test_grip_edit_flow_over_http(server):
+    """Dragging a grip is an ordinary modify_entity: this is every change set
+    the GUI's grips produce, for each kind of entity that gets them."""
+    eid = draw(server, "draw_line", start=[0, 0], end=[100, 0])
+    e, _ = grip(server, eid, {"start": [10, 20]})          # endpoint grip
+    assert e["start"] == [10, 20] and e["end"] == [100, 0]
+    e, _ = grip(server, eid, {"end": [120, 20]})
+    assert e["end"] == [120, 20]
+    e, _ = grip(server, eid, {"start": [10, 25], "end": [120, 25]})
+    assert e["start"] == [10, 25] and e["end"] == [120, 25]  # midpoint grip
+
+    eid = draw(server, "draw_polyline", vertices=[[0, 0], [100, 0], [100, 80]])
+    e, _ = grip(server, eid, {"vertices": [[0, 0], [140, 0], [100, 80]]})
+    assert e["vertices"][1] == [140, 0]                    # vertex grip
+    e, _ = grip(server, eid,
+                {"vertices": [[0, 0], [70, -30], [140, 0], [100, 80]]})
+    assert len(e["vertices"]) == 4                         # midpoint grip adds
+
+    eid = draw(server, "draw_circle", center=[0, 0], radius=50)
+    e, bbox = grip(server, eid, {"radius": 80})            # quadrant grip
+    assert e["radius"] == 80 and bbox[2] == 80
+    e, _ = grip(server, eid, {"center": [200, 200]})
+    assert e["center"] == [200, 200]
+
+    eid = draw(server, "draw_arc", center=[0, 0], radius=50,
+               start_angle_deg=0, end_angle_deg=90)
+    e, _ = grip(server, eid, {"start_angle_deg": -45.0})   # end-of-arc grips
+    assert e["start_angle_deg"] == -45.0
+    e, _ = grip(server, eid, {"end_angle_deg": 120.0})
+    assert e["end_angle_deg"] == 120.0
+    e, _ = grip(server, eid, {"radius": 65})
+    assert e["radius"] == 65
+
+    eid = draw(server, "place_text", position=[0, 0], content="STA 10+00",
+               height=8)
+    e, _ = grip(server, eid, {"position": [40, 60]})       # insertion grip
+    assert e["position"] == [40, 60]
+
+
+def test_grip_on_a_dimension_moves_what_it_measures(server):
+    """A dimension stores the measurement: drag the grip on a measured point
+    and the reading, the linework and the box all follow it."""
+    eid = draw(server, "place_dimension", kind="linear", p1=[0, 0],
+               p2=[100, 0], line_point=[50, 30], text_height=4)
+    _, bbox = entity_of(server, eid)
+    assert bbox[2] < 110                       # the box ends near p2
+    e, bbox = grip(server, eid, {"p2": [300, 0]})
+    assert e["p2"] == [300, 0] and bbox[2] > 290
+    e, bbox = grip(server, eid, {"line_point": [150, -60]})
+    assert e["line_point"] == [150, -60] and bbox[1] < -55
+    assert e["p1"] == [0, 0]                   # measured points stayed put
+
+
+def test_gui_wires_grips():
+    """The selected entity shows grips, and a grip edit lands as the same
+    modify_entity the properties panel sends."""
+    html = (STATIC_DIR / "index.html").read_text()
+    assert "function gripsFor(" in html and "function gripAt(" in html
+    assert "applyProp(active.grip.patch(pt))" in html
+    assert "gripGhostSVG(S.grip)" in html and "out += gripsSVG();" in html
+    assert '#ovl .grip.hot' in html and 'square(active.at, "grip hot")' in html
+    assert "S.grip.hot = true" in html                  # click, then click
+    assert "orthoFrom(S.grip.grip.pt, pt, ev)" in html  # ORTHO/Shift apply
+    assert "(adds a vertex)" in html                    # polyline midpoints
+    assert "sel.reference" in html                      # never on a reference

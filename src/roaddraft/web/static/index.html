@@ -191,6 +191,13 @@
                 vector-effect: non-scaling-stroke; }
   #ovl .mark { fill: var(--accent); stroke: #10121a; stroke-width: 1;
                vector-effect: non-scaling-stroke; }
+  /* grips: AutoCAD's blue squares on a selected entity, red once picked up */
+  #ovl .grip { fill: var(--accent); stroke: #0b0d12; stroke-width: 1;
+               vector-effect: non-scaling-stroke; }
+  #ovl .grip.sec { fill: var(--canvas); stroke: var(--accent);
+                   stroke-width: 1.6; }
+  #ovl .grip.over { fill: #9ccbff; }
+  #ovl .grip.hot { fill: var(--err); stroke: #2a0d07; }
   #zoomer { position: absolute; right: 14px; bottom: 12px; display: flex;
             gap: 5px; background: rgba(22,23,27,.92);
             border: 1px solid var(--border); border-radius: 7px;
@@ -354,7 +361,7 @@ const $ = id => document.getElementById(id);
 const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
             state: null, view: null, modelBounds: null, tool: "select",
             pts: [], cursor: null, stationPicks: [], dimPick: null,
-            dimBusy: false, selected: null,
+            dimBusy: false, selected: null, grip: null, gripHover: null,
             ribbonTab: "Home", dpi: 130, frames: true, dark: true,
             ortho: false, tsOpen: { layers: true, sheets: true, refs: true, alignments: true } };
 
@@ -475,6 +482,12 @@ function unitsPerPx() {
     const b = S.view.bounds; return (b[2] - b[0]) / r.width;
   }
   return S.view.sizeIn[0] / r.width;
+}
+// Overlay geometry is drawn in the image's own pixels: this is how many of
+// them go to one on-screen pixel, so a mark can be sized to the screen.
+function pxScale() {
+  const img = $("view"), r = img.getBoundingClientRect();
+  return r.width && img.naturalWidth ? img.naturalWidth / r.width : 1;
 }
 const fmtPt = p => S.view && S.view.kind === "model"
   ? `${p[0].toFixed(2)}, ${p[1].toFixed(2)} ft`
@@ -1138,7 +1151,7 @@ async function refresh() {
       { query: "get_entity", params: { id: S.selected.id } });
     if (info.ok) { S.selected.bbox = info.bbox;
                    S.selected.entity = info.entity; }
-    else S.selected = null;
+    else { S.selected = null; S.grip = null; S.gripHover = null; }
     drawOverlay();
     // don't rebuild the panel under the user's cursor mid-edit
     if (!S.selected || !$("props").contains(document.activeElement))
@@ -1148,7 +1161,7 @@ async function refresh() {
 }
 function setSpace(ref) {
   S.space = ref; S.pts = []; S.stationPicks = []; S.dimPick = null;
-  S.selected = null;
+  S.selected = null; S.grip = null; S.gripHover = null;
   renderProps();
   if (S.state) { renderLTabs(); renderToolspace(); renderStatus(); }
   updateCanvas();
@@ -1156,8 +1169,9 @@ function setSpace(ref) {
 
 // ----------------------------------------------------------------- tools
 const TOOLS = {
-  select:  { hint: "click an entity — it highlights and its properties " +
-                   "open in the side panel; Delete removes, Esc clears" },
+  select:  { hint: "click an entity — it highlights, its grips (the blue " +
+                   "squares) appear and its properties open in the side " +
+                   "panel; drag a grip to edit, Delete removes, Esc clears" },
   pan:     { hint: "drag to pan; wheel zooms" },
   line:    { hint: "click start, then end (Shift or ORTHO = orthogonal)" },
   pline:   { hint: "click vertices; Enter or right-click to finish" },
@@ -1183,19 +1197,30 @@ const TOOLS = {
 };
 function setTool(key) {
   S.tool = key; S.pts = []; S.stationPicks = []; S.dimPick = null;
-  S.dimBusy = false; S.selected = null;
+  S.dimBusy = false; S.selected = null; S.grip = null; S.gripHover = null;
   renderRibbon(); drawOverlay(); renderProps();
   $("st-tool").textContent = `${key.toUpperCase()}: ${TOOLS[key].hint}`;
 }
 function cancelTool() {
+  if (S.grip) {          // Esc lets go of a grip before it clears the pick
+    S.grip = null; drawOverlay();
+    logHint("grip released — the entity is unchanged");
+    return;
+  }
   S.pts = []; S.stationPicks = []; S.dimPick = null; S.selected = null;
+  S.gripHover = null;
   drawOverlay(); renderProps();
 }
+// Constrain a point to horizontal or vertical from an anchor — what ORTHO
+// (F8) and a held Shift do: whichever axis the cursor has travelled furthest
+// along wins, and the other keeps the anchor's value.
+function orthoFrom(anchor, pt, ev) {
+  if (!(ev.shiftKey || S.ortho) || !anchor) return pt;
+  return Math.abs(pt[0] - anchor[0]) >= Math.abs(pt[1] - anchor[1])
+    ? [pt[0], anchor[1]] : [anchor[0], pt[1]];
+}
 function orthoAdjust(pt, ev) {
-  if (!(ev.shiftKey || S.ortho) || !S.pts.length) return pt;
-  const last = S.pts[S.pts.length - 1];
-  return Math.abs(pt[0] - last[0]) >= Math.abs(pt[1] - last[1])
-    ? [pt[0], last[1]] : [last[0], pt[1]];
+  return S.pts.length ? orthoFrom(S.pts[S.pts.length - 1], pt, ev) : pt;
 }
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
 function circumcenter(a, b, c) {
@@ -1231,6 +1256,10 @@ async function hitAt(pt, tolPx, withRefs) {
   return r.ok && r.hits.length ? r.hits : [];
 }
 async function toolClick(pt, ev) {
+  if (S.grip) {                    // a picked-up grip owns the click
+    await commitGrip(orthoFrom(S.grip.grip.pt, pt, ev));
+    return;
+  }
   const tool = S.tool;
   if (tool === "line") {
     S.pts.push(orthoAdjust(pt, ev));
@@ -1358,8 +1387,9 @@ async function toolClick(pt, ev) {
         else
           logHTML(`<span class="hint">selected ${esc(hits[0].id)} (` +
             `${esc(info.entity.type)}) on layer ${esc(info.entity.layer)} — ` +
-            `edit in the Properties panel; Enter/double-click opens the full ` +
-            `editor, Delete erases</span>`);
+            `drag a grip to edit the geometry, or type values in the ` +
+            `Properties panel; Enter/double-click opens the full editor, ` +
+            `Delete erases</span>`);
       }
     } else { S.selected = null; renderProps(); }
   } else if (tool === "refclip") {
@@ -1811,7 +1841,8 @@ function renderProps() {
     if (e.closed && e.vertices.length > 2)
       len += dist(e.vertices[e.vertices.length - 1], e.vertices[0]);
     add(propRO("Length", `${fmtNum(len)} ${unit}`));
-    hint("double-click the polyline for the raw editor (vertices)");
+    hint("drag a vertex grip to move it, a hollow midpoint grip to add " +
+         "one; double-click the polyline for the raw editor");
   } else if (e.type === "text") {
     sec("TEXT");
     add(propInput("Contents", e.content,
@@ -1860,6 +1891,124 @@ function renderProps() {
 $("props-close").onclick = () => { S.selected = null;
   drawOverlay(); renderProps(); };
 
+// ------------------------------------------------------------------ grips
+// AutoCAD's grips. A selected entity shows its editable points as small
+// squares: drag one, or click it to pick it up and click again to drop it.
+// Every grip hands back a modify_entity change set — the same edit the
+// Properties panel makes — so a grip edit validates, journals and undoes
+// exactly like a typed one, and the server stays the single source of truth.
+const GRIP_PICK_PX = 8;   // how near the cursor must come to grab a grip
+const GRIP_SIZE_PX = 7;   // the square's on-screen size, at any zoom
+
+// Grips for one entity, in space units. kind drives only the look: "insert"
+// grips (a polyline's segment midpoints) draw hollow, the rest solid.
+function gripsFor(e) {
+  if (!e) return [];
+  const g = (pt, kind, label, patch) => ({ pt, kind, label, patch });
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const at = (c, r, deg) => [c[0] + r * Math.cos(deg * Math.PI / 180),
+                             c[1] + r * Math.sin(deg * Math.PI / 180)];
+  if (e.type === "line") {
+    const c = mid(e.start, e.end);
+    return [
+      g(e.start, "vertex", "start point", p => ({ start: p })),
+      g(c, "move", "midpoint (moves the whole line)", p => {
+        const d = [p[0] - c[0], p[1] - c[1]];
+        return { start: [e.start[0] + d[0], e.start[1] + d[1]],
+                 end: [e.end[0] + d[0], e.end[1] + d[1]] };
+      }),
+      g(e.end, "vertex", "end point", p => ({ end: p }))];
+  }
+  if (e.type === "polyline" && e.vertices.length) {
+    const v = e.vertices;
+    const out = v.map((w, i) => g(w, "vertex", `vertex ${i + 1} of ${v.length}`,
+      p => ({ vertices: v.map((x, j) => j === i ? p : x) })));
+    // a closed polyline has one more segment: the one back to the start
+    const segs = e.closed && v.length > 2 ? v.length : v.length - 1;
+    for (let i = 0; i < segs; i++)   // a midpoint grip adds a vertex there
+      out.push(g(mid(v[i], v[(i + 1) % v.length]), "insert",
+        `midpoint of segment ${i + 1} (adds a vertex)`,
+        p => ({ vertices: [...v.slice(0, i + 1), p, ...v.slice(i + 1)] })));
+    return out;
+  }
+  if (e.type === "circle")
+    return [g(e.center, "move", "center", p => ({ center: p }))].concat(
+      [0, 90, 180, 270].map(deg => g(at(e.center, e.radius, deg), "radius",
+        "quadrant (changes the radius)",
+        p => ({ radius: Math.max(dist(e.center, p), 1e-6) }))));
+  if (e.type === "arc") {
+    const [s0, s1] = arcSweepDeg(e.start_angle_deg, e.end_angle_deg);
+    return [
+      g(e.center, "move", "center", p => ({ center: p })),
+      g(at(e.center, e.radius, e.start_angle_deg), "vertex", "start angle",
+        p => ({ start_angle_deg: angDeg(e.center, p) })),
+      g(at(e.center, e.radius, (s0 + s1) / 2), "radius",
+        "midpoint (changes the radius)",
+        p => ({ radius: Math.max(dist(e.center, p), 1e-6) })),
+      g(at(e.center, e.radius, e.end_angle_deg), "vertex", "end angle",
+        p => ({ end_angle_deg: angDeg(e.center, p) }))];
+  }
+  if (["text", "blockref", "table"].includes(e.type))
+    return [g(e.position, "move", "insertion point", p => ({ position: p }))];
+  if (e.type === "dimension") {
+    // A dimension stores the measurement, so its grips move measured points
+    // and the place the dimension line was dragged to — the number, arrows
+    // and extension lines re-derive from wherever they land. A radial kind
+    // measures a circle, so its measured points stay on it.
+    const radial = ["radius", "diameter", "arc_length"].includes(e.kind);
+    const onArc = p => radial && e.center && e.radius
+      ? at(e.center, e.radius, angDeg(e.center, p)) : p;
+    const out = [];
+    if (e.center)
+      out.push(g(e.center, "move", "center of the measured arc",
+        p => ({ center: p })));
+    if (e.p1)
+      out.push(g(e.p1, "vertex", "first measured point",
+        p => ({ p1: onArc(p) })));
+    if (e.p2)
+      out.push(g(e.p2, "vertex", "second measured point",
+        p => ({ p2: onArc(p) })));
+    out.push(g(e.line_point, "line",
+      "dimension line (drag it to place the line and text)",
+      p => ({ line_point: p })));
+    return out;
+  }
+  return [];
+}
+
+// Grips belong to the entity as the server last described it; recompute when
+// that object is replaced (an edit, an undo, another client's command).
+function currentGrips() {
+  const sel = S.selected;
+  if (!sel || sel.reference || S.tool !== "select") return [];
+  if (sel.gripsOf !== sel.entity) {
+    sel.gripsOf = sel.entity; sel.grips = gripsFor(sel.entity);
+  }
+  return sel.grips;
+}
+// The grip under a point, or null. Measured in space units off a pixel
+// tolerance, so the grab radius is the same few pixels at any zoom.
+function gripAt(pt) {
+  let best = null, near = GRIP_PICK_PX * unitsPerPx();
+  currentGrips().forEach(gr => {
+    const d = dist(gr.pt, pt);
+    if (d <= near) { best = gr; near = d; }
+  });
+  return best;
+}
+function startGrip(grip, ev) {
+  S.grip = { grip, at: grip.pt, hot: false, down: [ev.clientX, ev.clientY] };
+  S.gripHover = null;
+}
+// Land the edit: the grip's patch for the point it was let go at.
+async function commitGrip(pt) {
+  const active = S.grip;
+  S.grip = null; S.gripHover = null;
+  drawOverlay();
+  if (!active || !S.selected) return;
+  await applyProp(active.grip.patch(pt));
+}
+
 // --------------------------------------------------------------- overlay
 function seg(a, b, cls) {
   return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" ` +
@@ -1894,29 +2043,105 @@ function entityOutline(e) {
   }
   return null;
 }
-// The selected entity, drawn shifted by [dx, dy] space units. Default styling
-// is the glow highlight; pass cls (e.g. "rb") for the move rubber-band ghost.
+// One entity traced in overlay pixels, shifted by [dx, dy] space units, or
+// null when it has no traceable outline. Default styling is the glow
+// highlight; pass cls (e.g. "rb") for a rubber-band ghost.
+function outlineSVG(entity, dx, dy, cls) {
+  const shapes = entityOutline(entity);
+  if (!shapes) return null;
+  const shift = p => [p[0] + dx, p[1] + dy];
+  return shapes.map(sh => {
+    const tag = sh.closed ? "polygon" : "polyline";
+    const pts = sh.pts.map(p => spacePx(shift(p))
+      .map(v => v.toFixed(2)).join(",")).join(" ");
+    return cls
+      ? `<${tag} points="${pts}" class="${cls}"/>`
+      : `<${tag} points="${pts}" class="hlglow"/>` +
+        `<${tag} points="${pts}" class="hlcore"/>`;
+  }).join("");
+}
+// The selected entity, drawn shifted by [dx, dy] space units. Entities with
+// no outline of their own (text, tables, blocks) fall back to their box.
 function highlightSVG(dx, dy, cls) {
   if (!S.selected) return "";
+  const traced = outlineSVG(S.selected.entity, dx, dy, cls);
+  if (traced !== null) return traced;
   const shift = p => [p[0] + dx, p[1] + dy];
-  const shapes = entityOutline(S.selected.entity);
-  if (shapes) {
-    return shapes.map(sh => {
-      const tag = sh.closed ? "polygon" : "polyline";
-      const pts = sh.pts.map(p => spacePx(shift(p))
-        .map(v => v.toFixed(2)).join(",")).join(" ");
-      return cls
-        ? `<${tag} points="${pts}" class="${cls}"/>`
-        : `<${tag} points="${pts}" class="hlglow"/>` +
-          `<${tag} points="${pts}" class="hlcore"/>`;
-    }).join("");
-  }
   const bb = S.selected.bbox;
   if (!bb) return "";
   const a = spacePx(shift([bb[0], bb[1]])), b = spacePx(shift([bb[2], bb[3]]));
   return `<rect x="${Math.min(a[0], b[0])}" y="${Math.min(a[1], b[1])}" ` +
          `width="${Math.abs(b[0] - a[0])}" ` +
          `height="${Math.abs(b[1] - a[1])}" class="${cls || "hlbox"}"/>`;
+}
+// The linework a linear or aligned dimension would draw, in overlay pixels:
+// the measured pair, the dimension line out at lp, and the extension lines
+// that reach it. The engine reads line_point the same way — along the pair
+// for an aligned dimension, across one axis for a linear one (the axis that
+// separates the points, or the one lp is dragged clear of).
+function dimBandSVG(a, b, lp, aligned) {
+  const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  let on;
+  if (aligned) {
+    const len = dist(a, b) || 1;
+    const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const d = [lp[0] - m[0], lp[1] - m[1]];
+    const along = d[0] * u[0] + d[1] * u[1];     // slide across only
+    const off = [d[0] - u[0] * along, d[1] - u[1] * along];
+    on = q => [q[0] + off[0], q[1] + off[1]];
+  } else {
+    const dx = Math.abs(b[0] - a[0]), dy = Math.abs(b[1] - a[1]);
+    const horizontal = dx < 1e-9 ? false : dy < 1e-9 ? true :
+      Math.abs(lp[1] - m[1]) >= Math.abs(lp[0] - m[0]);
+    on = q => horizontal ? [q[0], lp[1]] : [lp[0], q[1]];
+  }
+  return seg(a, b, "rb") + seg(on(a), on(b), "rb") +
+         seg(a, on(a), "rb") + seg(b, on(b), "rb");
+}
+// A dimension under a grip: what it measures, not the finished linework —
+// arrowheads, the number and the extension lines are the engine's to derive
+// once the edit lands.
+function dimGhostSVG(d) {
+  const P = p => spacePx(p);
+  if (["linear", "aligned"].includes(d.kind) && d.p1 && d.p2)
+    return dimBandSVG(P(d.p1), P(d.p2), P(d.line_point), d.kind === "aligned");
+  if (!d.center) return "";
+  const c = P(d.center), lp = P(d.line_point);
+  let out = seg(c, lp, "rb");
+  if (d.p1) out += seg(c, P(d.p1), "rb");
+  if (d.p2) out += seg(c, P(d.p2), "rb");
+  if (d.radius && d.p1)
+    out += `<circle cx="${c[0]}" cy="${c[1]}" r="${dist(c, P(d.p1))}" ` +
+           `class="rb"/>`;
+  return out;
+}
+// The edit as it would land: the entity with the dragged grip's patch on it.
+function gripGhostSVG(active) {
+  const e = S.selected && S.selected.entity;
+  if (!e) return "";
+  const patched = { ...e, ...active.grip.patch(active.at) };
+  const traced = outlineSVG(patched, 0, 0, "rb");
+  if (traced !== null) return traced;
+  if (patched.type === "dimension") return dimGhostSVG(patched);
+  return highlightSVG(patched.position[0] - e.position[0],
+                      patched.position[1] - e.position[1], "rb");
+}
+function gripsSVG() {
+  const active = S.grip, k = pxScale();
+  const square = (p, cls) => {
+    const q = spacePx(p), h = GRIP_SIZE_PX * k / 2;
+    return `<rect x="${(q[0] - h).toFixed(2)}" y="${(q[1] - h).toFixed(2)}" ` +
+           `width="${(h * 2).toFixed(2)}" height="${(h * 2).toFixed(2)}" ` +
+           `class="${cls}"/>`;
+  };
+  let out = "";
+  currentGrips().forEach(gr => {
+    if (active && active.grip === gr) return;   // that one is drawn hot below
+    out += square(gr.pt, "grip" + (gr.kind === "insert" ? " sec" : "") +
+                         (gr === S.gripHover ? " over" : ""));
+  });
+  if (active) out += square(active.at, "grip hot");
+  return out;
 }
 function drawOverlay() {
   const svg = $("ovl");
@@ -1961,29 +2186,9 @@ function drawOverlay() {
     }
   }
   if (["dim", "dimaligned"].includes(S.tool) && px.length && cur) {
-    out += seg(px[0], px.length > 1 ? px[1] : cur, "rb");
-    if (px.length === 2) {
-      // the dimension line follows the cursor, the same way the engine reads
-      // line_point: along the pair for an aligned dimension, across one axis
-      // for a linear one (the axis that separates the points, or the one the
-      // cursor is dragged clear of)
-      const [a, b] = px, m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      let on;
-      if (S.tool === "dimaligned") {
-        const len = dist(a, b) || 1;
-        const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
-        const d = [cur[0] - m[0], cur[1] - m[1]];
-        const along = d[0] * u[0] + d[1] * u[1];     // slide across only
-        const off = [d[0] - u[0] * along, d[1] - u[1] * along];
-        on = q => [q[0] + off[0], q[1] + off[1]];
-      } else {
-        const dx = Math.abs(b[0] - a[0]), dy = Math.abs(b[1] - a[1]);
-        const horizontal = dx < 1e-9 ? false : dy < 1e-9 ? true :
-          Math.abs(cur[1] - m[1]) >= Math.abs(cur[0] - m[0]);
-        on = q => horizontal ? [q[0], cur[1]] : [cur[0], q[1]];
-      }
-      out += seg(on(a), on(b), "rb") + seg(a, on(a), "rb") + seg(b, on(b), "rb");
-    }
+    // the dimension line follows the cursor, the same band a grip drags
+    if (px.length < 2) out += seg(px[0], cur, "rb");
+    else out += dimBandSVG(px[0], px[1], cur, S.tool === "dimaligned");
   }
   if (S.tool === "move" && S.selected && px.length === 1 && cur) {
     out += seg(px[0], cur, "rb");
@@ -1997,6 +2202,8 @@ function drawOverlay() {
            `class="mark"/>`;
   });
   if (S.selected) out += highlightSVG(0, 0);
+  if (S.grip) out += gripGhostSVG(S.grip);
+  out += gripsSVG();
   svg.innerHTML = out;
 }
 
@@ -2010,11 +2217,23 @@ stage.addEventListener("pointerdown", ev => {
             sl: $("viewwrap").scrollLeft, st: $("viewwrap").scrollTop };
     stage.setPointerCapture(ev.pointerId);
     ev.preventDefault();
+  } else if (ev.button === 0 && !S.grip && S.view) {
+    const pt = evtSpace(ev);       // a press on a grip grabs it, not the pick
+    const grip = pt && gripAt(pt);
+    if (grip) {
+      startGrip(grip, ev);
+      stage.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+      drawOverlay();
+    }
   }
 });
 stage.addEventListener("pointermove", ev => {
   const pt = evtSpace(ev);
   if (pt) {
+    if (S.grip) S.grip.at = orthoFrom(S.grip.grip.pt, pt, ev);
+    S.gripHover = S.grip ? null : gripAt(pt);
+    stage.style.cursor = S.gripHover ? "pointer" : "";
     S.cursor = ["line", "pline", "alignment"].includes(S.tool)
       ? orthoAdjust(pt, ev) : pt;
     $("st-coord").textContent = fmtPt(pt);
@@ -2046,6 +2265,21 @@ stage.addEventListener("pointerup", ev => {
     pan = null;
     return;
   }
+  if (S.grip && !S.grip.hot) {
+    // the two ways into a grip edit: drag it to its new place, or click it to
+    // pick it up (it then follows the cursor until the next click sets it)
+    const dragged = Math.hypot(ev.clientX - S.grip.down[0],
+                               ev.clientY - S.grip.down[1]) > 3;
+    const drop = evtSpace(ev);   // where it was let go, not where it last drew
+    if (dragged)
+      commitGrip(drop ? orthoFrom(S.grip.grip.pt, drop, ev) : S.grip.at);
+    else {
+      S.grip.hot = true;
+      logHint(`${S.grip.grip.label} — click where it goes (Esc lets go)`);
+      drawOverlay();
+    }
+    return;
+  }
   if (ev.button === 0 && S.view) {
     const pt = evtSpace(ev);
     if (pt) toolClick(pt, ev);
@@ -2069,6 +2303,7 @@ stage.addEventListener("dblclick", async ev => {
 stage.addEventListener("contextmenu", ev => { ev.preventDefault();
                                               finishTool(); });
 stage.addEventListener("pointerleave", () => { S.cursor = null;
+  S.gripHover = null; stage.style.cursor = "";
   $("st-coord").textContent = ""; drawOverlay(); });
 
 // Wheel zoom: factor proportional to scroll delta (smooth on trackpads and
@@ -2315,9 +2550,9 @@ function connect() {
   await refresh();
   connect();
   logHint("RoadDraft ready. Ribbon tools are selectable (or keys " +
-    "V/H/L/P/C/A/T/S/M/E/I/G); click the canvas to draw. ORTHO and F8 " +
-    "constrain to horizontal/vertical. The command line speaks the full " +
-    "language — 'help' lists it.");
+    "V/H/L/P/C/A/T/S/M/E/I/G); click the canvas to draw. Select an entity " +
+    "and drag its grips to edit it. ORTHO and F8 constrain to horizontal/" +
+    "vertical. The command line speaks the full language — 'help' lists it.");
 })();
 </script>
 </body>

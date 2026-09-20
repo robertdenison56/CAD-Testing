@@ -412,7 +412,7 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   click.
 - **Drawing tools** (ribbon or keys V/H/L/P/C/A/T/S/M/E/I/X): Select
   (hit-test pick — the entity itself lights up with a glow traced along its
-  actual geometry, not a box; Delete to erase), Pan, Line, Polyline, Circle
+  actual geometry, not a box, and its grips appear; Delete to erase), Pan, Line, Polyline, Circle
   (center+radius point), 3-point Arc, Text, **Station**, **Move** (entity →
   base point → destination, with the true shape as the drag ghost),
   **Erase** (click to delete), **Insert Block**
@@ -428,6 +428,20 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   center-radius-angles, text content/height/rotation/justification/style,
   block position/scale/rotation, table title/text height). Each change
   applies instantly and the panel re-syncs from the document.
+- **Grips**: a selected entity shows AutoCAD's grips — small blue squares on
+  the points that can be edited. Drag one, or click it to pick it up (it
+  turns red and follows the cursor) and click again to set it; Esc lets go. A
+  line gets both endpoints plus a midpoint that moves the whole line; a
+  polyline gets every vertex plus hollow midpoint grips that *add* one; a
+  circle gets its center and four quadrant grips that re-radius it; an arc
+  gets center, radius and end-angle grips; text, blocks and tables get their
+  insertion point; a dimension gets the points it measures and the place its
+  line was dragged to — move a measured point and the number re-derives. A
+  dashed ghost of the real shape shows the edit before it lands, Shift/ORTHO
+  constrains the drag, and the grab radius is the same few pixels at any
+  zoom. Every grip commits the same journaled `modify_entity` the Properties
+  panel sends, so it validates and undoes identically; reference elements are
+  read-only and get none.
 - **Editing**: double-click any entity with the Select tool (or select it and
   press Enter) for the full in-place editor. Text gets
   a full editor — multiline content, height, rotation, justification, style,
