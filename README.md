@@ -225,7 +225,36 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   actually landed on (`DESIGN:AR-007 (arc on V-ROAD-SHLD, 20.00' LT of
   SR-100)`) — worth reading, because roadway linework runs parallel a few feet
   apart, so a hand-computed point that misses usually lands on the *wrong* line
-  rather than on nothing.
+  rather than on nothing. A station and offset is a target too:
+  `target_anchor="586+57.73@20.83L" alignment="DESIGN:SR70"` takes the anchor
+  grammar (`PC-1`, `18+00@12R`, `{station, offset}`), because most plan callouts
+  point at a place on the alignment where there is no entity to find. A
+  referenced alignment is read, not owned, so the callout carries no anchor.
+- **Callouts on the sheet.** Plan annotation belongs in paper space, where it
+  neither scales nor turns with the view — but what it points at is in the
+  model, usually in a referenced basefile, and only *seen* on the sheet through
+  a viewport. So `place_callout space="C-102"` still takes a model
+  `target_entity` or `target_anchor`, and the engine carries the tip through
+  the viewport's centre, scale and twist (`viewport=` picks one; otherwise the
+  first that shows the target, as `place_label` does). `at` then runs along
+  **the part of the entity that sheet shows**: a pavement edge runs the length
+  of the project and a sheet shows one stretch of it, so on the demo project
+  the first curve is 62 % on C-102 and 38 % on C-101, and `mid` lands on a
+  visible point of each. Asking for something the sheet does not show is a
+  fault that names the sheets that do. `find_entities visible_on=` keeps only
+  what the viewports really show (a twisted window is not its bounding box) and
+  gives each row the `sheet_point` the tip will land on, so the text can be put
+  clear of the linework.
+- **Model ↔ sheet** (`model_to_sheet`, `sheet_to_model`) convert between model
+  feet and paper inches through a viewport, so nobody re-derives one by hand;
+  `sheet_to_model` also names the nearest entity under that spot on the paper.
+  `station_to_xy`, `resolve_anchor` and `point_on_entity` take a `sheet` and
+  answer in paper inches as well. A raw `target` on a sheet is checked the same
+  way — against the design the tip is looking at through the viewport, not
+  against whatever lettering sits nearby on the paper. The Caltrans L-2 rebuild
+  places its 14 station-and-offset callouts by `target_anchor` on a viewport
+  twisted −6.457°; the tips agree with the example's own independent trig to
+  1e-13 in.
 - **Constant offsets** (`draw_offset offsets=[-12, 12]`) draw pavement edges,
   shoulders and right of way as anchored lines and arcs. Offsets are feet, right
   of the direction of stationing positive (`"12L"` says the side out loud), so a
@@ -383,6 +412,14 @@ measured, not vocabulary.
 and checks that the untouched project fails, which is what keeps the checks
 honest. `pc-by-station` is the one that needs a *referenced* design: a PC is
 not an entity, so there is nothing to find — only a station to ask for.
+
+Aim is always judged in the model, in feet: a leader tip drawn on a sheet is
+carried back through the viewport it sits in before it is measured, so
+paper-space and model-space work are held to the same 1 ft (0.02 in at
+1" = 50'). The two `-paper` probes are the T2 shape — `edge-c102-paper` by
+entity, `sta-offset-c101-paper` by station and offset — and additionally
+require the callout to be on the sheet itself; a correct callout drawn in the
+model does not satisfy them.
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 

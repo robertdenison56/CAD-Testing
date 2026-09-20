@@ -60,10 +60,16 @@ def build(out_dir=OUT, quiet=False):
         return r
 
     def at(station, offset=0.0):
-        """Sheet position of a station/offset on the referenced alignment."""
+        """Sheet position of a station/offset on the referenced alignment. The
+        engine sees it through the viewport -- scale and twist included."""
         q = ask("station_to_xy", {"alignment": f"{REF}:{G.ALIGNMENT}",
-                                  "station": station, "offset": offset})
-        return G.model_to_paper(q["point"]), q
+                                  "station": station, "offset": offset,
+                                  "sheet": SHEET})
+        return q["on_sheet"]["sheet_point"], q
+
+    def under(x, y):
+        """The model point a spot on the paper is looking at."""
+        return ask("sheet_to_model", {"sheet": SHEET, "point": [x, y]})["point"]
 
     def road_angle(station):
         """How the roadway runs across the paper at a station, degrees CCW."""
@@ -132,14 +138,14 @@ def build(out_dir=OUT, quiet=False):
                            "valign": "bottom", "layer": "S-ANNO-NOTE"})
     for x, y, h, content in C.ROAD_NAMES:
         station = ask("xy_to_station", {"alignment": f"{REF}:{G.ALIGNMENT}",
-                                        "point": list(G.paper_to_model((x, y)))})
+                                        "point": under(x, y)})
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "rotation_deg": road_angle(station["station"]),
                            "halign": "left", "valign": "bottom",
                            "layer": "S-ANNO-NOTE"})
     for x, y, h, content in C.CATCH_LABELS:
         station = ask("xy_to_station", {"alignment": f"{REF}:{G.ALIGNMENT}",
-                                        "point": list(G.paper_to_model((x, y)))})
+                                        "point": under(x, y)})
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "rotation_deg": road_angle(station["station"]),
                            "halign": "left", "valign": "bottom",
@@ -187,9 +193,12 @@ def build(out_dir=OUT, quiet=False):
         station, offset, x, y, content = entry[:5]
         height = entry[5] if len(entry) > 5 else 0.140
         lines = content.count("\n") + 1
-        target, q = at(station, offset)
+        # aimed the way the plan reads it -- a station and an offset on the
+        # referenced alignment -- and seen through the viewport by the engine
+        _, q = at(station, offset)
         run("place_callout", {
-            "space": SHEET, "target": list(target),
+            "space": SHEET, "alignment": f"{REF}:{G.ALIGNMENT}",
+            "target_anchor": {"station": station, "offset": offset},
             "position": [x, y - (lines - 1) * 0.210 / 2 + height / 2],
             "content": content, "height": height, "landing": 0.30,
             "arrow_size": 0.11, "layer": "S-ANNO-CALL"})
@@ -251,8 +260,9 @@ def _road_below(ask, x, y):
         best, at_station = None, lo
         station = lo
         while station <= hi + 1e-9:
-            pt = G.model_to_paper(ask("station_to_xy", {
-                "alignment": f"{REF}:{G.ALIGNMENT}", "station": station})["point"])
+            pt = ask("station_to_xy", {
+                "alignment": f"{REF}:{G.ALIGNMENT}", "station": station,
+                "sheet": SHEET})["on_sheet"]["sheet_point"]
             d = abs(pt[0] - x)
             if best is None or d < best:
                 best, at_station, best_pt = d, station, pt

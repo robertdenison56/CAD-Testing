@@ -170,8 +170,11 @@ QUERIES = {
                                                 "this (case-insensitive)"},
             "bounds": BOUNDS,
             "visible_on": {**NSTR,
-                           "description": "sheet name: keep only model entities inside "
-                                          "what that sheet's viewports show"},
+                           "description": "sheet name: keep only model entities that "
+                                          "sheet's viewports actually show. Each row then "
+                                          "also carries sheet_point -- the middle of the "
+                                          "part shown, in paper inches -- and the "
+                                          "viewport it is seen through"},
             "include_references": {"type": "boolean",
                                    "description": "search attachments too (default true)"},
             "detail": {"type": "string", "enum": ["summary", "full"],
@@ -191,11 +194,38 @@ QUERIES = {
                        "runs there: where='start'|'mid'|'end' or a fraction from 0 to 1. "
                        "Use it instead of computing a point from an arc's center and "
                        "angles -- the midpoint of a curve's endpoints is not on the "
-                       "curve. Works on reference elements ('DESIGN:AR-003').",
+                       "curve. Works on reference elements ('DESIGN:AR-003'). With "
+                       "sheet, 'where' runs along the part of the entity that sheet "
+                       "shows and the answer adds where it falls on the paper -- the "
+                       "same point place_callout aims at from that sheet.",
         "schema": obj({"id": NSTR,
-                       "where": {"description": "start|mid|end, or a fraction 0-1"}},
+                       "where": {"description": "start|mid|end, or a fraction 0-1"},
+                       "sheet": {**NSTR, "description": "a sheet that sees this model "
+                                                        "entity through a viewport"},
+                       "viewport": NSTR},
                       ["id"]),
         "example": {"id": "DESIGN:AR-003", "where": "mid"},
+    },
+    "model_to_sheet": {
+        "description": "Where a model point falls on a sheet, in paper inches, seen "
+                       "through a viewport's centre, scale and twist. Use it to decide "
+                       "where annotation text should sit -- never do the viewport "
+                       "arithmetic by hand. visible=false means no viewport shows the "
+                       "point (the mapping through the first or given viewport is still "
+                       "returned). To aim a callout, skip this and give place_callout a "
+                       "target_entity or target_anchor.",
+        "schema": obj({"sheet": NSTR, "point": POINT, "viewport": NSTR},
+                      ["sheet", "point"]),
+        "example": {"sheet": "C-102", "point": [2450.0, 1180.0]},
+    },
+    "sheet_to_model": {
+        "description": "What a point on a sheet's paper is looking at: the model point "
+                       "under it through the viewport it falls in, and the nearest "
+                       "entity there (references included) with its distance in feet. "
+                       "inside=false means the point is outside every viewport window.",
+        "schema": obj({"sheet": NSTR, "point": POINT, "viewport": NSTR},
+                      ["sheet", "point"]),
+        "example": {"sheet": "C-102", "point": [17.0, 11.5]},
     },
     "measure": {
         "description": "Measure without drawing (AutoCAD DIST / MEASUREGEOM): the "
@@ -378,7 +408,9 @@ QUERIES = {
                        "element it lands on (an exact junction reads the ahead "
                        "element). An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed.",
         "schema": obj({"alignment": NSTR, "station": STATION, "offset": NUM,
-                       "region": {"type": "integer", "minimum": 1}}, ["station"]),
+                       "region": {"type": "integer", "minimum": 1},
+                       "sheet": {**NSTR, "description": "also say where this falls on that sheet: adds on_sheet {viewport, sheet_point in paper inches, visible}"}},
+                      ["station"]),
         "example": {"alignment": "ALIGN-1", "station": "16+00", "offset": 12},
     },
     "xy_to_station": {
@@ -398,7 +430,10 @@ QUERIES = {
                        "does not own.",
         "schema": obj({"alignment": NSTR, "anchor": ANCHOR, "kind": KIND, "space": SPACE,
                        "viewport": NSTR, "side": SIDE, "label_offset": NUM,
-                       "rotation": ROTATION, "content": STR}, ["anchor"]),
+                       "rotation": ROTATION, "content": STR,
+                       "sheet": {**NSTR, "description": "for a referenced alignment: "
+                                 "also say where the anchor falls on that sheet "
+                                 "(on_sheet)"}}, ["anchor"]),
         "example": {"alignment": "ALIGN-1", "anchor": "PC-1"},
     },
     "get_design_data": {
@@ -595,6 +630,7 @@ class Session:
 
     def _q_find_entities(self, p):
         from roaddraft.core import geometry as geo
+        from roaddraft.document import viewmap
         from roaddraft.document.locate import entity_length, representative_point
 
         space_ref = p.get("space", "model")
@@ -608,7 +644,14 @@ class Session:
             candidates += self._reference_elements(space_key)
 
         bounds = tuple(p["bounds"]) if "bounds" in p else None
+        shown_on = None
         if "visible_on" in p:
+            if space_key != "model":
+                raise _QueryFault(
+                    "visible_on filters model entities by what a sheet shows",
+                    hint="drop space (it defaults to model), or drop visible_on to "
+                         "list a sheet's own entities")
+            shown_on = self._sheet(p["visible_on"])
             window = self._visible_window(p["visible_on"])
             bounds = window if bounds is None else (
                 max(bounds[0], window[0]), max(bounds[1], window[1]),
@@ -635,6 +678,9 @@ class Session:
                 bb = entity.bbox(owner)
                 if bb is None or not geo.bbox_intersects(bb, bounds):
                     continue
+            if shown_on is not None and not any(
+                    viewmap.is_visible(owner, entity, vp) for vp in shown_on.viewports):
+                continue  # in the window's bounding box, but not in the window
             matches.append((entity, owner, ref))
 
         total = len(matches)
@@ -654,6 +700,10 @@ class Session:
             length = entity_length(owner, entity)
             if length is not None:
                 row["length"] = round(length, 4)
+            if shown_on is not None:
+                seen = self._entity_on_sheet(shown_on, owner, entity, "mid")
+                if seen is not None:
+                    row.update(seen[0])
             if entity.anchor:
                 row["anchor"] = dict(entity.anchor)
             content = getattr(entity, "content", None)
@@ -686,6 +736,76 @@ class Session:
             window = geo.bbox_union(window, box)
         return window
 
+    def _on_sheet(self, sheet_ref, model_point, viewport=None) -> dict:
+        """Where a model point falls on a sheet: the ``on_sheet`` block."""
+        from roaddraft.document import viewmap
+        sheet = self._sheet(sheet_ref)
+        if not sheet.viewports:
+            raise _QueryFault(f"sheet {sheet.name} has no viewport to see the model "
+                              f"through", hint="create_viewport first")
+        try:
+            vp = viewmap.viewport_showing(sheet, model_point, viewport)
+        except viewmap.ViewError as ex:
+            raise _QueryFault(str(ex), hint=ex.hint)
+        visible = vp is not None and viewmap.shows(vp, model_point)
+        vp = vp or sheet.viewports[0]
+        q = vp.transform().to_paper(model_point)
+        out = {"sheet": sheet.name, "viewport": vp.id,
+               "sheet_point": [round(v, 6) for v in q], "visible": visible,
+               "feet_per_inch": vp.feet_per_inch, "rotation_deg": vp.rotation_deg}
+        if not visible:
+            out["note"] = (f"no viewport of {sheet.name} shows this point; sheet_point "
+                           f"is where {vp.id} would put it, outside its window. "
+                           + viewmap.describe_windows(sheet))
+        return out
+
+    def _entity_on_sheet(self, sheet, owner, entity, where, viewport=None):
+        """``(block, model point, direction)`` for the part of an entity a sheet
+        shows, or None when it shows none of it. The block's ``sheet_point`` is
+        the point place_callout aims at from that sheet; ``shown`` is how much
+        of the entity's length the viewport shows."""
+        from roaddraft.document import viewmap
+        vp = viewmap.viewport_showing_entity(sheet, owner, entity, viewport)
+        seen = None if vp is None else viewmap.point_at_visible(owner, entity, where, vp)
+        if seen is None:
+            return None
+        point, direction, shown = seen
+        q = vp.transform().to_paper(point)
+        return ({"sheet_point": [round(v, 4) for v in q], "viewport": vp.id,
+                 "shown": round(shown, 4)}, point, direction)
+
+    def _q_model_to_sheet(self, p):
+        point = [float(v) for v in p["point"]]
+        return {"point": point, **self._on_sheet(p["sheet"], point, p.get("viewport"))}
+
+    def _q_sheet_to_model(self, p):
+        from roaddraft.document import viewmap
+        sheet = self._sheet(p["sheet"])
+        if not sheet.viewports:
+            raise _QueryFault(f"sheet {sheet.name} has no viewport to see the model "
+                              f"through", hint="create_viewport first")
+        q = [float(v) for v in p["point"]]
+        try:
+            vp = viewmap.viewport_under(sheet, q, p.get("viewport"))
+        except viewmap.ViewError as ex:
+            raise _QueryFault(str(ex), hint=ex.hint)
+        inside = vp is not None and viewmap.in_window(vp, q)
+        vp = vp or sheet.viewports[0]
+        model_point = vp.transform().to_model(q)
+        out = {"sheet": sheet.name, "sheet_point": q, "viewport": vp.id, "inside": inside,
+               "point": [round(v, 6) for v in model_point],
+               "feet_per_inch": vp.feet_per_inch, "rotation_deg": vp.rotation_deg}
+        if not inside:
+            out["note"] = (f"the point is outside every viewport window of {sheet.name}; "
+                           f"this is what {vp.id} would map it to")
+            return out
+        from roaddraft.document.locate import nearest_entity
+        hit = nearest_entity(self.doc, "model", model_point)
+        if hit is not None:
+            out["nearest"] = {"id": hit[0], "distance_ft": round(hit[1], 4),
+                              "distance_in": round(hit[1] / vp.feet_per_inch, 4)}
+        return out
+
     def _q_point_on_entity(self, p):
         from roaddraft.document.locate import entity_length, point_at
         eid = p["id"]
@@ -701,10 +821,31 @@ class Session:
                                   hint="find_entities and hit_test return ids; "
                                        "reference elements are 'REFNAME:ID'")
             entity, owner, ref, space_key = element
+        on_sheet = None
         try:
-            point, direction = point_at(owner, entity, p.get("where", "mid"))
+            if "sheet" in p:
+                from roaddraft.document import viewmap
+                sheet = self._sheet(p["sheet"])
+                if space_key != "model":
+                    raise _QueryFault(
+                        f"{eid} is not in the model, so no sheet sees it through a "
+                        f"viewport", hint="drop sheet: its point is already in its "
+                                          "own space")
+                seen = self._entity_on_sheet(sheet, owner, entity,
+                                             p.get("where", "mid"), p.get("viewport"))
+                if seen is None:
+                    raise _QueryFault(
+                        f"{eid} is not visible on {sheet.name}",
+                        hint=f"find_entities with visible_on={sheet.name!r} lists what "
+                             f"it shows; {viewmap.describe_windows(sheet)}")
+                on_sheet, point, direction = seen
+            else:
+                if "viewport" in p:
+                    raise _QueryFault("viewport goes with sheet")
+                point, direction = point_at(owner, entity, p.get("where", "mid"))
         except ValueError as ex:
-            raise _QueryFault(str(ex), hint="where is start|mid|end or a fraction 0-1")
+            hint = getattr(ex, "hint", None) or "where is start|mid|end or a fraction 0-1"
+            raise _QueryFault(str(ex), hint=hint)
         out = {"id": eid, "space": space_key, "type": entity.TYPE,
                "where": p.get("where", "mid"),
                "point": [round(v, 6) for v in point],
@@ -715,6 +856,8 @@ class Session:
         if ref:
             out["reference"] = ref
             out["read_only"] = True
+        if on_sheet is not None:
+            out["on_sheet"] = {"sheet": self._sheet(p["sheet"]).name, **on_sheet}
         return out
 
     def _q_measure(self, p):
@@ -1184,12 +1327,15 @@ class Session:
             raise _QueryFault(str(e), hint=e.hint)
         disp, region = st.to_display(raw)
         az = direction_to_azimuth(direction)
-        return {"alignment": a.name, "point": _place_point(placement, point),
-                "on_point": _place_point(placement, on_point), "station": raw,
-                "station_text": format_station(disp), "region": region, "offset": offset,
-                "direction_deg": direction, "azimuth_deg": az, "bearing": format_bearing(az),
-                "element_index": idx, "element_kind": a.elements[idx].kind,
-                "element_ref": a.element_ref(idx)}
+        out = {"alignment": a.name, "point": _place_point(placement, point),
+               "on_point": _place_point(placement, on_point), "station": raw,
+               "station_text": format_station(disp), "region": region, "offset": offset,
+               "direction_deg": direction, "azimuth_deg": az, "bearing": format_bearing(az),
+               "element_index": idx, "element_kind": a.elements[idx].kind,
+               "element_ref": a.element_ref(idx)}
+        if "sheet" in p:
+            out["on_sheet"] = self._on_sheet(p["sheet"], out["point"])
+        return out
 
     def _q_xy_to_station(self, p):
         from roaddraft.core.units import format_station
@@ -1264,7 +1410,7 @@ class Session:
             auto = label_content(alignment, point, kind)
         except DesignError:
             auto = None
-        return {"alignment": alignment.name, "anchor": point.ref, "kind": kind,
+        out = {"alignment": alignment.name, "anchor": point.ref, "kind": kind,
                 "auto_content": auto, "content": p.get("content", auto),
                 "station": point.station, "station_text": format_station(point.station)
                 if point.station is not None else None,
@@ -1274,8 +1420,12 @@ class Session:
                 "direction_deg": point.direction_deg,
                 "placement": _placement_block(placement),
                 "labelling": "place_label cannot anchor to a referenced alignment; "
-                             "call it out with place_callout, or copy the design into "
-                             "this document first"}
+                             "call it out with place_callout (target_anchor takes this "
+                             "anchor and alignment, from a sheet too), or copy the "
+                             "design into this document first"}
+        if "sheet" in p:
+            out["on_sheet"] = self._on_sheet(p["sheet"], out["point"])
+        return out
 
     def _design_rows(self, kind, aligns, profiles):
         from roaddraft.core.units import format_station

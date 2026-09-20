@@ -16,10 +16,14 @@ step is awkward for a script it is awkward for a model too:
      (the design lives in the basefile, so the host owns no geometry; the
       anchors travel through the attachment, so a pavement edge announces
       itself as kind "offset" at +/- 12 ft of SR-100)
-  4. call one out                   place_callout(target_entity=..., at="mid")
+  4. call one out, on the sheet     place_callout(space=<sheet>,
+                                                  target_entity=..., at="mid")
      (naming the entity rather than a point: the engine puts the leader tip
       on the geometry, which matters on a curve, where the midpoint of the
-      endpoints is 15.5 ft off the arc)
+      endpoints is 15.5 ft off the arc. The callout is sheet annotation, in
+      paper inches; the engine sees the referenced edge through the sheet's
+      viewport, and "mid" is the middle of the stretch this sheet shows --
+      the row's sheet_point says where that is, so the text can sit clear)
   5. fill every title block         fill_title_block
   6. look at the result             render_sheet
 
@@ -84,11 +88,13 @@ def main(argv=None):
             edge = found["entities"][0]
             anchor = edge["anchor"]
             side = "RT" if anchor["offset"] > 0 else "LT"
-            # 4. name the entity; the engine puts the leader tip on it
-            drop = 120.0 if anchor["offset"] > 0 else -120.0
+            # 4. name the entity; the engine sees it through the viewport and
+            # puts the leader tip on it, in paper inches
+            x, y = edge["sheet_point"]
+            drop = 2.4 if anchor["offset"] > 0 else -2.4
             check(s.execute("place_callout", {
-                "space": "model", "target_entity": edge["id"], "at": "mid",
-                "position": [edge["point"][0] + 150.0, edge["point"][1] - drop],
+                "space": sheet["name"], "target_entity": edge["id"], "at": "mid",
+                "position": [x + 3.0, y - drop],
                 "content": f"EDGE OF PAVEMENT {abs(anchor['offset']):.0f}' {side} "
                            f"OF {anchor['alignment']}",
                 "layer": CALLOUT_LAYER}))

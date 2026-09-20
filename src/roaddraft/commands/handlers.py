@@ -341,33 +341,30 @@ def place_callout(doc: Document, p: dict):
     geometry that has no design model of its own, including geometry seen
     through a reference."""
     from roaddraft.design.labels import MODEL_TEXT_HEIGHT, SHEET_TEXT_HEIGHT
-    from roaddraft.document.locate import nearest_entity, point_at, resolve_entity
 
     space_key, _container = _space(doc, p["space"])
     warnings: List[str] = []
-    if ("target" in p) == ("target_entity" in p):
+    given = [k for k in ("target", "target_entity", "target_anchor") if k in p]
+    if len(given) != 1:
         raise CommandFault(
-            "give exactly one of target (a point) or target_entity (what to point at)",
-            hint="target_entity is the reliable one: name the entity and the engine "
-                 "computes a point on it, curves included. find_entities and hit_test "
-                 "return the ids.")
+            "give exactly one of target (a point), target_entity (what to point at) or "
+            "target_anchor (a station, offset or named point of an alignment)",
+            hint="name the thing rather than the point: target_entity takes an id from "
+                 "find_entities or hit_test and the engine computes a point on it, "
+                 "curves included; target_anchor takes '18+00@12R' or 'PC-1'. Both "
+                 "work from a sheet, through its viewport.")
+    for key, needs in (("at", "target_entity"), ("alignment", "target_anchor")):
+        if key in p and needs not in p:
+            raise CommandFault(f"{key} goes with {needs}, which was not given")
+    pointing_at = None
     if "target_entity" in p:
-        eid = p["target_entity"]
-        found = resolve_entity(doc, eid)
-        if found is None:
-            raise CommandFault(f"no entity {eid!r} to point at",
-                               hint="find_entities and hit_test return ids; elements of "
-                                    "an attached reference are 'REFNAME:ID'")
-        entity, owner, _ref, entity_space = found
-        if entity_space != space_key:
-            raise CommandFault(
-                f"{eid} is in {entity_space}, but the callout goes in {space_key}",
-                hint=f"place the callout in {entity_space}, or point at something there")
-        try:
-            target, _direction = point_at(owner, entity, p.get("at", "mid"))
-        except ValueError as ex:
-            raise CommandFault(str(ex), hint="at is start|mid|end or a fraction 0-1")
+        target, pointing_at = _aim_at_entity(doc, space_key, p)
+    elif "target_anchor" in p:
+        target, pointing_at = _aim_at_anchor(doc, space_key, p)
     else:
+        if "viewport" in p:
+            raise CommandFault("viewport goes with target_entity or target_anchor: a "
+                               "raw target is already a point in the callout's space")
         target = as_point(p["target"])
     position = as_point(p["position"])
     if space_key == "model":
@@ -395,20 +392,8 @@ def place_callout(doc: Document, p: dict):
         # A point typed by hand can miss, and roadway linework runs parallel 8 to
         # 12 ft apart, so a miss usually lands on the *wrong* line rather than on
         # nothing. Report what the tip actually touched either way.
-        nearest = nearest_entity(doc, space_key, target)
-        reach = max(height, arrow_size)
-        if nearest is None:
-            warnings.append(f"nothing in {_space_label(doc, space_key)} to point at")
-        elif nearest[1] > reach:
-            warnings.append(
-                f"the leader points at empty space: the nearest entity {nearest[0]} is "
-                f"{nearest[1]:.2f} away from [{target[0]:.2f}, {target[1]:.2f}] "
-                f"(within {reach:.2f} counts as on it); pass target_entity to aim at "
-                f"something exactly")
-        else:
-            warnings.append(
-                f"the leader tip lands on {_describe_target(doc, nearest[0])}; pass "
-                f"target_entity instead of a point if that is not what you meant")
+        warnings.append(_what_the_tip_touches(doc, space_key, target,
+                                              max(height, arrow_size)))
 
     created: List[str] = []
     _, leader = _add(doc, space_key, "line", Line, {
@@ -430,8 +415,169 @@ def place_callout(doc: Document, p: dict):
 
     warnings += _annotation_warnings(doc, space_key, text)
     preview = p["content"] if len(p["content"]) <= 40 else p["content"][:37] + "..."
-    return (f"callout {text.id} ({preview!r}) placed in {_space_label(doc, space_key)}",
-            _diff(created=created), warnings)
+    aim = f", pointing at {pointing_at}" if pointing_at else ""
+    return (f"callout {text.id} ({preview!r}) placed in "
+            f"{_space_label(doc, space_key)}{aim}", _diff(created=created), warnings)
+
+
+def _through_viewport(doc: Document, space_key: str, target_space: str, what: str):
+    """The sheet a callout is on when its target is in the model, else None.
+    A target in some *other* space cannot be pointed at from here at all."""
+    if target_space == space_key:
+        return None
+    if target_space == "model" and space_key in doc.sheets:
+        return doc.sheets[space_key]
+    raise CommandFault(
+        f"{what} is in {_space_label(doc, target_space)}, but the callout goes in "
+        f"{_space_label(doc, space_key)}",
+        hint="a callout on a sheet can point at the model, which the sheet sees "
+             "through its viewports; nothing sees from the model onto a sheet, or "
+             "from one sheet onto another")
+
+
+def _aim_at_entity(doc: Document, space_key: str, p: dict):
+    """``(tip, what it points at)`` for target_entity. From a sheet the entity
+    is seen through a viewport, and ``at`` runs along the part it shows."""
+    from roaddraft.document import viewmap
+    from roaddraft.document.locate import point_at, resolve_entity
+    eid = p["target_entity"]
+    found = resolve_entity(doc, eid)
+    if found is None:
+        raise CommandFault(f"no entity {eid!r} to point at",
+                           hint="find_entities and hit_test return ids; elements of "
+                                "an attached reference are 'REFNAME:ID'")
+    entity, owner, _ref, entity_space = found
+    where = p.get("at", "mid")
+    try:
+        sheet = _through_viewport(doc, space_key, entity_space, eid)
+        if sheet is None:
+            if "viewport" in p:
+                raise CommandFault(
+                    f"viewport is for pointing from a sheet at the model; {eid} is "
+                    f"already in {_space_label(doc, space_key)}")
+            return point_at(owner, entity, where)[0], _describe_target(doc, eid)
+        vp = viewmap.viewport_showing_entity(sheet, owner, entity, p.get("viewport"))
+        seen = None if vp is None else viewmap.point_at_visible(owner, entity, where, vp)
+    except viewmap.ViewError as ex:
+        raise CommandFault(str(ex), hint=ex.hint)
+    except ValueError as ex:
+        raise CommandFault(str(ex), hint="at is start|mid|end or a fraction 0-1")
+    if seen is None:
+        through = f"viewport {vp.id}" if vp is not None else "any viewport"
+        elsewhere = [other.name for other in doc.sheets.values() if other is not sheet
+                     and viewmap.viewport_showing_entity(other, owner, entity)]
+        raise CommandFault(
+            f"{eid} is not visible through {through} of {sheet.name}",
+            hint=_shown_elsewhere(elsewhere) +
+                 f"find_entities with visible_on={sheet.name!r} lists what the sheet "
+                 f"shows; {viewmap.describe_windows(sheet)}")
+    point, _direction, shown = seen
+    part = "" if shown > 1.0 - 1e-9 else f", the {shown:.0%} of it {sheet.name} shows"
+    return (vp.transform().to_paper(point),
+            f"{_describe_target(doc, eid)} through {vp.id}{part}")
+
+
+def _aim_at_anchor(doc: Document, space_key: str, p: dict):
+    """``(tip, what it points at)`` for target_anchor: a station, an offset or
+    a named point of an alignment -- this document's, or a referenced one,
+    which is read here and not owned. The callout carries no anchor record."""
+    from roaddraft.commands.design_handlers import _alignment
+    from roaddraft.design.anchors import parse_anchor, resolve_anchor
+    from roaddraft.design.errors import DesignError
+    from roaddraft.document import viewmap
+    from roaddraft.document.references import find_reference_alignment, reference_alignments
+    name = p.get("alignment")
+    if isinstance(name, str) and ":" in name:
+        found = find_reference_alignment(doc, name)
+        if found is None:
+            known = [f"{ref.name}:{a.name}" for ref, _b, a, _pl in reference_alignments(doc)]
+            raise CommandFault(f"no alignment {name!r} in any attached reference",
+                               hint=f"referenced alignments: {known}" if known else
+                                    "no attachment carries a design model")
+        alignment, placement = found
+        shown_as = name
+    else:
+        try:
+            alignment, placement = _alignment(doc, p), None
+        except CommandFault as fault:
+            known = [f"{ref.name}:{a.name}" for ref, _b, a, _pl in reference_alignments(doc)]
+            if known and not doc.design.alignments:
+                raise CommandFault(str(fault), hint=f"this document owns no alignments, "
+                                                    f"but its references carry {known}; "
+                                                    f"pass one as alignment")
+            raise
+        shown_as = alignment.name
+    try:
+        ap = resolve_anchor(alignment, parse_anchor(p["target_anchor"]))
+    except DesignError as e:
+        raise CommandFault(str(e), hint=e.hint)
+    point = list(ap.point) if placement is None or placement.is_identity \
+        else placement.to_host(ap.point)
+    side = "" if abs(ap.offset) < 1e-9 else \
+        f", {abs(ap.offset):.2f}' {'RT' if ap.offset > 0 else 'LT'}"
+    named = "" if ap.kind_hint == "station" else f"{ap.ref} at "
+    what = f"{shown_as} {named}{ap.station_text}{side}"
+    try:
+        sheet = _through_viewport(doc, space_key, "model", what)
+        if sheet is None:
+            if "viewport" in p:
+                raise CommandFault("viewport is for pointing from a sheet at the model; "
+                                   "this callout is already in the model")
+            return point, what
+        vp = viewmap.viewport_showing(sheet, point, p.get("viewport"))
+    except viewmap.ViewError as ex:
+        raise CommandFault(str(ex), hint=ex.hint)
+    if vp is None or not viewmap.shows(vp, point):
+        through = f"viewport {vp.id}" if vp is not None else "any viewport"
+        elsewhere = [other.name for other in doc.sheets.values() if other is not sheet
+                     and viewmap.viewport_showing(other, point)]
+        raise CommandFault(
+            f"{what} ({point[0]:.2f}, {point[1]:.2f}) is not visible through {through} "
+            f"of {sheet.name}",
+            hint=_shown_elsewhere(elsewhere) + viewmap.describe_windows(sheet))
+    return vp.transform().to_paper(point), f"{what} through {vp.id}"
+
+
+def _shown_elsewhere(sheets: List[str]) -> str:
+    return f"it is on {', '.join(sheets)}; " if sheets else ""
+
+
+def _what_the_tip_touches(doc: Document, space_key: str, target, reach: float) -> str:
+    """What a hand-typed leader tip landed on, in the terms the plan uses.
+
+    On a sheet the tip is almost always aimed at the design, which is not on
+    the sheet at all but seen through a viewport -- so look there first. Only
+    searching the sheet's own entities names whatever lettering happens to be
+    nearby, on every callout, and stays silent about the line actually hit.
+    """
+    from roaddraft.document import viewmap
+    from roaddraft.document.locate import nearest_entity
+    exactly = ("pass target_entity or target_anchor to aim at something exactly")
+    sheet = doc.sheets.get(space_key)
+    seen = viewmap.seen_at(doc, sheet, target) if sheet is not None else None
+    if seen is not None:
+        vp, model_point, hit = seen
+        reach_ft = reach * vp.feet_per_inch
+        if hit is not None and hit[1] <= reach_ft:
+            return (f"the leader tip lands on {_describe_target(doc, hit[0])}, seen "
+                    f"through {vp.id}; pass target_entity instead of a point if that "
+                    f"is not what you meant")
+    nearest = nearest_entity(doc, space_key, target)
+    if nearest is not None and nearest[1] <= reach:
+        return (f"the leader tip lands on {_describe_target(doc, nearest[0])}; pass "
+                f"target_entity instead of a point if that is not what you meant")
+    if seen is not None and seen[2] is not None:
+        vp, model_point, hit = seen
+        return (f"the leader points at empty space: through {vp.id} the tip is at "
+                f"[{model_point[0]:.2f}, {model_point[1]:.2f}] in the model, and the "
+                f"nearest thing there is {_describe_target(doc, hit[0])}, {hit[1]:.2f} "
+                f"ft away (within {reach * vp.feet_per_inch:.2f} ft counts as on it); "
+                f"{exactly}")
+    if nearest is None:
+        return f"nothing in {_space_label(doc, space_key)} to point at"
+    return (f"the leader points at empty space: the nearest entity {nearest[0]} is "
+            f"{nearest[1]:.2f} away from [{target[0]:.2f}, {target[1]:.2f}] (within "
+            f"{reach:.2f} counts as on it); {exactly}")
 
 
 def _describe_target(doc: Document, eid: str) -> str:

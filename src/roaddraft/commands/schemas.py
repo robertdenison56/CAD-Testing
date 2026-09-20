@@ -6,7 +6,9 @@ back in teaching errors when a call is invalid.
 """
 from __future__ import annotations
 
-from roaddraft.commands.design_schemas import DESIGN_EXAMPLES, DESIGN_SCHEMAS, STATION
+from roaddraft.commands.design_schemas import (
+    ANCHOR, DESIGN_EXAMPLES, DESIGN_SCHEMAS, STATION,
+)
 from roaddraft.core.units import LENGTH_FORMATS
 from roaddraft.document.document import LINETYPES
 from roaddraft.document.entities import DIM_ARROWS, DIM_KINDS
@@ -101,16 +103,36 @@ SCHEMAS = {
     "place_callout": obj(
         {**_ENTITY_COMMON,
          "target": {**POINT, "description": "an explicit point for the leader to point "
-                                            "at; prefer target_entity, which cannot "
-                                            "miss"},
+                                            "at, in the callout's own space (paper inches "
+                                            "on a sheet); prefer target_entity or "
+                                            "target_anchor, which cannot miss"},
          "target_entity": {**NSTR,
                            "description": "what to point at, by id (find_entities and "
                                           "hit_test return them; reference elements are "
                                           "'DESIGN:LN-004'). The engine computes a point "
-                                          "on it, so a curve is aimed at correctly. Give "
-                                          "exactly one of target / target_entity."},
+                                          "on it, so a curve is aimed at correctly. On a "
+                                          "sheet it may be a model or referenced entity: "
+                                          "the tip lands where the viewport shows it. "
+                                          "Give exactly one of target / target_entity / "
+                                          "target_anchor."},
          "at": {"description": "where along target_entity: start|mid|end or a fraction "
-                               "0-1 (default mid)"},
+                               "0-1 (default mid). From a sheet it runs along the part "
+                               "of the entity that sheet shows, so mid is always a "
+                               "point the reader can see"},
+         "target_anchor": {**ANCHOR,
+                           "description": "a station, offset or named point of an "
+                                          "alignment to point at: '586+57.73@20.83L', "
+                                          "'PC-1', {station, offset}. There is no "
+                                          "entity at a station, so this is how a "
+                                          "station-and-offset callout is aimed"},
+         "alignment": {**NSTR,
+                       "description": "the alignment target_anchor is on; a referenced "
+                                      "one is 'DESIGN:SR-100' (read, not owned -- the "
+                                      "callout carries no anchor). Defaults to the "
+                                      "document's only alignment"},
+         "viewport": {**NSTR,
+                      "description": "on a sheet, the viewport to see the target "
+                                     "through (default: the first one that shows it)"},
          "position": {**POINT, "description": "where the text sits, clear of the geometry"},
          "content": NSTR,
          "height": {**POS, "description": "text height in space units (feet in model, "

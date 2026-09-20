@@ -236,8 +236,23 @@ class RoadDraftMCP:
                     "include_references=true names a referenced alignment "
                     "'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor "
                     "and get_design_data all accept that name and answer in host "
-                    "coordinates. Commands do not: nothing can be drawn, labelled or "
-                    "anchored to an alignment this document does not own.")}
+                    "coordinates. To call one out, give place_callout a target_anchor "
+                    "('18+00@12R', 'PC-1') and that alignment name. Otherwise commands "
+                    "do not take it: nothing can be drawn, labelled or anchored to an "
+                    "alignment this document does not own."
+                    "\n\n"
+                    "Plan annotation belongs on the sheet, in paper inches, not in the "
+                    "model. Pass the sheet as place_callout's space and still name a "
+                    "model target -- target_entity or target_anchor: the engine sees it "
+                    "through the sheet's viewport (scale and twist included) and puts "
+                    "the tip where it shows on the paper. 'at' then runs along the part "
+                    "of the entity that sheet shows, since a pavement edge runs the "
+                    "whole project and a sheet shows one stretch. find_entities with "
+                    "visible_on gives each row a sheet_point, which is where that tip "
+                    "will land -- use it to choose a position for the text that is "
+                    "clear of the linework. Never work out a viewport by hand: "
+                    "model_to_sheet and sheet_to_model convert, and station_to_xy and "
+                    "point_on_entity take a sheet and answer in paper inches as well.")}
 
     def serve(self, stdin=None, stdout=None) -> None:
         """Read newline-delimited JSON-RPC from stdin until EOF."""

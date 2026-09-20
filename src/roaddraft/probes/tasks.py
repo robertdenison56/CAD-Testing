@@ -14,6 +14,12 @@ like one from place_callout -- what is being measured is aim, not vocabulary.
 that the classic curve mistake (aiming at the midpoint of an arc's endpoints,
 which is 15.5 ft off on this alignment) fails, and loose enough that rounding
 does not.
+
+Aim is always judged in the model, in feet. A callout drawn on a sheet -- where
+plan annotation belongs -- has its leader tips carried back through the
+viewport they sit in before they are measured, so paper-space and model-space
+work are held to the same 1 ft. The ``-paper`` probes additionally require the
+work to be on the sheet.
 """
 from __future__ import annotations
 
@@ -21,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 from roaddraft.api.session import Session
+from roaddraft.document import viewmap
 from roaddraft.document.entities import Line, Polyline, Text, entity_distance
 from roaddraft.document.locate import point_at, resolve_entity
 from roaddraft.probes import fixture
@@ -54,15 +61,25 @@ class Probe:
 # ------------------------------------------------------------------ helpers
 
 
-def added_entities(baseline: Session, submitted: Session):
-    """Entities in the submitted document that the fixture did not have."""
+def added_by_space(baseline: Session, submitted: Session, on_sheet: Optional[str] = None):
+    """``(space key, entity)`` for what the submission added to the fixture.
+    ``on_sheet`` keeps only what was drawn on that sheet's paper."""
     before = set(baseline.doc.model_entities)
     for sheet in baseline.doc.sheets.values():
         before |= set(sheet.entities)
-    out = [e for eid, e in submitted.doc.model_entities.items() if eid not in before]
-    for sheet in submitted.doc.sheets.values():
-        out += [e for eid, e in sheet.entities.items() if eid not in before]
+    out = []
+    if on_sheet is None:
+        out += [("model", e) for eid, e in submitted.doc.model_entities.items()
+                if eid not in before]
+    for key, sheet in submitted.doc.sheets.items():
+        if on_sheet is None or sheet.name == on_sheet:
+            out += [(key, e) for eid, e in sheet.entities.items() if eid not in before]
     return out
+
+
+def added_entities(baseline: Session, submitted: Session, on_sheet: Optional[str] = None):
+    """Entities in the submitted document that the fixture did not have."""
+    return [e for _space, e in added_by_space(baseline, submitted, on_sheet)]
 
 
 def leader_tips(entities):
@@ -76,6 +93,30 @@ def leader_tips(entities):
     return tips
 
 
+def model_tips(submitted: Session, added) -> list:
+    """Leader tips in model feet. A tip drawn on a sheet is carried back
+    through the viewport it sits in; one outside every viewport points at
+    nothing in the model and is dropped."""
+    tips = []
+    for space, entity in added:
+        sheet = submitted.doc.sheets.get(space)
+        for tip in leader_tips([entity]):
+            if sheet is None:
+                tips.append(tip)
+                continue
+            vp = viewmap.viewport_under(sheet, tip)
+            if vp is not None:
+                tips.append(vp.transform().to_model(tip))
+    return tips
+
+
+def _nothing_added(on_sheet: Optional[str]) -> str:
+    if on_sheet:
+        return (f"nothing was drawn on sheet {on_sheet} itself -- this probe wants the "
+                f"callout in paper space, not in the model")
+    return "nothing was added to the document"
+
+
 def targets(session: Session, **find) -> List[str]:
     """Ids of the entities a probe considers correct to point at."""
     r = session.query("find_entities", {**find, "limit": 500})
@@ -85,15 +126,15 @@ def targets(session: Session, **find) -> List[str]:
 
 
 def aimed_at(baseline: Session, submitted: Session, wanted: List[str],
-             what: str, count: int = 1) -> Result:
+             what: str, count: int = 1, on_sheet: Optional[str] = None) -> Result:
     """Did the added linework put ``count`` tips within tolerance of ``wanted``?"""
-    added = added_entities(baseline, submitted)
+    added = added_by_space(baseline, submitted, on_sheet)
     if not added:
-        return Result(False, "nothing was added to the document")
-    if not any(isinstance(e, Text) for e in added):
+        return Result(False, _nothing_added(on_sheet))
+    if not any(isinstance(e, Text) for _space, e in added):
         return Result(False, f"{len(added)} entities added but no text, so nothing "
                              f"is labelled")
-    tips = leader_tips(added)
+    tips = model_tips(submitted, added)
     if not tips:
         return Result(False, "text was added but no leader, so nothing points at "
                              f"{what}")
@@ -133,15 +174,16 @@ def _closest(baseline: Session, wanted: List[str], tips) -> str:
 
 
 def aimed_at_point(baseline: Session, submitted: Session, point, what: str,
-                   must_contain: Optional[str] = None) -> Result:
+                   must_contain: Optional[str] = None,
+                   on_sheet: Optional[str] = None) -> Result:
     """Did the added linework put a tip on ``point``, and say the right thing?"""
-    added = added_entities(baseline, submitted)
+    added = added_by_space(baseline, submitted, on_sheet)
     if not added:
-        return Result(False, "nothing was added to the document")
-    texts = [e for e in added if isinstance(e, Text)]
+        return Result(False, _nothing_added(on_sheet))
+    texts = [e for _space, e in added if isinstance(e, Text)]
     if not texts:
         return Result(False, "no text, so nothing is labelled")
-    tips = leader_tips(added)
+    tips = model_tips(submitted, added)
     if not tips:
         return Result(False, f"no leader, so nothing points at {what}")
     best = min((((tip[0] - point[0]) ** 2 + (tip[1] - point[1]) ** 2) ** 0.5, tip)
@@ -311,6 +353,62 @@ def _solve_pc_by_station(session):
         raise RuntimeError(r["error"]["message"])
 
 
+def _paper_layer(session: Session) -> str:
+    if "S-ANNO-CALL" not in session.doc.layers:
+        session.execute("create_layer", {"name": "S-ANNO-CALL", "color": "black"})
+    return "S-ANNO-CALL"
+
+
+def _check_edge_on_paper(baseline, submitted):
+    return aimed_at(baseline, submitted, _edges(baseline, visible_on="C-102"),
+                    "a pavement edge on C-102", on_sheet="C-102")
+
+
+def _solve_edge_on_paper(session):
+    """The T2 route, start to finish: find what the sheet shows, name it, and
+    let the engine see it through the viewport."""
+    r = session.query("find_entities", {
+        "anchor": {"kind": "offset", "offset": list(fixture.EDGE_OFFSETS)},
+        "visible_on": "C-102"})
+    row = r["entities"][0]
+    x, y = row["sheet_point"]
+    r = session.execute("place_callout", {
+        "space": "C-102", "target_entity": row["id"], "position": [x + 2.5, y - 2.0],
+        "content": "EDGE OF PAVEMENT", "layer": _paper_layer(session)})
+    if not r["ok"]:
+        raise RuntimeError(r["error"]["message"])
+
+
+STATION_PROBE = {"station": "18+00", "offset": 12.0, "anchor": "18+00@12R"}
+
+
+def _station_point(session: Session) -> dict:
+    r = session.query("station_to_xy", {
+        "alignment": f"DESIGN:{fixture.ALIGNMENT}", "station": STATION_PROBE["station"],
+        "offset": STATION_PROBE["offset"], "sheet": "C-101"})
+    if not r["ok"]:
+        raise RuntimeError(r["error"]["message"])
+    return r
+
+
+def _check_station_on_paper(baseline, submitted):
+    return aimed_at_point(baseline, submitted, _station_point(baseline)["point"],
+                          "SR-100 18+00, 12' RT", must_contain="18+00",
+                          on_sheet="C-101")
+
+
+def _solve_station_on_paper(session):
+    at = _station_point(session)
+    x, y = at["on_sheet"]["sheet_point"]
+    r = session.execute("place_callout", {
+        "space": "C-101", "target_anchor": STATION_PROBE["anchor"],
+        "alignment": f"DESIGN:{fixture.ALIGNMENT}", "position": [x + 2.0, y - 2.5],
+        "content": f"STA {at['station_text']}, 12.00' RT\nBEGIN GUARDRAIL",
+        "layer": _paper_layer(session)})
+    if not r["ok"]:
+        raise RuntimeError(r["error"]["message"])
+
+
 PROBES: List[Probe] = [
     Probe(id="edge-c102",
           prompt="On sheet C-102, add a callout pointing at the edge of pavement.",
@@ -347,13 +445,30 @@ PROBES: List[Probe] = [
           tags=["sheets"],
           note="No geometry to find; checks that 'every sheet' is taken literally."),
     Probe(id="pc-by-station",
-          prompt="Call out the PC of the first curve of SR-100 on sheet C-102, "
+          prompt="Call out the PC of the first curve of SR-100 on sheet C-101, "
                  "labelled with its station.",
           check=_check_pc_by_station, solve=_solve_pc_by_station,
           tags=["find", "station", "reference-design"],
           note="Needs the referenced design: resolve_anchor on 'DESIGN:SR-100' "
                "gives the PC in host coordinates and the station text to write. "
                "There is no entity at a PC, so the point is the only way in."),
+    Probe(id="edge-c102-paper",
+          prompt="On sheet C-102, call out the edge of pavement. Draw the callout on "
+                 "the sheet itself, in paper space, the way plan annotation is drawn "
+                 "-- not in the model.",
+          check=_check_edge_on_paper, solve=_solve_edge_on_paper,
+          tags=["find", "reference", "paper"],
+          note="The T2 shape. The edge is in a referenced basefile and the callout is "
+               "in paper inches, so the tip has to go through the viewport. The leader "
+               "tip is carried back to the model and held to the same 1 ft."),
+    Probe(id="sta-offset-c101-paper",
+          prompt="On sheet C-101, in paper space, call out the point 12 ft right of "
+                 "SR-100 station 18+00 as BEGIN GUARDRAIL, with the station in the "
+                 "text.",
+          check=_check_station_on_paper, solve=_solve_station_on_paper,
+          tags=["station", "reference-design", "paper"],
+          note="How most real plan callouts are aimed: a station and an offset, with "
+               "no entity there to find. 1 ft is 0.02 in on this sheet."),
 ]
 
 BY_ID = {probe.id: probe for probe in PROBES}
@@ -366,4 +481,5 @@ def get(probe_id: str) -> Probe:
 
 
 __all__ = ["TOLERANCE_FT", "TITLE_FIELDS", "Probe", "Result", "PROBES", "BY_ID", "get",
-           "added_entities", "leader_tips", "targets", "aimed_at", "callout_at"]
+           "added_entities", "added_by_space", "leader_tips", "model_tips", "targets",
+           "aimed_at", "aimed_at_point", "callout_at"]

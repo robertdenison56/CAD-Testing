@@ -87,10 +87,14 @@ REGISTRY: List[CommandSpec] = [
     CommandSpec("place_callout",
                 "Text with a leader pointing at something: the way a drafter annotates "
                 "geometry that carries no design model of its own -- a pavement edge, a "
-                "utility, anything seen through a reference. hit_test finds the point to "
-                "aim at (referenced entities included) and get_entity reads it back in "
-                "host coordinates. Leader, landing, arrowhead and text are drawn as "
-                "ordinary entities on the current or given layer.",
+                "utility, anything seen through a reference. Name what it points at: "
+                "target_entity (an id from find_entities or hit_test, referenced "
+                "entities included) or target_anchor (a station, offset or named point "
+                "of an alignment, a referenced one included). Plan callouts belong on "
+                "the sheet, and from a sheet both are seen through its viewport -- the "
+                "tip lands in paper inches where the model shows, with no scale or "
+                "twist arithmetic to do by hand. Leader, landing, arrowhead and text "
+                "are drawn as ordinary entities on the current or given layer.",
                 h.place_callout,
                 {"c3d": ["MLEADER", "QLEADER", "LEADER"],
                  "ord": ["place note", "place callout"]}),
