@@ -205,3 +205,83 @@ def test_serve_reads_newline_delimited_json_and_survives_bad_input():
     assert replies[1]["error"]["code"] == -32700      # the bad JSON
     assert replies[2]["result"]["isError"] is False
     assert replies[3]["result"] == {}
+
+
+def test_autosave_writes_the_document_and_journal_back_after_every_command(tmp_path):
+    """An agent is asked to do a drafting job, not to remember to save. Without
+    autosave its work lives in memory and is gone when the client hangs up --
+    so a probe would score the untouched file and fail for the wrong reason."""
+    from roaddraft.mcp.server import journal_path
+    from roaddraft.probes import fixture
+    _model, sheets = fixture.build(tmp_path)
+    srv = RoadDraftMCP(Session.load(sheets, out_dir=tmp_path), autosave=True)
+    result = call(srv, "fill_title_block", sheet="C-101", fields={"project": "SR-100"})
+    assert not result["isError"]
+    on_disk = Session.load(sheets, out_dir=tmp_path)
+    assert on_disk.doc.sheet_by_ref("C-101").title_block_fields == {"project": "SR-100"}
+    assert journal_path(sheets).name == "SR-100.sheets.jsonl"
+    assert journal_path(sheets).is_file()
+    assert journal_path(tmp_path / "plan.rdraft").name == "plan.jsonl"
+
+    # an undo is a command too: a retracted mistake must not be what gets scored
+    assert not call(srv, "undo")["isError"]
+    on_disk = Session.load(sheets, out_dir=tmp_path)
+    assert on_disk.doc.sheet_by_ref("C-101").title_block_fields == {}
+
+    # a fault and a query change nothing, and write nothing
+    stamp = sheets.stat().st_mtime_ns
+    assert call(srv, "fill_title_block", sheet="C-999", fields={"a": "b"})["isError"]
+    assert not call(srv, "list_sheets")["isError"]
+    assert sheets.stat().st_mtime_ns == stamp
+
+
+def test_autosave_is_off_by_default_and_leaves_an_unsaved_document_alone(tmp_path):
+    from roaddraft.probes import fixture
+    _model, sheets = fixture.build(tmp_path)
+    before = sheets.read_bytes()
+    srv = RoadDraftMCP(Session.load(sheets, out_dir=tmp_path))
+    assert not call(srv, "fill_title_block", sheet="C-101", fields={"a": "b"})["isError"]
+    assert sheets.read_bytes() == before
+    # nowhere to save a document that never came from a file: not an error
+    fresh = RoadDraftMCP(Session(project_name="new", out_dir=tmp_path), autosave=True)
+    assert not call(fresh, "create_layer", name="L1", color="black")["isError"]
+
+
+def test_trace_keeps_the_queries_and_the_faults_the_journal_does_not(tmp_path):
+    trace = tmp_path / "run" / "trace.jsonl"
+    srv = RoadDraftMCP(Session(project_name="t", out_dir=tmp_path), trace=str(trace))
+    call(srv, "list_layers")
+    call(srv, "create_layer", name="V-ROAD", color="black")
+    call(srv, "create_layer", name="V-ROAD", color="black")           # already exists
+    rows = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert [(r["tool"], r["kind"], r["ok"]) for r in rows] == [
+        ("list_layers", "query", True), ("create_layer", "command", True),
+        ("create_layer", "command", False)]
+    assert rows[1]["arguments"] == {"name": "V-ROAD", "color": "black"}
+    assert "already exists" in rows[2]["error"]["message"] and rows[2]["error"]["hint"]
+    assert len(srv.session.bus.journal) == 1                          # the journal kept one
+
+
+def test_autosave_stays_with_the_opened_file_when_the_agent_saves_a_copy(tmp_path):
+    """Seen in a real run: a model finishes with save_document under a name of
+    its own. If autosave followed it there, the file the harness scores would
+    silently stop updating."""
+    from roaddraft.probes import fixture
+    _model, sheets = fixture.build(tmp_path / "project")
+    srv = RoadDraftMCP(Session.load(sheets, out_dir=tmp_path), autosave=True)
+    copy = tmp_path / "elsewhere" / "my-copy.rdraft"
+    assert not call(srv, "save_document", path=str(copy))["isError"]
+    assert not call(srv, "fill_title_block", sheet="C-102", fields={"project": "P"})["isError"]
+    opened = Session.load(sheets, out_dir=tmp_path)
+    assert opened.doc.sheet_by_ref("C-102").title_block_fields == {"project": "P"}
+    # the copy is the agent's own business: it holds what was saved, no more
+    assert Session.load(copy, out_dir=tmp_path).doc.sheet_by_ref(
+        "C-102").title_block_fields == {}
+    # opening another document moves home with it
+    other = tmp_path / "other" / "plan.rdraft"
+    Session(project_name="other", out_dir=tmp_path).query("save_document",
+                                                          {"path": str(other)})
+    assert not call(srv, "open_document", path=str(other))["isError"]
+    assert not call(srv, "create_layer", name="L9", color="black")["isError"]
+    assert "L9" in Session.load(other, out_dir=tmp_path).doc.layers
+    assert "L9" not in Session.load(sheets, out_dir=tmp_path).doc.layers

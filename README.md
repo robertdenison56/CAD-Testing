@@ -371,9 +371,17 @@ the model referenced in gets annotated):
 claude mcp add roaddraft-sheets -- /ABSOLUTE/PATH/TO/.venv/bin/roaddraft-mcp --doc /path/to/SR-100.sheets.rdoc.json
 ```
 
-- **70 tools**: 43 commands + 26 queries straight from `Session.manifest()` —
+- **78 tools**: 45 commands + 32 queries straight from `Session.manifest()` —
   the same descriptions, JSON Schemas and worked examples the REPL and the web
   GUI use, so there is no second copy to drift — plus `open_document`.
+- **`--autosave`** writes the document, and its journal beside it, back to the
+  file it was opened from after every command. An agent is asked to do a
+  drafting job, not to remember to save; without this its work is in memory and
+  gone when the client hangs up. It stays with the opened file even if the agent
+  saves a copy elsewhere, which real models do. **`--trace FILE`** appends one
+  JSON line per tool call — queries and faults included, which the journal does
+  not keep — so a run can be read back for what the agent tripped on rather than
+  taken from what it says it did.
 - **Faults teach instead of failing**: a bad call comes back as a tool error
   carrying the message, the hint, the schema and a valid example, so the model
   corrects itself rather than guessing.

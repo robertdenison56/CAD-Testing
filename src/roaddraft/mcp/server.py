@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Sequence
 
 from roaddraft import __version__
 from roaddraft.api.session import Session
+from roaddraft.document import fileformat
 from roaddraft.document.fileformat import DocumentFormatError
 
 #: Revision of the MCP spec this server implements. The client's requested
@@ -100,11 +101,17 @@ class RoadDraftMCP:
     """One MCP session over one RoadDraft ``Session``."""
 
     def __init__(self, session: Session, only: Optional[Sequence[str]] = None,
-                 exclude: Optional[Sequence[str]] = None):
+                 exclude: Optional[Sequence[str]] = None, autosave: bool = False,
+                 trace: Optional[str] = None):
         self.session = session
         self.only = list(only) if only else None
         self.exclude = list(exclude) if exclude else None
         self.protocol_version = PROTOCOL_VERSION
+        self.autosave = autosave
+        self.trace = Path(trace) if trace else None
+        #: where autosave writes: the file the document was opened from. It does
+        #: not follow a save_document to somewhere else (see _autosave).
+        self.home = getattr(session.doc, "_path", None)
 
     # ------------------------------------------------------------- tools
 
@@ -132,6 +139,9 @@ class RoadDraftMCP:
             return self._call_extra(name, arguments)
         result = (self.session.execute(name, arguments) if kind == "command"
                   else self.session.query(name, arguments))
+        self._trace(name, kind, arguments, result)
+        if kind == "command" and result.get("ok"):
+            self._autosave()
         content = [_text(result)]
         if result.get("ok") and name in IMAGE_QUERIES:
             image = _image_content(result.get("path"))
@@ -147,6 +157,7 @@ class RoadDraftMCP:
             return self._tool_error("open_document needs a path to a document file")
         try:
             self.session = Session.load(path, out_dir=self.session.out_dir)
+            self.home = getattr(self.session.doc, "_path", None)
         except FileNotFoundError:
             return self._tool_error(f"no such document: {path}")
         except DocumentFormatError as ex:  # not a document, or malformed JSON
@@ -160,6 +171,44 @@ class RoadDraftMCP:
     @staticmethod
     def _tool_error(message: str) -> dict:
         return {"content": [{"type": "text", "text": message}], "isError": True}
+
+    def _autosave(self) -> None:
+        """Write the document back where it was opened from, and its journal
+        beside it, after every command that changed it. An agent is asked to do
+        a drafting job, not to remember to save: without this its work lives in
+        memory and is gone when the client hangs up. A document that was never
+        opened from a file has nowhere to go and is left alone.
+
+        The file it was opened from stays the target even if the agent saves a
+        copy elsewhere. Real models do that -- "save as" under a name of their
+        own, often a relative one -- and if autosave followed them there, the
+        file whoever launched the server is watching would silently go stale.
+        Written directly rather than through save_document, which would move
+        the document (and with it how relative references resolve)."""
+        if not self.autosave or self.home is None:
+            return
+        fileformat.write_document(self.home, self.session.doc.to_dict())
+        self.session.query("save_journal", {"path": str(journal_path(self.home))})
+
+    def _trace(self, name: str, kind: str, arguments: dict, result: dict) -> None:
+        """One line per tool call -- queries and faults too, which the journal
+        does not keep -- so a run can be read back for how the agent went about
+        it and what it tripped on, not only for what it left behind."""
+        if self.trace is None:
+            return
+        entry = {"tool": name, "kind": kind, "arguments": arguments,
+                 "ok": bool(result.get("ok"))}
+        if result.get("ok"):
+            for key in ("message", "warnings", "created"):
+                if result.get(key):
+                    entry[key] = result[key]
+        else:
+            error = result.get("error") or {}
+            entry["error"] = {k: error.get(k) for k in ("type", "message", "hint")
+                              if error.get(k)}
+        self.trace.parent.mkdir(parents=True, exist_ok=True)
+        with self.trace.open("a") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     # ---------------------------------------------------------- protocol
 
@@ -279,6 +328,16 @@ class RoadDraftMCP:
 # ------------------------------------------------------------------ helpers
 
 
+def journal_path(document: Path) -> Path:
+    """``SR-100.sheets.rdoc.json`` -> ``SR-100.sheets.jsonl``, beside it."""
+    name = Path(document).name
+    for suffix in (".rdoc.json", ".rdraft", ".json"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return Path(document).with_name(name + ".jsonl")
+
+
 def _text(payload) -> dict:
     """A text content block: readable JSON while it is small, compact when not."""
     compact = json.dumps(payload, ensure_ascii=False)
@@ -328,6 +387,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="project name for a new document (ignored with --doc)")
     parser.add_argument("--only", help="comma-separated tool names to expose")
     parser.add_argument("--exclude", help="comma-separated tool names to hide")
+    parser.add_argument("--autosave", action="store_true",
+                        help="write the document (and its journal, beside it) back to "
+                             "its file after every command, so the work outlives the "
+                             "session without the agent having to save")
+    parser.add_argument("--trace", help="append one JSON line per tool call to this "
+                                        "file: arguments, outcome, faults and hints")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool names that would be served, then exit")
     args = parser.parse_args(argv)
@@ -336,7 +401,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session = Session.load(args.doc, out_dir=args.out_dir)
     else:
         session = Session(project_name=args.project, out_dir=args.out_dir)
-    server = RoadDraftMCP(session, only=_names(args.only), exclude=_names(args.exclude))
+    server = RoadDraftMCP(session, only=_names(args.only), exclude=_names(args.exclude),
+                          autosave=args.autosave, trace=args.trace)
 
     if args.list_tools:
         tools = server.tools()
