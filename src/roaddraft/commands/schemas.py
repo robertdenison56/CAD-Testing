@@ -115,10 +115,11 @@ SCHEMAS = {
                                           "the tip lands where the viewport shows it. "
                                           "Give exactly one of target / target_entity / "
                                           "target_anchor."},
-         "at": {"description": "where along target_entity: start|mid|end or a fraction "
-                               "0-1 (default mid). From a sheet it runs along the part "
-                               "of the entity that sheet shows, so mid is always a "
-                               "point the reader can see"},
+         "at": {"description": "where along target_entity the leader TIP goes: "
+                               "start|mid|end or a fraction 0-1 (default mid) -- not "
+                               "where the text goes, which is position. From a sheet "
+                               "it runs along the part of the entity that sheet shows, "
+                               "so mid is always a point the reader can see"},
          "target_anchor": {**ANCHOR,
                            "description": "a station, offset or named point of an "
                                           "alignment to point at: '586+57.73@20.83L', "
@@ -133,8 +134,16 @@ SCHEMAS = {
          "viewport": {**NSTR,
                       "description": "on a sheet, the viewport to see the target "
                                      "through (default: the first one that shows it)"},
-         "position": {**POINT, "description": "where the text sits, clear of the geometry"},
-         "content": NSTR,
+         "position": {**POINT,
+                      "description": "where the text sits, clear of the geometry, in the "
+                                     "callout's own space. The text reads away from the "
+                                     "target: when the target is to the left, the text "
+                                     "starts here and runs right (left-justified); when "
+                                     "it is to the right, the text ends here "
+                                     "(right-justified). Vertically it is centred on "
+                                     "this point, and the landing runs from here back "
+                                     "toward the target"},
+         "content": {**NSTR, "description": "the callout's text; \\n starts a new line"},
          "height": {**POS, "description": "text height in space units (feet in model, "
                                           "inches on sheets); defaults to the annotation "
                                           "scale in model space, 0.10 in on a sheet"},

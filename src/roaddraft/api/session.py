@@ -440,11 +440,11 @@ QUERIES = {
         "description": "Tabular design data: alignments, curves (Δ/R/T/L/E/M/C, "
                        "bearings, PC/PI/PT/MC stations), tangents, station "
                        "equations, named anchors, profiles, PVIs, vertical curves. "
-                       "Stations are raw + display text. Paginated (default 50). ""An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed.",
+                       "Stations are raw + display text. Paginated (default 50). "
+                       "kind defaults to 'alignments', the overview. ""An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed.",
         "schema": obj({"kind": {"enum": list(DESIGN_DATA_KINDS)}, "alignment": NSTR,
                        "profile": NSTR, "start": {"type": "integer", "minimum": 0},
-                       "limit": {"type": "integer", "minimum": 1, "maximum": 500}},
-                      ["kind"]),
+                       "limit": {"type": "integer", "minimum": 1, "maximum": 500}}),
         "example": {"kind": "curves", "alignment": "ALIGN-1"},
     },
     "list_annotation_scales": {
@@ -1501,7 +1501,9 @@ class Session:
 
     def _q_get_design_data(self, p):
         design = self.doc.design
-        kind = p["kind"]
+        # no kind is the question "what is this alignment?": answer it, and say
+        # what else can be asked (the commonest fault in every agent run so far)
+        kind = p.get("kind", "alignments")
         from roaddraft.document.references import Placement
         placement = Placement()
         if "alignment" in p:
@@ -1525,6 +1527,8 @@ class Session:
         limit = int(p.get("limit", 50))
         out = {"kind": kind, "total": len(rows), "start": start, "limit": limit,
                "rows": rows[start:start + limit]}
+        if "kind" not in p:
+            out["other_kinds"] = [k for k in DESIGN_DATA_KINDS if k != kind]
         if not placement.is_identity or placement.reference:
             out["placement"] = _placement_block(placement)
         return out

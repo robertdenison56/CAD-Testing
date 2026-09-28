@@ -258,8 +258,10 @@ class RoadDraftMCP:
                 "serverInfo": dict(SERVER_INFO),
                 "instructions": (
                     "RoadDraft is a headless 2D CAD engine for roadway plans. Model "
-                    "space is US survey feet; sheets are paper inches seen through "
-                    "viewports at a feet-per-inch scale. Work through the commands: "
+                    "space is US survey feet, and a point is [x, y] = [easting, "
+                    "northing] -- the other way round from how coordinates are usually "
+                    "spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches "
+                    "seen through viewports at a feet-per-inch scale. Work through the commands: "
                     "each one validates its params and explains what was wrong, every "
                     "change is journaled and undoable. Start with get_document_state "
                     "to see what is in the document, list_commands for the full "

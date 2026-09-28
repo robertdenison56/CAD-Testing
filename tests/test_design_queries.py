@@ -249,3 +249,32 @@ def test_route_line_sta2xy_and_alignments_builtin():
     assert r["kind"] == "help" and r["item"]["name"] == "place_label"
     r = route_line(s, "landxml")
     assert r["result"]["ok"] and r["result"]["path"].endswith(".xml")
+
+
+def test_the_end_station_the_engine_prints_is_a_station_it_accepts():
+    """Found by a real agent run: SR-100 is 4675.2488 ft long, so its end is
+    written '56+75.25' everywhere -- and station_to_xy refused it as off the end."""
+    from roaddraft.probes import fixture
+    s = Session(project_name="round-trip")
+    assert s.execute("create_alignment", {"name": "SR-100", "begin_station": "10+00",
+                                          "pis": fixture.PIS})["ok"]
+    row = s.query("list_alignments", {})["alignments"][0]
+    assert row["end_station_text"] == "56+75.25" and row["end_station"] < 5675.25
+    end = s.query("station_to_xy", {"station": row["end_station_text"]})
+    assert end["ok"] and end["station"] == pytest.approx(row["end_station"])
+    assert end["point"] == pytest.approx([5600.0, 1500.0])
+    begin = s.query("station_to_xy", {"station": "9+99.996"})
+    assert begin["ok"] and begin["point"] == pytest.approx([1000.0, 1000.0])
+    # a hundredth further is off the end, and still says so
+    r = s.query("station_to_xy", {"station": "56+75.26"})
+    assert not r["ok"] and "does not exist on this alignment" in r["error"]["message"]
+
+
+def test_get_design_data_without_a_kind_is_the_overview():
+    """The commonest fault across every real agent run was asking for design
+    data by alignment alone."""
+    s = design_session()
+    r = s.query("get_design_data", {"alignment": "ALIGN-1"})
+    assert r["ok"] and r["kind"] == "alignments" and r["rows"][0]["name"] == "ALIGN-1"
+    assert "curves" in r["other_kinds"] and "tangents" in r["other_kinds"]
+    assert "other_kinds" not in s.query("get_design_data", {"kind": "curves"})

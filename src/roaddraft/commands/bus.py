@@ -157,7 +157,11 @@ REGISTRY: List[CommandSpec] = [
                 "Create a horizontal alignment in the design model from PIs "
                 "([x, y] at BEGIN/END, [x, y, R] interior) or from CoordGeom "
                 "elements; optional begin station (display, '10+00') and station "
-                "equations. Alignments are pure design data: draw_alignment puts "
+                "equations. x is the easting and y the northing, so N 5000, E 2000 is "
+                "[2000, 5000]. PIs are coordinates: a bearing and distance has to be "
+                "turned into one first (E + d sin az, N + d cos az), and "
+                "get_design_data kind=tangents reads the bearings and lengths back to "
+                "check. Alignments are pure design data: draw_alignment puts "
                 "linework in model space, annotate_stationing/place_label label it.",
                 dh.create_alignment,
                 {"c3d": ["CREATEALIGNMENTLAYOUT"], "ord": ["complex by pi"]}),

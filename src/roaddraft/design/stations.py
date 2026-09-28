@@ -17,6 +17,9 @@ from roaddraft.core.units import format_station, parse_station
 from roaddraft.design.errors import DesignError
 
 STATION_EPS = 1e-6
+#: Stations are written to the hundredth, so one read back off a label, a table
+#: or a query result can sit up to half a hundredth outside the alignment.
+DISPLAY_HALF = 0.005 + STATION_EPS
 
 
 @dataclass
@@ -145,6 +148,13 @@ class StationSystem:
             return display - r.shift
         found = self._regions_containing_display(display)
         if not found:
+            # "56+75.25" is how the end of a 5675.2488 ft alignment is written,
+            # everywhere, by this engine. Asked for it back, give the end.
+            first, last = self._regions[0], self._regions[-1]
+            if last.display_end < display <= last.display_end + DISPLAY_HALF:
+                return last.display_end - last.shift
+            if first.display_start - DISPLAY_HALF <= display < first.display_start:
+                return first.display_start - first.shift
             for eq in self.equations:
                 if float(eq.back) < display < float(eq.ahead):
                     raise DesignError(
