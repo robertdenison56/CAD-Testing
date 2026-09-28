@@ -96,7 +96,7 @@ Every state change is a named JSON command (PRD section 5.1):
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                      # 582 tests
+.venv/bin/pytest                      # 660 tests
 .venv/bin/python examples/demo_plan_sheet.py   # drafts a full plan sheet
 .venv/bin/python examples/caltrans_l2/build_all.py  # rebuilds a real Caltrans sheet
 .venv/bin/python -m roaddraft.tasks 42         # generates a D1 task + reference solution
@@ -397,9 +397,9 @@ standard library (the official MCP SDK needs Python 3.10 and this runs on 3.9).
 
 ### Find-probes — can an agent locate the right thing?
 
-`roaddraft.probes` is a small set of capability probes for exactly the skill an
-agent needs before anything else: finding the object it was asked about and
-putting the work on it. Deliberately *not* the scored benchmark in
+`roaddraft.probes` holds two small sets of capability probes. The find-probes
+are for the skill an agent needs before anything else: finding the object it
+was asked about and putting the work on it. Deliberately *not* the scored benchmark in
 `RoadDraft_Eval_Plan.md` — no rubric, no spec hash, no task ids.
 
 ```bash
@@ -428,6 +428,38 @@ paper-space and model-space work are held to the same 1 ft (0.02 in at
 entity, `sta-offset-c101-paper` by station and offset — and additionally
 require the callout to be on the sheet itself; a correct callout drawn in the
 model does not satisfy them.
+
+### Drafting-probes — can an agent draft from a description?
+
+The other half of the job: nothing is there yet, and an engineer says what to
+draw, the way engineers say it — northings and eastings, bearings and
+distances, deflections, stations and offsets, lane and shoulder widths.
+
+```bash
+python -m roaddraft.probes list --tag draft
+python -m roaddraft.probes setup draft-turn-lane --out /tmp/probe --force
+```
+
+Eight probes, each built around one way of getting it wrong: a swapped northing
+and easting (`draft-tangent-ne`), lines from PI to PI that are neither the road
+nor an alignment (`draft-pi-curve`), a bearing and a deflection to turn into
+coordinates (`draft-bearing-distance`), an 8 ft shoulder drawn 8 ft from the
+centerline instead of 20 (`draft-edges-shoulders`), a turn lane whose edge runs
+on past its stations (`draft-turn-lane`), pavement edges through a cul-de-sac
+bulb (`draft-cul-de-sac`), a building turned off-axis on a layer that does not
+exist yet (`draft-building`), and the whole job in one instruction
+(`draft-roadway`). Each starts from its own document — a blank design file, the
+SR-100 centerline, or the full SR-100 model — and `setup` hands over the right one.
+
+They judge what was drafted, not how. An alignment counts if the design model
+carries one that *runs where it was described*, whether it was built from PIs
+or from elements. Linework counts if it *lies where it should*: the expected
+path is sampled every few feet and each sample needs added linework within
+0.5 ft, on the layer that was asked for — so an edge from `draw_offset` scores
+like one composed of lines and arcs by hand, and a curve faked with chords does
+not. Where a description says where something stops, the check also looks past
+the end for linework that should not be there. `tests/test_probes_drafting.py`
+spends most of its effort proving that each trap fails and says why.
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
@@ -619,7 +651,7 @@ src/roaddraft/
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
   tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
                ground truth, and the reference solution (python -m roaddraft.tasks)
-tests/         582 tests: geometry, design math, commands, dimensions,
+tests/         660 tests: geometry, design math, commands, dimensions,
                determinism, LandXML, renders, DXF, web server, tasks
 examples/      demo_plan_sheet.py — a full sheet drafted from the design model;
                caltrans_l2/ — a published Caltrans plan sheet rebuilt as a

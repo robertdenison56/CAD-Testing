@@ -29,7 +29,7 @@ def baseline(project) -> Session:
     return fresh(project)
 
 
-@pytest.mark.parametrize("probe", [p for p in tasks.PROBES if p.solve],
+@pytest.mark.parametrize("probe", [p for p in tasks.FIND_PROBES if p.solve],
                          ids=lambda p: p.id)
 def test_the_scripted_solution_passes_and_the_untouched_project_does_not(probe, project):
     base = baseline(project)

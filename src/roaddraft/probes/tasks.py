@@ -23,14 +23,14 @@ work to be on the sheet.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import List, Optional
 
 from roaddraft.api.session import Session
 from roaddraft.document import viewmap
 from roaddraft.document.entities import Line, Polyline, Text, entity_distance
 from roaddraft.document.locate import point_at, resolve_entity
 from roaddraft.probes import fixture
+from roaddraft.probes.base import Probe, Result
 
 TOLERANCE_FT = 1.0
 
@@ -39,23 +39,6 @@ TITLE_FIELDS = {
     "sheet_title": "ROADWAY PLAN",
     "scale": "1\" = 50'",
 }
-
-
-@dataclass
-class Result:
-    passed: bool
-    detail: str
-
-
-@dataclass
-class Probe:
-    id: str
-    prompt: str
-    check: Callable[[Session, Session], Result]
-    solve: Optional[Callable[[Session], None]] = None
-    note: str = ""
-    blocked_on: str = ""
-    tags: List[str] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------ helpers
@@ -409,7 +392,7 @@ def _solve_station_on_paper(session):
         raise RuntimeError(r["error"]["message"])
 
 
-PROBES: List[Probe] = [
+FIND_PROBES: List[Probe] = [
     Probe(id="edge-c102",
           prompt="On sheet C-102, add a callout pointing at the edge of pavement.",
           check=_check_edge_on_sheet("C-102"), solve=_solve_edge_on_sheet("C-102"),
@@ -471,6 +454,11 @@ PROBES: List[Probe] = [
                "no entity there to find. 1 ft is 0.02 in on this sheet."),
 ]
 
+from roaddraft.probes.drafting import DRAFT_PROBES  # noqa: E402  (needs Probe above)
+
+#: every probe: finding and annotating (T2), then drafting from a description (T1)
+PROBES: List[Probe] = FIND_PROBES + DRAFT_PROBES
+
 BY_ID = {probe.id: probe for probe in PROBES}
 
 
@@ -480,6 +468,7 @@ def get(probe_id: str) -> Probe:
     return BY_ID[probe_id]
 
 
-__all__ = ["TOLERANCE_FT", "TITLE_FIELDS", "Probe", "Result", "PROBES", "BY_ID", "get",
+__all__ = ["TOLERANCE_FT", "TITLE_FIELDS", "Probe", "Result", "PROBES", "FIND_PROBES",
+           "DRAFT_PROBES", "BY_ID", "get",
            "added_entities", "added_by_space", "leader_tips", "model_tips", "targets",
            "aimed_at", "aimed_at_point", "callout_at"]

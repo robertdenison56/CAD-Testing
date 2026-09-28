@@ -1,6 +1,6 @@
-"""Run the find-probes.
+"""Run the probes: finding and annotating (T2), drafting from a description (T1).
 
-    python -m roaddraft.probes list
+    python -m roaddraft.probes list [--tag draft]
     python -m roaddraft.probes setup edge-curve-c102 --out /tmp/probe
     python -m roaddraft.probes score edge-curve-c102 --doc /tmp/probe/SR-100.sheets.rdoc.json
     python -m roaddraft.probes selftest
@@ -26,17 +26,18 @@ def _venv_bin() -> str:
 
 
 def cmd_list(args) -> int:
-    for probe in tasks.PROBES:
+    chosen = [p for p in tasks.PROBES if not args.tag or args.tag in p.tags]
+    for probe in chosen:
         flag = "  [BLOCKED]" if probe.blocked_on else ""
-        print(f"{probe.id:18} {', '.join(probe.tags):22}{flag}")
+        print(f"{probe.id:24} {', '.join(probe.tags):34} opens: {probe.start}{flag}")
         print(f"  {probe.prompt}")
         if probe.note:
             print(f"  note: {probe.note}")
         if probe.blocked_on:
             print(f"  blocked on: {probe.blocked_on}")
         print()
-    blocked = sum(1 for p in tasks.PROBES if p.blocked_on)
-    print(f"{len(tasks.PROBES)} probes, {blocked} blocked on a capability that does "
+    blocked = sum(1 for p in chosen if p.blocked_on)
+    print(f"{len(chosen)} probes, {blocked} blocked on a capability that does "
           f"not exist yet")
     return 0
 
@@ -46,9 +47,9 @@ def cmd_setup(args) -> int:
     out = Path(args.out)
     if out.exists() and args.force:
         shutil.rmtree(out)
-    _model, sheets = fixture.build(out)
+    sheets = fixture.start_document(out, probe.start)
     print(f"project written to {out}")
-    print(f"  sheet file: {sheets}")
+    print(f"  the document to open: {sheets}")
     print()
     print("give the model this:")
     print(f"  {probe.prompt}")
@@ -56,7 +57,7 @@ def cmd_setup(args) -> int:
         print(f"  [BLOCKED] {probe.blocked_on}")
     print()
     print("point it at the project:")
-    print(f"  claude mcp add roaddraft-probe -- {_venv_bin()} --doc {sheets}")
+    print(f"  claude mcp add roaddraft-probe -- {_venv_bin()} --doc {sheets} --autosave")
     print()
     print("then score what it leaves behind:")
     print(f"  python -m roaddraft.probes score {probe.id} --doc {sheets}")
@@ -66,7 +67,7 @@ def cmd_setup(args) -> int:
 def cmd_score(args) -> int:
     probe = tasks.get(args.probe)
     submitted = Session.load(args.doc)
-    baseline = _baseline(Path(args.doc).parent, args.baseline)
+    baseline = _baseline(probe, args.baseline)
     result = probe.check(baseline, submitted)
     print(f"{probe.id}: {'PASS' if result.passed else 'FAIL'}")
     print(f"  {result.detail}")
@@ -83,7 +84,7 @@ def cmd_selftest(args) -> int:
     for probe in runnable:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
-            _model, sheets = fixture.build(out)
+            sheets = fixture.start_document(out, probe.start)
             baseline = Session.load(sheets, out_dir=out)
             session = Session.load(sheets, out_dir=out)
             probe.solve(session)
@@ -103,14 +104,14 @@ def cmd_selftest(args) -> int:
     return 1 if failures else 0
 
 
-def _baseline(folder: Path, explicit) -> Session:
-    """A pristine copy of the project, to diff the submission against."""
+def _baseline(probe, explicit) -> Session:
+    """A pristine copy of what the probe started from, to diff the submission
+    against."""
     import tempfile
     if explicit:
         return Session.load(explicit)
     tmp = Path(tempfile.mkdtemp())
-    _model, sheets = fixture.build(tmp)
-    return Session.load(sheets, out_dir=tmp)
+    return Session.load(fixture.start_document(tmp, probe.start), out_dir=tmp)
 
 
 def main(argv=None) -> int:
@@ -118,7 +119,8 @@ def main(argv=None) -> int:
                                      description=__doc__.splitlines()[0])
     subs = parser.add_subparsers(dest="command")
 
-    subs.add_parser("list", help="the probes and what each asks for")
+    lister = subs.add_parser("list", help="the probes and what each asks for")
+    lister.add_argument("--tag", help="only probes with this tag, e.g. draft, find, paper")
 
     setup = subs.add_parser("setup", help="write a fresh project for one probe")
     setup.add_argument("probe")
