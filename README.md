@@ -461,6 +461,12 @@ not. Where a description says where something stops, the check also looks past
 the end for linework that should not be there. `tests/test_probes_drafting.py`
 spends most of its effort proving that each trap fails and says why.
 
+Runs of both sets by real models — Fable 5.1 and Haiku 4.5 through an MCP
+bridge, gpt-oss:120b through Ollama as a native MCP client — are kept under
+`benchmarks/probe_runs/`, one folder per run: the writeup, the rig that drove
+it, every tool call as the server saw it, and the documents the models left
+behind, which is what was scored. See its README.
+
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
 ```bash
@@ -658,6 +664,7 @@ examples/      demo_plan_sheet.py — a full sheet drafted from the design model
                model file + a sheet file that references it;
                generate_task.py — task seed 42 end to end
 benchmarks/    knowledge/ — reference standards behind the drafting spec (Caltrans PPM text + page index; see its README)
+               probe_runs/ — real-model probe runs: writeups, rigs, traces and the documents scored (see its README)
 scripts/       build_knowledge.py — rebuilds the knowledge base from the raw PDFs
 ```
 

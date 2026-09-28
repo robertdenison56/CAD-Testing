@@ -1,0 +1,136 @@
+{
+ "meta": {
+  "model": "gpt-oss:120b-cloud",
+  "probe": "draft-bearing-distance",
+  "stop": "answered",
+  "turns": 5,
+  "seconds": 8.7,
+  "tokens": {
+   "prompt": 73383,
+   "eval": 2046
+  }
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, visible_on: 'C-102'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('18+00@12R', 'PC-1') and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n- You have no calculator or code execution. Any arithmetic you need, do yourself.\n\nTHE TASK:\nCreate alignment RAMP-B. It begins at N 1000.00, E 1000.00, station 10+00, and runs N 62\u00b030'00\" E for 900.00 ft to a PI. There it deflects 35\u00b000'00\" to the right and continues 1,100.00 ft to its end. Use a 600 ft radius curve at the PI. Draw its centerline on layer V-ALIGN-CNTR.\n\nWhen finished, reply briefly with:\n1. What you created and drew (names, layers, key coordinates).\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages. If you had to compute coordinates yourself, show the arithmetic."
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "We need to create alignment RAMP-B with given start point and station, and a bearing 62\u00b030'00\" (i.e., angle from north? In alignment creation, bearings are from north? In RoadDraft alignment creation expects PIs as [x,y] coordinates, and interior points [x,y,R] for curves. We need to compute coordinates: start at N1000, E1000 -> that's [1000,1000] (Easting, Northing). Bearing N 62\u00b030' E means direction: from north towards east by 62.5\u00b0. In typical bearing, north-south first then east-west. Bearing N 62\u00b030' E means from north, rotate eastwards 62.5\u00b0, i.e., angle clockwise from north. In Cartesian coordinates (x east, y north), to get dx, dy: dx = distance * sin(bearing), dy = distance * cos(bearing). So for 900 ft: dx = 900 * sin(62.5\u00b0), dy = 900 * cos(62.5\u00b0). Need sin and cos approximations. 62.5\u00b0 in radians ~1.09083 rad. sin~0.8829, cos~0.4695. Multiply: dx \u2248 900*0.8829=794.6 ft, dy\u2248900*0.4695=422.6 ft. So point1 = start + (dx, dy) = [1000+794.6\u22481794.6, 1000+422.6\u22481422.6].\n\nAt that PI, we have a curve deflecting 35\u00b0 to the right (i.e., direction changes rightward). So initial bearing = N62\u00b030'E. Turn right 35\u00b0 means new bearing = N (62.5 -35) = N27\u00b030'E? Actually turning right reduces the bearing angle from north toward east? If moving eastwards, turning right means heading more eastward? Let's think: Bearing N 62.5 E points NE quadrant. Right turn would head more towards east then south? In road design, right turn means heading changes to the right; since you are moving with heading direction, right turn means bearing becomes more towards east-south? But may interpret as turning towards the east? Possibly new bearing = N (62.5 - 35) = N27\u00b030'E. That is less eastwards, more northwards. That seems like a left turn? Actually if you face NE (bearing 62.5\u00b0 east of north), turning right would point towards southeast (bearing east of south). However typical deflection angle measured from the forward direction to the tangent at PI. Right deflection reduces the azimuth (from north) i.e., it turns clockwise? Since azimuth measured clockwise from north. Starting azimuth = 62.5\u00b0. Right turn of 35\u00b0 adds 35\u00b0 to the azimuth (clockwise). So new azimuth = 62.5\u00b0 + 35\u00b0 = 97.5\u00b0, which corresponds to bearing S7\u00b030' E? Let's convert: 97.5\u00b0 from north clockwise is slightly past east (90\u00b0). So it's E 7\u00b030' S? Actually 97.5\u00b0 is east of south? The bearing would be S 7\u00b030' E (since after 90\u00b0, you are in E-SE quadrant). So direction is slightly south of east.\n\nThus we can compute new direction vector for 1100 ft: angle = 97.5\u00b0 from north clockwise. Convert to dx, dy: dx = distance * sin(azimuth) where azimuth measured from north. sin(97.5\u00b0)=? sin(97.5)=cos(7.5\u00b0)\u22480.9914. dy = distance * cos(azimuth) = distance * cos(97.5\u00b0)= -sin(7.5\u00b0)\u2248 -0.1305. So dx\u22481100*0.9914=1090.5 ft, dy\u22481100*(-0.1305)=-143.6 ft. End point = PI + (dx, dy) = [1794.6+1090.5\u22482885.1, 1422.6-143.6\u22481279.0].\n\nNow need a curve with radius 600 ft at PI connecting the two tangents (deflection 35\u00b0). The arc length = radius * deflection rad. Deflection 35\u00b0 = 0.610865 rad. Arc length \u2248 600*0.6109=366.5 ft. However the alignment definition: interior PI includes radius to be used for curve. So we can create alignment with PIs: start point, then curve PI with radius 600, then end point. The create_alignment expects pis: list of points: first PI start, then middle with radius, then end. Format: [x,y] for start and end; interior as [x,y,R].\n\nThus create_alignment with name \"RAMP-B\". Provide begin_station \"10+00\". Compute points as above. Provide pis array: [[1000,1000], [1794.6,1422.6,600], [2885.1,1279.0]].\n\nAfter alignment creation, draw_alignment on layer V-ALIGN-CNTR, color maybe black default. Need to ensure layer exists. Use create_layer for V-ALIGN-CNTR if not existing: color red? Not specified; we can create with black.\n\nProceed steps:\n\n1. create_layer name V-ALIGN-CNTR, color black, linetype \"continuous\", lineweight 0.25 (default). Provide description.\n\n2. create_alignment.\n\n3. draw_alignment with layer V-ALIGN-CNTR.\n\nNow need to report.\n\nWe must include tool calls with key args.\n\nLet's execute tool calls via function calls.\n\n",
+   "tool_calls": [
+    {
+     "id": "call_93wew0mp",
+     "function": {
+      "index": 0,
+      "name": "create_layer",
+      "arguments": {
+       "name": "V-ALIGN-CNTR",
+       "color": "black",
+       "linetype": "continuous",
+       "lineweight_mm": 0.25,
+       "description": "Roadway centerline layer"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "create_layer",
+   "content": "[tool error]\n{\n  \"ok\": false,\n  \"name\": \"create_layer\",\n  \"error\": {\n    \"type\": \"command_failed\",\n    \"message\": \"layer 'V-ALIGN-CNTR' already exists\",\n    \"hint\": \"use modify_layer to change it\",\n    \"example\": {\n      \"name\": \"V-ALIGN-CNTR\",\n      \"color\": \"red\",\n      \"linetype\": \"center\",\n      \"lineweight_mm\": 0.35,\n      \"description\": \"Roadway centerline\"\n    }\n  },\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "Layer already exists; no need to create. We can proceed.\n\nCreate alignment.",
+   "tool_calls": [
+    {
+     "id": "call_27duqc0h",
+     "function": {
+      "index": 0,
+      "name": "create_alignment",
+      "arguments": {
+       "name": "RAMP-B",
+       "begin_station": "10+00",
+       "pis": [
+        [
+         1000,
+         1000
+        ],
+        [
+         1794.6,
+         1422.6,
+         600
+        ],
+        [
+         2885.1,
+         1279
+        ]
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "create_alignment",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"create_alignment\",\n  \"message\": \"alignment RAMP-B created: 3 elements (2 tangents, 1 curve), 1987.53 ft, 10+00.00 to 29+87.53\",\n  \"created\": [\n    \"alignment:RAMP-B\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "Now draw alignment on given layer.",
+   "tool_calls": [
+    {
+     "id": "call_k4h6y4j9",
+     "function": {
+      "index": 0,
+      "name": "draw_alignment",
+      "arguments": {
+       "alignment": "RAMP-B",
+       "layer": "V-ALIGN-CNTR"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "draw_alignment",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 2,\n  \"name\": \"draw_alignment\",\n  \"message\": \"RAMP-B drawn on V-ALIGN-CNTR: 2 lines, 1 arc\",\n  \"created\": [\n    \"LN-001\",\n    \"AR-001\",\n    \"LN-002\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "Now we have drawn.\n\nWe should maybe get document state summary.",
+   "tool_calls": [
+    {
+     "id": "call_05mtmtkr",
+     "function": {
+      "index": 0,
+      "name": "get_document_state",
+      "arguments": {
+       "detail": "summary"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "get_document_state",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_document_state\",\n  \"summary\": {\n    \"meta\": {\n      \"project_name\": \"Design model\",\n      \"description\": \"\",\n      \"model_units\": \"us_survey_ft\",\n      \"paper_units\": \"inch\"\n    },\n    \"settings\": {\n      \"current_layer\": \"0\",\n      \"current_text_style\": \"STANDARD\",\n      \"annotation_scale\": null,\n      \"annotation_scales\": [\n        {\n          \"name\": \"1\\\"=10'\",\n          \"feet_per_inch\": 10.0\n        },\n        {\n          \"name\": \"1\\\"=20'\",\n          \"feet_per_inch\": 20.0\n        },\n        {\n          \"name\": \"1\\\"=30'\",\n          \"feet_per_inch\": 30.0\n        },\n        {\n          \"name\": \"1\\\"=40'\",\n          \"feet_per_inch\": 40.0\n        },\n        {\n          \"name\": \"1\\\"=50'\",\n          \"feet_per_inch\": 50.0\n        },\n        {\n          \"name\": \"1\\\"=60'\",\n          \"feet_per_inch\": 60.0\n        },\n        {\n          \"name\": \"1\\\"=100'\",\n          \"feet_per_inch\": 100.0\n        },\n        {\n          \"name\": \"1\\\"=200'\",\n          \"feet_per_inch\": 200.0\n        },\n        {\n          \"name\": \"1\\\"=500'\",\n          \"feet_per_inch\": 500.0\n        }\n      ],\n      \"annotation_paper\": {\n        \"text_height_in\": 0.1,\n        \"tick_half_len_in\": 0.2,\n        \"label_offset_in\": 0.32\n      }\n    },\n    \"layers\": [\n      \"0\",\n      \"V-ALIGN-CNTR\",\n      \"V-ANNO-TEXT\",\n      \"V-ROAD-EOP\",\n      \"V-ROAD-SHLD\"\n    ],\n    \"text_styles\": [\n      \"STANDARD\"\n    ],\n    \"blocks\": [\n      \"NORTH_ARROW\"\n    ],\n    \"sheets\": [],\n    \"model_entity_count\": 3,\n    \"model_extents\": [\n      1000.0,\n      1000.0,\n      2885.1,\n      1402.6550206639904\n    ],\n    \"alignments\": [\n      \"RAMP-B\"\n    ],\n    \"profiles\": [],\n    \"annotation_scale\": null,\n    \"journal_length\": 2\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "**What was created\u202f& drawn**  \n- Alignment **RAMP\u2011B** (begin station\u202f10+00) with three PIs:  \n  1. Start\u202f=\u202f[1000\u202f\u200b,\u202f1000]\u202fft (N\u202f1000\u202fE\u202f1000)  \n  2. PI\u202f=\u202f[1794.6\u202f\u200b,\u202f1422.6]\u202fft, radius\u202f=\u202f600\u202fft (deflection\u202f35\u00b0\u202fright)  \n  3. End\u202f=\u202f[2885.1\u202f\u200b,\u202f1279.0]\u202fft (after 1\u202f100\u202fft on the new tangent)  \n- The alignment\u2019s **centerline** was drawn (2 straight lines + 1 curve) on layer **V-ALIGN-CNTR**.  \n\n**Tool calls that mattered (in order)**  \n\n1. `create_alignment` \u2013  \n   ```json\n   {\"name\":\"RAMP-B\",\"begin_station\":\"10+00\",\n    \"pis\":[[1000,1000],[1794.6,1422.6,600],[2885.1,1279]]}\n   ```\n2. `draw_alignment` \u2013  \n   ```json\n   {\"alignment\":\"RAMP-B\",\"layer\":\"V-ALIGN-CNTR\"}\n   ```\n\n*(The layer V-ALIGN-CNTR already existed, so no create_layer call was needed.)*  \n\n**Issues / work\u2011arounds**  \n- Attempted `create_layer` for V-ALIGN-CNTR failed because the layer already existed (`layer 'V-ALIGN-CNTR' already exists`). No further action required.  \n- All coordinate arithmetic was done manually:\n  - Tangent\u202f1: 900\u202fft at bearing N\u202f62\u00b030\u2032\u202fE \u2192 \u0394E = 900\u202f\u00b7\u202fsin\u202f62.5\u00b0 \u2248\u202f794.6\u202fft, \u0394N = 900\u202f\u00b7\u202fcos\u202f62.5\u00b0 \u2248\u202f422.6\u202fft \u2192 PI\u202f\u2248\u202f[1794.6,\u202f1422.6].\n  - New azimuth = 62.5\u00b0\u202f+\u202f35\u00b0 = 97.5\u00b0 \u2192 \u0394E = 1100\u202f\u00b7\u202fsin\u202f97.5\u00b0 \u2248\u202f1090.5\u202fft, \u0394N = 1100\u202f\u00b7\u202fcos\u202f97.5\u00b0 \u2248\u202f\u2011143.6\u202fft \u2192 End\u202f\u2248\u202f[2885.1,\u202f1279.0].\n  - Curve radius =\u202f600\u202fft, deflection\u202f35\u00b0 (0.6109\u202frad) \u2192 arc length \u2248\u202f366\u202fft (used implicitly by the alignment creator).  \n\nAll commands executed successfully; the alignment and its centerline now exist in the document."
+  }
+ ]
+}

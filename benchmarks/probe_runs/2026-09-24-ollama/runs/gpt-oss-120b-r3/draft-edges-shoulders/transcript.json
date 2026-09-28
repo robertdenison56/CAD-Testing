@@ -1,0 +1,128 @@
+{
+ "meta": {
+  "model": "gpt-oss:120b-cloud",
+  "probe": "draft-edges-shoulders",
+  "stop": "answered",
+  "turns": 5,
+  "seconds": 5.2,
+  "tokens": {
+   "prompt": 69848,
+   "eval": 1019
+  }
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, visible_on: 'C-102'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('18+00@12R', 'PC-1') and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n- You have no calculator or code execution. Any arithmetic you need, do yourself.\n\nTHE TASK:\nSR-100 is a two-lane highway with 12 ft lanes and 8 ft paved shoulders. Its alignment is designed and drawn; nothing else is. Draw the edges of pavement on layer V-ROAD-EOP and the outside edges of shoulder on layer V-ROAD-SHLD, both sides, for the whole length.\n\nWhen finished, reply briefly with:\n1. What you created and drew (names, layers, key coordinates).\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages. If you had to compute coordinates yourself, show the arithmetic."
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "We need to draw pavement edges (offsets) of an existing alignment (name unknown maybe \"SR-100\" alignment). Need to list alignments to see name. Let's get document state summary, list_alignments.",
+   "tool_calls": [
+    {
+     "id": "call_ho5jm32a",
+     "function": {
+      "index": 0,
+      "name": "list_alignments",
+      "arguments": {
+       "include_references": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "list_alignments",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_alignments\",\n  \"count\": 1,\n  \"alignments\": [\n    {\n      \"name\": \"SR-100\",\n      \"description\": \"SR-100 mainline\",\n      \"source\": \"pis\",\n      \"begin_station\": 1000.0,\n      \"begin_station_text\": \"10+00.00\",\n      \"end_station\": 5675.248821609945,\n      \"end_station_text\": \"56+75.25\",\n      \"length\": 4675.248821609945,\n      \"curves\": 2,\n      \"tangents\": 3,\n      \"equations\": 0,\n      \"profiles\": [],\n      \"drawn\": true\n    }\n  ]\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "Alignment SR-100 exists, drawn already. We need to draw offset lines for pavement edges: lane width 12 ft each lane, shoulders 8 ft each side.\n\nRoad width total = 2 lanes *12 =24 ft, plus shoulders each side 8 ft = total 24+16=40 ft. The centerline is alignment. Pavement edges would be at +/-12 ft from center? Actually pavement edges are outer edges of pavement (including lanes) so half width = 12 ft (lane half?) Let's think: centerline to outermost lane edge: 12 ft (since 2 lanes of 12 ft each, centerline likely between lanes; each lane 12 ft, so edge of pavement on right side (assuming right of direction) is +12 ft? Actually centerline is reference for roadway center, edges of pavement are +/-12 ft (half total lane width). That seems correct. Then shoulders outer edges are offset further by +8 ft on each side from pavement edges. So shoulder outer edges offsets: +/- (12+8) = +/-20 ft.\n\nThus we need to call draw_offset twice? The draw_offset command draws offsets list of distances. Offsets: we can supply multiple offsets, e.g., [-12, 12] for pavement edges on a layer V-ROAD-EOP. Then another draw_offset with offsets [-20,20] on layer V-ROAD-SHLD.\n\nBut the offset command needs alignment name, color, layer, linetype. We'll need to ensure layers exist: V-ROAD-EOP and V-ROAD-SHLD. Let's list layers.",
+   "tool_calls": [
+    {
+     "id": "call_j95hkj8h",
+     "function": {
+      "index": 0,
+      "name": "list_layers",
+      "arguments": {}
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "list_layers",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_layers\",\n  \"current_layer\": \"0\",\n  \"layers\": [\n    {\n      \"name\": \"0\",\n      \"color\": \"black\",\n      \"linetype\": \"continuous\",\n      \"lineweight_mm\": 0.25,\n      \"description\": \"Default layer\",\n      \"visible\": true\n    },\n    {\n      \"name\": \"V-ALIGN-CNTR\",\n      \"color\": \"red\",\n      \"linetype\": \"center\",\n      \"lineweight_mm\": 0.35,\n      \"description\": \"\",\n      \"visible\": true\n    },\n    {\n      \"name\": \"V-ROAD-EOP\",\n      \"color\": \"yellow\",\n      \"linetype\": \"continuous\",\n      \"lineweight_mm\": 0.35,\n      \"description\": \"\",\n      \"visible\": true\n    },\n    {\n      \"name\": \"V-ROAD-SHLD\",\n      \"color\": \"gray\",\n      \"linetype\": \"dashed\",\n      \"lineweight_mm\": 0.18,\n      \"description\": \"\",\n      \"visible\": true\n    },\n    {\n      \"name\": \"V-ANNO-TEXT\",\n      \"color\": \"black\",\n      \"linetype\": \"continuous\",\n      \"lineweight_mm\": 0.25,\n      \"description\": \"\",\n      \"visible\": true\n    }\n  ]\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "Layers exist with colors, fine.\n\nNow draw_offset for pavement edges: offsets [-12,12]. Use alignment \"SR-100\". Color maybe use layer's default color; we can set color param \"\" to use layer by default, but we can just omit color. Provide layer \"V-ROAD-EOP\". linetype maybe default.\n\n",
+   "tool_calls": [
+    {
+     "id": "call_fdt6i75p",
+     "function": {
+      "index": 0,
+      "name": "draw_offset",
+      "arguments": {
+       "alignment": "SR-100",
+       "offsets": [
+        -12,
+        12
+       ],
+       "layer": "V-ROAD-EOP",
+       "color": "yellow",
+       "linetype": "continuous"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "draw_offset",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"draw_offset\",\n  \"message\": \"SR-100 offset 12.00' LT, 12.00' RT drawn on V-ROAD-EOP: 6 lines, 4 arcs\",\n  \"created\": [\n    \"LN-004\",\n    \"AR-003\",\n    \"LN-005\",\n    \"AR-004\",\n    \"LN-006\",\n    \"LN-007\",\n    \"AR-005\",\n    \"LN-008\",\n    \"AR-006\",\n    \"LN-009\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "thinking": "Good. Now draw shoulder outer edges offsets [-20,20] on V-ROAD-SHLD.\n\n",
+   "tool_calls": [
+    {
+     "id": "call_743wd6ti",
+     "function": {
+      "index": 0,
+      "name": "draw_offset",
+      "arguments": {
+       "alignment": "SR-100",
+       "color": "gray",
+       "layer": "V-ROAD-SHLD",
+       "linetype": "dashed",
+       "offsets": [
+        -20,
+        20
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "draw_offset",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 2,\n  \"name\": \"draw_offset\",\n  \"message\": \"SR-100 offset 20.00' LT, 20.00' RT drawn on V-ROAD-SHLD: 6 lines, 4 arcs\",\n  \"created\": [\n    \"LN-010\",\n    \"AR-007\",\n    \"LN-011\",\n    \"AR-008\",\n    \"LN-012\",\n    \"LN-013\",\n    \"AR-009\",\n    \"LN-014\",\n    \"AR-010\",\n    \"LN-015\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "**What was created**\n\n- **Pavement edges** (centerline\u202f\u00b1\u202f12\u202fft) drawn on layer **V-ROAD-EOP** (yellow, continuous).  \n- **Shoulder outer edges** (centerline\u202f\u00b1\u202f20\u202fft) drawn on layer **V-ROAD-SHLD** (gray, dashed).  \n- Both sides (left\u2011hand and right\u2011hand) were generated for the entire length of alignment **SR\u2011100**.\n\n**Tool calls that mattered (in order)**  \n\n1. `draw_offset` \u2013\u202falignment **SR\u2011100**, offsets **[-12,\u202f12]**, layer **V-ROAD-EOP**, color\u202fyellow, linetype\u202fcontinuous.  \n2. `draw_offset` \u2013\u202falignment **SR\u2011100**, offsets **[-20,\u202f20]**, layer **V-ROAD-SHLD**, color\u202fgray, linetype\u202fdashed.\n\n**Issues / work\u2011arounds**\n\n- No errors were encountered.  \n- Offsets were calculated directly from the roadway geometry:  \n  - Pavement half\u2011width = 2\u202flanes\u202f\u00d7\u202f12\u202fft\u202f\u00f7\u202f2 = **12\u202fft**.  \n  - Shoulder half\u2011width = pavement half\u2011width\u202f+\u202f8\u202fft = **20\u202fft**.  \n- No extra arithmetic or coordinate calculations were required because `draw_offset` handles the geometry automatically.",
+   "thinking": "Now we should confirm that we have drawn both offsets. Possibly check model state for these new entities? But not necessary.\n\nNow report: created pavement edges offset at +/-12 ft on V-ROAD-EOP, shoulder edges at +/-20 ft on V-ROAD-SHLD, using draw_offset commands.\n\nProvide key coordinates: Not have explicit coordinates, but can mention offsets.\n\nNow produce final answer."
+  }
+ ]
+}
