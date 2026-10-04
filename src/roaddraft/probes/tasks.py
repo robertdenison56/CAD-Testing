@@ -455,9 +455,11 @@ FIND_PROBES: List[Probe] = [
 ]
 
 from roaddraft.probes.drafting import DRAFT_PROBES  # noqa: E402  (needs Probe above)
+from roaddraft.probes.tier2 import TIER2_PROBES  # noqa: E402  (needs the helpers above)
 
-#: every probe: finding and annotating (T2), then drafting from a description (T1)
-PROBES: List[Probe] = FIND_PROBES + DRAFT_PROBES
+#: every probe: finding and annotating (T2), drafting from a description (T1),
+#: then the harder second tier of both
+PROBES: List[Probe] = FIND_PROBES + DRAFT_PROBES + TIER2_PROBES
 
 BY_ID = {probe.id: probe for probe in PROBES}
 
@@ -469,6 +471,6 @@ def get(probe_id: str) -> Probe:
 
 
 __all__ = ["TOLERANCE_FT", "TITLE_FIELDS", "Probe", "Result", "PROBES", "FIND_PROBES",
-           "DRAFT_PROBES", "BY_ID", "get",
+           "DRAFT_PROBES", "TIER2_PROBES", "BY_ID", "get",
            "added_entities", "added_by_space", "leader_tips", "model_tips", "targets",
            "aimed_at", "aimed_at_point", "callout_at"]

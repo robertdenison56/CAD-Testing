@@ -1,6 +1,7 @@
-"""Run the probes: finding and annotating (T2), drafting from a description (T1).
+"""Run the probes: finding and annotating (T2), drafting from a description (T1),
+and the harder second tier of both (tier2).
 
-    python -m roaddraft.probes list [--tag draft]
+    python -m roaddraft.probes list [--tag draft|find|tier2]
     python -m roaddraft.probes setup edge-curve-c102 --out /tmp/probe
     python -m roaddraft.probes score edge-curve-c102 --doc /tmp/probe/SR-100.sheets.rdoc.json
     python -m roaddraft.probes selftest

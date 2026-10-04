@@ -96,7 +96,7 @@ Every state change is a named JSON command (PRD section 5.1):
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                      # 660 tests
+.venv/bin/pytest                      # 683 tests
 .venv/bin/python examples/demo_plan_sheet.py   # drafts a full plan sheet
 .venv/bin/python examples/caltrans_l2/build_all.py  # rebuilds a real Caltrans sheet
 .venv/bin/python -m roaddraft.tasks 42         # generates a D1 task + reference solution
@@ -397,7 +397,7 @@ standard library (the official MCP SDK needs Python 3.10 and this runs on 3.9).
 
 ### Find-probes — can an agent locate the right thing?
 
-`roaddraft.probes` holds two small sets of capability probes. The find-probes
+`roaddraft.probes` holds three small sets of capability probes. The find-probes
 are for the skill an agent needs before anything else: finding the object it
 was asked about and putting the work on it. Deliberately *not* the scored benchmark in
 `RoadDraft_Eval_Plan.md` — no rubric, no spec hash, no task ids.
@@ -466,6 +466,36 @@ bridge, gpt-oss:120b through Ollama as a native MCP client — are kept under
 `benchmarks/probe_runs/`, one folder per run: the writeup, the rig that drove
 it, every tool call as the server saw it, and the documents the models left
 behind, which is what was scored. See its README.
+
+### Tier-2 probes — harder, one gap each
+
+For the agents that pass the first seventeen. Six probes, each aimed at
+something the first two sets do not measure: the scope of a job that spans
+sheets, legibility, geometry between two alignments, QA of an existing
+drawing, and a design carried through to a plotted sheet.
+
+```bash
+python -m roaddraft.probes list --tag tier2
+```
+
+| probe | opens | asks for | the trap |
+|---|---|---|---|
+| `sheet-set-callouts` | sheets | every edge and shoulder and the named centerline on all three sheets, title blocks numbered | stopping after one sheet; `CENTERLINE` instead of `SR-100` |
+| `station-callouts` | sheets | a callout on every even station C-101 shows, text reading the station | fifteen calls without drift; `1100` for `11+00` |
+| `clean-callouts` | sheets | three callouts with text clear of linework, clear of each other, inside the border | text dropped beside the tip lands on the shoulder line |
+| `draft-intersection-corner` | intersection | a 50 ft curb return at the open corner, curbs trimmed to it | the wrong corner; an arc centred on the corner; curbs left running |
+| `draft-fix-the-drawing` | flawed | find and fix three planted mistakes, touch nothing else | fixing by adding; relayering one piece and not the other; orphaned leaders |
+| `draft-roadway-sheets` | blank | the whole roadway, then a 1" = 100' sheet that shows all of it | a viewport that misses an end; the wrong scale; a sheet with no title block |
+
+Two checks carry the new weight. `tier2.callouts` pairs each text with the
+chain of lines leaving it and finds the tip, so a check can ask what *this*
+callout says and where *it* points — for `place_callout`'s three pieces and for
+a hand-drawn line alike. `tier2.paper_linework` samples everything a reader
+sees on a sheet in paper inches, the model through each viewport included,
+and `clean-callouts` wants 0.05 in of air between text and any of it. Aim is
+still 1 ft and linework 0.5 ft; a curb trimmed by moving its endpoint scores
+like one deleted and redrawn. The design notes behind the set are in
+`docs/Probes_Tier2_Proposal.md`.
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
@@ -657,7 +687,7 @@ src/roaddraft/
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
   tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
                ground truth, and the reference solution (python -m roaddraft.tasks)
-tests/         660 tests: geometry, design math, commands, dimensions,
+tests/         683 tests: geometry, design math, commands, dimensions,
                determinism, LandXML, renders, DXF, web server, tasks
 examples/      demo_plan_sheet.py — a full sheet drafted from the design model;
                caltrans_l2/ — a published Caltrans plan sheet rebuilt as a

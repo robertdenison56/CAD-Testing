@@ -50,7 +50,8 @@ def copy_by_hand(s: Session, ids, layer: str):
 
 def test_every_drafting_probe_is_wired_in_and_starts_from_a_real_document(tmp_path):
     assert len(drafting.DRAFT_PROBES) == 8
-    assert tasks.PROBES == tasks.FIND_PROBES + drafting.DRAFT_PROBES
+    from roaddraft.probes import tier2
+    assert tasks.PROBES == tasks.FIND_PROBES + drafting.DRAFT_PROBES + tier2.TIER2_PROBES
     assert len({p.id for p in tasks.PROBES}) == len(tasks.PROBES)
     for probe in drafting.DRAFT_PROBES:
         assert probe.id.startswith("draft-") and "draft" in probe.tags
@@ -442,4 +443,5 @@ def test_setup_and_score_hand_a_drafting_probe_its_own_start_document(tmp_path, 
     assert main(["score", "draft-edges-shoulders", "--doc", str(doc)]) == 0
     assert main(["list", "--tag", "draft"]) == 0
     listed = capsys.readouterr().out
-    assert "draft-roadway" in listed and "edge-c102" not in listed and "8 probes" in listed
+    # the 8 here plus the three tier-2 drafting probes, which carry the tag too
+    assert "draft-roadway" in listed and "edge-c102" not in listed and "11 probes" in listed
