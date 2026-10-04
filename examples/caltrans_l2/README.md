@@ -73,6 +73,15 @@ sheet-up, which is exactly where the plan's own north arrow points.
 | `build_sheet.py` | builds the plan sheet file over it |
 | `build_all.py` | all of the above, then PNG / PDF / DXF |
 
+## Seeded variants
+
+`seed_variants.py` builds the sheet with known errors in it and writes the truth beside each
+PDF (`examples/output/seeded/`): `labels` edits the text while the leader stays on the true
+point, `tips` aims the leader somewhere else while the text stays, `clean` changes nothing.
+The truth files are in the stacheck engine's `SeedList` format (StaOffsetChecker/engine), one
+entry per wrong callout with labeled-minus-drawn in feet, so the engine can be scored against
+them with exact truth: `stacheck seed L-2-tips.pdf --seeds L-2-tips.seeds.json`.
+
 ## Not reproduced
 
 The Caltrans logo mark and the curved lettering around the engineer's seal
