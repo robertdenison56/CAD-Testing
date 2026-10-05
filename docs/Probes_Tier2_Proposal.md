@@ -2,7 +2,7 @@
 
 *Proposal, 2026-10-02. Evidence: `benchmarks/probe_runs/`.*
 
-*Status, 2026-10-03: the recommended batch of six is built, in `src/roaddraft/probes/tier2.py` (`python -m roaddraft.probes list --tag tier2`), with two new fixture starts (`intersection`, `flawed`), scripted solutions that pass their own checks, and trap tests in `tests/test_probes_tier2.py`. The three not built are curve-data, draft-widening and the L-2 redlines. No model has run the six yet.*
+*Status, 2026-10-03: the recommended batch of six is built, in `src/roaddraft/probes/tier2.py` (`python -m roaddraft.probes list --tag tier2`), with two new fixture starts (`intersection`, `flawed`), scripted solutions that pass their own checks, and trap tests in `tests/test_probes_tier2.py`. The three not built are curve-data, draft-widening and the L-2 redlines. First run 2026-10-04, Qwen3.5-9B through LM Studio: 0 of 6, each on its named gap (`benchmarks/probe_runs/2026-10-04-lmstudio-tier2/RESULTS.md`).*
 
 ## What the four runs say about the first 17
 

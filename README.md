@@ -495,7 +495,9 @@ sees on a sheet in paper inches, the model through each viewport included,
 and `clean-callouts` wants 0.05 in of air between text and any of it. Aim is
 still 1 ft and linework 0.5 ft; a curb trimmed by moving its endpoint scores
 like one deleted and redrawn. The design notes behind the set are in
-`docs/Probes_Tier2_Proposal.md`.
+`docs/Probes_Tier2_Proposal.md`. First run, 2026-10-04: Qwen3.5-9B, which
+passes 8 of the 9 find-probes, gets 0 of 6 here, each on the gap it was
+built to measure (`benchmarks/probe_runs/2026-10-04-lmstudio-tier2/`).
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 

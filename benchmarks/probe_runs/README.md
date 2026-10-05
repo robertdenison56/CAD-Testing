@@ -12,6 +12,7 @@ capability probes, not the scored benchmark of `RoadDraft_Eval_Plan.md`.
 | 2026-09-22 | Fable 5.1, Haiku 4.5 | all 17, after the engine fixes | 17/17, 14/17 | [RESULTS.md](2026-09-22/RESULTS.md) |
 | 2026-09-24-ollama | gpt-oss:120b-cloud | all 17, three passes | 12, 12, 15 of 17 | [RESULTS.md](2026-09-24-ollama/RESULTS.md) |
 | 2026-09-29-lmstudio | Qwen3.5-9B, local through LM Studio | all 17 | 11/17 (T2 8/9, T1 3/8) | [RESULTS.md](2026-09-29-lmstudio/RESULTS.md) |
+| 2026-10-04-lmstudio-tier2 | Qwen3.5-9B, local through LM Studio | the 6 Tier-2 probes | 0/6, each on the gap it measures | [RESULTS.md](2026-10-04-lmstudio-tier2/RESULTS.md) |
 
 Each folder keeps the rig exactly as it ran, so a writeup and the engine it
 measured stay together. The engine version is named in each RESULTS.md.
@@ -33,6 +34,7 @@ measured stay together. The engine version is named in each RESULTS.md.
         renders/                     what the model looked at        (not tracked: PNGs, regenerable from project/)
         deliverables/                the plots: <probe>.pdf, <probe>.reference.pdf, OVERVIEW.pdf, OVERVIEW.png
         server.json, rd, *.log       launch shim and logs            (not tracked: absolute paths to one machine)
+    <run>/runs/<label>/_attemptN/    a launch the infrastructure ended, kept for the record; the scorers ignore it
 
 `2026-09-19/runs/haiku/_stray_saves/` holds the three files Haiku saved under
 names of its own, moved out of the repository root where they landed.
