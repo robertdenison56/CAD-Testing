@@ -152,7 +152,8 @@ def create_alignment(doc: Document, p: dict):
     try:
         if has_pis:
             pis = [PI.from_dict(x) for x in p["pis"]]
-            align = Alignment(name=name, elements=compile_pis(pis), pis=pis, begin_station=begin,
+            elements = compile_pis(pis, angle_points=bool(p.get("angle_points")))
+            align = Alignment(name=name, elements=elements, pis=pis, begin_station=begin,
                               description=description, source="pis")
         else:
             align = alignment_from_elements(name, elements_from_dicts(p["elements"]),
@@ -180,7 +181,7 @@ def modify_alignment(doc: Document, p: dict):
     try:
         if "pis" in changes:
             pis = [PI.from_dict(x) for x in changes["pis"]]
-            new.elements = compile_pis(pis)
+            new.elements = compile_pis(pis, angle_points=bool(p.get("angle_points")))
             new.pis = pis
             new.source = "pis"
             stations_changed = True
@@ -219,15 +220,29 @@ def modify_alignment(doc: Document, p: dict):
         created.append(f"alignment:{final}")
     doc.design.alignments[final] = new
 
+    redrawn = ""
+    if p.get("redraw") and "pis" in changes:
+        drawn = [e for e in doc.model_entities.values() if e.anchor
+                 and e.anchor.get("alignment") == final and e.anchor.get("kind") == "element"]
+        if drawn:  # drawn again as it was: same layer, color and linetype
+            style = {"alignment": final, "layer": drawn[0].layer, "color": drawn[0].color,
+                     "linetype": drawn[0].linetype, "replace": True}
+            redrawn, rd_diff, _ = draw_alignment(doc, style)
+            created += rd_diff["created"]
+            deleted += rd_diff["deleted"]
+            modified_ids = [i for i in modified_ids if i not in rd_diff["deleted"]]
+
     warnings = []
-    anchored = _anchored(doc, final)
+    anchored = [e for _k, e in _anchored(doc, final)
+                if not (redrawn and e.anchor.get("kind") == "element")]
     if stations_changed and anchored:
         warnings.append(
             f"{len(anchored)} entities are anchored to {final} and were not regenerated; "
-            f"re-run draw_alignment / annotate_stationing / place_label")
+            f"re-run " + ("" if redrawn else "draw_alignment / ")
+            + "annotate_stationing / place_label")
     st = new.stations()
     return (f"alignment {final} updated: {', '.join(sorted(changes))} "
-            f"({st.begin_text()} to {st.end_text()})",
+            f"({st.begin_text()} to {st.end_text()})" + (f"; {redrawn}" if redrawn else ""),
             _diff(created=created, modified=[f"alignment:{final}"] + modified_ids,
                   deleted=deleted), warnings)
 

@@ -160,6 +160,12 @@
               user-select: text; overflow: hidden; text-overflow: ellipsis;
               white-space: nowrap; }
   .prow input[type=checkbox] { justify-self: start; margin: 3px 0; }
+  .picells { display: grid; grid-template-columns: 1fr 1fr 0.8fr 12px;
+             gap: 3px; align-items: center; }
+  .prow.pirow { grid-template-columns: 44px 1fr; }
+  .picells input[type=text] { min-width: 0; width: 100%; padding: 3px 4px; }
+  .picells .x { color: var(--dim); cursor: pointer; text-align: center; }
+  .picells .x:hover { color: var(--err); }
   .colorwrap { display: flex; align-items: center; gap: 5px; min-width: 0; }
   .colorwrap select { flex: 1; }
   .colorwrap input[type=color] { width: 26px; height: 22px; padding: 1px;
@@ -175,6 +181,9 @@
            width: calc(100% - 24px); }
   #view { display: block; width: 100%;
           box-shadow: 0 3px 16px rgba(0,0,0,.55); }
+  /* model space fills its canvas edge to edge, as in CAD; sheets stay paper */
+  #stage.fill { position: absolute; inset: 0; margin: 0; width: auto; }
+  #stage.fill #view { height: 100%; box-shadow: none; }
   #ovl { position: absolute; inset: 0; width: 100%; height: 100%;
          pointer-events: none; }
   #ovl .ch { stroke: #7ab5ff88; stroke-width: 1;
@@ -198,6 +207,9 @@
                    stroke-width: 1.6; }
   #ovl .grip.over { fill: #9ccbff; }
   #ovl .grip.hot { fill: var(--err); stroke: #2a0d07; }
+  /* a PI whose curve does not fit its legs, in a preview */
+  #ovl .bad { fill: none; stroke: var(--err); stroke-width: 2;
+              vector-effect: non-scaling-stroke; }
   #zoomer { position: absolute; right: 14px; bottom: 12px; display: flex;
             gap: 5px; background: rgba(22,23,27,.92);
             border: 1px solid var(--border); border-radius: 7px;
@@ -286,12 +298,19 @@
   #modal .actions { display: flex; justify-content: flex-end; gap: 8px;
                     margin-top: 14px; }
   #modal .actions .zbtn { padding: 4px 16px; }
+  #modal .actions .zbtn.primary { background: var(--accent2);
+                                  border-color: var(--accent); }
+  #modal .actions .zbtn.left { margin-right: auto; }
+  #modal .msg { color: var(--dim); max-width: 380px; }
 </style>
 </head>
 <body>
   <div id="qat">
     <div class="logo">Road<span>Draft</span></div>
-    <div class="qbtn" id="q-save" title="Save document"></div>
+    <div class="qbtn" id="q-new" title="New drawing (⌘N)"></div>
+    <div class="qbtn" id="q-open" title="Open a drawing (⌘O)"></div>
+    <div class="qbtn" id="q-save" title="Save (⌘S)"></div>
+    <div class="qbtn" id="q-saveas" title="Save As (⇧⌘S)"></div>
     <div class="qbtn" id="q-undo" title="Undo"></div>
     <div class="qbtn" id="q-redo" title="Redo"></div>
     <div class="proj" id="proj">…</div>
@@ -363,7 +382,8 @@ const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
             pts: [], cursor: null, stationPicks: [], dimPick: null,
             dimBusy: false, selected: null, grip: null, gripHover: null,
             ribbonTab: "Home", dpi: 130, frames: true, dark: true,
-            ortho: false, tsOpen: { layers: true, sheets: true, refs: true, alignments: true } };
+            ortho: false, alignRadius: 800,
+            tsOpen: { layers: true, sheets: true, refs: true, alignments: true } };
 
 const esc = s => String(s).replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -401,6 +421,9 @@ const ICONS = {
   export: `<path d="M13.5 3.5 H7 a1.6 1.6 0 0 0-1.6 1.6 V19 A1.6 1.6 0 0 0 7 20.6 h10 a1.6 1.6 0 0 0 1.6-1.6 V8.5 Z M13.5 3.5 v5 h5.1"/><path d="M9 14.8 h6.2 M15.2 14.8 l-2.4-2.4 M15.2 14.8 l-2.4 2.4"/>`,
   print: `<path d="M7 9 V3.5 h10 V9"/><path d="M5 9 h14 a1.6 1.6 0 0 1 1.6 1.6 v4.8 A1.6 1.6 0 0 1 19 17 h-2 M7 17 H5 a1.6 1.6 0 0 1-1.6-1.6 v-4.8 A1.6 1.6 0 0 1 5 9 Z"/><path d="M7 13.5 h10 v7 H7 Z"/>`,
   save: `<path d="M5 3.5 H16 L20.5 8 V19 a1.5 1.5 0 0 1-1.5 1.5 H5 A1.5 1.5 0 0 1 3.5 19 V5 A1.5 1.5 0 0 1 5 3.5 Z"/><path d="M7.5 3.5 V9 H15 V3.5 M7 20.5 V14 h10 v6.5"/>`,
+  saveas: `<path d="M4.5 3.5 H14 L18 7.5 V10 M4.5 3.5 A1.5 1.5 0 0 0 3 5 V18 A1.5 1.5 0 0 0 4.5 19.5 H10"/><path d="M6.5 3.5 V8 H13 V3.5"/><path d="M13.6 18 L20 11.6 a1.4 1.4 0 0 1 2 2 L15.6 20 l-2.8.8 Z"/>`,
+  new: `<path d="M13 3 H6.6 A1.6 1.6 0 0 0 5 4.6 v14.8 A1.6 1.6 0 0 0 6.6 21 H11.5 M13 3 L18.5 8.5 V12 M13 3 v5.5 h5.5"/><path d="M17.5 14.5 v7 M14 18 h7"/>`,
+  open: `<path d="M3.5 18.5 V5.6 A1.6 1.6 0 0 1 5.1 4 h4.2 l2 2.3 h7.1 A1.6 1.6 0 0 1 20 7.9 V10.3"/><path d="M3.5 18.5 L6.2 11.4 A1.6 1.6 0 0 1 7.7 10.3 H20.9 a1 1 0 0 1 .9 1.4 L19.1 18.5 Z"/>`,
   journal: `<path d="M8 5 h13 M8 10 h13 M8 15 h13 M8 20 h13"/><circle class="f" cx="4" cy="5" r="1.1"/><circle class="f" cx="4" cy="10" r="1.1"/><circle class="f" cx="4" cy="15" r="1.1"/><circle class="f" cx="4" cy="20" r="1.1"/>`,
   layers: `<path d="M12 3 L21 8 L12 13 L3 8 Z"/><path d="M4.8 11.4 L12 15.4 L19.2 11.4 M4.8 15.2 L12 19.2 L19.2 15.2"/>`,
   toolspace: `<rect x="3" y="3.5" width="8" height="17" rx="1"/><path d="M14 5 h7 M14 10 h7 M14 15 h7 M14 20 h7"/>`,
@@ -501,18 +524,25 @@ function imgURL() {
     if (S.dark) url += "&theme=dark";
     if (S.modelBounds)
       url += `&bounds=${S.modelBounds.map(v => v.toFixed(4)).join(",")}`;
+    const box = $("viewwrap").getBoundingClientRect();  // the shape it fills
+    if (box.width > 0 && box.height > 0)
+      url += `&aspect=${(box.width / box.height).toFixed(4)}`;
   }
   return url;
 }
 let canvasToken = 0;
 async function updateCanvas() {
+  applyZoom();  // model space fills the canvas; a sheet sits on it as paper
   const tok = ++canvasToken;
   const resp = await fetch(imgURL());
   if (tok !== canvasToken) return;
   const kind = resp.headers.get("X-RD-Kind");
-  if (kind === "model")
+  if (kind === "model") {
     S.view = { kind, bounds: resp.headers.get("X-RD-Bounds")
                              .split(",").map(Number) };
+    // a zoomed window follows what is shown: widened to the canvas's shape
+    if (S.modelBounds) S.modelBounds = S.view.bounds.slice();
+  }
   else if (kind === "sheet")
     S.view = { kind, sizeIn: resp.headers.get("X-RD-Size-In")
                              .split(",").map(Number) };
@@ -523,6 +553,7 @@ async function updateCanvas() {
   img.onload = () => {
     if (old) URL.revokeObjectURL(old);
     clearPendingZoom();
+    if (S.view.kind === "model" && !fitsCanvas()) refitCanvas();
     $("ovl").setAttribute("viewBox",
       `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
     drawOverlay();
@@ -545,6 +576,7 @@ const RIBBON = {
       { t: "big", icon: "station", label: "Station­ing", tool: "station" },
       { t: "stack", items: [
         { icon: "alignment", label: "Draw Alignment", act: "drawalign" },
+        { icon: "alignment", label: "Edit Alignment…", act: "editalign" },
         { icon: "label", label: "Label…", act: "label" }] }] },
     { caption: "Modify", items: [
       { t: "big", icon: "select", label: "Select", tool: "select" },
@@ -610,8 +642,12 @@ const RIBBON = {
       { t: "big", icon: "export", label: "PDF", act: "pdf" },
       { t: "big", icon: "export", label: "LandXML", act: "landxml" }] },
     { caption: "Document", items: [
+      { t: "big", icon: "open", label: "Open…", act: "open" },
       { t: "big", icon: "save", label: "Save", act: "save" },
-      { t: "big", icon: "journal", label: "Journal", act: "journal" }] },
+      { t: "stack", items: [
+        { icon: "new", label: "New…", act: "new" },
+        { icon: "saveas", label: "Save As…", act: "saveas" },
+        { icon: "journal", label: "Journal", act: "journal" }] }] },
   ],
 };
 
@@ -814,13 +850,19 @@ async function ribbonAct(act) {
     logResult(await postJSON("/api/query",
       { query: act === "dxf" ? "export_dxf" : "export_pdf", params: {} }));
   }
-  else if (act === "save") {
-    logResult(await postJSON("/api/query", { query: "save_document",
-      params: { path: slugProject() + ".rdraft" } }));
-  }
-  else if (act === "journal") {
+  else if (["new", "open", "save", "saveas"].includes(act)) await fileAct(act);
+  else if (act === "journal") {   // kept beside the drawing
     logResult(await postJSON("/api/query", { query: "save_journal",
-      params: { path: slugProject() + ".journal.jsonl" } }));
+      params: { path: S.state.file.journal } }));
+  }
+  else if (act === "editalign") {
+    const a = alignNames();
+    if (!a.length) { logHint("no alignments yet — lay one out with the " +
+                             "Alignment tool (G)"); return; }
+    const v = a.length === 1 ? { name: a[0] } : await openForm(
+      "Edit alignment", [{ key: "name", label: "Alignment", value: a[0],
+                           options: a }]);
+    if (v) { setTool("select"); selectAlignment(v.name); }
   }
   else if (act === "drawalign") {
     const a = alignNames();
@@ -875,8 +917,6 @@ async function ribbonAct(act) {
 }
 const alignNames = () => (S.state && S.state.alignments || [])
   .map(a => a.name);
-const slugProject = () => (S.state ? S.state.project : "project")
-  .replace(/[^A-Za-z0-9_-]+/g, "_");
 const spaceLabel = () => S.space === "model" ? "model" :
   ((S.state && S.state.spaces.find(x => x.ref === S.space)) ||
    { label: S.space }).label;
@@ -959,7 +999,7 @@ function renderToolspace() {
           `${a.tangents} tangents, ${a.curves} curves, ${a.equations} ` +
           `equations` + (a.profiles.length ? `, profiles ${a.profiles.join(", ")}`
                                             : "") +
-          `\nclick to prefill alignment-mode stationing`;
+          `\nclick to select it: grips and its PIs in the Properties panel`;
         const ic = document.createElement("span");
         ic.style.color = "var(--dim)"; ic.innerHTML = icon("alignment", 13);
         const nm = document.createElement("span");
@@ -986,8 +1026,8 @@ function renderToolspace() {
               { command: "delete_alignment",
                 params: { name: a.name, cascade: true } })); };
         row.appendChild(x);
-        row.onclick = () => { $("cmd").value = `station alignment=${a.name}`;
-                              $("cmd").focus(); };
+        row.onclick = () => { if (S.tool !== "select") setTool("select");
+                              selectAlignment(a.name); };
         sec.appendChild(row);
       });
     }));
@@ -1115,8 +1155,13 @@ function renderLTabs() {
   bar.appendChild(plus);
 }
 function renderStatus() {
-  const st = S.state;
-  $("proj").textContent = st.project;
+  const st = S.state, f = st.file;
+  $("proj").textContent = `${st.project} — ${f.path ? f.name : "not saved"}` +
+                          (f.dirty ? " ●" : "");
+  $("proj").title = (f.path || `not saved yet; its files go in ${f.folder}`) +
+                    (f.dirty ? " — unsaved changes" : "");
+  document.title = `${f.path ? f.name : st.project}` +
+                   `${f.dirty ? " — Edited" : ""} · RoadDraft`;
   $("st-journal").textContent = `journal: ${st.journal_length}`;
   const sheetEnts = st.sheets.reduce((a, s) => a + s.entities, 0);
   $("st-entities").textContent =
@@ -1144,14 +1189,26 @@ function renderStatus() {
 }
 async function refresh() {
   S.state = await getJSON("/api/state");
+  if (S.state.generation !== S.generation) {  // a different drawing is open
+    if (S.generation !== undefined) {
+      cancelTool(); S.zoom = 0; S.modelBounds = null; applyZoom();
+      setSpace("model");
+    }
+    S.generation = S.state.generation;
+  }
   if (!S.state.spaces.some(sp => sp.ref === S.space)) setSpace("model");
   if (S.state.rev !== S.rev) { S.rev = S.state.rev; updateCanvas(); }
   if (S.selected) {  // revalidate: the entity may have moved or been erased
-    const info = await postJSON("/api/query",
-      { query: "get_entity", params: { id: S.selected.id } });
-    if (info.ok) { S.selected.bbox = info.bbox;
-                   S.selected.entity = info.entity; }
-    else { S.selected = null; S.grip = null; S.gripHover = null; }
+    if (S.selected.alignment) {  // an alignment lives in the state itself
+      if (!alignmentOf(S.selected.alignment)) {
+        S.selected = null; S.grip = null; S.gripHover = null; }
+    } else {
+      const info = await postJSON("/api/query",
+        { query: "get_entity", params: { id: S.selected.id } });
+      if (info.ok) { S.selected.bbox = info.bbox;
+                     S.selected.entity = info.entity; }
+      else { S.selected = null; S.grip = null; S.gripHover = null; }
+    }
     drawOverlay();
     // don't rebuild the panel under the user's cursor mid-edit
     if (!S.selected || !$("props").contains(document.activeElement))
@@ -1180,7 +1237,9 @@ const TOOLS = {
   text:    { hint: "click the insertion point" },
   station: { hint: "click centerline elements in order (or none, for an " +
                    "alignment); Enter to configure" },
-  alignment:{ hint: "click PIs in order (BEGIN … END); Enter to create" },
+  alignment:{ hint: "click PIs in order (BEGIN … END) — curves of the " +
+                     "last radius used show as you go; Enter to create " +
+                     "(radius 0 lays out tangents only, curves added later)" },
   move:    { hint: "click an entity, then base point, then destination" },
   erase:   { hint: "click an entity to erase it" },
   insblock:{ hint: "click the insertion point" },
@@ -1375,6 +1434,13 @@ async function toolClick(pt, ev) {
       if (S.selected && S.selected.id === hits[0].id) return;  // already shown
       const info = await postJSON("/api/query",
         { query: "get_entity", params: { id: hits[0].id } });
+      const anchor = info.ok && !info.reference && info.entity.anchor;
+      if (anchor && anchor.kind === "element" && alignmentOf(anchor.alignment)) {
+        // a drawn alignment element: what is selected is the alignment
+        if (!(S.selected && S.selected.alignment === anchor.alignment))
+          selectAlignment(anchor.alignment);
+        return;
+      }
       if (info.ok) {
         S.selected = { id: hits[0].id, bbox: info.bbox, entity: info.entity,
                        reference: info.reference || null };
@@ -1399,6 +1465,10 @@ async function toolClick(pt, ev) {
 }
 async function finishTool() {
   if (S.tool === "select" && S.selected) {
+    if (S.selected.alignment) {
+      logHint("edit the alignment by its grips or in the Properties panel");
+      return;
+    }
     if (S.selected.reference)
       logHint(`${S.selected.id} belongs to reference ` +
               `${S.selected.reference} (read-only)`);
@@ -1416,24 +1486,27 @@ async function finishTool() {
   } else if (S.tool === "alignment" && S.pts.length >= 2) {
     const pts = S.pts; S.pts = []; drawOverlay();
     const layers = S.state ? S.state.layers.map(l => l.name) : ["0"];
-    const v = await openForm("Create alignment", [
+    const v = await openForm("Create alignment by PI", [
       { key: "name", label: "Name", value: `ALIGN-${alignNames().length + 1}` },
       { key: "begin", label: "Begin station", value: "10+00" },
-      { key: "radius", label: "Curve radius at interior PIs (ft)",
-        value: "800" },
+      { key: "radius", label: "Curve radius at interior PIs (ft; 0 = " +
+        "tangents only, add curves later)", value: String(S.alignRadius) },
       { key: "layer", label: "Draw on layer",
         value: S.state ? S.state.current_layer : "0", options: layers },
       { key: "draw", label: "Draw now", value: "yes", options: ["yes", "no"] }]);
     if (v) {
-      const R = parseFloat(v.radius) || 0;
+      const R = Math.max(0, parseFloat(v.radius) || 0);
+      S.alignRadius = R;
       const pis = pts.map((p, i) =>
         (i === 0 || i === pts.length - 1) ? p : [p[0], p[1], R]);
       const r = await postJSON("/api/execute", { command: "create_alignment",
-        params: { name: v.name, begin_station: v.begin.trim() || "0", pis } });
+        params: { name: v.name, begin_station: v.begin.trim() || "0", pis,
+                  angle_points: true } });
       logResult(r);
       if (r.ok && v.draw === "yes")
         logResult(await postJSON("/api/execute", { command: "draw_alignment",
           params: { alignment: v.name, layer: v.layer } }));
+      if (r.ok) { await refresh(); setTool("select"); selectAlignment(v.name); }
     }
   } else if (S.tool === "station" &&
              (S.stationPicks.length || alignNames().length)) {
@@ -1741,8 +1814,92 @@ function propColor(e) {
   return propRow("Color", wrap);
 }
 
+// A number box for the PI table, shown to the hundredth of a foot: Enter or
+// leaving it applies, Esc reverts, and an untouched box changes nothing.
+function piField(value, title, onCommit) {
+  const shown = (Math.round(value * 100) / 100).toFixed(2);
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.value = shown; inp.title = `${title}: ${fmtNum(value)}`;
+  inp.onkeydown = ev => {
+    if (ev.key === "Enter") inp.blur();
+    else if (ev.key === "Escape") { inp.value = shown; inp.blur(); }
+    ev.stopPropagation();
+  };
+  inp.onblur = () => {
+    if (inp.value === shown) return;
+    const v = parseFloat(inp.value);
+    if (isNaN(v)) { logHint(`${title}: "${inp.value}" is not a number`);
+                    inp.value = shown; return; }
+    onCommit(v);
+  };
+  return inp;
+}
+// The Properties panel for a selected alignment: its PIs as a table, each
+// change one modify_alignment (the drawn centerline follows).
+function renderAlignmentProps(panel) {
+  const a = alignmentOf(S.selected.alignment);
+  if (!a) { panel.classList.remove("open"); return; }
+  panel.classList.add("open");
+  $("props-id").textContent = `alignment ${a.name}`;
+  const body = $("props-body"); body.innerHTML = "";
+  const add = row => body.appendChild(row);
+  const sec = title => { const d = document.createElement("div");
+    d.className = "psec"; d.textContent = title; body.appendChild(d); };
+  const hint = text => { const d = document.createElement("div");
+    d.className = "phint"; d.textContent = text; body.appendChild(d); };
+  sec("ALIGNMENT");
+  add(propInput("Name", a.name,
+    v => v.trim() && alignmentChange(a.name, { rename: v.trim() })));
+  add(propInput("Begin station", a.begin_station_text,
+    v => alignmentChange(a.name, { begin_station: v.trim() })));
+  add(propRO("Stations", a.station_range));
+  add(propRO("Length", `${fmtNum(a.length)} ft`));
+  add(propRO("Elements", `${a.tangents} tangent${a.tangents === 1 ? "" : "s"}, ` +
+                         `${a.curves} curve${a.curves === 1 ? "" : "s"}`));
+  if (!a.editable) {
+    hint("back-to-back curves have no PIs between them, so this alignment " +
+         "cannot be edited by PI");
+    return;
+  }
+  sec("PIs — X, Y, curve radius (0 = none)");
+  const n = a.pis.length;
+  a.pis.forEach((q, i) => {
+    const set = (k, v) => editAlignment(a.name, a.pis.map((x, j) => {
+      if (j !== i) return x;
+      const y = x.slice(); y[k] = v; return y; }));
+    const cells = document.createElement("div");
+    cells.className = "picells";
+    cells.append(piField(q[0], `${piLabel(i, n)} X`, v => set(0, v)),
+                 piField(q[1], `${piLabel(i, n)} Y`, v => set(1, v)));
+    if (i > 0 && i < n - 1) {
+      cells.append(piField(q[2] || 0, `${piLabel(i, n)} radius`,
+        v => v < 0 ? logHint("a radius cannot be negative") : set(2, v)));
+      const x = document.createElement("span");
+      x.className = "x"; x.textContent = "✕"; x.title = `delete ${piLabel(i, n)}`;
+      x.onclick = () => editAlignment(a.name, a.pis.filter((_, j) => j !== i));
+      cells.append(x);
+    } else cells.append(document.createElement("span"),
+                        document.createElement("span"));
+    const row = propRow(piLabel(i, n), cells);
+    row.classList.add("pirow");
+    add(row);
+  });
+  hint("Drag a triangle to move a PI, a circle to change its curve's " +
+       "radius (onto the PI removes it), a hollow square in a corner to add " +
+       "a curve, or one on a leg to add a PI.");
+  if (!a.drawn) {
+    const b = document.createElement("div");
+    b.className = "zbtn"; b.textContent = `Draw on ${S.state.current_layer}`;
+    b.onclick = async () => logResult(await postJSON("/api/execute",
+      { command: "draw_alignment", params: { alignment: a.name,
+        layer: S.state.current_layer } }));
+    add(propRow("Not drawn", b));
+  }
+}
+
 function renderProps() {
   const panel = $("props");
+  if (S.selected && S.selected.alignment) { renderAlignmentProps(panel); return; }
   const e = S.selected && S.selected.entity;
   if (!e) { panel.classList.remove("open"); return; }
   panel.classList.add("open");
@@ -1981,6 +2138,8 @@ function gripsFor(e) {
 function currentGrips() {
   const sel = S.selected;
   if (!sel || sel.reference || S.tool !== "select") return [];
+  if (sel.alignment)  // few, and sized to the zoom: worked out each time
+    return alignmentGrips(alignmentOf(sel.alignment));
   if (sel.gripsOf !== sel.entity) {
     sel.gripsOf = sel.entity; sel.grips = gripsFor(sel.entity);
   }
@@ -2006,8 +2165,155 @@ async function commitGrip(pt) {
   S.grip = null; S.gripHover = null;
   drawOverlay();
   if (!active || !S.selected) return;
-  await applyProp(active.grip.patch(pt));
+  if (S.selected.alignment)
+    await editAlignment(S.selected.alignment, active.grip.patch(pt));
+  else await applyProp(active.grip.patch(pt));
 }
+
+// ------------------------------------------------------ alignments by PI
+// An alignment is laid out by its PIs, [x, y, R] each: BEGIN and END carry
+// no radius, an interior PI either a curve's radius or 0 (an angle point,
+// whose tangents meet with no curve until one is added). Selecting a drawn
+// alignment selects the alignment itself, and its grips edit the PIs: every
+// edit is one modify_alignment that also redraws the centerline, so it
+// validates, journals and undoes as a single step.
+const ADD_CURVE_PX = 22;  // how far inside a corner its add-a-curve grip sits
+
+const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const add2 = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const mul2 = (a, k) => [a[0] * k, a[1] * k];
+const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1];
+const unit2 = a => { const l = Math.hypot(a[0], a[1]) || 1;
+                     return [a[0] / l, a[1] / l]; };
+
+// The geometry the engine compiles, worked out here for previews and grips:
+// per interior PI its deflection, the bisector pointing into the turn, and
+// its curve (PC, PT, centre, midpoint); plus the centerline as points.
+function alignGeom(pis) {
+  const P = pis.map(q => [q[0], q[1]]), n = P.length, info = [];
+  for (let i = 1; i < n - 1; i++) {
+    const u1 = unit2(sub2(P[i], P[i - 1])), u2 = unit2(sub2(P[i + 1], P[i]));
+    const cross = u1[0] * u2[1] - u1[1] * u2[0];
+    const delta = Math.acos(Math.max(-1, Math.min(1, dot2(u1, u2))));
+    const inside = unit2(add2(mul2(u1, -1), u2));   // toward the curve's centre
+    const R = pis[i][2] || 0;
+    let curve = null;
+    if (R > 0 && delta > 1e-6 && delta < Math.PI - 1e-6) {
+      const T = R * Math.tan(delta / 2);
+      const pc = sub2(P[i], mul2(u1, T)), pt = add2(P[i], mul2(u2, T));
+      const nrm = cross > 0 ? [-u1[1], u1[0]] : [u1[1], -u1[0]];
+      const c = add2(pc, mul2(nrm, R));
+      curve = { pc, pt, c, R, T, left: cross > 0,
+                mc: add2(c, mul2(unit2(sub2(P[i], c)), R)) };
+    }
+    info[i] = { delta, inside, curve };
+  }
+  // a curve longer than its legs allow (the engine would refuse it) is drawn
+  // as the corner it would replace, and its PI is flagged
+  const T = i => info[i] && info[i].curve ? info[i].curve.T : 0;
+  const bad = [];
+  for (let i = 0; i < n - 1; i++)
+    if (T(i) + T(i + 1) > dist(P[i], P[i + 1]) + 1e-6)
+      [i, i + 1].forEach(j => { if (info[j] && info[j].curve && !info[j].bad) {
+        info[j].bad = true; bad.push(j); } });
+  const pts = [P[0]];
+  for (let i = 1; i < n - 1; i++) {
+    const cv = info[i].curve;
+    if (!cv || info[i].bad) { pts.push(P[i]); continue; }
+    pts.push(cv.pc);
+    const a0 = Math.atan2(cv.pc[1] - cv.c[1], cv.pc[0] - cv.c[0]);
+    let a1 = Math.atan2(cv.pt[1] - cv.c[1], cv.pt[0] - cv.c[0]);
+    if (cv.left) while (a1 < a0) a1 += 2 * Math.PI;
+    else while (a1 > a0) a1 -= 2 * Math.PI;
+    const steps = Math.max(8, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 36)));
+    for (let s = 1; s <= steps; s++) {
+      const a = a0 + (a1 - a0) * s / steps;
+      pts.push([cv.c[0] + cv.R * Math.cos(a), cv.c[1] + cv.R * Math.sin(a)]);
+    }
+  }
+  pts.push(P[n - 1]);
+  return { P, info, pts, bad };
+}
+const alignmentOf = name =>
+  ((S.state && S.state.alignments) || []).find(a => a.name === name);
+const piLabel = (i, n) => i === 0 ? "BEGIN" : i === n - 1 ? "END" : `PI-${i + 1}`;
+
+// The radius that puts a curve's midpoint at p: E = R (sec(Δ/2) - 1), with E
+// measured from the PI along the bisector into the turn. Whole feet; dragged
+// back onto the PI it is 0, and the curve is gone.
+function radiusAt(info, piPt, p) {
+  const k = 1 / Math.cos(info.delta / 2) - 1;
+  const R = Math.max(0, dot2(sub2(p, piPt), info.inside)) / k;
+  return R < 1 ? 0 : Math.round(R);
+}
+
+function alignmentGrips(a) {
+  if (!a || !a.editable) return [];
+  const pis = a.pis, n = pis.length, geom = alignGeom(pis), out = [];
+  const g = (pt, kind, label, patch) => ({ pt, kind, label, patch });
+  const withPI = (i, q) => pis.map((x, j) => j === i ? q : x);
+  pis.forEach((q, i) => out.push(g([q[0], q[1]], "pi",
+    `${piLabel(i, n)} (drag to move it)`,
+    p => withPI(i, [p[0], p[1], q[2] || 0]))));
+  for (let i = 1; i < n - 1; i++) {
+    const inf = geom.info[i];
+    if (inf.delta < 1e-4 || inf.delta > Math.PI - 1e-4) continue;
+    const at = p => withPI(i, [pis[i][0], pis[i][1], radiusAt(inf, geom.P[i], p)]);
+    if (inf.curve)
+      out.push(g(inf.curve.mc, "radius", `curve at PI-${i + 1}, R ${pis[i][2]} ` +
+                 `(drag to change the radius, onto the PI to remove it)`, at));
+    else
+      out.push(g(add2(geom.P[i], mul2(inf.inside, ADD_CURVE_PX * unitsPerPx())),
+                 "insert", `PI-${i + 1} (drag into the turn to add a curve)`, at));
+  }
+  for (let i = 0; i < n - 1; i++)   // a leg's midpoint grip adds a PI there
+    out.push(g(mul2(add2(geom.P[i], geom.P[i + 1]), 0.5), "insert",
+      `leg ${piLabel(i, n)} to ${piLabel(i + 1, n)} (drag to add a PI)`,
+      p => [...pis.slice(0, i + 1), [p[0], p[1], 0], ...pis.slice(i + 1)]));
+  return out;
+}
+
+// The alignment traced in overlay pixels: its PI legs faint, its centerline
+// in cls (the glow highlight when cls is omitted).
+function alignmentSVG(pis, cls) {
+  const geom = alignGeom(pis);
+  const line = pts => pts.map(p => spacePx(p).map(v => v.toFixed(2)).join(","))
+                         .join(" ");
+  const legs = `<polyline points="${line(geom.P)}" class="ch" ` +
+               `stroke-dasharray="6 4" fill="none"/>`;
+  const path = line(geom.pts);
+  const flags = geom.bad.map(i => { const q = spacePx(geom.P[i]);
+    return `<circle cx="${q[0].toFixed(2)}" cy="${q[1].toFixed(2)}" ` +
+           `r="${(9 * pxScale()).toFixed(2)}" class="bad"/>`; }).join("");
+  return legs + flags + (cls ? `<polyline points="${path}" class="${cls}"/>`
+    : `<polyline points="${path}" class="hlglow"/>` +
+      `<polyline points="${path}" class="hlcore"/>`);
+}
+
+function selectAlignment(name) {
+  if (S.space !== "model") setSpace("model");
+  S.selected = { alignment: name, id: null, entity: null };
+  S.grip = null; S.gripHover = null;
+  renderProps(); drawOverlay();
+  logHTML(`<span class="hint">selected alignment ${esc(name)} — drag a ` +
+    `triangle to move a PI, a circle to change its curve's radius, a ` +
+    `hollow square in a corner to add a curve or on a leg to add a PI; ` +
+    `or edit the PIs in the Properties panel</span>`);
+}
+
+// One edit: a single journaled command that, when the PIs change, also
+// redraws the centerline where it was drawn. A layout's interior PIs may be
+// angle points.
+async function alignmentChange(name, changes) {
+  const r = await postJSON("/api/execute", { command: "modify_alignment",
+    params: { name, changes, angle_points: true, redraw: true } });
+  logResult(r);
+  if (r.ok && changes.rename && S.selected && S.selected.alignment === name)
+    S.selected = { ...S.selected, alignment: changes.rename };
+  await refresh();
+  return r;
+}
+const editAlignment = (name, pis) => alignmentChange(name, { pis });
 
 // --------------------------------------------------------------- overlay
 function seg(a, b, cls) {
@@ -2064,6 +2370,10 @@ function outlineSVG(entity, dx, dy, cls) {
 // no outline of their own (text, tables, blocks) fall back to their box.
 function highlightSVG(dx, dy, cls) {
   if (!S.selected) return "";
+  if (S.selected.alignment) {
+    const a = alignmentOf(S.selected.alignment);
+    return a && a.pis.length ? alignmentSVG(a.pis, cls) : "";
+  }
   const traced = outlineSVG(S.selected.entity, dx, dy, cls);
   if (traced !== null) return traced;
   const shift = p => [p[0] + dx, p[1] + dy];
@@ -2117,6 +2427,8 @@ function dimGhostSVG(d) {
 }
 // The edit as it would land: the entity with the dragged grip's patch on it.
 function gripGhostSVG(active) {
+  if (S.selected && S.selected.alignment)   // the alignment as the PIs now lie
+    return alignmentSVG(active.grip.patch(active.at), "rb");
   const e = S.selected && S.selected.entity;
   if (!e) return "";
   const patched = { ...e, ...active.grip.patch(active.at) };
@@ -2134,13 +2446,29 @@ function gripsSVG() {
            `width="${(h * 2).toFixed(2)}" height="${(h * 2).toFixed(2)}" ` +
            `class="${cls}"/>`;
   };
+  // Civil 3D's shapes for an alignment: a triangle on each PI, a circle on
+  // each curve; everything else is AutoCAD's square
+  const triangle = (p, cls) => {
+    const q = spacePx(p), h = GRIP_SIZE_PX * k * 0.75;
+    return `<polygon points="${q[0]},${(q[1] - h).toFixed(2)} ` +
+           `${(q[0] - h).toFixed(2)},${(q[1] + h * 0.8).toFixed(2)} ` +
+           `${(q[0] + h).toFixed(2)},${(q[1] + h * 0.8).toFixed(2)}" ` +
+           `class="${cls}"/>`;
+  };
+  const circle = (p, cls) => {
+    const q = spacePx(p);
+    return `<circle cx="${q[0].toFixed(2)}" cy="${q[1].toFixed(2)}" ` +
+           `r="${(GRIP_SIZE_PX * k * 0.6).toFixed(2)}" class="${cls}"/>`;
+  };
+  const shape = gr => gr.kind === "pi" ? triangle
+                    : gr.kind === "radius" ? circle : square;
   let out = "";
   currentGrips().forEach(gr => {
     if (active && active.grip === gr) return;   // that one is drawn hot below
-    out += square(gr.pt, "grip" + (gr.kind === "insert" ? " sec" : "") +
-                         (gr === S.gripHover ? " over" : ""));
+    out += shape(gr)(gr.pt, "grip" + (gr.kind === "insert" ? " sec" : "") +
+                            (gr === S.gripHover ? " over" : ""));
   });
-  if (active) out += square(active.at, "grip hot");
+  if (active) out += shape(active.grip)(active.at, "grip hot");
   return out;
 }
 function drawOverlay() {
@@ -2156,7 +2484,12 @@ function drawOverlay() {
   const px = S.pts.map(spacePx);
   const cur = S.cursor ? spacePx(S.cursor) : null;
   if (S.tool === "line" && px.length === 1 && cur) out += seg(px[0], cur, "rb");
-  if (["pline", "refclip", "alignment"].includes(S.tool) && px.length) {
+  if (S.tool === "alignment" && S.pts.length) {
+    // the layout as it will be created: curves of the radius last used
+    const pis = (S.cursor ? [...S.pts, S.cursor] : S.pts).map((p, i, all) =>
+      [p[0], p[1], i > 0 && i < all.length - 1 ? S.alignRadius : 0]);
+    if (pis.length >= 2) out += alignmentSVG(pis, "rb");
+  } else if (["pline", "refclip"].includes(S.tool) && px.length) {
     for (let i = 1; i < px.length; i++) out += seg(px[i - 1], px[i], "rb");
     if (cur) out += seg(px[px.length - 1], cur, "rb");
     if (S.tool === "refclip" && px.length >= 2)  // closing edge of the polygon
@@ -2360,12 +2693,31 @@ $("viewwrap").addEventListener("wheel", ev => {
 
 function applyZoom() {
   const st = $("stage");
-  if (!S.zoom) { st.style.width = "calc(100% - 24px)";
-    $("zoompct").textContent =
-      S.space === "model" && S.modelBounds ? "zoom" : "fit"; }
+  const model = S.space === "model";  // zooms by re-rendering a new window
+  st.classList.toggle("fill", model);
+  if (model) { st.style.width = "";
+    $("zoompct").textContent = S.modelBounds ? "zoom" : "fit"; }
+  else if (!S.zoom) { st.style.width = "calc(100% - 24px)";
+    $("zoompct").textContent = "fit"; }
   else { st.style.width = (S.zoom * 100) + "%";
          $("zoompct").textContent = Math.round(S.zoom * 100) + "%"; }
 }
+// The model view is rendered to the canvas's shape, so a canvas that changes
+// shape (a resized window, the Toolspace hidden, the layout settling while a
+// render was on its way) gets a fresh render.
+let resizeTimer = null;
+function fitsCanvas() {
+  const box = $("viewwrap").getBoundingClientRect(), b = S.view.bounds;
+  return !box.height || Math.abs(box.width / box.height -
+                                 (b[2] - b[0]) / (b[3] - b[1])) < 0.005;
+}
+function refitCanvas() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(updateCanvas, 150);
+}
+new ResizeObserver(() => {
+  if (S.space === "model") refitCanvas();
+}).observe($("viewwrap"));
 function zoomBtn(f) {
   if (S.space === "model") {
     const b = S.modelBounds || (S.view && S.view.bounds);
@@ -2415,6 +2767,96 @@ function openForm(title, fields) {
     $("mf0").focus();
     if ($("mf0").select) $("mf0").select();
   });
+}
+// A question with a few answers, laid out the macOS way: with three, the
+// first sits apart on the left. Enter gives `enter`, Escape gives `escape`.
+function askChoice(title, message, buttons, enter, escape) {
+  return new Promise(resolve => {
+    const modal = $("modal");
+    modal.innerHTML = `<h3>${esc(title)}</h3><div class="msg">${esc(message)}` +
+      `</div><div class="actions">` + buttons.map((b, i) =>
+        `<div class="zbtn${b === enter ? " primary" : ""}` +
+        `${i === 0 && buttons.length > 2 ? " left" : ""}" id="mb${i}">` +
+        `${esc(b)}</div>`).join("") + `</div>`;
+    $("modal-bg").style.display = "flex";
+    const done = v => { $("modal-bg").style.display = "none"; resolve(v); };
+    buttons.forEach((b, i) => { $("mb" + i).onclick = () => done(b); });
+    modal.onkeydown = ev => {
+      if (ev.key === "Enter") done(enter);
+      if (ev.key === "Escape") done(escape);
+      ev.stopPropagation();
+    };
+    modal.tabIndex = -1; modal.focus();
+  });
+}
+
+// ------------------------------------------------------------------ files
+// File New / Open / Save / Save As. The server knows which drawing is open
+// and whether it has unsaved changes; a request without a path makes it ask
+// with a native file dialog.
+async function fileRequest(action, extra = {}) {
+  let r = await postJSON("/api/file", { action, ...extra });
+  if (!r.ok && r.error && r.error.type === "no_file_dialog") {
+    // no native dialog on this machine: ask for the path in the page
+    const path = prompt(action === "open" ? "Open which drawing? (path)"
+                                          : "Save the drawing as (path)",
+                        r.error.suggestion || "");
+    if (!path) return { ok: false, cancelled: true };
+    r = await postJSON("/api/file", { action, ...extra, path });
+  }
+  return r;
+}
+async function settleUnsaved(doing) {
+  const f = S.state.file;
+  const choice = await askChoice(
+    `Save the changes to ${f.path ? f.name : S.state.project}?`,
+    `Your changes are lost if you ${doing} without saving them.`,
+    ["Don't Save", "Cancel", "Save"], "Save", "Cancel");
+  if (choice === "Save") {
+    const r = await fileRequest("save");
+    if (!r.cancelled) logResult(r);
+    return !!r.ok;
+  }
+  return choice === "Don't Save";
+}
+// Open and New replace the drawing. Unsaved changes are settled first, and
+// the server will not drop them unless the person chose Don't Save.
+async function replaceDrawing(action, doing, params) {
+  let discard = false;
+  if (S.state.file.dirty) {
+    if (!(await settleUnsaved(doing))) return null;
+    discard = true;
+  }
+  const p = typeof params === "function" ? await params() : params;
+  if (!p) return null;
+  let r = await fileRequest(action, { ...p, discard });
+  if (!r.ok && r.error && r.error.type === "unsaved_changes") {
+    if (!(await settleUnsaved(doing))) return null;  // changed meanwhile
+    r = await fileRequest(action, { ...p, discard: true });
+  }
+  return r;
+}
+async function fileAct(act) {
+  let r = null;
+  if (act === "save") r = await fileRequest("save");
+  else if (act === "saveas") r = await fileRequest("save_as");
+  else if (act === "open")
+    r = await replaceDrawing("open", "open another drawing", {});
+  else if (act === "new")
+    r = await replaceDrawing("new", "start a new drawing", async () => {
+      const v = await openForm("New drawing",
+        [{ key: "project", label: "Project name", value: "Untitled" }]);
+      return v && { project: v.project.trim() || "Untitled" };
+    });
+  if (r && !r.cancelled) logResult(r);
+  await refresh();
+}
+// The desktop window calls this when it is closed over unsaved changes. It
+// stays open until they are saved or let go, then the page closes it.
+async function rdConfirmClose() {
+  await refresh();
+  if (S.state.file.dirty && !(await settleUnsaved("close RoadDraft"))) return;
+  window.pywebview.api.close_window();
 }
 
 // ------------------------------------------------------------ command bar
@@ -2472,10 +2914,16 @@ $("run").onclick = () => {
 };
 
 // -------------------------------------------------------------- QAT etc.
+$("q-new").innerHTML = icon("new", 16);
+$("q-open").innerHTML = icon("open", 16);
 $("q-save").innerHTML = icon("save", 16);
+$("q-saveas").innerHTML = icon("saveas", 16);
 $("q-undo").innerHTML = icon("undo", 16);
 $("q-redo").innerHTML = icon("redo", 16);
-$("q-save").onclick = () => ribbonAct("save");
+$("q-new").onclick = () => fileAct("new");
+$("q-open").onclick = () => fileAct("open");
+$("q-save").onclick = () => fileAct("save");
+$("q-saveas").onclick = () => fileAct("saveas");
 $("q-undo").onclick = () => ribbonAct("undo");
 $("q-redo").onclick = () => ribbonAct("redo");
 $("tog-ortho").onclick = () => { S.ortho = !S.ortho;
@@ -2489,6 +2937,19 @@ $("st-annoscale").onchange = async ev => {
 };
 
 // ------------------------------------------------------- global keyboard
+// File shortcuts work wherever the focus is, the command line included:
+// this listener runs in the capture phase, before the focused element's own.
+document.addEventListener("keydown", ev => {
+  if (!(ev.metaKey || ev.ctrlKey) || ev.altKey) return;
+  if ($("modal-bg").style.display === "flex") return;
+  const key = ev.key.toLowerCase();
+  const act = key === "s" ? (ev.shiftKey ? "saveas" : "save")
+            : ev.shiftKey ? null
+            : key === "o" ? "open" : key === "n" ? "new" : null;
+  if (!act) return;
+  ev.preventDefault(); ev.stopPropagation();
+  fileAct(act);
+}, true);
 const TOOL_KEYS = { v: "select", h: "pan", l: "line", p: "pline",
                     c: "circle", a: "arc", t: "text", s: "station",
                     m: "move", e: "erase", i: "insblock", x: "edittext",
@@ -2507,6 +2968,11 @@ document.addEventListener("keydown", ev => {
   else if (ev.key === "Enter") finishTool();
   else if (ev.key === "Escape") cancelTool();
   else if ((ev.key === "Delete" || ev.key === "Backspace") && S.selected) {
+    if (S.selected.alignment) {
+      logHint(`to delete alignment ${S.selected.alignment}, use ✕ on its ` +
+              `row in Toolspace ▸ Alignments; ✕ in the PI table deletes a PI`);
+      return;
+    }
     if (S.selected.reference) {
       logHint(`${S.selected.id} is a reference element — detach the ` +
               `reference or edit the basefile instead`);

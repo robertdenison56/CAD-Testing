@@ -36,6 +36,7 @@ GEOM_EPS = 1e-6  # ft
 ANGLE_EPS = 1e-9  # deg
 CONNECT_TOL = 1e-3  # ft (LandXML continuity)
 _COINCIDENT_TOL = 0.01  # ft
+_KINK_EPS = 1e-6  # deg: tangents turning less than this are one line, not an angle point
 _SPIRAL_MSG = "spiral elements are not supported in this version"
 
 
@@ -180,12 +181,14 @@ def curve_from_pi(back_pt, pi_pt, ahead_pt, radius: float, start_dist: float,
                         direction_in_deg=d_in, direction_out_deg=norm_deg(d_out))
 
 
-def compile_pis(pis: List[PI]) -> List[object]:
+def compile_pis(pis: List[PI], angle_points: bool = False) -> List[object]:
     """Compile a PI list into tangent/curve elements in travel order.
 
     PIs are numbered ``PI-n`` by their 1-based position in ``pis`` in every
     error message.  Zero-length tangents between back-to-back curves are not
-    emitted.
+    emitted.  With ``angle_points`` an interior PI of radius 0 is an angle
+    point: its tangents meet there with no curve, as a layout does before its
+    curves are chosen.  Without it, radius 0 is refused (a forgotten radius).
     """
     pis = [p if isinstance(p, PI) else PI.from_dict(p) for p in (pis or [])]
     n = len(pis)
@@ -198,20 +201,26 @@ def compile_pis(pis: List[PI]) -> List[object]:
     if float(pis[0].radius) != 0.0 or float(pis[-1].radius) != 0.0:
         raise DesignError("BEGIN/END PIs cannot carry a radius")
     for k in range(1, n - 1):
-        if float(pis[k].radius) <= 0.0:
+        if float(pis[k].radius) <= 0.0 and not angle_points:
             raise DesignError(
                 f"PI-{k + 1} is an angle point (radius 0); interior PIs must have a curve radius",
                 hint="pass [x, y, R] for every interior PI")
+        if float(pis[k].radius) <= 0.0:
+            turn = signed_delta_deg(direction_of(pts[k - 1], pts[k]),
+                                    direction_of(pts[k], pts[k + 1]))
+            if abs(turn) >= 180.0 - ANGLE_EPS:
+                raise DesignError(f"PI-{k + 1} deflects 180°")
 
-    # curves (start_dist filled later)
-    curves: List[CurveElement] = []
+    # curves (start_dist filled later); None at an angle point
+    curves: List[Optional[CurveElement]] = [None] * n
     for k in range(1, n - 1):
-        curves.append(curve_from_pi(pts[k - 1], pts[k], pts[k + 1], float(pis[k].radius),
-                                    0.0, label=f"PI-{k + 1}"))
+        if float(pis[k].radius) > 0.0:
+            curves[k] = curve_from_pi(pts[k - 1], pts[k], pts[k + 1], float(pis[k].radius),
+                                      0.0, label=f"PI-{k + 1}")
 
     # fit check per PI-to-PI segment
     seg_len = [geo.distance(pts[k], pts[k + 1]) for k in range(n - 1)]
-    tl = [0.0] + [c.tangent_length for c in curves] + [0.0]  # T at each PI (0 at ends)
+    tl = [c.tangent_length if c else 0.0 for c in curves]  # T at each PI (0 at ends)
     for k in range(n - 1):
         need = tl[k] + tl[k + 1]
         if need > seg_len[k] + GEOM_EPS:
@@ -234,7 +243,14 @@ def compile_pis(pis: List[PI]) -> List[object]:
     elements: List[object] = []
     dist = 0.0
     prev_end = pts[0]
-    for c in curves:
+    for k in range(1, n - 1):
+        c = curves[k]
+        if c is None:  # an angle point: the tangent runs to the PI and turns there
+            if geo.distance(prev_end, pts[k]) > GEOM_EPS:
+                elements.append(_tangent(prev_end, pts[k], dist))
+                dist += elements[-1].length
+            prev_end = pts[k]
+            continue
         gap = geo.distance(prev_end, c.pc)
         if gap > GEOM_EPS:
             elements.append(_tangent(prev_end, c.pc, dist))
@@ -383,17 +399,22 @@ def elements_from_dicts(items: List[dict], tol: float = CONNECT_TOL) -> List[obj
 
 
 def pis_from_elements(elements) -> List[PI]:
-    """Recover PIs (``[BEGIN] + curve PIs + [END]``); ``[]`` when a curve is
-    not between tangents/ends (back-to-back curves)."""
+    """Recover PIs (``[BEGIN] + curve PIs and angle points + [END]``); ``[]``
+    when a curve is not between tangents/ends (back-to-back curves). An angle
+    point -- two tangents meeting at a kink -- comes back as a PI of radius 0,
+    which compiles again only with ``angle_points``."""
     if not elements:
         return []
     for i in range(1, len(elements)):
         if isinstance(elements[i - 1], CurveElement) and isinstance(elements[i], CurveElement):
             return []
     pis = [PI(point=_pt(elements[0].start), radius=0.0)]
-    for el in elements:
+    for i, el in enumerate(elements):
         if isinstance(el, CurveElement):
             pis.append(PI(point=_pt(el.pi), radius=float(el.radius)))
+        elif i > 0 and isinstance(elements[i - 1], TangentElement) and abs(
+                signed_delta_deg(elements[i - 1].direction_deg, el.direction_deg)) > _KINK_EPS:
+            pis.append(PI(point=_pt(el.start), radius=0.0))
     pis.append(PI(point=_pt(elements[-1].end), radius=0.0))
     return pis
 

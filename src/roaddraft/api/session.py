@@ -528,6 +528,11 @@ class Session:
                  _document: Optional[Document] = None):
         self.bus = CommandBus(_document or Document.new(project_name))
         self.out_dir = Path(out_dir) if out_dir else Path.cwd() / "renders"
+        #: The folder a relative file path resolves against. None is the
+        #: working directory, as the REPL, the MCP server and the tests expect;
+        #: the GUI points it at the drawing's own folder, because an app opened
+        #: from Finder runs in '/'.
+        self.base_dir: Optional[Path] = None
         self._validators = {}
 
     @property
@@ -1225,12 +1230,13 @@ class Session:
                            round(content[1] * paper_scale, 3)]}
 
     def _q_save_document(self, p):
-        path = fileformat.write_document(p["path"], self.doc.to_dict())
+        path = fileformat.write_document(self._resolve(p["path"]),
+                                         self.doc.to_dict())
         self.doc._path = path.resolve()  # relative reference paths follow the host
         return self._file_result(path, False)
 
     def _q_save_journal(self, p):
-        path = Path(p["path"])
+        path = self._resolve(p["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = [json.dumps({"type": "init", "document": self.bus.baseline})]
         lines += [json.dumps({"type": "command", **entry})
@@ -1580,8 +1586,14 @@ class Session:
                 hint=f"existing sheets: {[s.name for s in self.doc.sheets.values()]}")
         return sheet
 
+    def _resolve(self, given) -> Path:
+        path = Path(given).expanduser()
+        if self.base_dir is not None and not path.is_absolute():
+            path = Path(self.base_dir) / path
+        return path
+
     def _out_path(self, given, default_name) -> Path:
-        path = Path(given) if given else self.out_dir / default_name
+        path = self._resolve(given) if given else self.out_dir / default_name
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 

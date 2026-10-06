@@ -212,11 +212,27 @@ def model_window(doc, bounds=None):
     return tuple(bounds)
 
 
-def model_figure(doc, bounds=None, max_size_in=14.0, dark=False):
+def fit_aspect(bounds, aspect):
+    """Grow a window about its centre to width / height = ``aspect``: the
+    shape of the screen area it is shown in, as a CAD window shows more of
+    model space when it is wider than the drawing."""
+    x0, y0, x1, y1 = bounds
+    w, h = x1 - x0, y1 - y0
+    if w / h < aspect:
+        grow = (h * aspect - w) / 2
+        return (x0 - grow, y0, x1 + grow, y1)
+    grow = (w / aspect - h) / 2
+    return (x0, y0 - grow, x1, y1 + grow)
+
+
+def model_figure(doc, bounds=None, max_size_in=14.0, dark=False, aspect=None):
     """Build a figure of model space (own entities + visible references).
-    dark=True renders on the AutoCAD-style dark canvas. Returns
+    dark=True renders on the AutoCAD-style dark canvas; ``aspect`` (width /
+    height) widens the window to fill a screen area of that shape. Returns
     (figure, bounds_drawn)."""
     bounds = model_window(doc, bounds)
+    if aspect:
+        bounds = fit_aspect(bounds, aspect)
     dw, dh = bounds[2] - bounds[0], bounds[3] - bounds[1]
     scale = max_size_in / max(dw, dh)
     bg = DARK_BG if dark else "white"

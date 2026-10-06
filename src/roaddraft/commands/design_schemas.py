@@ -60,6 +60,11 @@ STATION = {"type": ["number", "string"],
            "description": "display station: feet (1600) or '16+00.00'"}
 PI_ITEM = {"type": "array", "items": NUM, "minItems": 2, "maxItems": 3,
            "description": "[x, y] or [x, y, radius]"}
+ANGLE_POINTS = {"type": "boolean",
+                "description": "allow interior PIs of radius 0: angle points, where "
+                               "the tangents meet with no curve -- a layout whose "
+                               "curves come later (default false: a missing radius "
+                               "is refused)"}
 PVI_ITEM = {"type": "array", "items": NUM, "minItems": 2, "maxItems": 3,
             "description": "[station, elevation] or [station, elevation, vc_length]"}
 EQUATION = obj({"back": STATION, "ahead": STATION, "raw_station": NUM}, ["back", "ahead"])
@@ -85,13 +90,19 @@ DESIGN_SCHEMAS = {
          "elements": {"type": "array", "items": ELEMENT, "minItems": 1},
          "begin_station": STATION,
          "equations": {"type": "array", "items": EQUATION},
-         "description": STR},
+         "description": STR,
+         "angle_points": ANGLE_POINTS},
         ["name"]),
     "modify_alignment": obj(
         {"name": NSTR,
          "changes": {"type": "object", "minProperties": 1,
                      "description": "any of: pis, begin_station, equations, "
-                                    "description, rename"}},
+                                    "description, rename"},
+         "angle_points": ANGLE_POINTS,
+         "redraw": {"type": "boolean",
+                    "description": "when the pis change, redraw the alignment's "
+                                   "drawn elements to the new geometry, on the "
+                                   "layer they were drawn on (default false)"}},
         ["name", "changes"]),
     "delete_alignment": obj(
         {"name": NSTR,

@@ -96,8 +96,8 @@ Every state change is a named JSON command (PRD section 5.1):
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                      # 728 tests
+.venv/bin/pip install -e ".[dev]"     # add ,desktop for the app window
+.venv/bin/pytest                      # 787 tests
 .venv/bin/python examples/demo_plan_sheet.py   # drafts a full plan sheet
 .venv/bin/python examples/caltrans_l2/build_all.py  # rebuilds a real Caltrans sheet
 .venv/bin/python -m roaddraft.tasks 42         # generates a D1 task + reference solution
@@ -566,26 +566,52 @@ solution as a project, `<probe>.reference/`.
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
 ```bash
-.venv/bin/roaddraft-web --project "SR 100"
+.venv/bin/pip install -e ".[dev,desktop]"         # once: pywebview, for the window
+.venv/bin/roaddraft-desktop --project "SR 100"    # in a window of its own
+.venv/bin/roaddraft-web --project "SR 100"        # or in your browser
 ```
 
-…or double-click `RoadDraft.command` in Finder. A browser window opens with a
-**Civil 3D-style workspace**: a ribbon (Home / Insert / Annotate / View /
+…or double-click `RoadDraft.command` in Finder (`RoadDraft.command --browser`
+for the browser). The desktop window runs the same server inside the app, on
+a free loopback port, and both end when the window closes: nothing to start
+first, nothing left running. Closing it over unsaved changes asks Save /
+Don't Save / Cancel first, the title bar names the drawing ("— Edited" while
+it has unsaved changes), Open and Save As use the window's own macOS panels,
+and it logs to `~/Library/Logs/RoadDraft/roaddraft.log`. The app bundle is
+built from a separate environment, `.venv-build` (uv's Python 3.13 with
+PyInstaller, apart from the development `.venv`); `scripts/build_env.sh`
+makes or refreshes it. The icons come from the artwork in
+`packaging/icon/`: `packaging/make_icons.py` cuts its rounded square out of
+the black, sets it on Apple's icon grid, and writes the app and `.rdraft`
+document icons to `build/icons/` (the window also shows the app icon in the
+Dock when run from `.venv`). Either way the page
+is a **Civil 3D-style workspace**: a ribbon (Home / Insert / Annotate / View /
 Output) whose panels carry Civil 3D's groupings — Palettes, Draw, Create
 Design, Modify, Layers, Annotation; Block, Reference, Sheet; Labels & Tables;
 Navigate, Display; Print, Export, Document — each command with its own SVG icon and
 a highlighted selected state; a **Toolspace** tree (Layers / Sheets /
-References, Prospector-style); a quick-access bar (save/undo/redo);
+References, Prospector-style); a quick-access bar (new/open/save/save
+as/undo/redo);
 AutoCAD-style **Model/layout tabs at bottom-left**; the docked command line;
 and a status bar with coordinate readout and an **ORTHO** toggle (F8). Model
 space renders on the AutoCAD dark canvas (black/white linework flips to
 light; sheets stay white paper) — toggle in View ▸ Display.
 
-- **Design tools**: the **Alignment** tool (key G) — click PIs in order, press
-  Enter, name it, give the interior PIs a radius, and it is created and drawn;
-  the **Toolspace ▸ Alignments** node lists every alignment with its station
-  range and curve count (draw / delete glyphs; click to prefill alignment-mode
-  stationing); the Station tool's dialog offers *design mode* by alignment;
+- **Design tools**: the **Alignment** tool (key G) lays an alignment out by
+  PI — click PIs in order (curves of the last radius used preview as you go,
+  a PI circled red where one would not fit), press Enter, name it and give
+  the interior PIs a radius, or 0 to lay out tangents only and add curves
+  later. Clicking a drawn alignment (or its Toolspace row, or **Edit
+  Alignment…**) selects the alignment itself, Civil 3D style: drag a
+  triangle to move a PI, a curve's circle to change its radius (onto the PI
+  to remove it), a hollow square in a corner to add a curve, or one on a leg
+  to add a PI; the Properties panel lists every PI's X, Y and radius, with ✕
+  to delete one. Each edit is one `modify_alignment` (angle points allowed,
+  `redraw` on) that redraws the centerline on its own layer, so one Undo
+  takes it back; labels and stationing anchored to the alignment are named
+  in a warning, to re-run. The **Toolspace ▸ Alignments** node lists every
+  alignment with its station range and curve count (draw / delete glyphs);
+  the Station tool's dialog offers *design mode* by alignment;
   **Annotate ▸ Label** opens the anchored-label form (alignment, anchor, kind,
   side, rotation, content); **Curve Table** and **Output ▸ LandXML** are one
   click.
@@ -645,17 +671,43 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   what to print (the space you are in, model space, one sheet, all sheets),
   paper, orientation, scale, whether a model print takes the current view or
   the extents, and monochrome. The log says what each page was plotted at.
+- **File ▸ New / Open… / Save / Save As…** (the quick-access bar, Output ▸
+  Document, or ⌘N / ⌘O / ⌘S / ⇧⌘S from anywhere, the command line
+  included). Open and Save As show the standard macOS file dialogs. The
+  title bar names the file and marks unsaved changes with ●, and opening
+  or starting a drawing over unsaved work asks Save / Don't Save / Cancel
+  first. A drawing's files follow it: exports, the journal and any relative
+  path typed on the command line land beside the drawing. A drawing that has
+  never been saved keeps them in `~/Documents/RoadDraft`. `--out-dir`
+  sends exports somewhere else.
 - Model/sheet tabs, layer manager, log with teaching errors, exports
-  (DXF/PDF/save/journal), and an AutoCAD-style command bar speaking the same
+  (DXF/PDF/journal), and an AutoCAD-style command bar speaking the same
   grammar as the terminal REPL (`help` lists everything).
 
 The server is stdlib-only (no framework), binds to 127.0.0.1, serves the same
 `Session` over `/api/execute`, `/api/query`, `/api/line`, and
-`/api/manifest`, streams change events over SSE, and renders any space at
+`/api/manifest`, opens and saves drawings over `/api/file`, streams change
+events over SSE, and renders any space at
 `/render/<ref>.png` (with pixel→coordinate metadata headers) — so it doubles
 as the first slice of the M2 session server: an agent can drive the same HTTP
 surface a human sees. Open a saved document with
 `roaddraft-web project.rdraft`.
+
+### Build the Mac app
+
+```bash
+scripts/build_app.sh                 # -> dist/RoadDraft.app, about 70 MB
+```
+
+One script does the whole build: it makes or refreshes `.venv-build`, rebuilds
+the icons, and runs PyInstaller on `packaging/RoadDraft.spec`. The app carries
+its own Python and opens like any Mac app, so drag it to Applications. Built
+and signed for local use on this Mac, it opens here without a Gatekeeper
+prompt; another Mac needs it signed with a Developer ID and notarized. The
+first launch builds matplotlib's font list (about 10 s, kept in
+`~/Library/Caches/RoadDraft`); later launches are ready in about a second.
+`.rdraft` files show RoadDraft's document icon in Finder but open from inside
+the app (File ▸ Open): RoadDraft declares the type without claiming to open it.
 
 ### Drive it as a human — terminal REPL (PRD 5.4)
 
@@ -751,12 +803,13 @@ src/roaddraft/
   api/         Session (execute/query/manifest) + the shared command-line grammar
   cli/         the terminal REPL
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
+  desktop/     the GUI in a window of its own (pywebview), its log and close guard
   tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
                ground truth, and the reference solution (python -m roaddraft.tasks)
   probes/      capability probes (find, drafting, tier 2, tier 3), their fixture
                documents, the plotted-sheet reader and the notation parsers;
                l2/ builds Caltrans sheet L-2 (python -m roaddraft.probes)
-tests/         728 tests: geometry, design math, commands, dimensions,
+tests/         787 tests: geometry, design math, commands, dimensions,
                determinism, LandXML, renders, DXF, web server, tasks
 examples/      demo_plan_sheet.py — a full sheet drafted from the design model;
                caltrans_l2/ — a published Caltrans plan sheet rebuilt as a

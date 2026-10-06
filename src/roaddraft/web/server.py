@@ -11,6 +11,8 @@ framework. The browser gets:
   POST /api/execute          {command, params} -> command bus
   POST /api/query            {query, params}   -> queries/exports
   POST /api/line             {line, space}     -> human command-line grammar
+  POST /api/file             {action, path?, project?, discard?} -> File
+                             New / Open / Save / Save As (a dialog when no path)
   GET  /api/events           SSE stream; fires whenever the document changes
   GET  /render/<ref>.png     live render of 'model' or a sheet id/name
 
@@ -23,38 +25,72 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import shutil
+import subprocess
+import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from roaddraft.api.lines import route_line
-from roaddraft.api.session import Session
+from roaddraft.api.session import Session, _slug
 from roaddraft.core import colors as colorlib
 from roaddraft.document.document import LINETYPES
+from roaddraft.document.fileformat import journal_path
+from roaddraft.document.references import resolve_reference_path
 from roaddraft.render import mpl as mpl_render
 
 STATIC_DIR = Path(__file__).parent / "static"
 RENDER_CACHE_MAX = 12
 
+#: Where the GUI keeps a drawing's files until it is first saved.
+DRAWINGS_DIR = Path.home() / "Documents" / "RoadDraft"
+
 
 class WebApp:
-    """Owns the session, a revision counter, and the render cache."""
+    """Owns the session, a revision counter, and the render cache.
 
-    def __init__(self, session: Session):
+    It also owns which drawing is open. File ▸ New and Open swap the session
+    for another one, and ``saved_rev`` remembers the revision last opened or
+    saved, so ``dirty`` means changed since then.
+
+    Given a ``drawings_dir``, a drawing's files follow it: relative paths and
+    default-named exports land beside the drawing (in ``drawings_dir`` until
+    it is first saved), and exports go to ``out_dir`` instead when one is
+    given. Without one the session keeps its own paths, as the tests expect.
+    ``dialogs`` asks a person for a file path when a request carries none."""
+
+    def __init__(self, session: Session, dialogs=None, drawings_dir=None,
+                 out_dir=None):
         self.session = session
         self.lock = threading.RLock()
         self.change = threading.Condition()
         self.rev = 0
+        self.saved_rev = 0
+        self.generation = 0  # bumps each time a different drawing is opened
         self._cache = {}
+        self.dialogs = dialogs
+        self.drawings_dir = Path(drawings_dir) if drawings_dir else None
+        self.out_dir = Path(out_dir) if out_dir else None
+        self._dialog_open = threading.Lock()
+        self._place_files()
 
     # ------------------------------------------------------------- changes
 
-    def bump(self):
+    def bump(self, saved=False):
         with self.change:
             self.rev += 1
+            if saved:
+                self.saved_rev = self.rev
             self.change.notify_all()
+
+    @property
+    def dirty(self) -> bool:
+        with self.change:
+            return self.rev != self.saved_rev
 
     def _run_tracked(self, fn):
         """Run a session call under the lock; bump rev if the journal grew."""
@@ -70,11 +106,189 @@ class WebApp:
         return self._run_tracked(lambda: self.session.execute(command, params))
 
     def query(self, query, params):
-        return self._run_tracked(lambda: self.session.query(query, params))
+        return self._run_tracked(
+            lambda: self._note_save(self.session.query(query, params)))
 
     def line(self, line, space):
-        return self._run_tracked(
-            lambda: route_line(self.session, line, space or "model"))
+        def run():
+            resp = route_line(self.session, line, space or "model")
+            if isinstance(resp, dict) and resp.get("kind") == "result":
+                self._note_save(resp.get("result"))
+            return resp
+        return self._run_tracked(run)
+
+    def _note_save(self, result):
+        """A save_document that went through, such as 'save PATH' typed on the
+        command line, leaves the drawing clean and living where it was written.
+        Runs under the lock, so no command can slip in between."""
+        if isinstance(result, dict) and result.get("ok") \
+                and result.get("name") == "save_document":
+            self._place_files()
+            self.bump(saved=True)
+        return result
+
+    # --------------------------------------------------------------- files
+
+    def file_action(self, body: dict) -> dict:
+        """File ▸ New / Open / Save / Save As. Without a ``path`` the person
+        is asked with a file dialog. A dialog closed without a choice answers
+        ``{"ok": false, "cancelled": true}``."""
+        action = body.get("action", "")
+        try:
+            if action == "new":
+                return self.new_document(str(body.get("project") or "Untitled"),
+                                         discard=bool(body.get("discard")))
+            if action == "open":
+                return self.open_document(body.get("path"),
+                                          discard=bool(body.get("discard")))
+            if action == "save":
+                return self.save_document()
+            if action == "save_as":
+                return self.save_document_as(body.get("path"))
+        except _FileFault as fault:
+            return fault.result(action)
+        return _FileFault("unknown_action", f"unknown file action {action!r}",
+                          hint="new, open, save or save_as").result(action)
+
+    def new_document(self, project: str, discard=False) -> dict:
+        self._check_unsaved(discard, "start a new drawing")
+        self._replace(Session(project_name=project, out_dir=self.session.out_dir))
+        return {"ok": True, "name": "new", "message": f"new drawing: {project}",
+                "warnings": []}
+
+    def open_document(self, path=None, discard=False) -> dict:
+        self._check_unsaved(discard, "open another drawing")
+        if path is None:
+            path = self._ask_open()
+            if path is None:
+                return _cancelled("open")
+        path = self._resolve(path)
+        if not path.is_file():
+            raise _FileFault("open_failed", f"no file at {path}")
+        try:
+            session = Session.load(path, out_dir=self.session.out_dir)
+        except Exception as ex:  # report a bad file; never take the GUI down
+            raise _FileFault("open_failed", f"could not open {path.name}: {ex}")
+        self._replace(session)
+        return {"ok": True, "name": "open", "message": f"opened {path.name}",
+                "path": str(session.doc._path), "warnings": []}
+
+    def save_document(self) -> dict:
+        """Save where the drawing lives; a drawing never saved asks where."""
+        host = self.session.doc._path
+        if host is None:
+            return self.save_document_as(None, action="save")
+        return self._save_to(Path(host), "save")
+
+    def save_document_as(self, path=None, action="save_as") -> dict:
+        if path is None:
+            path = self._ask_save()
+            if path is None:
+                return _cancelled(action)
+        return self._save_to(self._resolve(path), action)
+
+    def _save_to(self, path: Path, action: str) -> dict:
+        with self.lock:
+            found = self._found_references()
+            try:
+                result = self.session.query("save_document", {"path": str(path)})
+            except OSError as ex:
+                raise _FileFault("save_failed", f"could not save {path.name}: "
+                                 f"{ex.strerror or ex}")
+            if not result.get("ok"):
+                return result
+            lost = sorted(found - self._found_references())
+            self._place_files()
+            self.bump(saved=True)
+        saved = Path(result["path"])
+        result = dict(result, name=action, message=f"saved {saved.name}")
+        result["warnings"] = [
+            f"reference {name} is not found from {saved.parent}: a relative "
+            f"reference path follows the drawing, so copy the basefile beside "
+            f"it or attach it again" for name in lost]
+        return result
+
+    def _replace(self, session: Session):
+        with self.lock:
+            self.session = session
+            self._cache.clear()
+            self.generation += 1
+            self._place_files()
+            self.bump(saved=True)
+
+    def _check_unsaved(self, discard: bool, doing: str):
+        if not discard and self.dirty:
+            raise _FileFault(
+                "unsaved_changes", f"{self._file_name()} has unsaved changes",
+                hint=f"save it first, or pass discard=true to {doing} anyway")
+
+    def _found_references(self) -> set:
+        doc = self.session.doc
+        return {ref.name for ref in doc.references.values()
+                if resolve_reference_path(doc, ref).exists()}
+
+    def _home(self) -> Path:
+        """The folder this drawing's files belong in."""
+        host = self.session.doc._path
+        if host is not None:
+            return Path(host).parent
+        return self.drawings_dir or self.session.out_dir
+
+    def _place_files(self):
+        if self.drawings_dir is None:
+            return
+        home = self._home()
+        self.session.base_dir = home
+        self.session.out_dir = self.out_dir or home
+
+    def _resolve(self, path) -> Path:
+        p = Path(path).expanduser()
+        return p if p.is_absolute() else self._home() / p
+
+    def _file_name(self) -> str:
+        host = self.session.doc._path
+        return Path(host).name if host else "Untitled"
+
+    def _default_save_name(self) -> str:
+        host = self.session.doc._path
+        if host is not None:
+            return Path(host).name
+        return _slug(self.session.doc.meta["project_name"]) + ".rdraft"
+
+    def _ask_open(self) -> Optional[str]:
+        start = self._home()
+        return self._ask(lambda d: d.open_path(start), suggestion=f"{start}/")
+
+    def _ask_save(self) -> Optional[str]:
+        start, name = self._home(), self._default_save_name()
+        return self._ask(lambda d: d.save_path(start, name),
+                         suggestion=str(start / name))
+
+    def _ask(self, show, suggestion: str) -> Optional[str]:
+        """Run a dialog outside the lock: the page keeps rendering behind it."""
+        if self.dialogs is None:
+            raise _FileFault("no_file_dialog", "no file dialog here; give a path",
+                             suggestion=suggestion)
+        if not self._dialog_open.acquire(blocking=False):
+            raise _FileFault("dialog_open", "a file dialog is already open")
+        try:
+            return show(self.dialogs)
+        except DialogError as ex:
+            raise _FileFault("dialog_failed", str(ex))
+        finally:
+            self._dialog_open.release()
+
+    def _file_state(self, doc) -> dict:
+        host = doc._path
+        home = self._home()
+        return {
+            "path": str(host) if host else None,
+            "name": self._file_name(),
+            "dirty": self.dirty,
+            "folder": str(home),
+            "journal": str(journal_path(
+                host or home / f"{_slug(doc.meta['project_name'])}.rdraft")),
+        }
 
     # --------------------------------------------------------------- state
 
@@ -88,6 +302,8 @@ class WebApp:
                     return "#000000"
             return {
                 "rev": self.rev,
+                "generation": self.generation,
+                "file": self._file_state(doc),
                 "project": doc.meta["project_name"],
                 "spaces": [{"ref": "model", "label": "Model"}] + [
                     {"ref": s.id, "label": s.name} for s in doc.sheets.values()],
@@ -134,10 +350,16 @@ class WebApp:
 
     @staticmethod
     def _alignment_state(doc):
+        from roaddraft.design.horizontal import pis_from_elements
         out = []
         for a in doc.design.alignments.values():
             st = a.stations()
+            # the PIs the GUI edits by: as laid out, or recovered from elements
+            pis = a.pis if a.source == "pis" and a.pis else pis_from_elements(a.elements)
             out.append({
+                "pis": [[float(q.point[0]), float(q.point[1]), float(q.radius)]
+                        for q in pis],
+                "editable": bool(pis),
                 "name": a.name,
                 "begin_station_text": st.begin_text(),
                 "end_station_text": st.end_text(),
@@ -155,11 +377,12 @@ class WebApp:
     # -------------------------------------------------------------- render
 
     def render_png(self, ref: str, dpi: float, frames: bool, bounds=None,
-                   dark=False):
+                   dark=False, aspect=None):
         """Returns (png_bytes, meta) or (None, None). meta carries the
-        pixel->space mapping the GUI needs for click-to-draw."""
+        pixel->space mapping the GUI needs for click-to-draw. ``aspect``
+        shapes a model render to the screen area it fills."""
         key = (ref, self.rev, dpi, frames,
-               tuple(bounds) if bounds else None, dark)
+               tuple(bounds) if bounds else None, dark, aspect)
         with self.lock:
             if key in self._cache:
                 return self._cache[key]
@@ -167,7 +390,7 @@ class WebApp:
             buf = io.BytesIO()
             if ref == "model":
                 fig, drawn = mpl_render.model_figure(doc, bounds=bounds,
-                                                     dark=dark)
+                                                     dark=dark, aspect=aspect)
                 meta = {"kind": "model", "bounds": list(drawn)}
             else:
                 sheet = doc.sheet_by_ref(ref)
@@ -252,8 +475,13 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     bounds = None
             dark = q.get("theme", ["paper"])[0] == "dark"
+            aspect = None  # model space: the shape of the canvas it fills
+            try:
+                aspect = round(min(max(float(q["aspect"][0]), 0.05), 20.0), 4)
+            except (KeyError, ValueError):
+                pass
             data, meta = self.app.render_png(ref, min(max(dpi, 30), 300),
-                                             frames, bounds, dark)
+                                             frames, bounds, dark, aspect)
             if data is None:
                 self._json({"error": f"no space {ref!r}"}, code=404)
             else:
@@ -276,15 +504,25 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         url = urlparse(self.path)
         body = self._body()
-        if url.path == "/api/execute":
+        try:
+            self._post(url.path, body)
+        except Exception as ex:  # an export into a folder it cannot write, say
+            self._json({"ok": False, "error": {
+                "type": "internal_error",
+                "message": f"{type(ex).__name__}: {ex}"}}, code=500)
+
+    def _post(self, path, body):
+        if path == "/api/execute":
             self._json(self.app.execute(body.get("command", ""),
                                         body.get("params") or {}))
-        elif url.path == "/api/query":
+        elif path == "/api/query":
             self._json(self.app.query(body.get("query", ""),
                                       body.get("params") or {}))
-        elif url.path == "/api/line":
+        elif path == "/api/line":
             self._json(self.app.line(body.get("line", ""),
                                      body.get("space") or "model"))
+        elif path == "/api/file":
+            self._json(self.app.file_action(body))
         else:
             self._json({"error": "not found"}, code=404)
 
@@ -308,10 +546,91 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-def create_server(session: Session, host="127.0.0.1", port=8787):
+class _FileFault(Exception):
+    """A File action that could not be done, reported in the bus's error shape."""
+
+    def __init__(self, etype, message, hint=None, **extra):
+        super().__init__(message)
+        self.etype, self.hint, self.extra = etype, hint, extra
+
+    def result(self, action) -> dict:
+        error = {"type": self.etype, "message": str(self), **self.extra}
+        if self.hint:
+            error["hint"] = self.hint
+        return {"ok": False, "name": action, "error": error, "warnings": []}
+
+
+def _cancelled(action) -> dict:
+    return {"ok": False, "name": action, "cancelled": True, "warnings": []}
+
+
+class DialogError(RuntimeError):
+    """A file dialog could not be shown."""
+
+
+class MacDialogs:
+    """The standard macOS Open and Save panels, asked for through osascript.
+    This is how the GUI running in a browser gets real file dialogs; a
+    desktop window would bring its own."""
+
+    _OPEN = ("on run argv",
+             "activate",
+             "set f to choose file with prompt (item 1 of argv) "
+             "default location (POSIX file (item 2 of argv))",
+             "return POSIX path of f",
+             "end run")
+    _SAVE = ("on run argv",
+             "activate",
+             "set f to choose file name with prompt (item 1 of argv) "
+             "default location (POSIX file (item 2 of argv)) "
+             "default name (item 3 of argv)",
+             "return POSIX path of f",
+             "end run")
+
+    def open_path(self, folder) -> Optional[str]:
+        return self._run(self._OPEN, "Open a RoadDraft drawing",
+                         existing_dir(folder))
+
+    def save_path(self, folder, name) -> Optional[str]:
+        return self._run(self._SAVE, "Save the drawing as",
+                         existing_dir(folder), name)
+
+    @staticmethod
+    def _run(script, *args) -> Optional[str]:
+        cmd = ["osascript"]
+        for line in script:
+            cmd += ["-e", line]
+        proc = subprocess.run(cmd + [str(a) for a in args],
+                              capture_output=True, text=True)
+        if proc.returncode == 0:
+            return proc.stdout.strip() or None
+        if "(-128)" in proc.stderr:  # User canceled.
+            return None
+        raise DialogError(proc.stderr.strip() or "osascript failed")
+
+
+def existing_dir(folder) -> Path:
+    """The folder, or its nearest ancestor that exists: a dialog cannot start
+    in a folder that is not there yet."""
+    p = Path(folder)
+    while not p.is_dir() and p != p.parent:
+        p = p.parent
+    return p
+
+
+def default_dialogs():
+    """The file dialogs this machine can show the browser GUI, or None."""
+    if sys.platform == "darwin" and shutil.which("osascript"):
+        return MacDialogs()
+    return None
+
+
+def create_server(session: Session, host="127.0.0.1", port=8787, *,
+                  dialogs=None, drawings_dir=None, out_dir=None):
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
-    server.app = WebApp(session)
+    server.app = WebApp(session, dialogs=dialogs, drawings_dir=drawings_dir,
+                        out_dir=out_dir)
     return server
 
 
@@ -324,7 +643,9 @@ def main(argv=None):
     parser.add_argument("--project", default="Untitled",
                         help="project name for a new document")
     parser.add_argument("--out-dir", default=None,
-                        help="directory for exports (default ./renders)")
+                        help="directory for exports (default: beside the "
+                             "drawing, or ~/Documents/RoadDraft until it is "
+                             "first saved)")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--no-browser", action="store_true",
                         help="don't auto-open the browser")
@@ -339,7 +660,10 @@ def main(argv=None):
     server = None
     for attempt in range(20):
         try:
-            server = create_server(session, port=port + attempt)
+            server = create_server(session, port=port + attempt,
+                                   dialogs=default_dialogs(),
+                                   drawings_dir=DRAWINGS_DIR,
+                                   out_dir=ns.out_dir)
             port = port + attempt
             break
         except OSError:

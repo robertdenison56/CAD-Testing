@@ -180,6 +180,33 @@ def test_render_metadata_headers(server):
         assert resp.headers["X-RD-Size-In"] == "34.0,22.0"
 
 
+def test_model_render_takes_the_shape_of_the_canvas(server):
+    """The GUI sends its canvas's width/height; model space widens to fill
+    it, about the same centre, rather than leaving the canvas half empty."""
+    import io
+
+    from PIL import Image
+    post(server, "/api/execute", {
+        "command": "draw_line",
+        "params": {"space": "model", "start": [0, 0], "end": [1000, 500]}})
+    for aspect in (3.0, 0.5):
+        url = server + f"/render/model.png?dpi=40&aspect={aspect}"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            b = [float(v) for v in resp.headers["X-RD-Bounds"].split(",")]
+            png = Image.open(io.BytesIO(resp.read()))
+        assert abs((b[2] - b[0]) / (b[3] - b[1]) - aspect) < 1e-6
+        assert abs(png.width / png.height - aspect) < 0.02
+        assert b[0] < 0 and b[2] > 1000 and b[1] < 0 and b[3] > 500
+        assert abs((b[0] + b[2]) / 2 - 500) < 1e-6  # same centre
+
+
+def test_fit_aspect_grows_the_short_side_only():
+    from roaddraft.render.mpl import fit_aspect
+    assert fit_aspect((0, 0, 100, 100), 2.0) == (-50, 0, 150, 100)
+    assert fit_aspect((0, 0, 100, 100), 0.5) == (0, -50, 100, 150)
+    assert fit_aspect((0, 0, 200, 100), 2.0) == (0, 0, 200, 100)
+
+
 def test_render_model_bounds_window(server):
     post(server, "/api/execute", {
         "command": "draw_circle",
@@ -365,8 +392,21 @@ def test_gui_wires_grips():
     assert "function gripsFor(" in html and "function gripAt(" in html
     assert "applyProp(active.grip.patch(pt))" in html
     assert "gripGhostSVG(S.grip)" in html and "out += gripsSVG();" in html
-    assert '#ovl .grip.hot' in html and 'square(active.at, "grip hot")' in html
+    assert '#ovl .grip.hot' in html
+    assert 'shape(active.grip)(active.at, "grip hot")' in html  # keeps its shape
     assert "S.grip.hot = true" in html                  # click, then click
     assert "orthoFrom(S.grip.grip.pt, pt, ev)" in html  # ORTHO/Shift apply
     assert "(adds a vertex)" in html                    # polyline midpoints
     assert "sel.reference" in html                      # never on a reference
+
+
+def test_gui_wires_alignment_grips():
+    """A drawn alignment selects the alignment, whose grips edit its PIs: one
+    modify_alignment that redraws the centerline and allows angle points."""
+    html = (STATIC_DIR / "index.html").read_text()
+    assert "function alignmentGrips(" in html and "function alignGeom(" in html
+    assert 'anchor.kind === "element"' in html and "selectAlignment(" in html
+    assert "editAlignment(S.selected.alignment, active.grip.patch(pt))" in html
+    assert "angle_points: true, redraw: true" in html
+    assert "renderAlignmentProps(panel)" in html       # the PI table
+    assert "angle_points: true } });" in html          # created by PI, curves later

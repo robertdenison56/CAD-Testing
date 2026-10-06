@@ -31,7 +31,9 @@ def test_state_includes_alignments_and_profiles():
     a = state["alignments"][0]
     assert set(a) == {"name", "begin_station_text", "end_station_text", "station_range",
                       "length", "curves", "tangents", "equations", "source", "profiles",
-                      "drawn"}
+                      "drawn", "pis", "editable"}
+    assert a["editable"] is True and len(a["pis"]) == 3  # BEGIN, the curve's PI, END
+    assert a["pis"][0][2] == 0 and a["pis"][1][2] > 0 and a["pis"][2][2] == 0
     assert a["name"] == "ALIGN-1" and a["curves"] == 1 and a["tangents"] == 2
     assert a["equations"] == 0 and a["source"] == "pis" and a["profiles"] == ["PROF-1"]
     assert a["drawn"] is False

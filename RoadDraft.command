@@ -1,9 +1,13 @@
 #!/bin/zsh
-# Double-clickable launcher for the RoadDraft GUI (macOS).
-# Starts the local web app and opens it in your browser.
+# Double-clickable launcher for RoadDraft (macOS): opens the app in a window
+# of its own. `RoadDraft.command --browser` opens the GUI in your browser.
 cd "$(dirname "$0")"
-if [ ! -x .venv/bin/roaddraft-web ]; then
-  echo "First run: creating environment..."
-  python3 -m venv .venv && .venv/bin/pip install -q -e ".[dev]"
+if [ ! -x .venv/bin/roaddraft-desktop ]; then
+  echo "First run: setting up the environment..."
+  python3 -m venv .venv && .venv/bin/pip install -q -e ".[dev,desktop]"
 fi
-exec .venv/bin/roaddraft-web "$@"
+if [ "$1" = "--browser" ]; then
+  shift
+  exec .venv/bin/roaddraft-web "$@"
+fi
+exec .venv/bin/roaddraft-desktop "$@"

@@ -9,8 +9,19 @@ Core structure mirrors production CAD:
 Every mutation goes through the command bus as a serializable command; the full
 document state is always available as JSON. See RoadDraft_Build_Plan.md.
 """
-from roaddraft.api.session import Session
-from roaddraft.document.document import Document
-
 __version__ = "0.1.0"
 __all__ = ["Session", "Document", "__version__"]
+
+
+def __getattr__(name):
+    """``Session`` and ``Document`` load on first use, not with the package:
+    Session brings in matplotlib, and the desktop app has to choose
+    matplotlib's cache folder before anything imports it."""
+    if name == "Session":
+        from roaddraft.api.session import Session as value
+    elif name == "Document":
+        from roaddraft.document.document import Document as value
+    else:
+        raise AttributeError(f"module 'roaddraft' has no attribute {name!r}")
+    globals()[name] = value
+    return value
