@@ -45,7 +45,8 @@ def rows(s: Session, **find):
 
 def test_the_six_are_wired_in_and_start_from_real_documents(tmp_path):
     assert len(TIER2_PROBES) == 6
-    assert tasks.PROBES == tasks.FIND_PROBES + drafting.DRAFT_PROBES + TIER2_PROBES
+    assert tasks.PROBES[:len(tasks.FIND_PROBES) + len(drafting.DRAFT_PROBES) + 6] == \
+        tasks.FIND_PROBES + drafting.DRAFT_PROBES + TIER2_PROBES
     assert len({p.id for p in tasks.PROBES}) == len(tasks.PROBES)
     for probe in TIER2_PROBES:
         assert "tier2" in probe.tags and probe.start in fixture.START

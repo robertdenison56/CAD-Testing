@@ -280,7 +280,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     instructions = (
         f"Draft plan sheet {sheet_name} ({size}, {scale_text}) showing alignment "
         f"{ALIGNMENT_NAME} in full: draw the alignment on {spec['layers']['alignment']}, "
-        f"station ticks and labels every {spec['stationing']['interval_ft']} ft, PC/PT labels, "
+        f"station ticks and labels every {spec['stationing']['interval_ft']} ft, BC/EC labels, "
         f"a bearing on every tangent, a C-n callout at every mid-curve, "
         f"{'the station equation label, ' if align.equations else ''}a curve data table on the "
         f"sheet, a north arrow, and a filled title block. Use anchored labels (place_label), "

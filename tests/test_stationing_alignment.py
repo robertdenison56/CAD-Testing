@@ -27,7 +27,7 @@ def lines(s):
     return [e for e in s.doc.model_entities.values() if isinstance(e, Line)]
 
 
-def test_alignment_mode_A_matches_entity_mode_labels_16_PC_PT():
+def test_alignment_mode_A_matches_entity_mode_labels_16_BC_EC():
     ent, ids = centerline_session()
     r_ent = ent.execute("annotate_stationing", {"space": "model", "path_ids": ids,
                                                 "begin_station": 1000.0, "interval": 100.0})
@@ -36,7 +36,7 @@ def test_alignment_mode_A_matches_entity_mode_labels_16_PC_PT():
                                                 "interval": 100.0})
     assert r_ali["ok"], r_ali
     assert r_ali["message"] == ("stationing annotated in model space from ALIGN-1: 16 ticks @ "
-                                "100 ft, 2 PC/PT labels, 0 equation labels, stations 10+00.00 "
+                                "100 ft, 2 BC/EC labels, 0 equation labels, stations 10+00.00 "
                                 "to 25+18.88")
     assert len(r_ali["created"]) == len(r_ent["created"]) == 34
     ent_texts = sorted(texts(ent), key=lambda t: t.id)
@@ -70,7 +70,7 @@ def test_alignment_mode_every_tick_and_label_anchored_entity_mode_none():
             assert e.layer == "0"
             assert e.anchor["kind"] in ("station", "pc", "pt")
             assert e.anchor["content_auto"] is True and e.anchor["viewport"] is None
-    pc = next(e for e in texts(ali) if e.content.startswith("PC "))
+    pc = next(e for e in texts(ali) if e.content.startswith("BC "))
     assert pc.anchor["ref"] == "PC-1" and pc.anchor["side"] == "right"
     sta = next(e for e in texts(ali) if e.content == "13+00.00")
     assert sta.anchor["ref"] == "13+00.00" and sta.anchor["side"] == "left"
@@ -88,7 +88,7 @@ def test_alignment_mode_equation_2000_2500_16_ticks_labels_19_25_30_not_20_and_E
     eq = next(t for t in texts(s) if t.anchor["kind"] == "equation")
     assert eq.content == "STA 20+00.00 BK = STA 25+00.00 AH" and eq.anchor["ref"] == "EQ-1"
     assert eq.anchor["label_offset"] == 24.0
-    assert "PT 25+18.88" in contents
+    assert "EC 25+18.88" in contents
     r = s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1",
                                           "include_equations": False})
     assert r["ok"] and "0 equation labels" in r["message"]

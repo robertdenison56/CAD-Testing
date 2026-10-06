@@ -74,7 +74,7 @@ profile, its drainage plan and its delineation plan can be compared for the same
 
 ## What the PPM says about the D1 deliverable
 
-The D1 task is a single plan sheet: alignment linework, station ticks and labels, PC/PT labels,
+The D1 task is a single plan sheet: alignment linework, station ticks and labels, BC/EC labels,
 tangent bearings, a curve table, title block, north arrow (`DRAFTING_SPEC_V1`, eval plan §3.4).
 Each row cites where the PPM states the corresponding requirement.
 
@@ -85,7 +85,7 @@ Each row cites where the PPM states the corresponding requirement.
 | `scale_text_format`, D1-10 | `SCALE: 1" = 50'` with a colon, centered below the sheet name, TX=8.75 FT=3 WT=2 on border_INSIDE-BORDER-anno | p. 2-89 (pdf 118); ppm-examples pdf 63 |
 | `north_arrow`, D1-11 | standard north arrow cell AC=NARR on pp_PRESENTATION; preferred location upper right of the sheet within the clip frame | p. 2-89 (pdf 118); ppm-examples pdf 63 |
 | `stationing`, D1-02, D1-03 | 100 ft per station; **full annotation at 500-ft stations (multiples of 5), a single digit (the ones column) at 100-ft stations, no "+00" on whole stations**; precise stations at equations, BCs, ECs and POCs to 0.01 ft; **ticks centered on the alignment line, 7.0 ft long at 1"=50' and 14.0 ft at 1"=100' (0.14 in on paper), no minor ticks; annotation below the line, about half the text height below the tick**, moved further down or above only to avoid a feature | p. 2-8 (pdf 21) "Stationing"; ppm-examples pdf 63; drawn on pdf 45 |
-| `labels.pc_pt`, D1-04 | curve points are labeled **BC / EC** (begin / end of curve), station plus line designation, reading bottom to top along a line perpendicular to the alignment: `"TB1" 644+45.25 EC` | p. 2-4 (pdf 17) "Placement of text"; ppm-examples pdf 45 |
+| `labels.pc_pt`, D1-04 | curve points are labeled **BC / EC** (begin / end of curve), station plus line designation, reading bottom to top along a line perpendicular to the alignment: `"TB1" 644+45.25 EC`. draft-v1 and the engine letter BC/EC and read square text bottom to top since 2026-10-05 | p. 2-4 (pdf 17) "Placement of text"; ppm-examples pdf 45 |
 | `labels.bearing`, D1-05 | bearings for all alignments in degree-minute-second plus direction; **bearing and distance of every tangent** on all stationed lines, typically above the alignment line: `N 04°56'15" E 426.51'` | p. 2-6 (pdf 19) "Bearings"; p. 2-89 (pdf 118); ppm-examples pdf 45 |
 | `labels.mc`, `curve_table`, D1-06 | alignment data for every stationing line must be shown: equations, tangent distances and bearings, stations of all curve points, curve data. A **CURVE DATA** table with columns **No., R, Δ, T, L**; curve numbers consecutive per station line, never restarted on the next sheet, never duplicated; on the plan each curve carries its circled number. Northing/easting of BCs and ECs optional in the table | p. 2-85 (pdf 114); checklist p. 2-90 (pdf 119); ppm-examples pdf 45, 63 |
 | `labels.equation` | station equations are required plan content | p. 2-85 (pdf 114); p. 2-89 (pdf 118) |

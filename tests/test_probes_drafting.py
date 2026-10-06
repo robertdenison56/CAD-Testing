@@ -51,7 +51,9 @@ def copy_by_hand(s: Session, ids, layer: str):
 def test_every_drafting_probe_is_wired_in_and_starts_from_a_real_document(tmp_path):
     assert len(drafting.DRAFT_PROBES) == 8
     from roaddraft.probes import tier2
-    assert tasks.PROBES == tasks.FIND_PROBES + drafting.DRAFT_PROBES + tier2.TIER2_PROBES
+    from roaddraft.probes import tier3
+    assert tasks.PROBES == (tasks.FIND_PROBES + drafting.DRAFT_PROBES + tier2.TIER2_PROBES
+                            + tier3.TIER3_PROBES)
     assert len({p.id for p in tasks.PROBES}) == len(tasks.PROBES)
     for probe in drafting.DRAFT_PROBES:
         assert probe.id.startswith("draft-") and "draft" in probe.tags

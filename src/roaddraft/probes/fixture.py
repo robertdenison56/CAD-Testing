@@ -12,8 +12,8 @@ from typing import Tuple
 
 from roaddraft.api.session import Session
 
-#: ~4,600 ft of two-lane highway: tangent, 1,200 ft curve right, tangent,
-#: 900 ft curve left, tangent. Long enough to need three sheets at 1"=50'.
+#: ~4,600 ft of two-lane highway: tangent, 1,200 ft curve left, tangent,
+#: 900 ft curve right, tangent. Long enough to need three sheets at 1"=50'.
 PIS = [
     [1000.0, 1000.0],
     [2600.0, 1000.0, 1200.0],
@@ -42,11 +42,28 @@ BLANK_FILE = "DESIGN.model.rdoc.json"
 CENTERLINE_FILE = "SR-100.centerline.rdoc.json"
 INTERSECTION_FILE = "Main-Cross.model.rdoc.json"
 FLAWED_FILE = "SR-100.flawed.rdoc.json"
+EQ_MODEL_FILE = "SR-100-eq.model.rdoc.json"
+EQ_SHEET_FILE = "SR-100-eq.sheets.rdoc.json"
+ROW_MODEL_FILE = "SR-100-row.model.rdoc.json"
+ROW_SHEET_FILE = "SR-100-row.sheets.rdoc.json"
+QA_FILE = "SR-100.qa.sheets.rdoc.json"
+L2_SHEET_FILE = "SR70-Bear-Creek.sheets.rdraft"
 
 #: the document an agent is handed, by Probe.start
 START = {"sheets": SHEET_FILE, "model": MODEL_FILE, "blank": BLANK_FILE,
          "centerline": CENTERLINE_FILE, "intersection": INTERSECTION_FILE,
-         "flawed": FLAWED_FILE}
+         "flawed": FLAWED_FILE, "sheets-eq": EQ_SHEET_FILE, "sheets-row": ROW_SHEET_FILE,
+         "sheets-qa": QA_FILE, "l2": L2_SHEET_FILE}
+
+#: the station equation the sheets-eq design carries, on T-2 (sheet C-102)
+EQUATION = {"back": "35+00", "ahead": "35+50"}
+
+#: right of way for sheets-row, as raw linework on V-ROW (no anchor records,
+#: the way deed lines arrive): 50 ft each side, except a take on the right
+#: that jogs out to 80 ft between 30+00 and 36+00
+ROW = {"layer": "V-ROW", "left": -50.0, "right": 50.0, "jog": 80.0,
+       "jog_from": 3000.0, "jog_to": 3600.0}
+ROW_LAYER = {"name": "V-ROW", "color": "magenta", "linetype": "phantom", "lineweight_mm": 0.35}
 
 #: MAIN ST / CROSS AVE for the tier-2 probes: two straight alignments crossing
 #: at right angles, curb faces at constant offsets, 50 ft curb returns. MAIN-ST
@@ -71,29 +88,78 @@ def check(result: dict) -> dict:
     return result
 
 
-def build_model(out: Path) -> Path:
-    """The design: alignment, pavement edges, shoulders. No sheets, no labels."""
+def build_model(out: Path, name: str = MODEL_FILE, equations=(), row: bool = False) -> Path:
+    """The design: alignment, pavement edges, shoulders. No sheets, no labels.
+    ``equations`` gives SR-100 station equations; ``row`` adds the right of way."""
     s = Session(project_name="SR-100 Widening", out_dir=out)
     for layer in LAYERS:
         s.execute("create_layer", layer)
     check(s.execute("create_alignment", {"name": ALIGNMENT, "begin_station": BEGIN_STATION,
-                                         "pis": PIS, "description": "SR-100 mainline"}))
+                                         "pis": PIS, "description": "SR-100 mainline",
+                                         **({"equations": list(equations)} if equations else {})}))
     check(s.execute("draw_alignment", {"alignment": ALIGNMENT, "layer": "V-ALIGN-CNTR"}))
     check(s.execute("draw_offset", {"alignment": ALIGNMENT, "offsets": EDGE_OFFSETS,
                                     "layer": "V-ROAD-EOP"}))
     check(s.execute("draw_offset", {"alignment": ALIGNMENT, "offsets": SHOULDER_OFFSETS,
                                     "layer": "V-ROAD-SHLD"}))
-    path = out / MODEL_FILE
+    if row:
+        check(s.execute("create_layer", ROW_LAYER))
+        for piece in row_pieces(s.doc.design.alignments[ALIGNMENT]):
+            if piece["kind"] == "line":
+                check(s.execute("draw_line", {"space": "model", "layer": ROW["layer"],
+                                              "start": piece["start"], "end": piece["end"]}))
+            else:
+                check(s.execute("draw_arc", {"space": "model", "layer": ROW["layer"],
+                                             "center": piece["center"], "radius": piece["radius"],
+                                             "start_angle_deg": piece["start_angle_deg"],
+                                             "end_angle_deg": piece["end_angle_deg"]}))
+    path = out / name
     check(s.query("save_document", {"path": str(path)}))
     return path
 
 
-def build_sheets(out: Path, model_path: Path) -> Path:
+def row_pieces(alignment) -> list:
+    """The right of way of sheets-row, piece by piece in stationing order,
+    left line first: ``kind`` line|arc, ``side`` L|R, the start station of
+    the piece, and its geometry (ends, or centre/radius/angles CCW)."""
+    from roaddraft.design.offsets import offset_pieces
+    begin, end = alignment.begin_station, alignment.end_station
+    R = ROW
+    out = []
+
+    def add(pieces, side):
+        for p in pieces:
+            d = {"side": side, "station": float(p.station), "offset": float(p.offset),
+                 "length": float(p.length)}
+            if p.kind == "tangent":
+                d.update(kind="line", start=list(p.start), end=list(p.end))
+            else:
+                d.update(kind="arc", center=list(p.center), radius=float(p.radius),
+                         start_angle_deg=float(p.start_angle_deg),
+                         end_angle_deg=float(p.end_angle_deg), delta_deg=float(p.delta_deg))
+            out.append(d)
+
+    def jog(station, a, b):
+        start = alignment.station_to_xy(station, a)[0]
+        stop = alignment.station_to_xy(station, b)[0]
+        out.append({"side": "R", "kind": "line", "station": float(station), "offset": None,
+                    "length": abs(b - a), "start": list(start), "end": list(stop)})
+
+    add(offset_pieces(alignment, R["left"]), "L")
+    add(offset_pieces(alignment, R["right"], (begin, R["jog_from"])), "R")
+    jog(R["jog_from"], R["right"], R["jog"])
+    add(offset_pieces(alignment, R["jog"], (R["jog_from"], R["jog_to"])), "R")
+    jog(R["jog_to"], R["jog"], R["right"])
+    add(offset_pieces(alignment, R["right"], (R["jog_to"], end)), "R")
+    return out
+
+
+def build_sheets(out: Path, model_path: Path, name: str = SHEET_FILE) -> Path:
     """The plans: three sheets over the referenced model, title blocks empty."""
     s = Session(project_name="SR-100 Widening", out_dir=out)
     for layer in LAYERS:
         s.execute("create_layer", layer)
-    path = out / SHEET_FILE
+    path = out / name
     # Save first so the relative reference resolves from the sheet file's own
     # folder, the way it will when the file is opened again later.
     check(s.query("save_document", {"path": str(path)}))
@@ -249,6 +315,39 @@ def build_flawed(out: Path) -> Path:
     return path
 
 
+def build_qa(out: Path) -> Path:
+    """The SR-100 plan set with its alignment data lettered -- the scripted
+    solutions of tier 3's line-data, curve-points and curve-data -- and five
+    mistakes planted in it (``tier3.QA_PLANTS``), for qa-alignment-data."""
+    from roaddraft.probes import tier3
+    model_path, sheet_path = build(out)
+    s = Session.load(sheet_path, out_dir=out)
+    tier3.letter_alignment_data(s)
+    tier3.plant_qa_errors(s)
+    path = out / QA_FILE
+    check(s.query("save_document", {"path": str(path)}))
+    return path
+
+
+def build_l2(out: Path) -> Path:
+    """Caltrans sheet L-2 with its alignment data stripped: no tangent bearings
+    or BC/EC/PCC stations in the design file (layer V-ANNO-ALGN), and no curve
+    bubbles, curve data table or match lines on the sheet (S-ANNO-CURV,
+    S-ANNO-MTCH). Stationing, callouts, notes and existing ground stay."""
+    from roaddraft.probes.l2 import build_model as l2_model, build_sheet as l2_sheet
+    model_path = l2_model.build(out, quiet=True)
+    sheet_path, _session = l2_sheet.build(out, quiet=True)
+    for path, layers in ((model_path, {"V-ANNO-ALGN"}), (sheet_path, {"S-ANNO-CURV", "S-ANNO-MTCH"})):
+        s = Session.load(path, out_dir=out)
+        ids = [eid for eid, e in s.doc.model_entities.items() if e.layer in layers]
+        for sheet in s.doc.sheets.values():
+            ids += [eid for eid, e in sheet.entities.items() if e.layer in layers]
+        if ids:
+            check(s.execute("delete_entities", {"ids": ids}))
+        check(s.query("save_document", {"path": str(path)}))
+    return Path(sheet_path)
+
+
 def start_document(out: Path, start: str = "sheets") -> Path:
     """Build the fixture under ``out`` and return the document a probe with
     this ``start`` hands to the agent."""
@@ -262,6 +361,15 @@ def start_document(out: Path, start: str = "sheets") -> Path:
         return build_intersection(out)
     if start == "flawed":
         return build_flawed(out)
+    if start == "sheets-eq":
+        return build_sheets(out, build_model(out, EQ_MODEL_FILE, equations=[EQUATION]),
+                            EQ_SHEET_FILE)
+    if start == "sheets-row":
+        return build_sheets(out, build_model(out, ROW_MODEL_FILE, row=True), ROW_SHEET_FILE)
+    if start == "sheets-qa":
+        return build_qa(out)
+    if start == "l2":
+        return build_l2(out)
     if start not in START:
         raise KeyError(f"no start document {start!r}; one of {sorted(START)}")
     model_path, sheet_path = build(out)
@@ -277,6 +385,8 @@ def build(out: Path) -> Tuple[Path, Path]:
 
 
 __all__ = ["START", "BLANK_FILE", "CENTERLINE_FILE", "INTERSECTION_FILE", "FLAWED_FILE",
+           "EQ_MODEL_FILE", "EQ_SHEET_FILE", "ROW_MODEL_FILE", "ROW_SHEET_FILE", "QA_FILE",
+           "L2_SHEET_FILE", "EQUATION", "ROW", "row_pieces", "build_qa", "build_l2",
            "INTERSECTION", "FLAWS", "corner_geometry", "build_intersection", "build_flawed",
            "build_blank", "build_centerline",
            "start_document", "PIS", "BEGIN_STATION", "EDGE_OFFSETS", "SHOULDER_OFFSETS", "ALIGNMENT",

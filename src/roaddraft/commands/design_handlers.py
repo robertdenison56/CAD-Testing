@@ -681,7 +681,7 @@ def annotate_stationing_alignment(doc: Document, p: dict):
                                "valign": item.valign, "anchor": item.anchor_record(None),
                                "annotative": anno.text_record(doc, text_h, item.label_offset)})
     return (f"stationing annotated in model space from {align.name}: {plan.n_ticks} ticks @ "
-            f"{interval:g} ft, {plan.n_junctions} PC/PT labels, {plan.n_equations} equation "
+            f"{interval:g} ft, {plan.n_junctions} BC/EC labels, {plan.n_equations} equation "
             f"labels, stations {plan.begin_text} to {plan.end_text}",
             _diff(created=created), [])
 

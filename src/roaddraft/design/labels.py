@@ -7,6 +7,12 @@ tick/label plan an alignment-mode ``annotate_stationing`` materialises; and
 ``curve_table_rows`` builds the curve data table.  Because the task
 generator's ground truth calls these same functions, the reference solution
 matches the truth exactly.
+
+Wording follows the Caltrans plans (PPM 2-2.5): the beginning and end of a
+curve are lettered BC and EC, though the design model and its anchors call the
+same points PC and PT.  Text set square to the line (``rotation:
+"perpendicular"``) reads bottom to top, as BC and EC stations do on a layout
+(PPM 2-1.2); text along the line stays upright.
 """
 from __future__ import annotations
 
@@ -38,6 +44,9 @@ MODEL_TEXT_HEIGHT = 8.0
 MODEL_TICK_HALF = 10.0
 SHEET_LABEL_OFFSET = 0.32
 SHEET_TEXT_HEIGHT = 0.10
+#: what a plan letters at each curve point: the design's PC and PT are the
+#: Caltrans BC and EC
+CURVE_POINT_WORDS = {"pc": "BC", "pt": "EC", "pi": "PI", "pcc": "PCC", "prc": "PRC"}
 
 
 @dataclass
@@ -115,6 +124,11 @@ def upright(angle_deg: float) -> float:
     return geo.upright(angle_deg)
 
 
+def reading_up(angle_deg: float) -> float:
+    """Fold a rotation into (-45, 135]: text square to a line reads bottom to top."""
+    return geo.reading_up(angle_deg)
+
+
 def offset_point(p: Sequence[float], angle_deg: float, dist: float) -> List[float]:
     a = math.radians(angle_deg)
     return [p[0] + dist * math.cos(a), p[1] + dist * math.sin(a)]
@@ -135,8 +149,8 @@ def label_content(alignment: Alignment, ap: AnchorPoint, kind: str) -> str:
     st = alignment.stations()
     if kind == "station":
         return st.format(ap.station)
-    if kind in ("pc", "pt", "pi", "pcc", "prc"):
-        return f"{kind.upper()} {st.format(ap.station)}"
+    if kind in CURVE_POINT_WORDS:
+        return f"{CURVE_POINT_WORDS[kind]} {st.format(ap.station)}"
     if kind == "mc":
         return f"C-{ap.curve_index}"
     if kind == "bearing":
@@ -238,7 +252,7 @@ def compile_label(alignment: Alignment, ap: AnchorPoint, kind: str, side: Option
     if rotation == "along":
         rot = upright(direction)
     elif rotation == "perpendicular":
-        rot = upright(direction + 90.0)
+        rot = reading_up(direction + 90.0)
     else:
         rot = 0.0
     return LabelSpec(kind=kind, alignment=alignment.name, ref=ap.ref, station=float(ap.station),
@@ -260,7 +274,7 @@ def sheet_pose(spec: LabelSpec, transform, viewport_rotation_deg: float,
     if spec.rotation == "along":
         rot = upright(spec.direction_deg + twist)
     elif spec.rotation == "perpendicular":
-        rot = upright(spec.direction_deg + twist + 90.0)
+        rot = reading_up(spec.direction_deg + twist + 90.0)
     else:
         rot = 0.0
     return position, rot
@@ -273,7 +287,7 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0, tick_half: fl
                     label_offset: float = 16.0, include_pc_pt: bool = True,
                     include_equations: bool = True,
                     station_range: Optional[Tuple[float, float]] = None) -> StationingPlan:
-    """Ticks + labels for every interval station (per region), PC/PT/PCC/PRC
+    """Ticks + labels for every interval station (per region), BC/EC/PCC/PRC
     labels, and equation labels.  ``station_range`` is in RAW stations."""
     if interval <= 0:
         raise DesignError("interval must be > 0")
@@ -337,7 +351,7 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0, tick_half: fl
                 kind=jk, alignment=alignment.name, ref=ref, station=raw, offset=0.0,
                 region=region, anchor_point=list(pt), direction_deg=direction, side="right",
                 label_offset=float(label_offset), rotation="along",
-                content=f"{jk.upper()} {st.format(raw)}", content_auto=True,
+                content=f"{CURVE_POINT_WORDS[jk]} {st.format(raw)}", content_auto=True,
                 position=offset_point(pt, direction - 90.0, label_offset),
                 rotation_deg=upright(direction), halign="center", valign="top"))
             n_junctions += 1
@@ -369,8 +383,8 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0, tick_half: fl
 CURVE_COLUMNS = OrderedDict([
     ("curve", ("CURVE", 0.8)),
     ("pi_sta", ("PI STA", 1.1)),
-    ("pc_sta", ("PC STA", 1.1)),
-    ("pt_sta", ("PT STA", 1.1)),
+    ("pc_sta", ("BC STA", 1.1)),
+    ("pt_sta", ("EC STA", 1.1)),
     ("delta", ("DELTA", 1.3)),
     ("direction", ("DIR", 0.6)),
     ("radius", ("R", 1.0)),
@@ -430,7 +444,8 @@ def curve_table_rows(alignment: Alignment, columns: Optional[Sequence[str]] = No
 __all__ = [
     "LABEL_KINDS", "ROTATION_MODES", "SIDES", "DEFAULT_SIDE", "DEFAULT_VALIGN",
     "MODEL_LABEL_OFFSET", "MODEL_TEXT_HEIGHT", "MODEL_TICK_HALF", "SHEET_LABEL_OFFSET",
-    "SHEET_TEXT_HEIGHT", "LabelSpec", "TickSpec", "StationingPlan", "upright", "offset_point",
+    "SHEET_TEXT_HEIGHT", "CURVE_POINT_WORDS", "LabelSpec", "TickSpec", "StationingPlan",
+    "upright", "reading_up", "offset_point",
     "label_content", "compile_label", "sheet_pose", "stationing_plan", "CURVE_COLUMNS",
     "DEFAULT_CURVE_COLUMNS", "curve_table_rows",
 ]

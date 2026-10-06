@@ -80,8 +80,14 @@ def test_gap_2200_raises(gap):
         gap.to_raw(2200)
     assert str(ei.value) == ("station 22+00.00 does not exist on this alignment "
                              "(gap between 20+00.00 BK and 25+00.00 AH)")
-    with pytest.raises(DesignError):
+    with pytest.raises(DesignError) as ei:
         gap.to_raw(2000)  # the BK reading itself is not a display station (equation reads AHEAD)
+    # ...but the fault names the point and how to reach it, not "does not exist"
+    assert str(ei.value) == ("station 20+00.00 is the back reading of the equation 20+00.00 BK = "
+                             "25+00.00 AH; the equation point is read by its ahead station, "
+                             "25+00.00")
+    assert "region=1" in ei.value.hint and "EQ-1" in ei.value.hint
+    assert gap.to_raw(2000, region=1) == pytest.approx(2000, abs=1e-9)
 
 
 def test_overlap_1800_ambiguous_1900_regions_1_2(overlap):

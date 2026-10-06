@@ -6,7 +6,7 @@ line, the UPRR, the right of way -- carries no design data anywhere, so it is
 read out of the published PDF's vector content and written into the model file
 as ordinary survey linework, which is where it belongs.
 
-Writes existing.json: the survey linework as {layer: [polyline, ...]} plus the
+Writes existing.json, beside the builders in roaddraft.probes.l2: the survey linework as {layer: [polyline, ...]} plus the
 contour elevation labels, all in model-space feet.
 
     python extract_existing.py --pdf <plan.pdf> [--out existing.json]
@@ -15,13 +15,15 @@ import argparse
 import json
 import math
 import re
-import sys
 import zlib
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import sheet_content as SHEET                                   # noqa: E402
-import sr70_geometry as G                                       # noqa: E402
+from roaddraft.probes import l2                                  # noqa: E402
+from roaddraft.probes.l2 import sheet_content as SHEET          # noqa: E402
+from roaddraft.probes.l2 import sr70_geometry as G              # noqa: E402
+
+#: the build reads the survey from beside the builders, in the package
+EXISTING = Path(l2.__file__).parent / "existing.json"
 
 TOKEN = re.compile(r'/[^\s/\[\]<>(){}]+|<<|>>|\[|\]|-?\d*\.?\d+|[A-Za-z\'"*]+')
 PT_PER_IN = 72.0
@@ -391,7 +393,7 @@ def classify(lw, dashed, pts, cl, tips=(), filled=False):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pdf", required=True)
-    ap.add_argument("--out", default=str(Path(__file__).parent / "existing.json"))
+    ap.add_argument("--out", default=str(EXISTING))
     ap.add_argument("--tol", type=float, default=0.004,
                     help="simplify tolerance, sheet inches (0.004 in = 0.2 ft)")
     args = ap.parse_args(argv)

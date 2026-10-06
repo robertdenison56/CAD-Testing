@@ -196,6 +196,32 @@ def test_clip_validation_and_replay(tmp_path):
     assert Session.replay_journal(journal).doc.to_dict() == s.doc.to_dict()
 
 
+def test_a_journal_replays_through_a_relative_reference_from_any_folder(tmp_path,
+                                                                      monkeypatch):
+    """A command that reads through a reference (a callout aimed at a referenced
+    element) replays wherever the replay runs: relative reference paths resolve
+    from the journal's folder, where it is kept beside its document."""
+    make_basefile(tmp_path / "base.rdoc.json")
+    s = Session(out_dir=str(tmp_path))
+    s.query("save_document", {"path": str(tmp_path / "host.rdoc.json")})
+    assert s.execute("attach_reference", {"name": "SURVEY", "path": "base.rdoc.json"})["ok"]
+    r = s.execute("place_callout", {"space": "model", "target_entity": "SURVEY:CI-001",
+                                    "position": [1600, 1050], "content": "TREE",
+                                    "height": 5})
+    assert r["ok"], r
+    journal = tmp_path / "host.jsonl"
+    s.query("save_journal", {"path": str(journal)})
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert Session.replay_journal(journal).doc.to_dict() == s.doc.to_dict()
+    # a journal kept away from its document is told where the document is
+    moved = elsewhere / "host.jsonl"
+    moved.write_text(journal.read_text())
+    replayed = Session.replay_journal(moved, home=tmp_path / "host.rdoc.json")
+    assert replayed.doc.to_dict() == s.doc.to_dict()
+
+
 # ------------------------------------------------------------ paths
 
 

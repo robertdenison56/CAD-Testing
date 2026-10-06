@@ -11,20 +11,17 @@ Every callout names a station and an offset on "SR70", and the leader is aimed
 at the point the *referenced* design model puts there -- so the arrow lands on
 the geometry the text describes rather than on a typed coordinate.
 
-    python build_sheet.py [--out DIR]
+    python -m roaddraft.probes.l2.build_sheet --out DIR   (after build_model)
 """
 import argparse
 import json
 import math
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import sheet_content as C                                       # noqa: E402
-import sr70_geometry as G                                       # noqa: E402
-from roaddraft import Session                                   # noqa: E402
+from roaddraft import Session
+from roaddraft.probes.l2 import sheet_content as C
+from roaddraft.probes.l2 import sr70_geometry as G
 
-OUT = Path(__file__).resolve().parents[1] / "output"
 SHEET_NAME = "SR70-Bear-Creek.sheets"
 MODEL_FILE = "SR70-Bear-Creek.model.rdraft"
 SHEET = "L-2"
@@ -39,7 +36,7 @@ LAYERS = [
 ]
 
 
-def build(out_dir=OUT, quiet=False):
+def build(out_dir, quiet=False):
     out_dir = Path(out_dir)
     session = Session(project_name="03-But-70 Bear Creek Bridge Replacement",
                       out_dir=out_dir)
@@ -273,7 +270,7 @@ def _road_below(ask, x, y):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     build(Path(args.out))
     return 0

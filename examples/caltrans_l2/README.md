@@ -64,20 +64,27 @@ sheet-up, which is exactly where the plan's own north arrow points.
 
 ## Files
 
+The builders live in the package, `src/roaddraft/probes/l2/`, because the tier-3 probes
+start from this sheet (fixture start `l2`); the scripts here drive them.
+
 | | |
 |---|---|
-| `sr70_geometry.py` | the design data read off the sheet, and the sheet↔model transform |
-| `sheet_content.py` | what sheet L-2 says and where it says it |
-| `extract_existing.py` | digitises the existing ground out of the published PDF |
-| `build_model.py` | builds the design model file |
-| `build_sheet.py` | builds the plan sheet file over it |
-| `build_all.py` | all of the above, then PNG / PDF / DXF |
+| `roaddraft/probes/l2/sr70_geometry.py` | the design data read off the sheet, and the sheet↔model transform |
+| `roaddraft/probes/l2/sheet_content.py` | what sheet L-2 says and where it says it |
+| `roaddraft/probes/l2/build_model.py` | builds the design model file |
+| `roaddraft/probes/l2/build_sheet.py` | builds the plan sheet file over it |
+| `roaddraft/probes/l2/existing.json` | the digitised existing ground the model file is built with |
+| `extract_existing.py` | digitises the existing ground out of the published PDF into `existing.json` |
+| `build_all.py` | both files, then PNG / PDF / DXF |
+| `seed_variants.py` | the sheet with known errors seeded: each variant's sheet file, its PDF and the truth |
 
 ## Seeded variants
 
-`seed_variants.py` builds the sheet with known errors in it and writes the truth beside each
-PDF (`examples/output/seeded/`): `labels` edits the text while the leader stays on the true
-point, `tips` aims the leader somewhere else while the text stays, `clean` changes nothing.
+`seed_variants.py` builds the sheet with known errors in it and keeps each variant as its own
+RoadDraft document, `L-2-<variant>.sheets.rdraft` beside the model file it references, with its
+PDF and the truth beside it (`examples/output/seeded/`): `labels` edits the text while the
+leader stays on the true point, `tips` aims the leader somewhere else while the text stays,
+`clean` changes nothing.
 The truth files are in the stacheck engine's `SeedList` format (StaOffsetChecker/engine), one
 entry per wrong callout with labeled-minus-drawn in feet, so the engine can be scored against
 them with exact truth: `stacheck seed L-2-tips.pdf --seeds L-2-tips.seeds.json`.

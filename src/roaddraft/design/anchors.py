@@ -6,7 +6,7 @@ label placed on it carries provenance the verifier can check.  Grammar
 without spaces)::
 
     anchor  := ref [ "@" offset ]
-    ref     := "BEGIN" | "END" | ("PI"|"PC"|"PT"|"MC"|"T"|"EQ") "-" n | station
+    ref     := "BEGIN" | "END" | ("PI"|"PC"|"PT"|"BC"|"EC"|"MC"|"T"|"EQ") "-" n | station
     station := int "+" number            ; display station "18+00" / "18+00.00"
             |  number                     ; display station in feet, e.g. "1800"
     offset  := signed number [ "L" | "R" ]  ; feet, right positive; "25L" == "-25"
@@ -16,7 +16,9 @@ Dict form: ``{"ref": "PC-1", "offset": 10}`` or
 number is a display station.
 
 Canonical ``ref`` strings are upper-case for named refs and formatted display
-stations (``"18+00.00"``) for station refs.
+stations (``"18+00.00"``) for station refs.  ``BC-n`` and ``EC-n``, the names a
+Caltrans plan letters (PPM 2-2.5), are read as ``PC-n`` and ``PT-n``: the same
+point, so the canonical ref is ``PC-n`` / ``PT-n`` either way.
 """
 from __future__ import annotations
 
@@ -31,10 +33,15 @@ from roaddraft.design.horizontal import Alignment, CurveElement, TangentElement
 
 GRAMMAR_HINT = ("anchor = BEGIN | END | PI-n | PC-n | PT-n | MC-n | T-n | EQ-n | '18+00.00' | 1800, "
                 "optionally '@offset' (ft, right +; '25L' = 25 ft left), e.g. 'PC-1@16', '18+00@25L'; "
+                "BC-n / EC-n are the same points as PC-n / PT-n; "
                 "or {ref|station, offset, region}")
 
-_NAMED_KINDS = {"PI": "pi", "PC": "pc", "PT": "pt", "MC": "mc", "T": "tangent", "EQ": "equation"}
-_NAMED_RE = re.compile(r"^(PI|PC|PT|MC|T|EQ)\s*-\s*(\d+)$")
+_NAMED_KINDS = {"PI": "pi", "PC": "pc", "PT": "pt", "BC": "pc", "EC": "pt", "MC": "mc",
+                "T": "tangent", "EQ": "equation"}
+#: Caltrans letters the beginning and end of a curve BC and EC; the design
+#: model calls the same points PC and PT
+_CANONICAL = {"BC": "PC", "EC": "PT"}
+_NAMED_RE = re.compile(r"^(PI|PC|PT|BC|EC|MC|T|EQ)\s*-\s*(\d+)$")
 _STATION_RE = re.compile(r"^(-?\d+)\s*\+\s*(\d+(?:\.\d*)?)$")
 _NUMBER_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 _OFFSET_RE = re.compile(r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*([LR])?$")
@@ -125,7 +132,8 @@ def _parse_ref_text(text: str, original) -> AnchorRef:
         n = int(m.group(2))
         if n < 1:
             raise _cannot(original, "indices are 1-based")
-        return AnchorRef(ref=f"{m.group(1)}-{n}", kind_hint=_NAMED_KINDS[m.group(1)],
+        name = _CANONICAL.get(m.group(1), m.group(1))
+        return AnchorRef(ref=f"{name}-{n}", kind_hint=_NAMED_KINDS[m.group(1)],
                          index=n, station_display=None)
     m = _STATION_RE.match(t)
     if m:
@@ -136,7 +144,7 @@ def _parse_ref_text(text: str, original) -> AnchorRef:
         disp = float(t)
         return AnchorRef(ref=format_station(disp), kind_hint="station", index=None,
                          station_display=disp)
-    if re.match(r"^(PI|PC|PT|MC|T|EQ)\d+$", t):
+    if re.match(r"^(PI|PC|PT|BC|EC|MC|T|EQ)\d+$", t):
         raise _cannot(original, "named anchors need a dash: PC-1, not PC1")
     raise _cannot(original)
 

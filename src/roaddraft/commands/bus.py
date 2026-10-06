@@ -150,7 +150,8 @@ REGISTRY: List[CommandSpec] = [
                 "Design mode (alignment=NAME): use the alignment's true stations "
                 "and equations and anchor every tick and label. Either way it "
                 "draws perpendicular ticks at the interval, '12+34.56' labels "
-                "rotated along the path, and PC/PT/PCC/PRC labels at junctions.",
+                "rotated along the path, and BC/EC/PCC/PRC labels at the curve "
+                "points.",
                 h.annotate_stationing,
                 {"c3d": ["ADDALIGNMENTLABELS"], "ord": ["annotate stationing"]}),
     CommandSpec("create_alignment",
@@ -431,10 +432,13 @@ class CommandBus:
     # ------------------------------------------------------------- replay
 
     @classmethod
-    def replay(cls, baseline: dict, entries: List[dict]) -> "CommandBus":
+    def replay(cls, baseline: dict, entries: List[dict], home=None) -> "CommandBus":
         """Rebuild a bus by re-executing a journal against its baseline document.
-        Deterministic: same baseline + same journal -> same document."""
+        Deterministic: same baseline + same journal -> same document. ``home``
+        is the host path relative reference paths resolve from, as a loaded
+        document's own path is."""
         bus = cls(Document.from_dict(baseline))
+        bus.doc._path = home
         for entry in entries:
             result = bus.execute(entry["name"], entry.get("params") or {})
             if not result["ok"]:

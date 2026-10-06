@@ -980,7 +980,7 @@ def annotate_stationing(doc: Document, p: dict):
 
     n_junctions = 0
     if p.get("include_pc_pt", True):
-        labels = {("line", "arc"): "PC", ("arc", "line"): "PT",
+        labels = {("line", "arc"): "BC", ("arc", "line"): "EC",
                   ("arc", "arc"): "PCC"}
         for i in range(len(kinds) - 1):
             tag = labels.get((kinds[i], kinds[i + 1]))
@@ -997,7 +997,7 @@ def annotate_stationing(doc: Document, p: dict):
             n_junctions += 1
 
     message = (f"stationing annotated in {_space_label(doc, space_key)}: "
-               f"{n_ticks} ticks @ {interval:g} ft, {n_junctions} PC/PT labels, "
+               f"{n_ticks} ticks @ {interval:g} ft, {n_junctions} BC/EC labels, "
                f"stations {format_station(begin)} to "
                f"{format_station(begin + total)}")
     return message, _diff(created=created), []

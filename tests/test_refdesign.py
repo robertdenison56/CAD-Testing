@@ -65,7 +65,7 @@ def test_a_sheet_file_can_read_the_design_it_references(tmp_path):
     assert where["ok"] and where["point"] == pytest.approx([1600.0, 1000.0], abs=1e-6)
 
     pc = s.query("resolve_anchor", {"alignment": "DESIGN:SR-100", "anchor": "PC-1"})
-    assert pc["ok"] and pc["auto_content"] == "PC 16+00.00"
+    assert pc["ok"] and pc["auto_content"] == "BC 16+00.00"
     assert pc["point"] == pytest.approx([1600.0, 1000.0], abs=1e-6)
     assert "place_label cannot anchor" in pc["labelling"]
 

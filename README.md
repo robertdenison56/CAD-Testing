@@ -38,7 +38,8 @@ Beyond the 2D primitives, the bus carries roadway-semantic actions:
 - `annotate_stationing` — the stationing engine. Give it connected
   line/polyline/arc entities (the centerline), a begin station, and an
   interval; it computes length along tangents and curves, draws ticks,
-  formats stations ('12+34.56'), keeps labels upright, and marks PC/PT/PCC.
+  formats stations ('12+34.56'), keeps labels upright, and letters BC/EC/PCC
+  the Caltrans way.
 - `attach_reference` / `detach_reference` / `modify_reference` /
   `reload_references` — external basefiles (AutoCAD xref / MicroStation
   reference attachment): the host stores path + offset/rotation/scale plus
@@ -96,7 +97,7 @@ Every state change is a named JSON command (PRD section 5.1):
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                      # 683 tests
+.venv/bin/pytest                      # 728 tests
 .venv/bin/python examples/demo_plan_sheet.py   # drafts a full plan sheet
 .venv/bin/python examples/caltrans_l2/build_all.py  # rebuilds a real Caltrans sheet
 .venv/bin/python -m roaddraft.tasks 42         # generates a D1 task + reference solution
@@ -104,7 +105,7 @@ python3 -m venv .venv
 
 The demo drafts C-101 (ANSI D) from a design-model alignment: centerline
 drawn from the alignment, pavement edges from station/offset queries,
-alignment-mode stationing (ticks, labels, PC/PT), anchored bearing and
+alignment-mode stationing (ticks, labels, BC/EC), anchored bearing and
 mid-curve callouts, the curve data table, north arrow, notes, filled title
 block — then renders PNG/PDF, exports DXF and LandXML, and proves the
 journal replays byte-identically (26 commands).
@@ -120,7 +121,10 @@ reference to it at 1"=50' with a 6.457° view twist. Its four curves are
 rebuilt from the sheet's own CURVE DATA table and BC/EC stations, so the plan's
 every printed station comes back out of the design model; its fourteen
 station-and-offset callouts are aimed through that model rather than at typed
-points. See [examples/caltrans_l2/README.md](examples/caltrans_l2/README.md).
+points; its BC, EC and PCC stations read bottom to top, as the published sheet
+letters them. The builders live in the package (`roaddraft.probes.l2`), because
+the tier-3 probes start from this sheet. See
+[examples/caltrans_l2/README.md](examples/caltrans_l2/README.md).
 
 ### Drive it as an agent (JSON in, JSON out)
 
@@ -158,7 +162,7 @@ s.execute("create_profile", {"name": "PROF-1", "alignment": "ALIGN-1",
                              "pvis": [[1000, 100], [2000, 120, 400], [2500, 90]]})
 s.execute("draw_alignment", {"alignment": "ALIGN-1", "layer": "V-ALIGN-CNTR"})
 s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1"})
-s.execute("place_label", {"space": "model", "anchor": "PC-1"})        # "PC 16+00.00"
+s.execute("place_label", {"space": "model", "anchor": "PC-1"})        # "BC 16+00.00"
 s.execute("place_label", {"space": "model", "anchor": "T-2"})         # bearing N 60°00'00" E
 s.execute("place_label", {"space": "C-101", "anchor": "MC-1", "kind": "curve_data"})
 s.execute("place_curve_table", {"space": "C-101", "position": [24, 8.5]})
@@ -176,12 +180,13 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
 - **Profiles** are PVIs with symmetric parabolic vertical curves; the engine
   validates fit/overlap and reports PVC/PVT, grades, A, K, and high/low points.
 - **Anchors** name design points: `BEGIN`, `END`, `PC-n`, `PT-n`, `PI-n`,
-  `MC-n`, `T-n`, `EQ-n`, or a station (`18+00`, `1800`), optionally with an
+  `MC-n`, `T-n`, `EQ-n` (`BC-n`/`EC-n` name the PC/PT), or a station (`18+00`, `1800`), optionally with an
   offset (`PC-1@16`, `18+00@25L`, right positive). `place_label` resolves the
   anchor, infers the label kind (`station`, `pc`, `pt`, `pi`, `mc`, `pcc`,
   `prc`, `bearing`, `begin`, `end`, `equation`, `curve_data`, `custom`),
   writes the conventional wording, places the text on the conventional side
-  with the conventional offset, keeps it upright, and — on a sheet — maps it
+  with the conventional offset, keeps it upright (text square to the line reads
+  bottom to top, as Caltrans letters BC and EC), and — on a sheet — maps it
   through the viewport that shows the point. The text entity records an
   `anchor` (`alignment`, `ref`, `kind`, `station`, `offset`, `side`,
   `label_offset`, `rotation`, `viewport`, `content_auto`, `placed_by`): the
@@ -397,7 +402,7 @@ standard library (the official MCP SDK needs Python 3.10 and this runs on 3.9).
 
 ### Find-probes — can an agent locate the right thing?
 
-`roaddraft.probes` holds three small sets of capability probes. The find-probes
+`roaddraft.probes` holds four small sets of capability probes. The find-probes
 are for the skill an agent needs before anything else: finding the object it
 was asked about and putting the work on it. Deliberately *not* the scored benchmark in
 `RoadDraft_Eval_Plan.md` — no rubric, no spec hash, no task ids.
@@ -416,9 +421,9 @@ was supposed to land on — so a callout composed by hand out of `draw_line` and
 `place_text` scores exactly like one from `place_callout`. Aim is what is being
 measured, not vocabulary.
 
-`python -m roaddraft.probes selftest` runs a scripted solution for every probe
-and checks that the untouched project fails, which is what keeps the checks
-honest. `pc-by-station` is the one that needs a *referenced* design: a PC is
+`python -m roaddraft.probes selftest` runs a scripted solution for every probe,
+scores the file it saves, and checks that the untouched project fails, which is
+what keeps the checks honest. `pc-by-station` is the one that needs a *referenced* design: a PC is
 not an entity, so there is nothing to find — only a station to ask for.
 
 Aim is always judged in the model, in feet: a leader tip drawn on a sheet is
@@ -499,6 +504,65 @@ like one deleted and redrawn. The design notes behind the set are in
 passes 8 of the 9 find-probes, gets 0 of 6 here, each on the gap it was
 built to measure (`benchmarks/probe_runs/2026-10-04-lmstudio-tier2/`).
 
+### Tier-3 probes — a layout's line and curve data
+
+What every Caltrans layout must carry for its station lines (PPM 2-2.5):
+bearings and distances of the tangents, the stations of the curve points, curve
+data, stationing, equations — and the work around them. Ten probes; every sheet
+file here *references* its design, so the engine's labelers (`place_label`,
+`place_curve_table`, `annotate_stationing`) refuse it and an agent either
+composes the lettering from `get_design_data` or copies the design into the
+sheet file first.
+
+```bash
+python -m roaddraft.probes list --tag tier3
+```
+
+| probe | opens | asks for | the trap |
+|---|---|---|---|
+| `line-data` | sheets | bearing and length of every tangent, above the line, parallel | PI-to-PI lengths; the back bearing; text across the edge of pavement |
+| `curve-points` | sheets | every BC and EC station, square to the line, reading bottom to top | upright-folded text reading top to bottom; `24+05` for `24+05.27` |
+| `curve-data` | sheets | a CURVE DATA table (No., R, Δ, T, L) per sheet for the curves it shows, numbered bubbles | both curves on every sheet; numbering restarted; E or M as T |
+| `stationing` | sheets | Caltrans stationing on C-102: 7 ft ticks, ones digits, whole numbers at 500s, below | `26+00` lettering; labels above; 7 in ticks |
+| `width-dims` | sheets | 8' 12' 12' 8' across the road at 17+00, every number readable | a paper dimension reading `0.24`; four numbers piled at one station |
+| `row-data` | sheets-row | right of way tagged L1…/C1… with LINE and CURVE TABLES | the centerline's radius; the visible length; a jog left untagged |
+| `equation-data` | sheets-eq | an equation, the tangent it falls on, the next BC | 1290.35' from stations for a 1240.36' tangent; the BC without the equation |
+| `qa-alignment-data` | sheets-qa | find and fix five planted errors, touch nothing else | fixing by adding; missing the restarted curve number |
+| `l2-match-lines` | l2 | both match lines on Caltrans L-2, square to the turned line | vertical lines; square to the model, not the sheet |
+| `l2-alignment-data` | l2 | L-2's stripped alignment data, curves numbered 2 to 5 | the design's C-1..C-4; lettering parallel to the model; EC at the PCC |
+
+The checks read the sheet **as it plots** (`probes.plotted`): paper space and
+the sheet file's own model space through each viewport, text as oriented boxes,
+tables by their rows and dimensions by their measured points — so the copy
+route and the compose route score alike. They read **values, not spellings**
+(`probes.notation`): `N71°33'54"E` and `N 71-33-54 E` are the bearing
+`N 71°33'54" E`; `1581.14'` fails wherever it is written. The words are the
+standard's: BC, EC, PCC, BK, AH. `tests/test_probes_tier3.py` proves each trap
+fails with a message saying why and each alternate route passes; it builds L-2
+once (about 20 s) and caches it. The design notes are in
+`docs/Probes_Tier3_Proposal.md`.
+
+### The reference solutions, as finished projects
+
+Every probe's scripted solution drafts through the command bus, with the
+commands an agent sends over MCP, and is kept as a finished project in
+`benchmarks/probe_references/<probe>/`: the start project with the document
+the agent is handed completed under its own name (open it in RoadDraft; it
+reads its design through the reference beside it), the journal of every
+command the solution ran, the sheets plotted to PDF, and a DXF for AutoCAD,
+Civil 3D or MicroStation. Each is scored the way a model's document is, read
+back from disk against a fresh start; the folder's README lists the verdicts.
+
+```bash
+python -m roaddraft.probes reference --out benchmarks/probe_references
+python -m roaddraft.probes reference curve-data --out /tmp/refs
+```
+
+`tests/test_probes_reference.py` fails when a probe has no kept reference or
+its reference no longer passes. The run deliverables in
+`benchmarks/probe_runs/` keep each `<probe>.reference.pdf` beside the same
+solution as a project, `<probe>.reference/`.
+
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
 ```bash
@@ -569,8 +633,8 @@ light; sheets stay white paper) — toggle in View ▸ Display.
 - **The Station tool** is the roadway feature: click the centerline elements
   in order (line–arc–line…), press Enter, set begin station/interval, and the
   `annotate_stationing` command walks the path and generates perpendicular
-  ticks, upright '12+34.56' labels rotated along the alignment, and PC/PT/PCC
-  labels at tangent-curve junctions.
+  ticks, upright '12+34.56' labels rotated along the alignment, and BC/EC/PCC
+  labels at the curve points.
 - **References panel**: attach basefiles (other RoadDraft documents) as
   xrefs / reference attachments — toggle display, gray-out, detach, reload;
   status, resolved path and true-scale factor per attachment; expand a row
@@ -689,7 +753,10 @@ src/roaddraft/
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
   tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
                ground truth, and the reference solution (python -m roaddraft.tasks)
-tests/         683 tests: geometry, design math, commands, dimensions,
+  probes/      capability probes (find, drafting, tier 2, tier 3), their fixture
+               documents, the plotted-sheet reader and the notation parsers;
+               l2/ builds Caltrans sheet L-2 (python -m roaddraft.probes)
+tests/         728 tests: geometry, design math, commands, dimensions,
                determinism, LandXML, renders, DXF, web server, tasks
 examples/      demo_plan_sheet.py — a full sheet drafted from the design model;
                caltrans_l2/ — a published Caltrans plan sheet rebuilt as a
@@ -697,6 +764,7 @@ examples/      demo_plan_sheet.py — a full sheet drafted from the design model
                generate_task.py — task seed 42 end to end
 benchmarks/    knowledge/ — reference standards behind the drafting spec (Caltrans PPM text + page index; see its README)
                probe_runs/ — real-model probe runs: writeups, rigs, traces and the documents scored (see its README)
+               probe_references/ — every probe's scripted solution as a finished project: document, journal, PDF, DXF
 scripts/       build_knowledge.py — rebuilds the knowledge base from the raw PDFs
 ```
 

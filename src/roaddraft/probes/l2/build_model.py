@@ -12,20 +12,19 @@ This is the file the plan sheets reference.  It owns the road and the ground:
   * the survey underneath: contours, cut/fill catch line, right of way, and
     the UPRR, digitised from the published sheet (see extract_existing.py).
 
-Nothing about *sheet L-2* lives here.  Run build_sheet.py for that.
+Nothing about *sheet L-2* lives here.  ``build_sheet`` does that.
 
-    python build_model.py [--out DIR]
+    python -m roaddraft.probes.l2.build_model --out DIR
+
+(``examples/caltrans_l2/build_all.py`` builds both files and the renders.)
 """
 import argparse
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import sr70_geometry as G                                       # noqa: E402
-from roaddraft import Session                                   # noqa: E402
+from roaddraft import Session
+from roaddraft.probes.l2 import sr70_geometry as G
 
-OUT = Path(__file__).resolve().parents[1] / "output"
 MODEL_NAME = "SR70-Bear-Creek.model"
 
 LAYERS = [
@@ -64,7 +63,7 @@ def caltrans_station(display_ft):
     return str(hundreds) if hundreds % 5 == 0 else str(hundreds % 10)
 
 
-def build(out_dir=OUT, quiet=False):
+def build(out_dir, quiet=False):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     session = Session(project_name="03-But-70 Bear Creek Bridge Replacement",
@@ -200,7 +199,7 @@ def build(out_dir=OUT, quiet=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     build(Path(args.out))
     return 0

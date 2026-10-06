@@ -32,12 +32,22 @@ measured stay together. The engine version is named in each RESULTS.md.
         project/                     the documents left behind, journal beside them: what was scored
         transcript.json, report.txt  Ollama and LM Studio runs: every message including the model's thinking; its final report
         renders/                     what the model looked at        (not tracked: PNGs, regenerable from project/)
-        deliverables/                the plots: <probe>.pdf, <probe>.reference.pdf, OVERVIEW.pdf, OVERVIEW.png
+        deliverables/                the plots: <probe>.pdf, <probe>.reference.pdf, OVERVIEW.pdf, OVERVIEW.png;
+                                     <probe>.reference/ is that reference as a finished RoadDraft project
+                                     (the start with the handed document completed, and its journal)
         server.json, rd, *.log       launch shim and logs            (not tracked: absolute paths to one machine)
     <run>/runs/<label>/_attemptN/    a launch the infrastructure ended, kept for the record; the scorers ignore it
 
 `2026-09-19/runs/haiku/_stray_saves/` holds the three files Haiku saved under
 names of its own, moved out of the repository root where they landed.
+
+The `<probe>.reference/` projects were added to the two runs with deliverables
+on 2026-10-05, written by the engine each run was made with (`06c4246` and
+`465640f`). Each was checked three ways: it passes its probe's check read back
+from disk, its journal replays to it, and printed again it matches
+`<probe>.reference.pdf` pixel for pixel. `make_deliverables.py` now writes them
+with the PDFs. The current engine's reference for every probe is in
+`benchmarks/probe_references/`.
 
 ## Re-scoring
 

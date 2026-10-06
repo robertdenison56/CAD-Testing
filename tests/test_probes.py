@@ -168,7 +168,7 @@ def test_pc_by_station_needs_the_referenced_design_and_now_has_it(project):
     qualified = f"DESIGN:{fixture.ALIGNMENT}"
     assert session.query("list_alignments", {"include_references": True})["count"] == 1
     pc = session.query("resolve_anchor", {"alignment": qualified, "anchor": "PC-1"})
-    assert pc["ok"] and pc["station_text"] and pc["auto_content"].startswith("PC ")
+    assert pc["ok"] and pc["station_text"] and pc["auto_content"].startswith("BC ")
     # nothing in the drawing sits at the PC, which is why find_entities cannot do it
     assert all(row["point"] != pc["point"]
                for row in session.query("find_entities", {})["entities"])

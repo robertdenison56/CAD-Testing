@@ -1603,14 +1603,20 @@ class Session:
         return cls(_document=doc, out_dir=out_dir)
 
     @classmethod
-    def replay_journal(cls, path, out_dir=None) -> "Session":
-        """Rebuild a session by replaying a saved journal. Deterministic."""
+    def replay_journal(cls, path, out_dir=None, home=None) -> "Session":
+        """Rebuild a session by replaying a saved journal. Deterministic.
+
+        A command that reads through a reference needs the referenced file, so
+        relative reference paths resolve from ``home``, the document the journal
+        was kept for, by default from the journal's own folder: a journal is
+        kept beside its document."""
         lines = [json.loads(line) for line in
                  Path(path).read_text().splitlines() if line.strip()]
         if not lines or lines[0].get("type") != "init":
             raise ValueError("journal must start with an init record")
         bus = CommandBus.replay(lines[0]["document"],
-                                [e for e in lines[1:] if e.get("type") == "command"])
+                                [e for e in lines[1:] if e.get("type") == "command"],
+                                home=Path(home or path).resolve())
         session = cls(out_dir=out_dir)
         session.bus = bus
         return session

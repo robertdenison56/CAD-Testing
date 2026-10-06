@@ -54,7 +54,7 @@ def test_upright_matches_engine_grid_0_to_360():
 def test_pc1_default_right_16_position_1600_984_valign_top(A):
     s = label(A, "PC-1", "pc")
     assert isinstance(s, LabelSpec)
-    assert s.content == "PC 16+00.00" and s.content_auto
+    assert s.content == "BC 16+00.00" and s.content_auto
     assert near(s.position, [1600.0, 984.0]) and s.rotation_deg == 0.0
     assert s.halign == "center" and s.valign == "top" and s.side == "right"
     rec = s.anchor_record()
@@ -79,9 +79,11 @@ def test_bearing_T2_N60E_rotation_30_position_2208_506_1246_036(A):
     assert label(A, "T-1", "bearing").content == 'N 90°00\'00" E'
 
 
-def test_perpendicular_18_00_rotation_neg75_676(A):
+def test_perpendicular_18_00_reads_bottom_to_top_at_104_324(A):
+    # square to the line at 14.324 deg, reading bottom to top (PPM 2-1.2): not
+    # folded to -75.676, which reads top to bottom
     s = label(A, "18+00", "station", rotation="perpendicular")
-    assert s.rotation_deg == pytest.approx(-75.676, abs=1e-3)
+    assert s.rotation_deg == pytest.approx(104.324, abs=1e-3)
     assert label(A, "18+00", "station", rotation="horizontal").rotation_deg == 0.0
     with pytest.raises(DesignError):
         label(A, "18+00", "station", rotation="diagonal")
@@ -106,7 +108,7 @@ def test_kind_pc_anchor_PT1_raises(A):
         label(A, "PC-1", "pcc")  # tangent-to-curve junction, not curve-to-curve
     with pytest.raises(DesignError):
         label(A, "PC-1", "bogus")
-    assert label(A, "PT-1", "pt").content == "PT 20+18.88"
+    assert label(A, "PT-1", "pt").content == "EC 20+18.88"
     assert label(A, "PI-1", "pi").content == "PI 18+14.36"
     assert label(A, "BEGIN", "begin").content == "BEGIN STA 10+00.00"
     assert label(A, "END", "end").content == "END STA 25+18.88"
@@ -171,7 +173,7 @@ def test_curve_table_default_row_C1_18_14_36_30_LT_800_214_36_418_88_414_11_N75E
     assert DEFAULT_CURVE_COLUMNS[0] == "curve"
 
 
-def test_stationing_plan_A_16_ticks_PC_PT(A):
+def test_stationing_plan_A_16_ticks_BC_EC(A):
     plan = stationing_plan(A)
     assert plan.n_ticks == 16 and plan.n_junctions == 2 and plan.n_equations == 0
     assert plan.begin_text == "10+00.00" and plan.end_text == "25+18.88"
@@ -190,7 +192,7 @@ def test_stationing_plan_A_16_ticks_PC_PT(A):
     assert len(station_labels) == 16
     assert near(station_labels[3].position, [1300.0, 1016.0])
     junctions = [l for l in labels if l.kind in ("pc", "pt")]
-    assert [l.content for l in junctions] == ["PC 16+00.00", "PT 20+18.88"]
+    assert [l.content for l in junctions] == ["BC 16+00.00", "EC 20+18.88"]
     assert [l.ref for l in junctions] == ["PC-1", "PT-1"]
     assert near(junctions[0].position, [1600.0, 984.0]) and junctions[0].valign == "top"
     for l in labels:

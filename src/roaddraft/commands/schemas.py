@@ -329,8 +329,8 @@ SCHEMAS = {
          "label_layer": {**NSTR, "description": "layer for labels; default same "
                                                 "as ticks"},
          "include_pc_pt": {"type": "boolean",
-                           "description": "label PC/PT/PCC at tangent-curve "
-                                          "junctions (default true)"},
+                           "description": "letter BC/EC/PCC/PRC at the curve "
+                                          "points (default true)"},
          "connect_tolerance": {**POS, "description": "max gap between path "
                                                      "elements (default 1 ft)"}},
         ["space"]),

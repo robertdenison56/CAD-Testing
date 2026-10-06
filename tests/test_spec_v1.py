@@ -103,7 +103,7 @@ def test_text_0_10_0_12_stationing_100_tick_0_20_offset_0_32():
 def test_labels_required_pc_pt_bearing_mc_not_pi_equation_when_present():
     labels = DRAFTING_SPEC_V1["labels"]
     assert labels["pc_pt"]["required"] is True and labels["pc_pt"]["side"] == "right"
-    assert labels["pc_pt"]["format"] == "PC 16+00.00"
+    assert labels["pc_pt"]["format"] == "BC 16+00.00"
     assert labels["bearing"]["required"] is True and labels["bearing"]["anchor"] == "T-n"
     assert labels["bearing"]["format"] == "quadrant" and labels["bearing"]["seconds_decimals"] == 0
     assert labels["mc"]["required"] is True and labels["mc"]["format"] == "C-1"

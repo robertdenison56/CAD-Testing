@@ -10,6 +10,9 @@ behind the way a drafter would plot it, and puts a correct answer next to it:
                                                     applied to a fresh start document, printed
                                                     the same way and, in model space, to the
                                                     same window
+    runs/LABEL/deliverables/<probe>.reference/      that solution as a finished RoadDraft project:
+                                                    the start project with the handed document
+                                                    completed under its own name, and its journal
     runs/LABEL/deliverables/OVERVIEW.pdf            one row per probe: verdict, the check's
                                                     detail, calls and faults; the model's
                                                     result; the reference
@@ -23,6 +26,7 @@ ANSI D. Re-run after a re-score: it rebuilds everything.
 """
 import json
 import re
+import shutil
 import sys
 import tempfile
 import textwrap
@@ -35,6 +39,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
 
 from roaddraft.api.session import Session
+from roaddraft.mcp.server import journal_path
 from roaddraft.probes import fixture, tasks
 from roaddraft.render import mpl as mpl_render
 
@@ -64,6 +69,21 @@ def load_pair(label, probe, work):
     if probe.solve:
         probe.solve(reference)
     return verdict, submitted, reference
+
+
+def save_reference(probe, reference, out):
+    """The reference as a finished RoadDraft project beside its PDF: its start
+    project, with the handed document completed under its own name and the
+    journal of every command the solution ran. Returns the completed document."""
+    folder = out / f"{probe.id}.reference"
+    if folder.exists():
+        shutil.rmtree(folder)
+    home = Path(reference.doc._path)
+    shutil.copytree(home.parent, folder)
+    document = folder / home.name
+    reference.query("save_document", {"path": str(document)})
+    reference.query("save_journal", {"path": str(journal_path(document))})
+    return document
 
 
 def trace_counts(label, probe):
@@ -204,10 +224,12 @@ def main(label):
             verdict, submitted, reference = load_pair(label, probe, work)
             sheets = sheets_named(probe)
             bounds = print_pair(probe, submitted, reference, sheets, out)
+            save_reference(probe, reference, out)
             calls, faults = trace_counts(label, probe)
             rows.append((verdict, submitted, reference, sheets, bounds, probe, calls, faults))
             print(f"{'PASS' if verdict.passed else 'FAIL'}  {probe.id:24s} -> {probe.id}.pdf, "
-                  f"{probe.id}.reference.pdf  ({'sheets ' + ','.join(sheets) if sheets else 'model'})")
+                  f"{probe.id}.reference.pdf, {probe.id}.reference/  "
+                  f"({'sheets ' + ','.join(sheets) if sheets else 'model'})")
     overview_pdf(rows, label, out)
     overview_png(rows, label, out)
     print(f"\n{sum(r[0].passed for r in rows)}/{len(rows)} pass; OVERVIEW.pdf and OVERVIEW.png in {out}")

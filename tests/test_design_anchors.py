@@ -150,3 +150,16 @@ def test_list_anchors_count_2_plus_4_curves_plus_tangents_plus_eq(A):
     assert aps[-1].station == pytest.approx(2000.0) and aps[-1].station_text == "25+00.00"
     begin, end = aps[0], aps[1]
     assert begin.station_text == "10+00.00" and end.station_text == "30+18.88"
+
+
+def test_BC_and_EC_are_the_Caltrans_names_for_PC_and_PT(A):
+    # a Caltrans plan letters the curve points BC and EC; the design model calls
+    # them PC and PT, and either name reaches the same point with the same ref
+    for caltrans, design in (("BC-1", "PC-1"), ("ec-1", "PT-1"), ("BC-1@12L", "PC-1@12L")):
+        a, b = resolve_anchor(A, parse_anchor(caltrans)), resolve_anchor(A, parse_anchor(design))
+        assert a.ref == b.ref == design.split("@")[0].upper() and a.kind_hint == b.kind_hint
+        assert near(a.point, b.point) and a.station == pytest.approx(b.station)
+    assert infer_kind(parse_anchor("EC-1")) == "pt"
+    with pytest.raises(DesignError) as e:
+        parse_anchor("BC1")
+    assert "dash" in str(e.value)

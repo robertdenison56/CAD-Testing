@@ -12,8 +12,9 @@ is correct by construction. Each variant here breaks that in a known way:
   drafter snaps to a wall rather than its end;
 * ``clean``: nothing changed, the precision baseline.
 
-For each variant a PDF is exported and a seed list is written in the stacheck engine's
-``SeedList`` format (StaOffsetChecker/engine, ``stacheck seed VARIANT.pdf --seeds
+For each variant the sheet is kept as its own RoadDraft document, ``L-2-VARIANT.sheets.rdraft``
+beside the model file it references, a PDF is exported from it, and a seed list is written in
+the stacheck engine's ``SeedList`` format (StaOffsetChecker/engine, ``stacheck seed VARIANT.pdf --seeds
 VARIANT.seeds.json``): one entry per wrong callout with ``delta_ft`` = labeled minus drawn, on
 the station or on the signed offset (right positive). Every other callout on the sheet is right,
 so any flag on it is a false flag.
@@ -22,12 +23,10 @@ import argparse
 import json
 import re
 import shutil
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import build_sheet                                                 # noqa: E402
-import sheet_content as C                                          # noqa: E402
+from roaddraft.probes.l2 import build_sheet                        # noqa: E402
+from roaddraft.probes.l2 import sheet_content as C                 # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "output" / "seeded"
 STATION_RE = re.compile(r"(\d+)\+(\d+\.\d+)")
@@ -127,6 +126,10 @@ def build_variant(name, changes, out_dir, quiet=True):
         _, session = build_sheet.build(out_dir, quiet=quiet)
     finally:
         C.CALLOUTS[:] = original
+    cad = out_dir / ("L-2-%s.sheets.rdraft" % name)
+    r = session.query("save_document", {"path": str(cad)})
+    if not r["ok"]:
+        raise SystemExit("save_document failed: %s" % r["error"])
     pdf = out_dir / ("L-2-%s.pdf" % name)
     r = session.query("export_pdf", {"path": str(pdf)})
     if not r["ok"]:
@@ -134,7 +137,7 @@ def build_variant(name, changes, out_dir, quiet=True):
     seeds_path = out_dir / ("L-2-%s.seeds.json" % name)
     seeds_path.write_text(json.dumps(
         {"source_name": pdf.name, "seeds": seeds}, indent=1))
-    return pdf, seeds_path, seeds
+    return cad, pdf, seeds_path, seeds
 
 
 def main(argv=None):
@@ -145,16 +148,28 @@ def main(argv=None):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     model = Path(__file__).resolve().parents[1] / "output" / build_sheet.MODEL_FILE
-    if not (out / build_sheet.MODEL_FILE).exists():
-        if not model.exists():
-            raise SystemExit("build the model first: python examples/caltrans_l2/build_all.py")
-        shutil.copy(model, out / build_sheet.MODEL_FILE)
-    for name in args.variants:
-        pdf, seeds_path, seeds = build_variant(name, VARIANTS[name], out)
-        print("%s: %d seeded errors -> %s, %s" % (name, len(seeds), pdf.name, seeds_path.name))
-        for seed in seeds:
-            print("    %-28s %+8.2f ft  %s" % (seed["name"], seed["delta_ft"],
-                                            seed["label_text"].splitlines()[0]))
+    target = out / build_sheet.MODEL_FILE
+    if model.exists() and model.resolve() != target.resolve():
+        shutil.copy(model, target)  # the current build, never a copy left from an older one
+    elif not target.exists():
+        raise SystemExit("build the model first: python examples/caltrans_l2/build_all.py")
+    # build_sheet writes every variant to the one sheet file; each is kept under its own name,
+    # and the shared file is left as it was found
+    shared = out / ("%s.rdraft" % build_sheet.SHEET_NAME)
+    found = shared.read_bytes() if shared.exists() else None
+    try:
+        for name in args.variants:
+            cad, pdf, seeds_path, seeds = build_variant(name, VARIANTS[name], out)
+            print("%s: %d seeded errors -> %s, %s, %s" % (name, len(seeds), cad.name, pdf.name,
+                                                         seeds_path.name))
+            for seed in seeds:
+                print("    %-28s %+8.2f ft  %s" % (seed["name"], seed["delta_ft"],
+                                                seed["label_text"].splitlines()[0]))
+    finally:
+        if found is None:
+            shared.unlink(missing_ok=True)
+        else:
+            shared.write_bytes(found)
     return 0
 
 

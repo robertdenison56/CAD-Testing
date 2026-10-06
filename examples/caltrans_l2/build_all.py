@@ -10,10 +10,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import build_model                                             # noqa: E402
-import build_sheet                                             # noqa: E402
-import sr70_geometry as G                                      # noqa: E402
 from roaddraft.api.session import Session                      # noqa: E402
+from roaddraft.probes.l2 import build_model, build_sheet       # noqa: E402
+from roaddraft.probes.l2 import sr70_geometry as G             # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "output"
 

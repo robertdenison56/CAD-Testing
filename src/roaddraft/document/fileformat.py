@@ -97,3 +97,14 @@ def write_document(path, data: dict) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2))
     return p
+
+
+def journal_path(document) -> Path:
+    """``SR-100.sheets.rdoc.json`` -> ``SR-100.sheets.jsonl``, beside it: where a
+    document's journal is kept."""
+    name = Path(document).name
+    for suffix in (INTERCHANGE_EXT, DOCUMENT_EXT, ".json"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return Path(document).with_name(name + ".jsonl")

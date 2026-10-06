@@ -63,3 +63,14 @@ def test_bbox_utils():
     assert not geo.bbox_intersects((0, 0, 1, 1), (2, 2, 3, 3))
     assert geo.bbox_contains((0, 0, 10, 10), (1, 1, 2, 2))
     assert not geo.bbox_contains((0, 0, 10, 10), (9, 9, 11, 11))
+
+
+def test_reading_up_keeps_square_text_reading_bottom_to_top():
+    # BC/EC text square to a line that climbs to the right reads bottom to top
+    # (PPM 2-1.2); upright() would turn it to read top to bottom
+    assert geo.reading_up(108.43) == 108.43 and geo.upright(108.43) == -71.57
+    assert abs(geo.reading_up(-71.57) - 108.43) < 1e-9
+    assert geo.reading_up(90.0) == 90.0 and geo.reading_up(270.0) == 90.0
+    # past 45 deg beyond vertical it reads left to right instead of upside down
+    assert geo.reading_up(140.0) == -40.0 and geo.reading_up(135.0) == 135.0
+    assert geo.reading_up(-45.0) == 135.0 and geo.reading_up(-44.0) == -44.0

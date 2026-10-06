@@ -69,7 +69,9 @@ ELEMENT = obj({"kind": {"enum": ["tangent", "curve"]}, "start": POINT, "end": PO
 ANCHOR = {"type": ["string", "number", "object"],
           "description": "BEGIN | END | PI-n | PC-n | PT-n | MC-n | T-n | EQ-n | "
                          "'18+00.00' | 1800, optionally '@offset' (ft, right +, e.g. "
-                         "'PC-1@16', '18+00@25L'); or {ref|station, offset, region}"}
+                         "'PC-1@16', '18+00@25L'); or {ref|station, offset, region}. "
+                         "BC-n and EC-n, as a Caltrans plan letters them, are PC-n and "
+                         "PT-n"}
 KIND = {"enum": list(LABEL_KINDS)}
 ROTATION = {"enum": ["along", "perpendicular", "horizontal"]}
 SIDE = {"enum": ["left", "right"]}

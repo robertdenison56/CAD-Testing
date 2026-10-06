@@ -35,7 +35,8 @@ DRAFTING_SPEC_V1 = {
                   "V-ANNO-TABL": {"color": "black", "lineweight_mm": 0.25}},
   "text": {"label_height_in": 0.10, "table_height_in": 0.12, "height_tolerance_pct": 10},
   "stationing": {"interval_ft": 100, "format": "12+34.56", "decimals": 2, "tick_half_len_in": 0.20, "label_offset_in": 0.32, "label_side": "left", "rotation": "along"},
-  "labels": {"pc_pt": {"required": True, "side": "right", "format": "PC 16+00.00"},
+  # BC/EC, as Caltrans letters curve points (ppm-text p. 2-85, pdf 114); decided 2026-10-05
+  "labels": {"pc_pt": {"required": True, "side": "right", "format": "BC 16+00.00"},
              "bearing": {"required": True, "anchor": "T-n", "format": "quadrant", "seconds_decimals": 0, "side": "left"},
              "mc": {"required": True, "format": "C-1"},
              "pi": {"required": False}, "equation": {"required_when_present": True, "format": "STA 20+00.00 BK = STA 25+00.00 AH"}},
@@ -45,7 +46,7 @@ DRAFTING_SPEC_V1 = {
      {"id": "D1-01", "name": "alignment linework on the alignment layer matches design geometry", "weight": 10, "hard_fail": True},
      {"id": "D1-02", "name": "station tick at every interval station (per region)", "weight": 12, "hard_fail": False},
      {"id": "D1-03", "name": "station label content/format correct and anchored", "weight": 12, "hard_fail": True},
-     {"id": "D1-04", "name": "PC/PT label for every curve, correct, anchored", "weight": 14, "hard_fail": True},
+     {"id": "D1-04", "name": "BC/EC label for every curve, correct, anchored", "weight": 14, "hard_fail": True},
      {"id": "D1-05", "name": "bearing label on every tangent, quadrant format, anchored T-n", "weight": 10, "hard_fail": True},
      {"id": "D1-06", "name": "curve table on the sheet: one row per curve, values within rounding, anchored", "weight": 14, "hard_fail": True},
      {"id": "D1-07", "name": "label position within tolerance of the anchor-implied position (no free-floating text)", "weight": 8, "hard_fail": False},

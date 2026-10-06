@@ -503,7 +503,7 @@ Content table:
 | kind | content |
 |---|---|
 | station | `18+00.00` |
-| pc / pt / pi / pcc / prc | `PC 16+00.00` / `PT 20+18.88` / `PI 18+14.36` / `PCC …` / `PRC …` |
+| pc / pt / pi / pcc / prc | `BC 16+00.00` / `EC 20+18.88` / `PI 18+14.36` / `PCC …` / `PRC …` (BC/EC, the Caltrans wording, since 2026-10-05; was `PC`/`PT`) |
 | mc | `C-1` |
 | bearing | `N 60°00'00" E` (bearing of the tangent) |
 | begin / end | `BEGIN STA 10+00.00` / `END STA 25+18.88` |
@@ -511,11 +511,11 @@ Content table:
 | curve_data | `C-1\nΔ = 30°00'00"\nR = 800.00'\nT = 214.36'\nL = 418.88'` |
 | custom | caller's `content` |
 
-Model placement: `side` defaults from `DEFAULT_SIDE[kind]`; `label_offset` default `MODEL_LABEL_OFFSET`; `position = offset_point(anchor_point, direction + (90 if left else −90), label_offset)`; `rotation_deg`: along → `upright(direction)`, perpendicular → `upright(direction + 90)`, horizontal → 0; `halign` default `"center"`; `valign` default `DEFAULT_VALIGN[side]`. (The `upright` fold on west-heading text is kept identical to the engine — known gotcha, flagged for PE review.)
+Model placement: `side` defaults from `DEFAULT_SIDE[kind]`; `label_offset` default `MODEL_LABEL_OFFSET`; `position = offset_point(anchor_point, direction + (90 if left else −90), label_offset)`; `rotation_deg`: along → `upright(direction)`, perpendicular → `reading_up(direction + 90)` (fold into (−45°, 135°]: square text reads bottom to top, PPM 2-1.2; was `upright` until 2026-10-05), horizontal → 0; `halign` default `"center"`; `valign` default `DEFAULT_VALIGN[side]`. (The `upright` fold on west-heading text is kept identical to the engine — known gotcha, flagged for PE review.)
 
 `stationing_plan`: for each region in order: `station_disp = ceil((region.display_start − 1e-9)/interval)·interval`; `while station_disp < region.display_end` (`<= end + 1e-6` for the last region): `raw = station_disp − shift`; `(pt, dir) = point_at/direction_at`; TickSpec `start = offset_point(pt, dir+90, −tick_half)`, `end = offset_point(pt, dir+90, +tick_half)`; LabelSpec kind `station`, side left, `valign bottom`, content `format_station(station_disp)`, rotation along. With `station_range=(a_raw, b_raw)` only raw stations in `[a, b]` are emitted. Junctions (`include_pc_pt`): per element boundary with `junction_kind` non-None: LabelSpec at the boundary distance, ref `PC-n`/`PT-n` (for pcc/prc: `PC-n` of the ahead curve), side right, `valign top`, content per table. Equations (`include_equations`): LabelSpec kind `equation`, ref `EQ-n`, side right, valign top, `label_offset` = 1.5 × label_offset (stacked below a possible junction label). `begin_text`/`end_text` = display of begin and end.
 
-Curve table column catalog (key → header → cell format): `curve→CURVE→C-1`; `pi_sta→PI STA→18+14.36`; `pc_sta→PC STA`; `pt_sta→PT STA`; `delta→DELTA→30°00'00"`; `direction→DIR→LT|RT`; `radius→R→800.00'`; `tangent→T→214.36'`; `length→L→418.88'`; `external→E→28.22'`; `mid_ordinate→M→27.26'`; `chord→C→414.11'`; `chord_bearing→CH BRG→N 75°00'00" E`. Default widths (in): curve 0.8, pi_sta 1.1, pc_sta 1.1, pt_sta 1.1, delta 1.3, direction 0.6, radius 1.0, tangent 1.0, length 1.0, external 0.9, mid_ordinate 0.9, chord 1.0, chord_bearing 1.6. Unknown column key → `DesignError` listing the catalog.
+Curve table column catalog (key → header → cell format): `curve→CURVE→C-1`; `pi_sta→PI STA→18+14.36`; `pc_sta→BC STA`; `pt_sta→EC STA`; `delta→DELTA→30°00'00"`; `direction→DIR→LT|RT`; `radius→R→800.00'`; `tangent→T→214.36'`; `length→L→418.88'`; `external→E→28.22'`; `mid_ordinate→M→27.26'`; `chord→C→414.11'`; `chord_bearing→CH BRG→N 75°00'00" E`. Default widths (in): curve 0.8, pi_sta 1.1, pc_sta 1.1, pt_sta 1.1, delta 1.3, direction 0.6, radius 1.0, tangent 1.0, length 1.0, external 0.9, mid_ordinate 0.9, chord 1.0, chord_bearing 1.6. Unknown column key → `DesignError` listing the catalog.
 
 Pinned default row for A: `["C-1", "18+14.36", "30°00'00\"", "LT", "800.00'", "214.36'", "418.88'", "414.11'", "N 75°00'00\" E"]`.
 
@@ -561,8 +561,8 @@ obj({"space": SPACE, "alignment": NSTR, "anchor": ANCHOR, "kind": KIND,
     ["space", "anchor"])
 ```
 Example: `{"space": "model", "alignment": "ALIGN-1", "anchor": "PC-1"}`.
-Handler steps: (1) `_space`; (2) `_alignment`; (3) `parse_anchor` → `resolve_anchor` (DesignError → CommandFault); (4) `kind = p.get("kind") or infer_kind(ref)`; (5) `compile_label(...)` with `side/label_offset(model default)/rotation/content/halign/valign`; (6) if sheet: pick viewport — explicit `viewport` (id or fault `"viewport VP-009 is not on C-101"`) else the first `vp` with `geo.bbox_contains(vp.paper_bbox(), (q0,q1,q0,q1))` where `q = vp.transform().to_paper(anchor_point)`; none → `CommandFault("anchor PC-1 of ALIGN-1 (1600.00, 1000.00) is not visible in any viewport of C-101", hint="viewports: VP-001 shows x 1100..2650, y 730..1655; move/resize it (modify_viewport) or pass viewport=")`; `(position, rotation_deg) = sheet_pose(spec, vp.transform(), vp.rotation_deg, p.get("label_offset", 0.32))`; height default 0.10; (7) `_add(doc, space, "text", Text, {...common, position, content, height, style(validated; default current_text_style), rotation_deg, halign, valign, anchor: spec.anchor_record(vp.id or None)})` — on sheets the recorded `label_offset` is the inch value; (8) warnings: `_annotation_warnings` (sheets) + `"label duplicates TX-004 (same alignment/anchor/kind)"` when another Text in the same container has an equal `(alignment, ref, kind)` anchor triple. Message: `"label TX-007 'PC 16+00.00' (pc @ PC-1 of ALIGN-1) placed in model space"` / `"... placed on sheet C-101 via VP-001"`. Diff `created=[id]`.
-Pinned (A, defaults): `PC-1` → content `PC 16+00.00`, position `(1600, 984)`, rotation 0, halign center, valign top, anchor `{alignment:"ALIGN-1", ref:"PC-1", kind:"pc", station:1600.0, offset:0.0, side:"right", label_offset:16.0, rotation:"along", viewport:null, content_auto:true}`. `"13+00"` → `13+00.00` at `(1300, 1016)`, valign bottom. `T-2` bearing → `N 60°00'00" E` at `(2208.506, 1246.036)`, rotation 30. `"18+00"` with `rotation=perpendicular` → rotation `upright(104.324) = −75.676`. `kind=pc anchor=PT-1` → fault. `kind=custom` without content → fault. Explicit `content="PC 16+00"` stored verbatim, `content_auto: false`.
+Handler steps: (1) `_space`; (2) `_alignment`; (3) `parse_anchor` → `resolve_anchor` (DesignError → CommandFault); (4) `kind = p.get("kind") or infer_kind(ref)`; (5) `compile_label(...)` with `side/label_offset(model default)/rotation/content/halign/valign`; (6) if sheet: pick viewport — explicit `viewport` (id or fault `"viewport VP-009 is not on C-101"`) else the first `vp` with `geo.bbox_contains(vp.paper_bbox(), (q0,q1,q0,q1))` where `q = vp.transform().to_paper(anchor_point)`; none → `CommandFault("anchor PC-1 of ALIGN-1 (1600.00, 1000.00) is not visible in any viewport of C-101", hint="viewports: VP-001 shows x 1100..2650, y 730..1655; move/resize it (modify_viewport) or pass viewport=")`; `(position, rotation_deg) = sheet_pose(spec, vp.transform(), vp.rotation_deg, p.get("label_offset", 0.32))`; height default 0.10; (7) `_add(doc, space, "text", Text, {...common, position, content, height, style(validated; default current_text_style), rotation_deg, halign, valign, anchor: spec.anchor_record(vp.id or None)})` — on sheets the recorded `label_offset` is the inch value; (8) warnings: `_annotation_warnings` (sheets) + `"label duplicates TX-004 (same alignment/anchor/kind)"` when another Text in the same container has an equal `(alignment, ref, kind)` anchor triple. Message: `"label TX-007 'BC 16+00.00' (pc @ PC-1 of ALIGN-1) placed in model space"` / `"... placed on sheet C-101 via VP-001"`. Diff `created=[id]`.
+Pinned (A, defaults): `PC-1` → content `BC 16+00.00`, position `(1600, 984)`, rotation 0, halign center, valign top, anchor `{alignment:"ALIGN-1", ref:"PC-1", kind:"pc", station:1600.0, offset:0.0, side:"right", label_offset:16.0, rotation:"along", viewport:null, content_auto:true}`. `"13+00"` → `13+00.00` at `(1300, 1016)`, valign bottom. `T-2` bearing → `N 60°00'00" E` at `(2208.506, 1246.036)`, rotation 30. `"18+00"` with `rotation=perpendicular` → rotation `reading_up(104.324) = 104.324` (was `upright` → −75.676). `kind=pc anchor=PT-1` → fault. `kind=custom` without content → fault. Explicit `content="PC 16+00"` stored verbatim, `content_auto: false`.
 Sheet pinned: viewport `center_paper [17, 11.7], model_center [1700, 1150], 31×18.5, fpi 50`: `PC-1` → position `(15.0, 8.38)`, height 0.10, `anchor.viewport == "VP-001"`, `anchor.label_offset == 0.32`; the same viewport with `rotation_deg 20` → rotation 20 and position `= to_paper([1600,1000]) + 0.32·[cos(−70°), sin(−70°)]`.
 
 ### 4.8 `place_curve_table` — c3d `["ADDALIGNMENTCURVETABLE"]`, ord `["place curve table"]`
@@ -584,7 +584,7 @@ if "alignment" in p:
 if "path_ids" not in p: raise CommandFault("path_ids is required in entity-chain mode", hint="or pass alignment=NAME for design-model stationing")
 if "begin_station" not in p: raise CommandFault("begin_station is required with path_ids")
 ```
-— the rest of the function is byte-identical. `annotate_stationing_alignment` (in `design_handlers.py`): `begin_station` present → `CommandFault("alignment mode uses ALIGN-1's own stationing (begins 10+00.00); omit begin_station", hint="modify_alignment changes begin_station")`; `space` must be `"model"` (`"alignment-mode stationing draws in model space; use place_label for sheet labels"`); layers/style exactly as the entity mode; `station_range` parsed to raw; `plan = stationing_plan(...)`; materialise `plan.items` in order with the local `add()` closure pattern (Line for TickSpec on tick layer with tick anchor; Text for LabelSpec on label layer with anchor record); message `"stationing annotated in model space from ALIGN-1: 16 ticks @ 100 ft, 2 PC/PT labels, 1 equation labels, stations 10+00.00 to 30+18.88"`; warnings `[]`.
+— the rest of the function is byte-identical. `annotate_stationing_alignment` (in `design_handlers.py`): `begin_station` present → `CommandFault("alignment mode uses ALIGN-1's own stationing (begins 10+00.00); omit begin_station", hint="modify_alignment changes begin_station")`; `space` must be `"model"` (`"alignment-mode stationing draws in model space; use place_label for sheet labels"`); layers/style exactly as the entity mode; `station_range` parsed to raw; `plan = stationing_plan(...)`; materialise `plan.items` in order with the local `add()` closure pattern (Line for TickSpec on tick layer with tick anchor; Text for LabelSpec on label layer with anchor record); message `"stationing annotated in model space from ALIGN-1: 16 ticks @ 100 ft, 2 BC/EC labels, 1 equation labels, stations 10+00.00 to 30+18.88"`; warnings `[]`.
 
 ### 4.11 `modify_entity` (one-literal change, WP6)
 `known = set(entity.to_dict()) | {"color", "linetype", "anchor"}`. Setting `"anchor": null` clears it; a malformed anchor faults via `as_anchor`. A `placed_by` inside the supplied anchor is dropped and the entity's existing one (if any) is kept, so `modify_entity` can neither claim provenance nor transfer it from another entity.
@@ -700,7 +700,7 @@ DRAFTING_SPEC_V1 = {
                   "V-ANNO-TABL": {"color": "black", "lineweight_mm": 0.25}},
   "text": {"label_height_in": 0.10, "table_height_in": 0.12, "height_tolerance_pct": 10},
   "stationing": {"interval_ft": 100, "format": "12+34.56", "decimals": 2, "tick_half_len_in": 0.20, "label_offset_in": 0.32, "label_side": "left", "rotation": "along"},
-  "labels": {"pc_pt": {"required": True, "side": "right", "format": "PC 16+00.00"},
+  "labels": {"pc_pt": {"required": True, "side": "right", "format": "BC 16+00.00"},
              "bearing": {"required": True, "anchor": "T-n", "format": "quadrant", "seconds_decimals": 0, "side": "left"},
              "mc": {"required": True, "format": "C-1"},
              "pi": {"required": False}, "equation": {"required_when_present": True, "format": "STA 20+00.00 BK = STA 25+00.00 AH"}},
@@ -710,7 +710,7 @@ DRAFTING_SPEC_V1 = {
      {"id": "D1-01", "name": "alignment linework on the alignment layer matches design geometry", "weight": 10, "hard_fail": True},
      {"id": "D1-02", "name": "station tick at every interval station (per region)", "weight": 12, "hard_fail": False},
      {"id": "D1-03", "name": "station label content/format correct and anchored", "weight": 12, "hard_fail": True},
-     {"id": "D1-04", "name": "PC/PT label for every curve, correct, anchored", "weight": 14, "hard_fail": True},
+     {"id": "D1-04", "name": "BC/EC label for every curve, correct, anchored", "weight": 14, "hard_fail": True},
      {"id": "D1-05", "name": "bearing label on every tangent, quadrant format, anchored T-n", "weight": 10, "hard_fail": True},
      {"id": "D1-06", "name": "curve table on the sheet: one row per curve, values within rounding, anchored", "weight": 14, "hard_fail": True},
      {"id": "D1-07", "name": "label position within tolerance of the anchor-implied position (no free-floating text)", "weight": 8, "hard_fail": False},
@@ -758,12 +758,12 @@ TaskBrief JSON:
                  "text_heights": {"model_label_ft": 5.0, "sheet_table_in": 0.12}, "tick_half_len_ft": 10.0, "label_offset_ft": 16.0,
                  "north_arrow": true, "title_block_fields": {"project": ..., "agency": ..., "sheet_title": "ROADWAY PLAN", "sheet_number": "C-101", "total_sheets": "1", "designed_by", "drawn_by", "checked_by", "date", "scale": "1\" = 50'"}},
  "drafting_spec": <spec_subset()>,
- "instructions": "Draft plan sheet C-101 (ANSI D, 1\" = 50') showing alignment ALIGN-1 in full: draw the alignment on V-ALIGN-CNTR, station ticks and labels every 100 ft, PC/PT labels, a bearing on every tangent, a C-n callout at every mid-curve, a curve data table on the sheet, a north arrow, and a filled title block. Use anchored labels (place_label), never raw text."}
+ "instructions": "Draft plan sheet C-101 (ANSI D, 1\" = 50') showing alignment ALIGN-1 in full: draw the alignment on V-ALIGN-CNTR, station ticks and labels every 100 ft, BC/EC labels, a bearing on every tangent, a C-n callout at every mid-curve, a curve data table on the sheet, a north arrow, and a filled title block. Use anchored labels (place_label), never raw text."}
 ```
 GroundTruth JSON:
 ```json
 {"task_id": "...", "design_fingerprint": "sha256:...",
- "labels": [{"kind": "pc", "alignment": "ALIGN-1", "anchor": "PC-1", "content": "PC 16+00.00", "station": 1600.0, "space": "model",
+ "labels": [{"kind": "pc", "alignment": "ALIGN-1", "anchor": "PC-1", "content": "BC 16+00.00", "station": 1600.0, "space": "model",
              "side": "right", "label_offset": 16.0, "rotation": "along", "position": [1600.0, 984.0], "rotation_deg": 0.0,
              "halign": "center", "valign": "top", "layer": "V-ANNO-TEXT", "height": 5.0, "required": true}, ...],
  "ticks": [{"station": 1100.0, "station_text": "11+00.00", "start": [x, y], "end": [x, y], "layer": "V-ROAD-STA"}, ...],

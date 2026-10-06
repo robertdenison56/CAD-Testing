@@ -35,7 +35,7 @@ def test_stationing_full_chain():
              if isinstance(e, Line) and e.layer == "0"]
     labels = {t.content for t in texts}
     assert "10+00.00" in labels and "25+00.00" in labels
-    assert "PC 16+00.00" in labels and "PT 20+18.88" in labels
+    assert "BC 16+00.00" in labels and "EC 20+18.88" in labels
     assert len([t for t in texts if "+" in t.content and " " not in t.content]) == 16
     assert len(ticks) == 16  # ticks landed on current layer "0"
 

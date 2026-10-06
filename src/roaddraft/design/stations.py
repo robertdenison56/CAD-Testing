@@ -155,6 +155,17 @@ class StationSystem:
                 return last.display_end - last.shift
             if first.display_start - DISPLAY_HALF <= display < first.display_start:
                 return first.display_start - first.shift
+            for k, eq in enumerate(self.equations, start=1):
+                # the BK reading names the equation point, which this engine
+                # reads by its AHEAD station; say so instead of "does not exist"
+                if abs(display - float(eq.back)) <= DISPLAY_HALF:
+                    raise DesignError(
+                        f"station {_display_text(display)} is the back reading of the equation "
+                        f"{_display_text(eq.back)} BK = {_display_text(eq.ahead)} AH; the "
+                        f"equation point is read by its ahead station, {_display_text(eq.ahead)}",
+                        hint=f"ask for {_display_text(eq.ahead)}, or pass region={k} to read "
+                             f"{_display_text(eq.back)} on the back side (EQ-{k} names the "
+                             f"point too)")
             for eq in self.equations:
                 if float(eq.back) < display < float(eq.ahead):
                     raise DesignError(

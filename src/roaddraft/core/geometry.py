@@ -111,6 +111,21 @@ def upright(angle_deg):
     return ((a + 180.0) % 360.0) - 180.0
 
 
+def reading_up(angle_deg):
+    """Fold a rotation into (-45, 135] for text set square to a line.
+
+    Caltrans letters BC and EC stations, and match lines, along the
+    perpendicular and reading bottom to top (PPM 2-1.2). ``upright`` would
+    turn every one of them whose line climbs to the right on the sheet so it
+    reads top to bottom. Here text stays bottom-to-top until it leans more
+    than 45 degrees past vertical; beyond that it reads left to right instead
+    of nearly upside down."""
+    a = angle_deg % 360.0
+    if 135.0 < a <= 315.0:
+        a -= 180.0
+    return ((a + 180.0) % 360.0) - 180.0
+
+
 # --------------------------------------------------------------- arrowheads
 
 ARROW_HALF_RATIO = 0.18  # half-width of an arrowhead as a fraction of its length

@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Sequence
 from roaddraft import __version__
 from roaddraft.api.session import Session
 from roaddraft.document import fileformat
-from roaddraft.document.fileformat import DocumentFormatError
+from roaddraft.document.fileformat import DocumentFormatError, journal_path
 
 #: Revision of the MCP spec this server implements. The client's requested
 #: version is echoed back when it sends one: only the stable core (initialize,
@@ -288,7 +288,8 @@ class RoadDraftMCP:
                     "'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor "
                     "and get_design_data all accept that name and answer in host "
                     "coordinates. To call one out, give place_callout a target_anchor "
-                    "('18+00@12R', 'PC-1') and that alignment name. Otherwise commands "
+                    "('18+00@12R', 'PC-1'; BC-1 and EC-1 name the PC and PT too) and that "
+                    "alignment name. Otherwise commands "
                     "do not take it: nothing can be drawn, labelled or anchored to an "
                     "alignment this document does not own."
                     "\n\n"
@@ -328,16 +329,6 @@ class RoadDraftMCP:
 
 
 # ------------------------------------------------------------------ helpers
-
-
-def journal_path(document: Path) -> Path:
-    """``SR-100.sheets.rdoc.json`` -> ``SR-100.sheets.jsonl``, beside it."""
-    name = Path(document).name
-    for suffix in (".rdoc.json", ".rdraft", ".json"):
-        if name.endswith(suffix):
-            name = name[:-len(suffix)]
-            break
-    return Path(document).with_name(name + ".jsonl")
 
 
 def _text(payload) -> dict:

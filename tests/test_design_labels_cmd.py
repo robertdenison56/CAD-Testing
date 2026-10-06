@@ -44,9 +44,9 @@ def test_place_label_pc1_content_position_1600_984_anchor_record():
     r = s.execute("place_label", {"space": "model", "alignment": "ALIGN-1", "anchor": "PC-1",
                                   "layer": "V-ANNO-TEXT"})
     assert r["ok"], r
-    assert r["message"] == "label TX-001 'PC 16+00.00' (pc @ PC-1 of ALIGN-1) placed in model space"
+    assert r["message"] == "label TX-001 'BC 16+00.00' (pc @ PC-1 of ALIGN-1) placed in model space"
     e = text_of(s, r)
-    assert e.content == "PC 16+00.00" and near(e.position, [1600.0, 984.0])
+    assert e.content == "BC 16+00.00" and near(e.position, [1600.0, 984.0])
     assert e.rotation_deg == 0.0 and e.halign == "center" and e.valign == "top"
     assert e.height == 8.0 and e.layer == "V-ANNO-TEXT" and e.style == "STANDARD"
     a = e.anchor
@@ -79,18 +79,29 @@ def test_place_label_bearing_T2_N60E_rotation_30():
     assert e.rotation_deg == pytest.approx(30.0, abs=1e-6)
 
 
-def test_place_label_perpendicular_neg75_676():
+def test_place_label_perpendicular_reads_bottom_to_top():
     s = session_A()
     r = s.execute("place_label", {"space": "model", "anchor": "18+00", "rotation": "perpendicular"})
-    assert text_of(s, r).rotation_deg == pytest.approx(-75.676, abs=1e-3)
+    assert text_of(s, r).rotation_deg == pytest.approx(104.324, abs=1e-3)
     r = s.execute("place_label", {"space": "model", "anchor": "18+00", "rotation": "horizontal"})
     assert text_of(s, r).rotation_deg == 0.0 and text_of(s, r).anchor["rotation"] == "horizontal"
+
+
+def test_perpendicular_label_on_a_twisted_sheet_reads_bottom_to_top():
+    # 18+00 runs at 14.324 deg in the model; a -6.457 deg twist shows it at
+    # 7.867 deg, so the square label reads up at 97.867, not down at -82.133
+    s = sheet_session(rotation=-6.457)
+    r = s.execute("place_label", {"space": "C-101", "anchor": "18+00", "rotation": "perpendicular"})
+    assert r["ok"], r
+    assert text_of(s, r).rotation_deg == pytest.approx(97.867, abs=1e-3)
+    r = s.execute("place_label", {"space": "C-101", "anchor": "BC-1"})
+    assert r["ok"] and text_of(s, r).content == "BC 16+00.00", r
 
 
 def test_place_label_infers_kind_from_anchor():
     s = session_A()
     for anchor, kind, content in (("T-1", "bearing", 'N 90°00\'00" E'), ("MC-1", "mc", "C-1"),
-                                  ("PT-1", "pt", "PT 20+18.88"), ("PI-1", "pi", "PI 18+14.36"),
+                                  ("PT-1", "pt", "EC 20+18.88"), ("PI-1", "pi", "PI 18+14.36"),
                                   ("BEGIN", "begin", "BEGIN STA 10+00.00"),
                                   ("END", "end", "END STA 25+18.88"),
                                   ("12+50", "station", "12+50.00")):
