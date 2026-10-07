@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Sequence
 
 from roaddraft import __version__
 from roaddraft.api.session import Session
+from roaddraft.mcp import config as mcpconfig
 from roaddraft.document import fileformat
 from roaddraft.document.fileformat import DocumentFormatError, journal_path
 
@@ -388,7 +389,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                         "file: arguments, outcome, faults and hints")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool names that would be served, then exit")
+    parser.add_argument("--config", metavar="CLIENT", choices=sorted(mcpconfig.CLIENTS),
+                        help="instead of serving, print the registration of this server -- "
+                             "with the options given here -- for an MCP client, then exit: "
+                             + ", ".join(sorted(mcpconfig.CLIENTS)))
+    parser.add_argument("--name", default=mcpconfig.DEFAULT_NAME,
+                        help="the server's name in the client (default %(default)s)")
+    parser.add_argument("--write", nargs="?", const="-", metavar="FILE",
+                        help="with --config: put the registration in the client's file "
+                             "(or FILE), merged in beside the servers already there")
     args = parser.parse_args(argv)
+
+    if args.config:
+        if args.doc and not Path(args.doc).is_file():
+            print(f"note: {args.doc} does not exist yet", file=sys.stderr)
+        return mcpconfig.configure(
+            args.config, name=args.name,
+            args=mcpconfig.server_args(doc=args.doc, autosave=args.autosave, trace=args.trace,
+                                       out_dir=args.out_dir, only=_names(args.only),
+                                       exclude=_names(args.exclude), project=args.project),
+            write_to=args.write)
+    if args.write:
+        parser.error("--write goes with --config")
 
     if args.doc:
         session = Session.load(args.doc, out_dir=args.out_dir)

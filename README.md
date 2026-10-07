@@ -363,18 +363,38 @@ entity's own length, radius and sweep — formatted with the same string
 `roaddraft-mcp` serves the whole command surface to any MCP client as tools, so
 an agent can be told *"draft a 2,000 ft alignment from station 10+00 with a
 1,200 ft curve, then draw 12 ft pavement edges"* and work it out through the
-same bus a human uses. Register it with Claude Code:
+same bus a human uses.
+
+**Claude Code finds it on its own in this repository.** The checked-in
+[`.mcp.json`](.mcp.json) registers the server as `roaddraft` through
+`${CLAUDE_PROJECT_DIR}`, so the file is the same on every machine and carries
+nobody's path. Claude Code asks once per project to approve it; from then on
+the tools are there as `mcp__roaddraft__<tool>` (`claude mcp list` shows the
+state, `claude mcp reset-project-choices` asks again). The server starts on a
+new document; `open_document` opens one, and `save_document` keeps the work.
+
+**Every other client is one command.** The server's own command line is the
+registration: `--config CLIENT` prints it for exactly the server invocation the
+other flags describe, with the venv's executable and every path absolute, and
+`--write` merges it into the client's file beside the servers already there (a
+file in your home folder is backed up first). Paths with spaces are quoted;
+this repository's own path has one.
 
 ```bash
-claude mcp add roaddraft -- /ABSOLUTE/PATH/TO/.venv/bin/roaddraft-mcp
+.venv/bin/roaddraft-mcp --config lmstudio --write          # ~/.lmstudio/mcp.json
+.venv/bin/roaddraft-mcp --config claude-desktop --write    # claude_desktop_config.json
+.venv/bin/roaddraft-mcp --config codex --write             # [mcp_servers.roaddraft] in ~/.codex/config.toml
+.venv/bin/roaddraft-mcp --config claude-code --doc /path/to/SR-100.sheets.rdoc.json --autosave --name roaddraft-sheets
 ```
 
-Point it at an existing document with `--doc` (this is how a sheet file with
-the model referenced in gets annotated):
-
-```bash
-claude mcp add roaddraft-sheets -- /ABSOLUTE/PATH/TO/.venv/bin/roaddraft-mcp --doc /path/to/SR-100.sheets.rdoc.json
-```
+The last one is a second server for Claude Code pointed at an existing document
+(this is how a sheet file with the model referenced in gets annotated); its
+output also names the `claude mcp add --scope user` line for a registration
+that follows you across projects. Clients: `claude-code` (the project
+`.mcp.json`), `claude-desktop`, `lmstudio`, `codex`, `cursor`, `vscode`
+(`.vscode/mcp.json`) and `json`, the bare entry for anything else with an
+`mcpServers` table. `python -m roaddraft.probes setup` prints the same line
+for a probe's fresh project.
 
 - **78 tools**: 45 commands + 32 queries straight from `Session.manifest()` —
   the same descriptions, JSON Schemas and worked examples the REPL and the web

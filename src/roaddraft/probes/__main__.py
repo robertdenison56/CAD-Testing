@@ -22,11 +22,8 @@ import sys
 from pathlib import Path
 
 from roaddraft.api.session import Session
+from roaddraft.mcp import config as mcpconfig
 from roaddraft.probes import fixture, reference, tasks
-
-
-def _venv_bin() -> str:
-    return str(Path(sys.executable).parent / "roaddraft-mcp")
 
 
 def cmd_list(args) -> int:
@@ -61,7 +58,10 @@ def cmd_setup(args) -> int:
         print(f"  [BLOCKED] {probe.blocked_on}")
     print()
     print("point it at the project:")
-    print(f"  claude mcp add roaddraft-probe -- {_venv_bin()} --doc {sheets} --autosave")
+    print("  " + mcpconfig.claude_mcp_add(
+        "roaddraft-probe", mcpconfig.server_command(),
+        mcpconfig.server_args(doc=str(sheets), autosave=True)))
+    print("  (for another MCP client: the same roaddraft-mcp options with --config CLIENT [--write])")
     print()
     print("then score what it leaves behind:")
     print(f"  python -m roaddraft.probes score {probe.id} --doc {sheets}")
