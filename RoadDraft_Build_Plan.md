@@ -1,253 +1,254 @@
-# RoadDraft — Build Plan
+# RoadDraft — Research Plan
 
-**An RL environment that teaches AI models to draft roadway plan sets**
-Robert Denison, PE · Working plan v1 · August 2, 2026
-*(Working name — rename freely.)*
-
----
-
-## 1. Concept
-
-RoadDraft is a training/evaluation environment ("game") where an AI agent receives finished roadway design data plus a drafting specification, and must produce annotated plan sheets. A deterministic verifier scores the output — every label value on a plan sheet (station, elevation, curve data, grade, K value) derives exactly from the design data, so right and wrong are computable, not judged.
-
-**Why this niche:** mechanical text-to-CAD is crowded (Zoo, Adam, Spectral Labs SGS-1) and benchmarked (Text2CAD-Bench, where frontier models hit 70–90% invalid outputs on harder tasks). Infrastructure *drafting* has no environment, no benchmark, and no one building one — and it requires exactly the domain knowledge a roadway PE has and AI researchers don't. The verifier — the encoded knowledge of what a correct sheet contains — is the moat, and it doubles as a standalone plan-set QA tool.
-
-**Core design principle (your call, and the right one):** the thinking lives in the environment's internal models and verifiers, not in any CAD program. Civil 3D, OpenRoads, or anything else are thin adapters at the edges. What the environment teaches — what must appear on a sheet, where, and why — is program-agnostic and transfers.
+**Benchmarking and training LLMs on 2D drafting software, through MCP**
+Robert Denison, PE · PRD v2 · October 6, 2026
+Supersedes the v1 build plan of August 2, 2026 (in git history through `5d4ab4a`). The filename is kept so links hold; references elsewhere to v1 sections (§4, §5.1, §5.4, §8, M2 to M5) resolve through §6 below.
+Companions: [RoadDraft_Eval_Plan.md](RoadDraft_Eval_Plan.md) (the scored verifier and harness, September 4), [docs/Probes_Tier2_Proposal.md](docs/Probes_Tier2_Proposal.md), [docs/Probes_Tier3_Proposal.md](docs/Probes_Tier3_Proposal.md), and [benchmarks/probe_runs/README.md](benchmarks/probe_runs/README.md) (every model run so far).
 
 ---
 
-## 2. Why roadway drafting works as an RL environment
+## 0. What changed from v1
 
-- **Ground truth is computable.** PC/PT stations, bearings, Δ/R/T/L, profile elevations, K values — all derive deterministically from the alignment and profile. Label verification is exact math, not fuzzy matching.
-- **Standards are codified.** AASHTO / Caltrans HDM govern design values; DOT CADD manuals (Caltrans, SCDOT, etc.) govern layers, text heights, stationing format, required annotations. Published rules convert directly into checker code.
-- **Tasks are generatable.** A procedural design generator produces unlimited alignments/profiles that are standards-compliant by construction — infinite tasks with known answers, no data licensing problems.
-- **Failure is informative.** Partial credit (85% of labels correct, two overlaps, one missing curve table) gives the dense reward signal RL training needs.
+v1 was a plan to build an RL environment for roadway drafting. The application it called for now exists: a headless 2D CAD engine with a command bus, an MCP server exposing 78 tools, a design model, a D1 task generator with reference solutions, 33 capability probes whose references are kept as finished drawings, and seven runs across four models. What v1 did not say is what the research is.
+
+v2 frames the project as a research program with three questions, and the app as the instrument that answers them:
+
+1. **Measure.** How well do LLMs operate a real 2D drafting program through MCP, and where exactly do they fail?
+2. **Rank.** Put every model, frontier and local, through the same tool surface and the same scorer, and publish a leaderboard that reproduces.
+3. **Train.** Use the app's own output (reference trajectories, verified rollouts, expert sessions, the verifier as a reward) to fine-tune open models, and measure the climb on the same leaderboard.
+
+The engine is no longer the deliverable; the measurements and the trained models are. Engine work continues only where a probe, a verifier check or a training loop needs it.
 
 ---
 
-## 3. Architecture
+## 1. Research statement
+
+**Claim under test.** Drafting is a tool-use task with computable ground truth. Every number on a roadway plan sheet derives from the design, and every placement follows a published convention. That makes it a benchmark where right and wrong are decided from the drawing on disk rather than by a judge, and a training environment whose reward cannot be argued with. No such benchmark exists for drafting; the mechanical text-to-CAD benchmarks score geometry, not the use of a drafting program.
+
+**Research questions and hypotheses**
+
+| | Question | Hypothesis | Evidence so far |
+|---|---|---|---|
+| RQ1 | Can an LLM, given only an MCP tool surface, locate, draft and annotate correctly in a 2D CAD program? | Frontier models can; smaller models fail on specific, nameable skills rather than uniformly. | Fable 17/17, Haiku 14/17, gpt-oss:120b 12 to 15 of 17, Qwen3.5-9B 11/17; each miss names a skill (§2.2). |
+| RQ2 | Does a probe-and-verifier benchmark rank models stably and discriminate between them? | Yes: tiers saturate for strong models and discriminate for the rest, so a tiered score orders the field. | The T2 find-probes are saturated (a 9B model scores 8/9); T1, Tier 2 and Tier 3 spread the models. |
+| RQ3 | Does fine-tuning on the app's own trajectories and rewards raise a small open model's rank, and does the gain hold on held-out tasks and renamed tool surfaces? | SFT on reference trajectories closes the schema and convention gaps; RL with the verifier closes the arithmetic and scope gaps; a dialect skin exposes tool memorisation. | Untested. No training code exists yet. |
+
+**What is novel.**
+
+- A tool-use benchmark on a real application, scored deterministically from the saved document, where the report the model gives is checked against the file it left.
+- A training environment whose expert demonstrations are generated with the tasks, because the generator knows the truth.
+- The dialect transfer gap: the same tasks through neutral, Civil 3D-style and ORD-style tool names, which separates "learned drafting" from "memorised a schema".
+- Domain knowledge encoded as checks by a licensed PE, each cited to a page of the Caltrans Plans Preparation Manual.
+
+---
+
+## 2. Where the project stands (October 6, 2026)
+
+### 2.1 The instrument that exists
+
+| Component | State | Where |
+|---|---|---|
+| CAD engine | 787 tests. Model space and sheets, layers, blocks, viewports, references, dimensions, a design model (alignments, profiles, station equations, anchors), DXF, PDF, PNG and LandXML out. | `src/roaddraft/{core,document,design,commands,render,adapters}` |
+| Command bus | Every mutation is a validated JSON command: atomic, journaled, undoable, replayable; faults return teaching errors; the bus stamps anchor provenance. | `commands/bus.py` |
+| MCP server | `roaddraft-mcp`: 78 tools (45 commands, 32 queries, `open_document`) from one manifest; `--autosave`, `--trace`, `--only` / `--exclude`. Stdlib JSON-RPC on Python 3.9. | `mcp/server.py` |
+| Probes | 33 pass/fail tasks in three tiers (9 find, 8 draft, 6 Tier 2, 10 Tier 3), each with a scripted solve that passes its own check, an untouched start that fails it, and tests (Tier 2 and 3 with trap tests that prove each trap fails). References kept as finished projects with journal, PDF and DXF. | `probes/`, `benchmarks/probe_references/` |
+| Task generator | D1 plan-sheet tasks from a seed, with brief, ground truth and a reference solution that replays; draft spec v1 ("Caltrans-flavored but genericized") of 11 weighted checks. | `tasks/` |
+| Knowledge base | The Caltrans PPM indexed by page, so every spec value and probe convention cites its source. | `benchmarks/knowledge/` |
+| Runners | Claude models through a shell bridge (`rd`) over one persistent server; Ollama and LM Studio through a minimal native MCP client. `score_runs.py` scores from disk; `make_deliverables.py` prints every document and reference to PDF with a pass/fail overview. | `benchmarks/probe_runs/<run>/` |
+| Human interfaces | Web GUI, terminal REPL and RoadDraft.app on the same bus, so a human session leaves the same journal an agent does. | `web/`, `cli/`, `desktop/`, `scripts/build_app.sh` |
+
+Not built: the scored verifier (`roaddraft.verify`), the eval harness (`roaddraft.eval`), pinned task sets, the leaderboard generator, and any training code. The eval plan specifies the first four as work packages E0 to E6.
+
+### 2.2 Current standings
+
+Seven runs, four models, every score taken from the document the run left on disk. These are capability probes at n = 1, not the scored benchmark, and no model has run every tier.
+
+| Model | Runner | All 17 (9 find + 8 draft) | Tier 2 (6) | Tier 3 batch A (4) |
+|---|---|---|---|---|
+| Fable 5.1 | shell bridge | 17/17 (Sep 22) | not run | not run |
+| Haiku 4.5 | shell bridge | 14/17 (Sep 22: find 7/9, draft 7/8) | 5/6 | 1/4 |
+| gpt-oss:120b (cloud) | native MCP client | 12, 12, 15 of 17 over three passes | not run | not run |
+| Qwen3.5-9B (local) | native MCP client | 11/17 (find 8/9, draft 3/8) | 0/6 | not run |
+
+What the runs already say, and what v2 turns into measurements:
+
+- **Skills, not models, are the unit of failure.** Draft-probe misses cluster on hand arithmetic (bearing and distance, the COGO gap), width versus offset, stopping an offset at a station, and losing track of one's own entities. Tier 3 batch A misses are lettering conventions: the data was read right every time and the text went in the wrong place or faced the wrong way.
+- **Reports and documents disagree.** gpt-oss:120b reported work it had not done (Sep 24); Haiku reported rotated labels that sit at 0° (Oct 6). Scoring from disk is the rule, and the disagreement rate becomes a published column.
+- **The first call to a tool usually faults.** Haiku's faults are almost all a missing required property on a tool's first use, fixed on the next call; one loop repeated the same fault 47 times. Schema compliance and recovery are measurable per model.
+- **The protocol is not yet uniform.** Claude models see the tools through a shell bridge; open models see them as native function tools. One runner for every vendor comes before any cross-vendor ranking is published.
+
+---
+
+## 3. Method
+
+### 3.1 The loop
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Harness / API                       │
-│   Gymnasium-style episodes · eval runner · leaderboard  │
-│   MCP server mode (any agent can connect and play)      │
-├────────────────┬───────────────────┬────────────────────┤
-│ Task Generator │  Agent Interface  │      Verifier      │
-│ procedural     │  semantic actions │  completeness      │
-│ designs w/     │  or raw-code mode │  value correctness │
-│ known truth    │  (sandboxed)      │  standards, layout │
-├────────────────┴───────────────────┴────────────────────┤
-│              Canonical models (the core IP)             │
-│  Design model: alignments, profiles, surfaces, stations │
-│  Sheet model: viewports, labels, tables, title block    │
-├─────────────────────────────────────────────────────────┤
-│        I/O adapters (edges only, never in core)         │
-│  LandXML ↔ · DXF out (ezdxf) · PDF out · later: IFC 4.3,│
-│  OpenDRIVE, Civil 3D via APS Design Automation          │
-└─────────────────────────────────────────────────────────┘
+                 ┌─────────────── model under test ─────────────────┐
+                 │  frontier API · hosted open · local (LM Studio,   │
+                 │  vLLM, Ollama) · fine-tuned checkpoints (RQ3)     │
+                 └───────────────┬──────────────────▲───────────────┘
+                  MCP tool calls │                  │ results, faults, renders
+                 ┌───────────────▼──────────────────┴───────────────┐
+                 │  roaddraft-mcp  (78 tools, one manifest;          │
+                 │  a dialect skin is the same tools renamed)        │
+                 │  --autosave  → document + journal on disk         │
+                 │  --trace     → every call, query and fault        │
+                 └───────────────┬──────────────────────────────────┘
+                                 │
+     ┌───────────────────────────▼────────────────────────────┐
+     │  scorer: probe checks (pass/fail) · verifier (0 to 100) │
+     │  reads the document from disk, never the report         │
+     └──────────┬─────────────────────────────┬────────────────┘
+                │ leaderboard (RQ1, RQ2)      │ reward, filtered trajectories (RQ3)
+                ▼                             ▼
+     benchmarks/runs/<run>/             training data → SFT / RFT / GRPO → checkpoint
+                                                               │
+                                                               └── served back through the same MCP server
 ```
 
-**Canonical design model** — tangents / circular curves / spirals, parabolic vertical curves, stationing with equations, surfaces, project metadata. Serialized as JSON schema; imported/exported as LandXML (natively supported by both Civil 3D and OpenRoads — this is what makes "applicable to multiple programs" real).
+Invariants, already in force for the probe runs and carried into everything below:
 
-**Canonical sheet model** — semantic entities: viewport (station range, scale, rotation), linework references, labels (text + anchor + style), curve/VC data tables, match lines, title block fields. Rendered to DXF and PDF. The agent works at this semantic level; DXF is just a render target.
+1. The model under test touches the app only through MCP. Same tools, descriptions and schemas for every model; the only permitted differences are the dialect skin and the mode (text, self-correct, vision).
+2. Scores come from the document on disk. The model's report is kept and compared, never scored.
+3. Every run folder keeps its rig: runner, prompts, traces, documents, journals, engine commit. A re-score runs against the current checks, which is why the documents are kept and not just the numbers.
+4. Every reference solution is a finished drawing that opens in the app, replays from its journal, and passes its own check.
+5. Versions are pinned into the record: engine commit, probe set or spec hash, prompt hash, model id, runner.
 
-**Agent interface, two modes:**
-1. *Semantic drafting actions* (tool calls / MCP): `place_station_labels`, `add_curve_table`, `annotate_profile`, `set_match_line`, `fill_title_block`… — the mode that transfers across programs, because an adapter can replay the same actions in Civil 3D or OpenRoads later.
-2. *Raw-code mode*: agent writes Python against the sheet SDK in a Docker sandbox — closer to how labs eval code agents.
+### 3.2 Measuring MCP use (RQ1)
 
-**Verifier** (rubric → 0–100, plus hard fails):
-- *Completeness*: every curve has data and PC/PT labels; bearings on tangents; station ticks at spec interval; grades, VC data, PVIs on profile; north arrow, scale, match lines, title block fields.
-- *Value correctness*: label values recomputed from design data must match exactly. Wrong elevation = hard fail.
-- *Anchoring*: labels must reference the correct geometry (no free-floating text that happens to say the right thing) — this is the anti-reward-hacking layer.
-- *Standards*: layer names, text heights, stationing format ("123+45.67"), abbreviations per the drafting spec.
-- *Legibility*: bounding-box overlap detection, labels within sheet extents, leader-line targets.
-- Optional secondary signal: VLM judge for visual quality (never primary — Text2CAD-Bench pattern).
+Each run yields, per model and per task, from `trace.jsonl`:
 
-**Stack:** Python · numpy/shapely (geometry) · ezdxf (DXF) · jsonschema · matplotlib (PDF/renders) · Docker · later rasterio/py3dep for real terrain. No CAD license required to run the environment.
-
----
-
-## 4. Program parity — staging the environment to feel like C3D and Bentley
-
-Your "applicable to multiple programs" requirement, made concrete: the agent should learn workflows and vocabulary that *already exist* in Civil 3D and OpenRoads/MicroStation, so moving from the test app to a real program — or between the two programs — is a re-skin, not a re-learn.
-
-**One ontology, program dialects.** The core model stays neutral, but every concept carries its C3D and Bentley names, and the environment can present any task in either vocabulary:
-
-| RoadDraft core concept | Civil 3D | Bentley (ORD / MicroStation) |
+| Measure | Definition | Why it matters |
 |---|---|---|
-| Layer | Layer | Level |
-| Symbol | Block | Cell |
-| External reference | Xref / data shortcut | Reference attachment |
-| Label style | Label style | Annotation group / element template |
-| Sheet frame | View frame (Plan Production) | Named boundary |
-| Typical section | Assembly / subassemblies | Template |
-| Alignment | Alignment | Horizontal geometry |
-| Profile | Profile + profile view | Vertical geometry + profile model |
-| Terrain | TIN surface | Terrain model |
-| Standards bundle | DOT state kit (styles) | DOT workspace |
-| Geometry / annotation / sheet separation | Model space + paper-space layouts | Design / drawing / sheet models |
+| Pass, or effective score | the probe check, or the verifier's effective score | the outcome |
+| Invalid-call rate | schema faults / calls | whether the model reads a JSON Schema before its first call |
+| Fault recovery | faults followed within 3 calls by a successful call of the same tool | whether it learns from the teaching error |
+| Repeated-fault loops | the same fault made 5 or more times in a row | the Haiku stationing case |
+| Query before compute | design queries used where arithmetic was needed (`station_to_xy`, `get_design_data`, `measure`) versus hand calculation | the COGO gap is a tool-use gap as much as a reasoning one |
+| Report fidelity | claims in the final report that the document contradicts | fabricated completion |
+| Steps, wall clock, tokens, cost | per task | the price of a sheet |
+| Render use | `render_sheet` calls, and whether a fix followed | whether looking helps |
+| Scope completion | items done / items asked on multi-sheet tasks | stopping early |
 
-**Command dialects, not just name maps.** Expose the same semantic actions in three skins: *neutral* (clean JSON tools), *C3D-style* (Plan Production workflow: create view frames → generate sheets → annotate with label styles), and *ORD-style* (key-in flavored: named boundaries, annotation groups). MicroStation key-ins and the AutoCAD command line are **text** interfaces — the modality LLMs are strongest at — so practicing a dialect in the environment is practicing the real program's actual automation surface.
+These are the columns of the model card that accompanies every leaderboard row.
 
-**Stage the workflow, not just the output.** Episodes follow the shared procedure both programs enforce: attach references / data shortcuts → load the standards kit → frame the sheets (view frames / named boundaries) → cut sheets → annotate via styles → final check. A model that internalizes that sequence — and the separation of design geometry, annotation, and sheet composition — already holds the mental model both platforms are built on.
+### 3.3 Ranking (RQ2)
 
-**Standards as swappable kits.** Deliver the drafting spec the way real deployments do: as a workspace / state-kit bundle (layer↔level map, text styles, label formats, title block). Switching DOTs = swapping kits — true to life, and it generates transfer tasks for free ("same design, redraft under a different agency's kit").
+**RoadDraft-Bench** has three tracks. A model's rank is its position on Track D once that track exists, and on Track P until then. Track X qualifies a rank rather than setting it.
 
-**Transfer gap as a headline metric.** Run the same tasks in each dialect and report the spread (neutral vs. C3D-style vs. ORD-style). A small gap means the model learned *drafting*; a large gap means it memorized a tool. Nobody publishes this number for CAD — it's a novel, very legible eval result.
+| Track | Content | Score | State |
+|---|---|---|---|
+| P: probes | the 33 probes, three tiers | pass rate over k = 3 attempts, per tier and overall | built; four models partially run |
+| D: drafted sheets | the eval plan's `d1-test` set, 100 held-out generated plan sheets | effective score mean ± 95% CI; hard-fail rate; clean-sheet rate | generator built; verifier and harness not |
+| X: transfer | Track P and D tasks through the `c3d` and `ord` dialect skins, and in vision mode | transfer gap = neutral − skin, paired by task | aliases exist on every command; skins not wired |
 
-**GUI-parity mode (optional, later).** For computer-use agents: a lightweight web UI over the same backend, skinned like the real programs (ribbon, layer/level manager, style pickers). Only worth building if you target computer-use evals — but it's exactly the kind of environment labs want for agentic GUI work, and a civil-CAD one doesn't exist.
+Ranking rules:
 
----
+- Same prompt, same tool surface, same budgets (steps, wall clock, tokens) for every model. The no-calculator rule holds: the app's queries are the only arithmetic allowed.
+- k ≥ 3 attempts per task. The Sep 22 rerun moved Haiku's draft score by three probes with no change to the reasoning; n = 1 says which traps a model falls into, not how often.
+- Ties on score break on hard-fail rate, then invalid-call rate, then cost per task.
+- Attempts ended by infrastructure are recorded and excluded; attempts ended by budget count as failures.
+- Model classes run side by side: frontier API models, hosted open-weight models, local small models, and the RQ3 checkpoints. The leaderboard marks the class and the runner for each row.
+- The leaderboard file is generated from the run folders, never edited by hand.
 
-## 5. The CADapp — build spec (what the model actually touches)
+### 3.4 Training (RQ3)
 
-The environment needs a real application under it. Build it **headless-first**: a CAD engine with clean machine interfaces, and only a thin human viewer on top.
+**Subject model.** Qwen3.5-9B: the weakest model measured (11/17, 0/6), it runs locally and is small enough for LoRA on one rented GPU. A second subject in the 30B class follows if the first climbs.
 
-### 5.1 Components
+**Data the app produces**, all in the trace format the server already writes, converted to tool-calling conversations:
 
-| Component | What it is | Notes |
+| Source | How it is made | What it teaches |
 |---|---|---|
-| Document model | Project → design model (alignments, profiles, surfaces, stationing) + sheet set | JSON-serializable; LandXML in/out |
-| Command bus | Every mutation is a serializable command; state changes *only* through it | The load-bearing decision: commands = action space, command log = training trajectory, replay = determinism, undo = free, and the C3D/ORD dialects are just command-name translations |
-| Geometry engine | Curve/spiral/VC math, stationing, state-plane coordinates, US survey feet | Pure functions, unit-tested against hand calcs |
-| Renderer | DXF (ezdxf), PDF, and PNG viewport renders | PNGs are the vision observation; multiple zoom levels to control token cost |
-| Verifier service | Rubric checks vs. ground truth, per-check breakdown output | Runs outside the agent sandbox |
-| Task service | Procedural generator + versioned, hash-pinned task sets | Same seed → same task, forever |
-| Session server | REST/WebSocket + **MCP server**; N parallel seeded sessions | Stateless workers + session store; Docker sandbox for raw-code mode |
-| Web viewer (thin) | Replay any session: render, action log, score breakdown | Debugging, demo GIFs, verifier sanity-checks; grows into GUI-parity mode later |
+| Reference trajectories | every probe's scripted solve and every generated D1 task's reference solution, run through a tracing session so the queries are captured and not just the commands | the schema, the semantic path (anchors, queries), the conventions |
+| Verified rollouts | k samples per task from a strong model (Fable, Haiku) and from the subject itself; only those the scorer passes are kept | the subject's own successful behaviour, and distillation from the stronger model |
+| Fault-and-recovery pairs | mined from traces: a schema fault, the teaching error, the corrected call | first-call compliance |
+| Expert sessions | the PE drafts through RoadDraft.app or the GUI; the journal is the trajectory (the eval plan's human playtest, kept under `benchmarks/expert/`) | how a drafter actually works |
 
-### 5.2 The tool surface (what the model sees)
+Generated tasks are unlimited and carry their own truth, so training data costs compute, not labelling.
 
-**Queries:** `get_task_brief()` · `get_design_data(kind)` (paginated tables) · `station_to_xy(sta, offset)` / `xy_to_station(x, y)` · `get_sheet_state()` (compact semantic JSON) · `render(viewport?, dpi)` (PNG) · `run_check(scope?)` — partial verifier feedback, **budget-limited** (e.g., 3 per episode)
+**Stages**, each measured on the same leaderboard before the next starts:
 
-**Actions (via command bus):** `create_sheet(template, viewport)` · `set_viewport(...)` · `place_label(kind, anchor_ref, style)` · `add_curve_table(...)` / `add_vc_table(...)` · `draw_station_ticks(interval)` · `set_match_line(sta)` · `fill_title_block(fields)` · `move(id, dxy)` · `delete(id)` · `undo()` · `submit()`
-
-Design rules that make it model-friendly — and trainable:
-
-- **Text-first.** Full state is always available as compact JSON, so text-only models can play; renders are optional confirmation for vision models. Doubles the models you can benchmark.
-- **Every action returns a diff + warnings** ("label L-041 placed; overlaps L-032"). Immediate feedback is dense learning signal.
-- **Strict schemas, teaching errors.** Invalid calls return *why* and what valid looks like — error messages are training data.
-- **Anchors are references, not coordinates.** `place_label(anchor="PC-3")`, never raw XY — forces the model to work in design semantics and lets the verifier check intent.
-- **The `run_check` budget** teaches self-QA without turning the verifier into an oracle; "did the model use its checks?" becomes a writeup analysis.
-
-### 5.3 Training modes
-
-| Mode | App provides | Use |
+| Stage | Method | Question it answers |
 |---|---|---|
-| Eval | Terminal rubric score, fixed held-out task sets, leaderboard reports | The Phase 3 artifact |
-| Multi-turn self-correction | Render + check results between attempts | How frontier agents actually get used |
-| SFT data generation | The generator emits a **reference solution trajectory for every task** (it knows the ground truth), plus record-your-own expert sessions through the same command bus | Free expert demonstrations at scale — a quietly big deal |
-| RL (GRPO/PPO) | Seeded parallel sessions, terminal + optional shaped per-action reward, verifiers/Gymnasium wrappers, TRL example script | Phase 5 training-proof |
+| T0 | prompt only: the lettering conventions and tool guidance in the system prompt, no weights changed | how much of the gap is knowledge the model was never given |
+| T1 | SFT (LoRA) on reference trajectories and fault-and-recovery pairs | whether imitation closes the schema and convention gaps |
+| T2 | rejection-sampling fine-tuning: sample, score, keep the passes, retrain; two or three rounds | whether the subject learns from its own verified successes |
+| T3 | GRPO with the verifier as reward through the eval plan's Gymnasium adapter (terminal reward = effective score / 100; probe reward = pass), with TRL or `verifiers` | whether RL closes the gaps imitation did not: arithmetic, scope, restraint |
 
-Performance targets so RL is feasible: **<100 ms per action, <1 s per render, ~50 parallel sessions** on one machine; env/spec/task versions pinned so every result reproduces.
+**Held-out evaluation.** Training draws on `d1-dev` seeds and the find and draft probes; evaluation uses `d1-test` seeds, Tier 2 and Tier 3, which stay out of every training set. Every stage also runs Track X: a checkpoint whose transfer gap widens has memorised tool names, not drafting.
 
-### 5.4 Human-play mode (build this before blaming the models)
+**Serving.** Checkpoints are served through an OpenAI-compatible endpoint (vLLM, or LM Studio for GGUF conversions) and driven by the same native MCP client as every other open model, so a trained model's leaderboard row is produced exactly as a base model's is.
 
-A minimal command-line or form UI over the *same* tool surface, so you can draft a sheet through the exact action space. Two payoffs: recorded expert trajectories, and the critical playtest — **if a PE can't produce a 100-score sheet with these tools, the action space is broken, not the model.**
+**Anti-reward-hacking**, carried from the eval plan §3.5: anchors required for label credit, anchor consistency recomputed from the design, bus-stamped provenance, the design fingerprint precondition, no truth leaking through `run_check`, duplicates counted once. Probe checks judge geometry and text as plotted, never vocabulary, so an alternate correct route passes and a decorated wrong one fails.
 
-### 5.5 App milestones → phase mapping
+---
 
-| Milestone | Contents | Lands in |
+## 4. Program
+
+Each phase ends shippable. Targets assume the existing pace of about 8 to 10 hours a week.
+
+| Phase | Scope | Deliverable | Target |
+|---|---|---|---|
+| **A. Close Track P** | Fable on Tier 2 and Tier 3 batch A; batch B and C runs; one native MCP runner for Anthropic, OpenAI-compatible and local endpoints, replacing the shell bridge; k = 3 reruns of all 33 probes on all four models; the §3.2 measures computed from traces; the leaderboard generated from run folders | RoadDraft-Bench v0.1: probe leaderboard, four or more models, model cards | October 2026 |
+| **B. Track D** | eval plan E0 to E4: finish Phase 1, build `roaddraft.verify` and `roaddraft.eval`, freeze spec v1 after PE review, pin `d1-dev` and `d1-test`, run the leaderboard set | the headline number, best model X/100, with CI and failure taxonomy | November 2026 |
+| **C. Training data and SFT** | trace-to-conversation converter; reference trajectories for every probe and 500+ generated tasks; T0 and T1 on Qwen3.5-9B; re-rank | the first trained checkpoint on the leaderboard, with its delta and transfer gap | December 2026 |
+| **D. RFT and RL** | T2 and T3 through the Gymnasium adapter; Track X on every checkpoint | a measured reward curve and a ranked checkpoint | January 2027 |
+| **E. Publish** | writeup, public leaderboard, trajectory dataset and checkpoints on Hugging Face, environment listings (Prime Intellect hub, `verifiers`, Inspect) | the paper and the artefacts | February 2027 |
+
+Phases B and C are independent once A has produced the runner, so they can interleave. The engine changes only when a probe, check or training loop needs it, and every such change is recorded in the run that motivated it, as the Tier 3 lettering fixes were.
+
+---
+
+## 5. Deliverables and success criteria
+
+| RQ | Done when |
+|---|---|
+| RQ1 measure | every model on the leaderboard has a model card with the §3.2 measures, computed from traces, at k ≥ 3 |
+| RQ2 rank | Track P covers four or more models across all 33 probes at k = 3; Track D reports best model X/100 with a CI half-width under 5 points; the ordering is stable across k |
+| RQ3 train | a fine-tuned checkpoint beats its base on held-out Tier 2, Tier 3 and `d1-test` with non-overlapping CIs, without widening its transfer gap; the data and recipe reproduce from the repo |
+
+Secondary signals: inbound from labs, environment vendors and AEC firms; the probe set adopted by anyone else; and the verifier pointed at human-drawn sheets as a QA tool (the v1 product probe, unchanged).
+
+---
+
+## 6. Retained from v1
+
+These decisions stand and are not repeated here. v1 section numbers are listed for the references in the eval plan and the README.
+
+| v1 | Decision | Where it lives now |
 |---|---|---|
-| M0 | Schemas, command bus, geometry engine | Phase 1 |
-| M1 | Renderer, LandXML I/O, task generator + reference trajectories | Phase 1 |
-| M2 | Session server, MCP + tool API, verifier wired in — **first agent plays** | Phase 2 |
-| M3 | Eval harness, trajectory logging, thin web viewer | Phase 2–3 |
-| M4 | Dialect skins, `run_check` budgets, human-play mode | Phase 4 |
-| M5 | RL mode: parallel rollouts, shaped rewards, TRL/GRPO example | Phase 5 |
-
-Vertical-slice rule: drive M0→M2 against D1 tasks only, get one agent scoring end-to-end, *then* widen.
-
----
-
-## 6. The game — curriculum
-
-**Drafting track (v1):**
-
-| Level | Task | Verifier focus |
-|-------|------|----------------|
-| D1 | Plan-view sheet, single sheet, tangents + circular curves | Station ticks, bearings, curve data tables, PC/PT |
-| D2 | Full plan & profile sheet | + grades, VC data, PVI stations/elevations, datum ties |
-| D3 | Multi-sheet run with match lines + sheet layout | Station ranges per sheet, match-line consistency, index |
-| D4 | Redline revisions: existing sheet + markup list → corrected sheet | Diff verifier: requested changes made, nothing else broken |
-| D5 | Dialect transfer: repeat D1/D2 through the C3D-style and ORD-style dialects | Transfer gap vs. neutral dialect |
-
-Difficulty dials within each level: curve count, spirals, station equations, sheet count, topo/utility clutter density.
-
-**Design track (later, reuses the same core):** G1 horizontal layout to HDM standards → G2 profiles with K/sight-distance checks → G3 corridor + earthwork optimization against terrain. This is where the environment grows from "AI drafter" toward "AI designer."
+| §3, §5.1 | the command bus as action space, trajectory and replay; zero CAD-program imports in core | `README.md`, `commands/bus.py` |
+| §4 | one ontology with Civil 3D and ORD dialects; the transfer gap as a headline metric | every command's `c3d` / `ord` aliases; Track X |
+| §5.2 | text-first, a diff and warnings on every action, teaching errors, anchors not coordinates, a `run_check` budget | the engine; eval plan §4 |
+| §5.4 | human-play mode: if a PE cannot score 100 through the tools, the tools are wrong | GUI, REPL, RoadDraft.app; the eval plan's human playtest |
+| M2 to M5 | verifier, harness, dialect skins, RL mode | eval plan E0 to E6 |
+| §8 | open-core: harness, D1 generator, probes and leaderboard public; full spec depth, D3/D4 generators and the QA linter internal | unchanged |
+| §9 | IP hygiene: own time, own hardware, procedural and public data only; no employer or client files | unchanged |
+| §6 | the D2 to D5 curriculum (profiles, multi-sheet sets, redlines, dialect transfer) | deferred; Tier 2 and 3 already cover redlines (`draft-fix-the-drawing`, `qa-alignment-data`) and multi-sheet scope |
 
 ---
 
-## 7. Phases
-
-Assumes ~8–10 hrs/week alongside EKG. **Every phase ends shippable — stopping at any point still leaves a coherent artifact.**
-
-**Phase 0 — Spec (wk 1).** Write drafting spec v1 as a machine-readable document: ~25–40 checks, Caltrans-flavored but genericized, plus rubric weights and JSON schemas for the design/sheet models. This is your PE knowledge dump — the highest-leverage week of the project. Freeze it; version later changes.
-
-**Phase 1 — Geometry core (wks 2–3).** Alignment/profile math, stationing engine, LandXML import/export, procedural design generator, ground-truth label computer. Unit-test against hand calcs.
-
-**Phase 2 — v0.1 loop (wks 4–5).** D1 end-to-end: task → agent (semantic actions + DXF render) → verifier → score. Run 3–4 frontier models over ~50 tasks via API. First leaderboard numbers.
-
-**Phase 3 — Publish (wk 6). ← the job-search artifact ships here.** GitHub repo, README with leaderboard, 1,500-word writeup — working title: *"Why frontier models can't draft a plan sheet (yet)"* — plus a short GIF of an agent drafting. List on Prime Intellect's Environments Hub. Cross-post LinkedIn/HN.
-
-**Phase 4 — Depth (wks 7–9).** D2/D3, MCP-server mode (directly on-brand with your EKG/MCP story), redline tasks, command-dialect skins (C3D and ORD vocabularies) with first transfer-gap numbers, more models, v0.2 with updated numbers.
-
-**Phase 5 — Options, pulled not pushed (wk 10+).** Pick based on the response v0.1 gets:
-- *Training proof*: GRPO run on a small open model — does the environment actually train? (The most impressive technical flex for lab audiences.)
-- *Multi-program proof*: Civil 3D adapter via APS Design Automation replaying semantic sheets into real DWG — demonstrates the program-agnostic claim.
-- *Product probe (Denison Systems)*: the verifier alone, pointed at human-produced sheets, is an automated plan-set QA linter — a sellable tool independent of AI drafting.
-- *Env-vendor conversations*: labs and environment vendors are actively buying domain environments; a working roadway env built by a PE is a rare object.
-- *GUI-parity mode*: the web UI skinned like C3D/ORD (section 4) so computer-use agents can practice the click-path versions of the same tasks.
-
----
-
-## 8. Staged goals — what to open, what to keep internal
-
-Per "both, staged" and keeping the thinking internal:
-
-- **Open**: the environment harness, D1 task generator, a *subset* of the rubric, the leaderboard, the writeup. Enough to be credible, runnable, and citable in interviews.
-- **Internal (Denison Systems)**: the full drafting spec, the complete verifier depth, D3/D4 generators, and the QA-linter packaging. This is the open-core split — the public artifact markets the private depth.
-- Portfolio narrative: **EKG = teaching AI to *know* AEC; RoadDraft = teaching AI to *do* AEC — and measuring both.** Together they are your positioning sentence made concrete: *"I ship AI into a domain almost nobody in AI understands, and I measure whether it actually works."*
-
----
-
-## 9. Risks & guardrails
+## 7. Risks and guardrails
 
 | Risk | Guardrail |
-|------|-----------|
-| Spec creep (the drafting spec could absorb months) | Freeze v1 at ~25–40 checks; version everything after |
-| IP / employment hygiene | Own time, own hardware, procedural + public data only (USGS 3DEP, published DOT manuals, public as-builts). Nothing from employer or client project files. Check your employment agreement's IP clause before Phase 0. |
-| Reward hacking | Anchor verification + overlap detection + hard fails on wrong values |
-| DXF edge cases | Semantic JSON is the source of truth; DXF is only a render |
-| Program-agnostic drift | Rule: zero CAD-program imports in core packages; adapters at edges only |
-| Time vs. EKG | Phases sized small; Phase 3 is a legitimate stopping point, not a failure |
-| Over-building the app before an agent ever plays | Vertical-slice rule (section 5.5): M0→M2 on D1 tasks only, one agent scoring end-to-end, then widen |
+|---|---|
+| Rankings compared across different runners | Phase A's single native MCP client before any cross-vendor table is published |
+| n = 1 noise | k = 3 minimum; paired comparisons; bootstrap CIs; an ordering is reported only where the CIs separate |
+| Reward hacking in training | the eval plan §3.5 layer; mutation and hack probes pass before any reward is computed; a journal audit per episode |
+| Contamination | held-out seeds and tiers never enter a training set; task ids carry the spec hash, so a changed spec mints new ids |
+| Tool memorisation masquerading as skill | Track X on every checkpoint |
+| Cost | lean runner agents, cached prefixes, `--budget` on local models, a cost cap per run; the Sep 20 draft run's $27 in 20 minutes came mostly from orchestrator overhead, not the models |
+| The spec is DRAFT | PE review and freeze before Track D publishes; the knowledge base cites every value to a PPM page |
+| Fabricated completion | report fidelity as a published column; the disk is the only scorer |
+| Time | each phase ships on its own; Phase A alone is a publishable benchmark |
 
 ---
 
-## 10. Success criteria
+## 8. Immediate next actions
 
-- **v0.1 (6 weeks):** 50+ reproducible tasks, 3+ frontier models on a public leaderboard, writeup published with one headline number ("best model scores X/100 on a basic plan sheet").
-- **Signals worth watching after:** inbound from labs/env vendors/AEC firms, repo engagement, and — the actual goal — interview conversations that reference it.
-
----
-
-## 11. Key resources
-
-- LandXML: [mac999/landxml_parser](https://github.com/mac999/landxml_parser) (or roll a minimal subset)
-- [ezdxf](https://github.com/mozman/ezdxf) — DXF generation/parsing
-- [Prime Intellect Environments Hub](https://www.primeintellect.ai/blog/environments) + `verifiers` format
-- [Text2CAD-Bench](https://arxiv.org/abs/2605.18430) — the mechanical-CAD analog; steal its metric structure
-- Example machine-readable-friendly CADD standard: [SCDOT Civil 3D 2026 manual](https://www.scdot.org/content/dam/scdot-legacy/business/pdf/cadd/2026%20Civil%203D%20Manual%20Draft%2020260227.pdf); Caltrans HDM + CADD standards for the spec
-- Interop later: [IfcOpenShell](https://github.com/IfcOpenShell/IfcOpenShell) (IFC 4.3 alignments), [ASAM OpenDRIVE](https://www.asam.net/standards/detail/opendrive/)
-- Market context: [TechCrunch on the RL environments land grab](https://techcrunch.com/2025/09/21/silicon-valley-bets-big-on-environments-to-train-ai-agents/), [RL environment vendor directory](https://www.rl-list.com/)
-
----
-
-## 12. Immediate next actions
-
-1. Decide the real name (RoadDraft is a placeholder).
-2. Check employment agreement IP clause.
-3. Phase 0: draft the drafting spec — start by listing, from memory, every annotation a Caltrans-style plan & profile sheet must carry. That list *is* the product.
-4. Scaffold the repo around the command bus (section 5) — it's the decision everything else hangs off.
+1. Run Fable on Tier 2 and Tier 3 batch A through the existing rig, so the batch-A ceiling is measured before batch C runs.
+2. Write the native MCP runner for the Anthropic API (the Ollama and LM Studio runners are the template) and rerun the 33 probes at k = 3 on all four models through it.
+3. Generate the Track P leaderboard and model cards from the run folders; commit the Oct 6 run with them.
+4. Start the eval plan's E0 (finish Phase 1) and E1 (verifier) for Track D.
+5. Write the trace-to-conversation converter and produce the first reference-trajectory dataset from the 33 scripted solves.

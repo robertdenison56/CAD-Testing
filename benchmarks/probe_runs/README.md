@@ -13,6 +13,7 @@ capability probes, not the scored benchmark of `RoadDraft_Eval_Plan.md`.
 | 2026-09-24-ollama | gpt-oss:120b-cloud | all 17, three passes | 12, 12, 15 of 17 | [RESULTS.md](2026-09-24-ollama/RESULTS.md) |
 | 2026-09-29-lmstudio | Qwen3.5-9B, local through LM Studio | all 17 | 11/17 (T2 8/9, T1 3/8) | [RESULTS.md](2026-09-29-lmstudio/RESULTS.md) |
 | 2026-10-04-lmstudio-tier2 | Qwen3.5-9B, local through LM Studio | the 6 Tier-2 probes | 0/6, each on the gap it measures | [RESULTS.md](2026-10-04-lmstudio-tier2/RESULTS.md) |
+| 2026-10-06-haiku-t2-t3a | Haiku 4.5 | the 6 Tier-2 probes and Tier-3 batch A (line-data, curve-points, curve-data, stationing) | 6/10: Tier 2 5/6, batch A 1/4 | [RESULTS.md](2026-10-06-haiku-t2-t3a/RESULTS.md) |
 
 Each folder keeps the rig exactly as it ran, so a writeup and the engine it
 measured stay together. The engine version is named in each RESULTS.md.
@@ -31,6 +32,7 @@ measured stay together. The engine version is named in each RESULTS.md.
         trace.jsonl                  every tool call as the server saw it (--trace): arguments, outcome, faults
         project/                     the documents left behind, journal beside them: what was scored
         transcript.json, report.txt  Ollama and LM Studio runs: every message including the model's thinking; its final report
+        prompt.txt, report.txt       Claude runs from 2026-10-06 on: the exact prompt the runner agent was handed; its final report
         renders/                     what the model looked at        (not tracked: PNGs, regenerable from project/)
         deliverables/                the plots: <probe>.pdf, <probe>.reference.pdf, OVERVIEW.pdf, OVERVIEW.png;
                                      <probe>.reference/ is that reference as a finished RoadDraft project
