@@ -75,7 +75,7 @@ class ClaudeCodeBackend(Backend):
         self.claude = find_claude(claude_bin or options.extra.get("claude_bin"))
 
     def command(self, episode: Episode) -> List[str]:
-        config = episode.folder / "mcp.json"
+        config = (episode.folder / "mcp.json").resolve()   # the CLI runs from project/
         config.write_text(json.dumps(mcp_config(episode.setup.cmd), indent=2))
         argv = [self.claude, "-p", episode.task,
                 "--model", self.options.model,

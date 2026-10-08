@@ -87,6 +87,20 @@ def test_the_server_over_stdio_serves_tools_and_traces_calls(tmp_path):
     assert lines[1]["ok"] is False
 
 
+def test_a_relative_run_folder_still_starts_the_server(tmp_path, monkeypatch):
+    # the server starts in project/, so the paths it is handed must not be relative
+    monkeypatch.chdir(tmp_path)
+    replies = iter([anthropic_reply([{"type": "tool_use", "id": "t", "name": "get_document_state", "input": {}}]),
+                    anthropic_reply([{"type": "text", "text": "ok"}], "end_turn")])
+    backend = AnthropicBackend(Options(model="claude-haiku-4-5"), post=lambda body: next(replies))
+    meta = run_probe(backend, Path("out/runs/h") / BLANK.id, BLANK, SERVER)
+    assert meta["stop"] == "answered" and meta["truncated_results"] == 0
+    cmd = json.loads((tmp_path / "out/runs/h" / BLANK.id / "server.json").read_text())["cmd"]
+    assert Path(cmd[cmd.index("--doc") + 1]).is_absolute()
+    trace = (tmp_path / "out/runs/h" / BLANK.id / "trace.jsonl").read_text().splitlines()
+    assert [json.loads(l)["tool"] for l in trace] == ["get_document_state"]
+
+
 def test_tool_result_rendering_and_cost():
     r = ToolResult(text="x", images=[("image/png", "QUJD")])
     assert "text-only" in r.rendered(vision=False) and "text-only" not in r.rendered(vision=True)
@@ -278,6 +292,16 @@ def test_claude_code_command_and_stream_parsing(tmp_path):
     assert parse_stream(json.dumps(capped), episode(tmp_path), "m").stop == "max_turns"
 
 
+def test_claude_code_config_path_survives_a_relative_out(tmp_path, monkeypatch):
+    # the CLI runs from project/, so a relative --out once sent it a path that doubled up
+    monkeypatch.chdir(tmp_path)
+    ep = episode(tmp_path)
+    ep.folder = Path("run")
+    argv = ClaudeCodeBackend(ep.options, claude_bin="/x/claude").command(ep)
+    config = Path(argv[argv.index("--mcp-config") + 1])
+    assert config.is_absolute() and config.exists()
+
+
 def test_claude_code_runs_the_cli_and_leaves_the_run_folder(tmp_path):
     bin_ = fake_claude(tmp_path, STREAM)
     options = Options(model="claude-haiku-4-5", max_turns=7, extra={"max_budget_usd": 2.5})
@@ -319,6 +343,56 @@ def openai_reply(content="", tool_calls=None, finish="stop", reasoning=None):
                       "completion_tokens_details": {"reasoning_tokens": 30}}}
 
 
+def chunk(content=None, reasoning=None, calls=None, finish=None) -> dict:
+    """One chat.completion.chunk, as LM Studio streams it."""
+    delta = {}
+    if content is not None:
+        delta["content"] = content
+    if reasoning is not None:
+        delta["reasoning_content"] = reasoning
+    if calls is not None:
+        delta["tool_calls"] = calls
+    return {"object": "chat.completion.chunk", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+
+
+def call_delta(index, name=None, arguments="", id=None) -> dict:
+    fn = {"arguments": arguments}
+    if name is not None:
+        fn["name"] = name
+    out = {"index": index, "type": "function", "function": fn}
+    if id is not None:
+        out["id"] = id
+    return out
+
+
+USAGE = {"choices": [], "usage": {"prompt_tokens": 900, "completion_tokens": 12,
+                                  "completion_tokens_details": {"reasoning_tokens": 5}}}
+
+
+def sse(*chunks, done=True):
+    """The lines of a server-sent-events body."""
+    lines = []
+    for c in chunks:
+        lines += [f"data: {json.dumps(c)}\n".encode(), b"\n"]
+    return lines + ([b"data: [DONE]\n", b"\n"] if done else [])
+
+
+class Stream:
+    """What urlopen hands back for a streamed request: its lines, then closed."""
+
+    def __init__(self, lines):
+        self.lines = iter(lines)
+
+    def __iter__(self):
+        return self.lines
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
 def test_openai_loop_sends_function_tools_and_keeps_reasoning_out_of_the_next_turn(tmp_path, monkeypatch):
     monkeypatch.setenv("MY_KEY", "secret")
     bodies = []
@@ -356,10 +430,6 @@ def test_openai_post_resamples_a_malformed_tool_call_and_reloads_on_overflow(mon
     from roaddraft.runners import openai_compat
     attempts, reloads = [], []
 
-    class Resp(io.BytesIO):
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
     def urlopen(req, timeout):
         attempts.append(1)
         if len(attempts) == 1:
@@ -368,11 +438,12 @@ def test_openai_post_resamples_a_malformed_tool_call_and_reloads_on_overflow(mon
         if len(attempts) == 2:
             raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(
                 b'{"error":"exceed_context_size_error"}'))
-        return Resp(json.dumps(openai_reply("fine")).encode())
+        return Stream(sse(chunk(content="fine"), chunk(finish="stop"), USAGE))
 
     monkeypatch.setattr(openai_compat.urllib.request, "urlopen", urlopen)
     guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "m", 65536)
     monkeypatch.setattr(guard, "reload", lambda: reloads.append(1))
+    monkeypatch.setattr(guard, "loaded_context", lambda: 16384)   # LM Studio's own reload, at its default
     reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
                                     guard=guard, sleep=lambda s: None)
     assert reply["choices"][0]["message"]["content"] == "fine"
@@ -383,6 +454,301 @@ def test_openai_post_resamples_a_malformed_tool_call_and_reloads_on_overflow(mon
         openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
                                 guard=None, sleep=lambda s: None)
     assert len(attempts) == 2
+
+
+def test_a_streamed_turn_is_assembled_by_index_with_its_reasoning_and_usage():
+    from roaddraft.runners.openai_compat import read_stream
+    lines = sse(chunk(reasoning="let me "), chunk(reasoning="think"), chunk(content="On it."),
+                chunk(calls=[call_delta(0, "draw_line", '{"start": [0, ', id="c1")]),
+                chunk(calls=[call_delta(1, "get_document_state", "{}", id="c2")]),
+                chunk(calls=[call_delta(0, arguments='0], "end": [1, 1]}')]),
+                chunk(finish="tool_calls"), USAGE)
+    reply = read_stream(lines, t0=0.0, clock=lambda: 1.0)
+    choice = reply["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    msg = choice["message"]
+    assert msg["content"] == "On it." and msg["reasoning_content"] == "let me think"
+    assert [c["id"] for c in msg["tool_calls"]] == ["c1", "c2"]
+    assert json.loads(msg["tool_calls"][0]["function"]["arguments"]) == {"start": [0, 0], "end": [1, 1]}
+    assert msg["tool_calls"][1]["function"] == {"name": "get_document_state", "arguments": "{}"}
+    assert reply["usage"] == USAGE["usage"]
+    # a server that leaves the index out: a new id starts a call, no id goes on with the last
+    lines = sse(chunk(calls=[{"id": "a", "function": {"name": "x", "arguments": "{"}}]),
+                chunk(calls=[{"function": {"arguments": "}"}}]),
+                chunk(calls=[{"id": "b", "function": {"name": "y", "arguments": "{}"}}]), chunk(finish="tool_calls"))
+    calls = read_stream(lines, 0.0, clock=lambda: 1.0)["choices"][0]["message"]["tool_calls"]
+    assert [(c["id"], c["function"]["arguments"]) for c in calls] == [("a", "{}"), ("b", "{}")]
+
+
+def test_a_turn_ends_when_the_model_starts_a_call_past_the_cap():
+    from roaddraft.runners.openai_compat import CALL_CAP, read_stream
+    assert CALL_CAP == 4
+    # GLM-4.6V-Flash on width-dims: one call after another, none waiting for a result
+    names = ["get_document_state", "list_sheets", "render_sheet", "list_alignments", "place_text", "place_text"]
+    stream = iter(sse(*[chunk(calls=[call_delta(i, n, "{}", id=f"c{i}")]) for i, n in enumerate(names)],
+                      chunk(finish="tool_calls"), USAGE))
+    reply = read_stream(stream, 0.0, clock=lambda: 1.0)
+    choice = reply["choices"][0]
+    assert choice["finish_reason"] == "call_cap"
+    assert [c["function"]["name"] for c in choice["message"]["tool_calls"]] == names[:4]
+    # the rest of the stream was never read, and a cut turn's usage is the chunk count, marked
+    assert next(stream, None) is not None
+    assert reply["usage"] == {"completion_tokens": 5, "estimated": True}
+
+
+def test_a_turn_past_the_turn_limit_ends_with_what_had_come():
+    from roaddraft.runners.openai_compat import read_stream
+    ticks = iter([100.0, 1901.0])          # the second chunk comes in past the limit
+    lines = sse(chunk(reasoning="the PC is at "), chunk(reasoning="station"), chunk(content="never read"),
+                chunk(finish="stop"), USAGE)
+    reply = read_stream(lines, t0=0.0, turn_limit=1800, clock=lambda: next(ticks))
+    choice = reply["choices"][0]
+    assert choice["finish_reason"] == "turn_limit"
+    assert choice["message"] == {"role": "assistant", "content": "", "reasoning_content": "the PC is at station"}
+    assert reply["usage"]["estimated"] is True
+
+
+def test_post_chat_streams_and_retries_a_stalled_stream(monkeypatch):
+    import socket
+    from roaddraft.runners import openai_compat
+    bodies, slept = [], []
+
+    class Stalled(Stream):
+        def __iter__(self):
+            yield sse(chunk(content="hal"))[0]
+            raise socket.timeout("timed out")     # what a stalled read raises on Python 3.9
+
+    def urlopen(req, timeout):
+        bodies.append(json.loads(req.data))
+        assert timeout == openai_compat.TURN_LIMIT
+        if len(bodies) == 1:
+            return Stalled([])
+        return Stream(sse(chunk(content="whole"), chunk(finish="stop"), USAGE))
+
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", urlopen)
+    reply = openai_compat.post_chat("http://x/v1/chat/completions", {"model": "m", "messages": []}, {},
+                                    sleep=slept.append)
+    assert reply["choices"][0]["message"]["content"] == "whole" and slept == [15]
+    assert bodies[0]["stream"] is True and bodies[0]["stream_options"] == {"include_usage": True}
+    # an error inside the stream: Llama's unparseable call is sampled again, anything else is the end
+    streams = iter([Stream(sse({"error": {"message": "Engine protocol predict stream returned an error: "
+                                          "The model produced output that does not match the expected "
+                                          "peg-native format"}})),
+                    Stream(sse({"error": {"message": "terminated"}}))])
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", lambda req, timeout: next(streams))
+    with pytest.raises(RuntimeError, match="stream error: .*terminated"):
+        openai_compat.post_chat("http://x/v1/chat/completions", {"model": "m"}, {}, sleep=slept.append)
+
+
+def test_an_engine_that_dies_mid_stream_is_reloaded_when_it_took_the_model(monkeypatch):
+    from roaddraft.runners import openai_compat
+    # Qwen3.5-9B on edge-c102, 2026-10-08 10:06: "terminated" in prompt processing, the model unloaded
+    streams = iter([Stream(sse({"error": {"message": "terminated"}})),
+                    Stream(sse(chunk(content="back"), chunk(finish="stop"), USAGE))])
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", lambda req, timeout: next(streams))
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    reloads = []
+    monkeypatch.setattr(guard, "reload", lambda: reloads.append(1))
+    monkeypatch.setattr(guard, "loaded_context", lambda: 0)
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                    guard=guard, sleep=lambda s: None)
+    assert reply["choices"][0]["message"]["content"] == "back" and reloads == [1]
+    # the model still loaded at the run's context: a reload would change nothing, so it is the end
+    streams = iter([Stream(sse({"error": {"message": "terminated"}}))])
+    monkeypatch.setattr(guard, "loaded_context", lambda: 65536)
+    with pytest.raises(RuntimeError, match="stream error"):
+        openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                guard=guard, sleep=lambda s: None)
+    assert reloads == [1]
+
+
+def test_openai_runs_the_first_four_calls_of_a_cut_turn(tmp_path, monkeypatch):
+    from roaddraft.runners import openai_compat
+    first = [chunk(reasoning="go")] + [
+        chunk(calls=[call_delta(i, "get_document_state", "{}", id=f"c{i}")]) for i in range(7)]
+    streams = iter([Stream(sse(*first, chunk(finish="tool_calls"), USAGE)),
+                    Stream(sse(chunk(content="Looked six ways."), chunk(finish="stop"), USAGE))])
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", lambda req, timeout: next(streams))
+    ep = episode(tmp_path, model="glm-4.6v-flash")
+    out = OpenAIBackend(ep.options).run(ep)
+    assert out.stop == "answered" and out.final == "Looked six ways." and out.turns == 2
+    assert len(ep.server.calls) == 4
+    assert out.extra["cut_turns"] == 1 and out.extra["usage_estimated_turns"] == 1
+    cut = ep.log[2]
+    assert cut["finish_reason"] == "call_cap" and cut["usage_estimated"] is True and len(cut["tool_calls"]) == 4
+    assert [m["tool_call_id"] for m in ep.log[3:7]] == ["c0", "c1", "c2", "c3"]
+    # estimated output (the chunk count, the cutting chunk too) plus the real usage of the second turn
+    assert out.usage == {"input_tokens": 900, "output_tokens": 6 + 12, "reasoning_tokens": 5}
+
+
+def test_openai_stops_at_the_turn_limit_and_keeps_the_partial_turn(tmp_path):
+    partial = {"choices": [{"message": {"role": "assistant", "content": "", "reasoning_content": "hmm",
+                                        "tool_calls": [{"id": "c0", "type": "function", "function": {
+                                            "name": "draw_line", "arguments": '{"start": [0'}}]},
+                            "finish_reason": "turn_limit"}],
+               "usage": {"completion_tokens": 9000, "estimated": True}}
+    ep = episode(tmp_path, model="glm-4.6v-flash")
+    out = OpenAIBackend(ep.options, post=lambda body: partial).run(ep)
+    assert out.stop == "turn_limit" and out.turns == 1 and out.final == ""
+    assert ep.server.calls == []               # a half-written call is not run
+    assert ep.log[-1]["finish_reason"] == "turn_limit" and ep.log[-1]["reasoning"] == "hmm"
+    assert ep.log[-1]["tool_calls"][0]["function"]["arguments"] == '{"start": [0'
+
+
+L2_OVERFLOW = (b'{"error":"Engine protocol predict request returned 400: {\\"error\\":{\\"code\\":400,'
+               b'\\"message\\":\\"request (467928 tokens) exceeds the available context size (65536 tokens), '
+               b'try increasing it\\",\\"type\\":\\"exceed_context_size_error\\"}}"}')
+
+
+def test_a_request_over_the_loaded_context_stops_the_probe(tmp_path, monkeypatch):
+    import io
+    import urllib.error
+    from roaddraft.runners import openai_compat
+    attempts, reloads = [], []
+
+    def urlopen(req, timeout):
+        attempts.append(1)
+        raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(L2_OVERFLOW))
+
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", urlopen)
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    monkeypatch.setattr(guard, "reload", lambda: reloads.append(1))
+    monkeypatch.setattr(guard, "loaded_context", lambda: 65536)
+    with pytest.raises(openai_compat.ContextFull, match="467928 tokens"):
+        openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                guard=guard, sleep=lambda s: None)
+    assert attempts == [1] and reloads == []    # no reload: it cannot fit
+    # the backend: the probe stops with "context" and keeps what came before
+    replies = iter([openai_reply(tool_calls=[{"id": "c1", "type": "function", "function": {
+        "name": "get_document_state", "arguments": "{}"}}])])
+
+    def post(body):
+        reply = next(replies, None)
+        if reply is None:
+            raise openai_compat.ContextFull("request (467928 tokens) exceeds the available context size")
+        return reply
+
+    ep = episode(tmp_path, model="qwen/qwen3.5-9b")
+    out = OpenAIBackend(ep.options, post=post).run(ep)
+    assert out.stop == "context" and out.turns == 1 and ep.server.calls == [("get_document_state", {})]
+    assert "467928" in out.extra["context_error"] and ep.log[-1]["role"] == "tool"
+
+
+def test_type_lists_are_rewritten_as_anyof():
+    from roaddraft.api.session import Session
+    from roaddraft.mcp.server import tool_definitions
+    from roaddraft.runners.openai_compat import function_tools, rewrite_type_lists
+    schema = {"type": "object", "properties": {
+        "offsets": {"type": "array", "items": {"type": ["number", "string"], "description": "ft or '12R'"}},
+        "scale": {"type": ["string", "number", "null"]}, "name": {"type": "string"}}}
+    assert rewrite_type_lists(schema) == {"type": "object", "properties": {
+        "offsets": {"type": "array", "items": {"description": "ft or '12R'",
+                                                "anyOf": [{"type": "number"}, {"type": "string"}]}},
+        "scale": {"anyOf": [{"type": "string"}, {"type": "number"}, {"type": "null"}]},
+        "name": {"type": "string"}}}
+    assert schema["properties"]["scale"]["type"] == ["string", "number", "null"]   # not changed in place
+
+    def type_lists(s):
+        if isinstance(s, dict):
+            return isinstance(s.get("type"), list) or any(type_lists(v) for v in s.values())
+        return isinstance(s, list) and any(type_lists(v) for v in s)
+
+    tools = tool_definitions(Session())
+    listed = {t["name"] for t in tools if type_lists(t["inputSchema"])}
+    assert {"draw_offset", "annotate_stationing"} <= listed
+    rewritten = function_tools(tools, rewrite=True)
+    assert not any(type_lists(t["function"]["parameters"]) for t in rewritten)
+    changed = {t["name"] for t, r in zip(tools, rewritten) if r["function"]["parameters"] != t["inputSchema"]}
+    assert changed == listed
+    assert function_tools(tools)[0]["function"]["parameters"] is tools[0]["inputSchema"]
+
+
+def test_openai_rewrites_the_type_lists_when_the_template_refuses_them(tmp_path, monkeypatch):
+    import io
+    import urllib.error
+    from roaddraft.runners import openai_compat
+    refusal = b'{"error":"Error rendering prompt with jinja template: NotImplemented: map: filter-mapping not implemented"}'
+    # post_chat: refused at once, whatever the status and whether before or inside the stream
+    for raise_it in (lambda req: (_ for _ in ()).throw(
+                         urllib.error.HTTPError(req.full_url, 500, "bad", {}, io.BytesIO(refusal))),
+                     lambda req: Stream(sse({"error": json.loads(refusal)["error"]}))):
+        attempts = []
+        monkeypatch.setattr(openai_compat.urllib.request, "urlopen",
+                            lambda req, timeout: attempts.append(1) or raise_it(req))
+        with pytest.raises(openai_compat.ToolsRefused):
+            openai_compat.post_chat("http://x/v1/chat/completions", {"model": "m"}, {},
+                                    sleep=lambda s: pytest.fail("no retry for a refusal"))
+        assert attempts == [1]
+    # the backend: the same turn again with anyOf, and every turn after, for the rest of the run
+    server = FakeServer()
+    server.tools = FakeServer.tools + [{"name": "draw_offset", "description": "an offset", "inputSchema": {
+        "type": "object", "properties": {"offsets": {"type": "array", "items": {"type": ["number", "string"]}}}}}]
+    bodies = []
+    replies = iter([openai_reply(tool_calls=[{"id": "c1", "type": "function", "function": {
+        "name": "get_document_state", "arguments": "{}"}}]), openai_reply("done"), openai_reply("again")])
+
+    def post(body):
+        bodies.append(json.loads(json.dumps(body)))
+        if "anyOf" not in json.dumps(body["tools"]):
+            raise openai_compat.ToolsRefused(refusal.decode())
+        return next(replies)
+
+    ep = episode(tmp_path, server=server, model="google/gemma-4-e4b")
+    backend = OpenAIBackend(ep.options, post=post)
+    out = backend.run(ep)
+    assert out.stop == "answered" and out.turns == 2 and out.extra["type_lists_rewritten"] is True
+    assert len(bodies) == 3 and bodies[1]["messages"] == bodies[0]["messages"]
+    assert bodies[2]["tools"][3]["function"]["parameters"]["properties"]["offsets"]["items"] == {
+        "anyOf": [{"type": "number"}, {"type": "string"}]}
+    ep2 = episode(tmp_path / "2", server=server, model="google/gemma-4-e4b")
+    assert backend.run(ep2).final == "again" and len(bodies) == 4    # no second refusal
+    # a template that refuses the rewrite too is an error, not a loop
+    ep3 = episode(tmp_path / "3", model="m")
+    stubborn = OpenAIBackend(ep3.options, post=lambda body: (_ for _ in ()).throw(openai_compat.ToolsRefused("x")))
+    with pytest.raises(openai_compat.ToolsRefused):
+        stubborn.run(ep3)
+
+
+def test_a_tool_result_past_the_cap_is_cut_for_every_backend(tmp_path):
+    from roaddraft.runners.core import RESULT_CAP, cap_text
+    assert RESULT_CAP == 30000
+    assert cap_text("short") == ("short", False)
+    cut, was = cap_text("y" * 30010)
+    assert was and cut == "y" * 30000 + "\n[output truncated: the first 30000 of 30010 characters are shown]"
+    # a stand-in server whose one tool answers like get_model_state on the L-2 start
+    script = tmp_path / "fake_mcp.py"
+    script.write_text(
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    msg = json.loads(line)\n"
+        "    if 'id' not in msg:\n"
+        "        continue\n"
+        "    if msg['method'] == 'initialize':\n"
+        "        result = {'instructions': 'fake', 'capabilities': {}}\n"
+        "    elif msg['method'] == 'tools/list':\n"
+        "        result = {'tools': [{'name': 'get_model_state', 'description': 'all of it',\n"
+        "                             'inputSchema': {'type': 'object', 'properties': {}}}]}\n"
+        "    else:\n"
+        "        result = {'content': [{'type': 'text', 'text': 'z' * 748312}]}\n"
+        "    print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': result}), flush=True)\n")
+    replies = iter([openai_reply(tool_calls=[{"id": "c1", "type": "function", "function": {
+        "name": "get_model_state", "arguments": '{"include_references": true}'}}]), openai_reply("Read it.")])
+    sent = []
+    backend = OpenAIBackend(Options(model="qwen/qwen3.5-9b"), post=lambda body: sent.append(
+        json.loads(json.dumps(body))) or next(replies))
+    meta = run_probe(backend, tmp_path / "runs" / "q" / BLANK.id, BLANK, [sys.executable, str(script)])
+    assert meta["stop"] == "answered" and meta["truncated_results"] == 1
+    shown = sent[1]["messages"][-1]["content"]
+    assert len(shown) < 30100 and shown.endswith("[output truncated: the first 30000 of 748312 characters are shown]")
+    # the Anthropic backend reads through the same server, so it sees the same cut
+    replies = iter([anthropic_reply([{"type": "tool_use", "id": "t", "name": "get_model_state", "input": {}}]),
+                    anthropic_reply([{"type": "text", "text": "ok"}], "end_turn")])
+    sent.clear()
+    backend = AnthropicBackend(Options(model="claude-haiku-4-5"), post=lambda body: sent.append(
+        json.loads(json.dumps(body))) or next(replies))
+    meta = run_probe(backend, tmp_path / "runs" / "h" / BLANK.id, BLANK, [sys.executable, str(script)])
+    assert meta["truncated_results"] == 1
+    assert sent[1]["messages"][-1]["content"][0]["content"].endswith("characters are shown]")
 
 
 # ----------------------------------------------------------------- score

@@ -15,7 +15,13 @@ Backends are the only vendor-specific part:
 - ``claude-code``: Claude Code in headless mode, on a subscription; the CLI
   starts the server from an MCP config and the model calls the tools natively.
 - ``openai``: any OpenAI-compatible chat-completions endpoint -- LM Studio,
-  Ollama, vLLM -- with LM Studio's reload guard when asked for.
+  Ollama, vLLM -- streamed, with the LM Studio rigs' guards: a cap on the
+  calls one turn may make, a per-turn time limit, a stop when the
+  conversation outgrows the loaded context, the type-list rewrite for
+  templates that refuse it, and the reload guard when asked for.
+
+Every backend that reads results through ``McpServer`` sees a tool result cut
+to ``RESULT_CAP`` characters.
 
     python -m roaddraft.runners run --backend anthropic --model claude-haiku-4-5 \\
         --out benchmarks/probe_runs/2026-10-07-native --label haiku --tag tier2

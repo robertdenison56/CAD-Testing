@@ -46,6 +46,23 @@ CACHE_READ, CACHE_WRITE = 0.1, 1.25
 #: the image note every text-only run carries, as the earlier rigs did
 IMAGE_OMITTED = "[image content omitted: this run is text-only -- the text above carries the file path]"
 
+#: characters of one tool result a model is shown, whatever the backend: about
+#: the cap Claude Code's Bash tool puts on a command's output, which is what the
+#: shell-bridge runs saw. Added to the LM Studio rig on 2026-10-08 after
+#: get_model_state with include_references on the L-2 start returned 748,312
+#: characters (467,928 tokens), a request no context holds. No result in any
+#: earlier run came near it (the largest was 12,886 characters).
+RESULT_CAP = 30000
+
+
+def cap_text(text: str, cap: int = RESULT_CAP) -> Tuple[str, bool]:
+    """``text`` cut to its first ``cap`` characters with a note saying so, and
+    whether it was cut."""
+    if len(text) <= cap:
+        return text, False
+    return (text[:cap] + f"\n[output truncated: the first {cap} of {len(text)} characters are shown]",
+            True)
+
 
 @dataclass
 class Options:
@@ -77,11 +94,14 @@ class ToolResult:
 
 class McpServer:
     """One ``roaddraft-mcp`` over stdio, the rigs' client: initialize, the
-    instructions and the tools, ``tools/call``, close."""
+    instructions and the tools, ``tools/call``, close. A result's text past
+    ``RESULT_CAP`` is cut before any backend sees it; ``truncated`` counts the
+    cuts."""
 
     def __init__(self, cmd: Sequence[str], cwd: Optional[Path] = None,
                  log: Optional[Path] = None, client_name: str = "roaddraft-runner"):
         self.cmd = list(cmd)
+        self.truncated = 0
         self._log = open(log, "a") if log else subprocess.DEVNULL
         self.proc = subprocess.Popen(self.cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=self._log, text=True, bufsize=1,
@@ -127,8 +147,9 @@ class McpServer:
                 images.append((block.get("mimeType", "image/png"), block.get("data", "")))
             else:
                 texts.append(f"[{block.get('type')} content]")
-        return ToolResult(text="\n".join(texts), is_error=bool(result.get("isError")),
-                          images=images)
+        text, cut = cap_text("\n".join(texts))
+        self.truncated += cut
+        return ToolResult(text=text, is_error=bool(result.get("isError")), images=images)
 
     def close(self) -> None:
         try:
@@ -150,8 +171,9 @@ class Setup:
 
 def setup_probe(folder: Path, probe: Probe, server_command: Sequence[str]) -> Setup:
     """A fresh project for the probe under ``folder``, with ``server.json`` and
-    ``prompt.txt`` beside it, the way ``setup_runs.py`` wrote them."""
-    folder = Path(folder)
+    ``prompt.txt`` beside it, the way ``setup_runs.py`` wrote them. The paths
+    in the command are absolute: the server starts in ``project/``."""
+    folder = Path(folder).resolve()
     folder.mkdir(parents=True, exist_ok=True)
     doc = fixture.start_document(folder / "project", probe.start)
     cmd = list(server_command) + ["--doc", str(doc), "--autosave",
@@ -248,6 +270,8 @@ def run_probe(backend: Backend, folder: Path, probe: Probe, server_command: Sequ
             "tokens": outcome.usage, "cost_usd": outcome.cost_usd,
             "max_turns": backend.options.max_turns, "budget_s": backend.options.budget,
             "vision": backend.options.vision, "effort": backend.options.effort}
+    if episode.server is not None:
+        meta["truncated_results"] = episode.server.truncated
     meta.update(outcome.extra)
     (folder / "transcript.json").write_text(json.dumps({"meta": meta, "messages": episode.log},
                                                        indent=1, ensure_ascii=False))
