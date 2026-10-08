@@ -367,8 +367,12 @@ same bus a human uses.
 
 **Claude Code finds it on its own in this repository.** The checked-in
 [`.mcp.json`](.mcp.json) registers the server as `roaddraft` through
-`${CLAUDE_PROJECT_DIR}`, so the file is the same on every machine and carries
-nobody's path. Claude Code asks once per project to approve it; from then on
+`${CLAUDE_PROJECT_DIR:-.}`, so the file is the same on every machine and
+carries nobody's path: the project folder when Claude Code sets that variable,
+otherwise a path relative to the server's working directory, which is the
+project (the CLI bundled with the desktop app, 2.1.289, does not set it and
+spawns the bare `${CLAUDE_PROJECT_DIR}` form as a literal, which fails).
+Claude Code asks once per project to approve it; from then on
 the tools are there as `mcp__roaddraft__<tool>` (`claude mcp list` shows the
 state, `claude mcp reset-project-choices` asks again). The server starts on a
 new document; `open_document` opens one, and `save_document` keeps the work.

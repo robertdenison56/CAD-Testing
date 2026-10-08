@@ -84,15 +84,17 @@ def test_each_client_has_its_shape():
 
 def test_project_files_go_through_the_project_variable(tmp_path):
     """A checked-in .mcp.json must not carry one machine's path: paths under the
-    project are written as ${CLAUDE_PROJECT_DIR}/...; those outside stay absolute."""
+    project are written as ${CLAUDE_PROJECT_DIR:-.}/... (the project when Claude
+    Code sets the variable, else relative to the server's working directory,
+    which is the project); those outside stay absolute."""
     project = tmp_path / "repo with space"
     project.mkdir()
     cmd = [str(project / ".venv" / "bin" / "roaddraft-mcp")]
     args = ["--doc", str(project / "examples" / "a.rdraft"), "--trace", "/elsewhere/trace.jsonl"]
     code = config.document("claude-code", "roaddraft", cmd, args, project_dir=str(project))
     e = code["mcpServers"]["roaddraft"]
-    assert e["command"] == "${CLAUDE_PROJECT_DIR}/.venv/bin/roaddraft-mcp"
-    assert e["args"] == ["--doc", "${CLAUDE_PROJECT_DIR}/examples/a.rdraft",
+    assert e["command"] == "${CLAUDE_PROJECT_DIR:-.}/.venv/bin/roaddraft-mcp"
+    assert e["args"] == ["--doc", "${CLAUDE_PROJECT_DIR:-.}/examples/a.rdraft",
                          "--trace", "/elsewhere/trace.jsonl"]
     vs = config.document("vscode", "roaddraft", cmd, args, project_dir=str(project))
     assert vs["servers"]["roaddraft"]["command"] == "${workspaceFolder}/.venv/bin/roaddraft-mcp"
@@ -148,7 +150,7 @@ def test_write_merges_beside_other_servers_and_backs_up(tmp_path):
     config.write("claude-code", "roaddraft", [str(tmp_path / ".venv/bin/roaddraft-mcp")], [], code,
                  project_dir=str(tmp_path))
     assert json.loads(code.read_text())["mcpServers"]["roaddraft"] == {
-        "type": "stdio", "command": "${CLAUDE_PROJECT_DIR}/.venv/bin/roaddraft-mcp", "args": []}
+        "type": "stdio", "command": "${CLAUDE_PROJECT_DIR:-.}/.venv/bin/roaddraft-mcp", "args": []}
     assert not list(tmp_path.glob(".mcp.json.bak-*"))
     vs = tmp_path / ".vscode" / "mcp.json"
     config.write("vscode", "roaddraft", cmd, [], vs, project_dir=str(tmp_path))
@@ -222,7 +224,7 @@ def test_the_projects_own_mcp_json_is_what_the_generator_writes():
     doc = json.loads((root / ".mcp.json").read_text())
     entry = doc["mcpServers"]["roaddraft"]
     assert entry["type"] == "stdio"
-    assert entry["command"] == "${CLAUDE_PROJECT_DIR}/.venv/bin/roaddraft-mcp"
+    assert entry["command"] == "${CLAUDE_PROJECT_DIR:-.}/.venv/bin/roaddraft-mcp"
     assert entry["args"] == []
     # and the generator, run from the project, produces exactly that entry --
     # when the venv is in the project, as it is here; elsewhere it stays absolute

@@ -41,9 +41,15 @@ CLIENTS: Dict[str, str] = {
 #: the file is in version control, or is meant to be), and the variable each
 #: expands to the project folder, so the file carries no path from one machine.
 #: Claude Code documents ``${CLAUDE_PROJECT_DIR}`` for exactly this ("relative
-#: paths in stdio command"); VS Code has ``${workspaceFolder}``.
+#: paths in stdio command") -- but the CLI bundled with the desktop app (2.1.289,
+#: Oct 2026) does not set it when it reads the file: ``claude mcp list`` warns
+#: the variable is missing, and the session spawned the literal string and got
+#: ENOENT. With ``:-.`` as the default the command falls back to a path relative
+#: to the server's working directory, which for a project .mcp.json is the
+#: project; a Claude Code that sets the variable gets the absolute path.
+#: VS Code has ``${workspaceFolder}``.
 PROJECT_FILE_CLIENTS = ("claude-code", "vscode")
-PROJECT_VARIABLE = {"claude-code": "${CLAUDE_PROJECT_DIR}", "vscode": "${workspaceFolder}"}
+PROJECT_VARIABLE = {"claude-code": "${CLAUDE_PROJECT_DIR:-.}", "vscode": "${workspaceFolder}"}
 
 DEFAULT_NAME = "roaddraft"
 
