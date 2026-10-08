@@ -15,7 +15,7 @@ import math
 import pytest
 
 from roaddraft.api.session import Session
-from roaddraft.document.entities import Arc, Line, Text
+from roaddraft.document.entities import Arc, Line, Polyline, Text
 from roaddraft.probes import drafting, fixture, tasks, tier2
 from roaddraft.probes.drafting import EOP, SHLD
 from roaddraft.probes.tier2 import ROADWAY, TIER2_PROBES
@@ -60,7 +60,7 @@ def test_the_six_are_wired_in_and_start_from_real_documents(tmp_path):
     planted = tier2.planted(flawed)
     assert planted["edge"].layer == EOP and planted["edge"].anchor is None
     assert planted["shoulder"].layer == EOP and planted["shoulder"].anchor["offset"] == -20.0
-    assert planted["callout"].tip is not None and len(planted["callout"].ids) == 3
+    assert planted["callout"].tip is not None and len(planted["callout"].ids) == 4
 
 
 @pytest.mark.parametrize("probe", TIER2_PROBES, ids=lambda p: p.id)
@@ -87,7 +87,7 @@ def test_callouts_pair_text_with_its_leader_however_it_was_drawn(tmp_path):
        layer="V-ANNO-TEXT")
     found = {c.text.content: c for c in tier2.callouts(list(s.doc.model_entities.values()), s.doc)}
     assert math.dist(found["A"].tip, [100.0, 200.0]) < 1e-6
-    assert len(found["A"].segments) == 2 and len(found["A"].ids) == 3   # leader, shoulder, text
+    assert len(found["A"].segments) == 2 and len(found["A"].ids) == 4   # leader, shoulder, arrowhead, text
     assert math.dist(found["B"].tip, [900.0, 900.0]) < 1e-6
     assert found["C"].tip is None and found["C"].segments == []
 
@@ -348,6 +348,19 @@ def test_the_callout_may_be_re_aimed_and_the_shoulder_redrawn_but_not_left_half_
     do(s, "delete_entities", ids=[P["callout"].text.id])
     r = probe.check(base, s)
     assert not r.passed and "left behind" in r.detail
+
+
+def test_replacing_the_callout_takes_its_arrowhead_with_it(tmp_path):
+    """Fable 5.1, 2026-10-07: it deleted the whole mislabelled callout and placed a new one,
+    and the check called the old arrowhead's removal an unasked-for change."""
+    probe, base, s = begin("draft-fix-the-drawing", tmp_path)
+    c = tier2.planted(base)["callout"]
+    heads = [eid for eid in c.ids if isinstance(base.doc.model_entities[eid], Polyline)]
+    assert len(heads) == 1 and base.doc.model_entities[heads[0]].closed
+    probe.solve(s)
+    assert heads[0] not in s.doc.model_entities
+    r = probe.check(base, s)
+    assert r.passed, r.detail
 
 
 def test_touching_anything_else_or_drawing_the_edge_twice_fails(tmp_path):

@@ -69,7 +69,8 @@ ALIGN = fixture.ALIGNMENT
 @dataclass
 class Callout:
     """A text and the leader that leaves it. ``tip`` is the far end of the
-    chain, in the callout's own space; None when the text has no leader."""
+    chain, in the callout's own space; None when the text has no leader.
+    ``ids`` holds the text, the leader's pieces and any arrowhead at the tip."""
     text: Text
     tip: Optional[list] = None
     segments: List[Tuple[list, list]] = field(default_factory=list)
@@ -91,9 +92,11 @@ def callouts(entities: Sequence[Entity], doc) -> List[Callout]:
     nearest the text (within 1.5 text heights of its box) and follows
     coincident ends until nothing continues it; where it stops is the tip.
     place_callout's leader, shoulder and text chain this way, and so does a
-    single hand-drawn line from the text to the thing."""
+    single hand-drawn line from the text to the thing. A closed polyline with
+    a vertex on the tip is the callout's arrowhead and belongs to it."""
     pieces: Dict[str, List[Tuple[list, list]]] = {}
     ends: List[Tuple[list, list, str]] = []           # (end, other end of that entity, id)
+    heads = [e for e in entities if isinstance(e, Polyline) and e.closed]
     for e in entities:
         ps = _pieces(e)
         if not ps:
@@ -123,7 +126,8 @@ def callouts(entities: Sequence[Entity], doc) -> List[Callout]:
             used.add(nxt[1])
             current = nxt[0]
         segments = [seg for eid in used for seg in pieces[eid]]
-        out.append(Callout(t, list(current), segments, used | {t.id}))
+        arrows = {h.id for h in heads if any(math.dist(v[:2], current[:2]) <= snap for v in h.vertices)}
+        out.append(Callout(t, list(current), segments, used | arrows | {t.id}))
     return out
 
 
@@ -576,7 +580,7 @@ def _callout_fixed(a, submitted: Session, P: dict) -> Optional[str]:
                     f"{off:.1f} ft off centerline")
     old = P["callout"]
     if old.text.id not in ids and any(eid in ids for eid in old.ids if eid != old.text.id):
-        return "the mislabelled callout's text was deleted but its leader was left behind"
+        return "the mislabelled callout's text was deleted but its leader or arrowhead was left behind"
     return None
 
 
