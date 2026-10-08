@@ -15,6 +15,7 @@ capability probes, not the scored benchmark of `RoadDraft_Eval_Plan.md`.
 | 2026-10-04-lmstudio-tier2 | Qwen3.5-9B, local through LM Studio | the 6 Tier-2 probes | 0/6, each on the gap it measures | [RESULTS.md](2026-10-04-lmstudio-tier2/RESULTS.md) |
 | 2026-10-06-haiku-t2-t3a | Haiku 4.5 | the 6 Tier-2 probes and Tier-3 batch A (line-data, curve-points, curve-data, stationing) | 6/10: Tier 2 5/6, batch A 1/4 | [RESULTS.md](2026-10-06-haiku-t2-t3a/RESULTS.md) |
 | 2026-10-07-runner-smoke | Qwen3.5-9B, Llama 3.1 8B through `roaddraft.runners` | edge-c102 only: the native runner's first live runs, not a benchmark | 1/1, 0/1 (LM Studio could not parse Llama's tool call) | [RESULTS.md](2026-10-07-runner-smoke/RESULTS.md) |
+| 2026-10-07-lmstudio-t3bc | Qwen3.5-9B, GLM-4.6V-Flash, Gemma-4-E4B, Llama-3.1-8B, local through LM Studio | Tier-3 batches B and C (equation-data, width-dims, row-data, qa-alignment-data, l2-match-lines, l2-alignment-data) | 0/6 each; Llama never completed a turn | [RESULTS.md](2026-10-07-lmstudio-t3bc/RESULTS.md) |
 
 Each folder keeps the rig exactly as it ran, so a writeup and the engine it
 measured stay together. The engine version is named in each RESULTS.md.
