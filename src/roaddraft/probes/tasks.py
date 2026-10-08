@@ -28,7 +28,7 @@ from typing import List, Optional
 from roaddraft.api.session import Session
 from roaddraft.document import viewmap
 from roaddraft.document.entities import Line, Polyline, Text, entity_distance
-from roaddraft.document.locate import point_at, resolve_entity
+from roaddraft.document.locate import resolve_entity
 from roaddraft.probes import fixture
 from roaddraft.probes.base import Probe, Result
 
@@ -184,24 +184,30 @@ def aimed_at_point(baseline: Session, submitted: Session, point, what: str,
                            else ""))
 
 
+def ensure_layer(session: Session, name: str, color: str = "black") -> str:
+    """The layer, created if the document lacks it. Asked of the engine, as a
+    model would: the scripted solutions read nothing from the document except
+    through the tool surface, so their trajectories are ones a model could
+    have taken."""
+    r = session.query("list_layers", {})
+    if name not in {layer["name"] for layer in r["layers"]}:
+        session.execute("create_layer", {"name": name, "color": color})
+    return name
+
+
 def callout_at(session: Session, eid: str, where="mid", content="EP", dy=-150.0):
     """The scripted solution: aim by entity, put the text clear of it."""
-    if "V-ANNO-TEXT" not in session.doc.layers:
-        session.execute("create_layer", {"name": "V-ANNO-TEXT", "color": "black"})
-    point = point_at(*_entity_and_owner(session, eid), where)[0]
+    ensure_layer(session, "V-ANNO-TEXT")
+    r = session.query("point_on_entity", {"id": eid, "where": where})
+    if not r["ok"]:
+        raise RuntimeError(r["error"]["message"])
+    point = r["point"]
     r = session.execute("place_callout", {
         "space": "model", "target_entity": eid, "at": where,
         "position": [point[0] + 150.0, point[1] + dy], "content": content,
         "layer": "V-ANNO-TEXT"})
     if not r["ok"]:
         raise RuntimeError(r["error"]["message"])
-
-
-def _entity_and_owner(session: Session, eid: str):
-    found = resolve_entity(session.doc, eid)
-    if found is None:
-        raise RuntimeError(f"no entity {eid}")
-    return found[1], found[0]
 
 
 # -------------------------------------------------------------------- probes
@@ -303,10 +309,10 @@ def _check_title_blocks(baseline, submitted):
 
 
 def _solve_title_blocks(session):
-    for sheet in session.doc.sheets.values():
+    for sheet in session.query("list_sheets", {})["sheets"]:
         session.execute("fill_title_block", {
-            "sheet": sheet.name,
-            "fields": {**TITLE_FIELDS, "sheet_title": f"ROADWAY PLAN {sheet.name}"}})
+            "sheet": sheet["name"],
+            "fields": {**TITLE_FIELDS, "sheet_title": f"ROADWAY PLAN {sheet['name']}"}})
 
 
 def _pc_of_the_first_curve(session: Session) -> dict:
@@ -326,8 +332,7 @@ def _check_pc_by_station(baseline, submitted):
 
 def _solve_pc_by_station(session):
     pc = _pc_of_the_first_curve(session)
-    if "V-ANNO-TEXT" not in session.doc.layers:
-        session.execute("create_layer", {"name": "V-ANNO-TEXT", "color": "black"})
+    ensure_layer(session, "V-ANNO-TEXT")
     r = session.execute("place_callout", {
         "space": "model", "target": pc["point"],
         "position": [pc["point"][0] + 200.0, pc["point"][1] - 200.0],
@@ -337,9 +342,7 @@ def _solve_pc_by_station(session):
 
 
 def _paper_layer(session: Session) -> str:
-    if "S-ANNO-CALL" not in session.doc.layers:
-        session.execute("create_layer", {"name": "S-ANNO-CALL", "color": "black"})
-    return "S-ANNO-CALL"
+    return ensure_layer(session, "S-ANNO-CALL")
 
 
 def _check_edge_on_paper(baseline, submitted):
@@ -466,12 +469,17 @@ BY_ID = {probe.id: probe for probe in PROBES}
 
 
 def get(probe_id: str) -> Probe:
-    if probe_id not in BY_ID:
-        raise KeyError(f"no probe {probe_id!r}; probes: {', '.join(BY_ID)}")
-    return BY_ID[probe_id]
+    """A fixed probe by id, or an instance of a family by ``family@seed``."""
+    if probe_id in BY_ID:
+        return BY_ID[probe_id]
+    from roaddraft.probes import families
+    if families.is_instance(probe_id):
+        return families.instance(probe_id)
+    raise KeyError(f"no probe {probe_id!r}; probes: {', '.join(BY_ID)}; "
+                   f"families: {', '.join(families.BY_ID)} (as family@seed)")
 
 
 __all__ = ["TOLERANCE_FT", "TITLE_FIELDS", "Probe", "Result", "PROBES", "FIND_PROBES",
            "DRAFT_PROBES", "TIER2_PROBES", "TIER3_PROBES", "BY_ID", "get",
            "added_entities", "added_by_space", "leader_tips", "model_tips", "targets",
-           "aimed_at", "aimed_at_point", "callout_at"]
+           "aimed_at", "aimed_at_point", "callout_at", "ensure_layer"]

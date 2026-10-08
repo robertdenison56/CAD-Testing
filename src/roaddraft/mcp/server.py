@@ -98,6 +98,60 @@ def tool_definitions(session: Session, only: Optional[Sequence[str]] = None,
     return tools
 
 
+#: What the server tells a client at initialize: the one piece of guidance
+#: every agent gets. The recorded trajectories use it as their system message.
+INSTRUCTIONS = (
+    "RoadDraft is a headless 2D CAD engine for roadway plans. Model "
+    "space is US survey feet, and a point is [x, y] = [easting, "
+    "northing] -- the other way round from how coordinates are usually "
+    "spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches "
+    "seen through viewports at a feet-per-inch scale. Work through the commands: "
+    "each one validates its params and explains what was wrong, every "
+    "change is journaled and undoable. Start with get_document_state "
+    "to see what is in the document, list_commands for the full "
+    "surface, and render_sheet or render_model to look at your work."
+    "\n\n"
+    "To annotate something, find it before you point at it. In a sheet "
+    "file the design usually lives in a referenced basefile, so the "
+    "document owns no geometry of its own; find_entities searches the "
+    "attachments too. Filter by what a thing IS -- layer, type, or its "
+    "design anchor -- rather than dumping the document: "
+    "find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, "
+    "visible_on: 'C-102'} is the pavement edges that sheet shows. Then "
+    "pass the id straight to place_callout as target_entity, and the "
+    "engine puts the leader tip on the geometry. Do not compute the "
+    "point yourself: the midpoint of a curve's endpoints is not on the "
+    "curve, and roadway linework runs parallel a few feet apart, so a "
+    "hand-computed point usually lands on the wrong line rather than on "
+    "nothing. If you do pass a raw target point, read the warning that "
+    "comes back -- it names what the tip actually touched."
+    "\n\n"
+    "Some things are not entities at all -- a station, a PC, a point at "
+    "an offset. Ask the design for those: list_alignments with "
+    "include_references=true names a referenced alignment "
+    "'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor "
+    "and get_design_data all accept that name and answer in host "
+    "coordinates. To call one out, give place_callout a target_anchor "
+    "('18+00@12R', 'PC-1'; BC-1 and EC-1 name the PC and PT too) and that "
+    "alignment name. Otherwise commands "
+    "do not take it: nothing can be drawn, labelled or anchored to an "
+    "alignment this document does not own."
+    "\n\n"
+    "Plan annotation belongs on the sheet, in paper inches, not in the "
+    "model. Pass the sheet as place_callout's space and still name a "
+    "model target -- target_entity or target_anchor: the engine sees it "
+    "through the sheet's viewport (scale and twist included) and puts "
+    "the tip where it shows on the paper. 'at' then runs along the part "
+    "of the entity that sheet shows, since a pavement edge runs the "
+    "whole project and a sheet shows one stretch. find_entities with "
+    "visible_on gives each row a sheet_point, which is where that tip "
+    "will land -- use it to choose a position for the text that is "
+    "clear of the linework. Never work out a viewport by hand: "
+    "model_to_sheet and sheet_to_model convert, and station_to_xy and "
+    "point_on_entity take a sheet and answer in paper inches as well."
+)
+
+
 class RoadDraftMCP:
     """One MCP session over one RoadDraft ``Session``."""
 
@@ -127,6 +181,10 @@ class RoadDraftMCP:
         kinds.update({name: "extra" for name in EXTRA_TOOLS})
         exposed = {t["name"] for t in self.tools()}
         return {k: v for k, v in kinds.items() if k in exposed}
+
+    def kind_of(self, name: str) -> Optional[str]:
+        """``"command"``, ``"query"`` or ``"extra"`` for an exposed tool; None otherwise."""
+        return self._kinds().get(name)
 
     def call_tool(self, name: str, arguments: Optional[dict]) -> dict:
         """Run one tool. Returns an MCP tool result; a fault is ``isError``."""
@@ -194,22 +252,15 @@ class RoadDraftMCP:
     def _trace(self, name: str, kind: str, arguments: dict, result: dict) -> None:
         """One line per tool call -- queries and faults too, which the journal
         does not keep -- so a run can be read back for how the agent went about
-        it and what it tripped on, not only for what it left behind."""
+        it and what it tripped on, not only for what it left behind. The line
+        carries the full result the agent was shown (see ``trace_line``), so
+        the run converts to a conversation without being replayed."""
         if self.trace is None:
             return
-        entry = {"tool": name, "kind": kind, "arguments": arguments,
-                 "ok": bool(result.get("ok"))}
-        if result.get("ok"):
-            for key in ("message", "warnings", "created"):
-                if result.get(key):
-                    entry[key] = result[key]
-        else:
-            error = result.get("error") or {}
-            entry["error"] = {k: error.get(k) for k in ("type", "message", "hint")
-                              if error.get(k)}
         self.trace.parent.mkdir(parents=True, exist_ok=True)
         with self.trace.open("a") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(trace_line(name, kind, arguments, result),
+                                ensure_ascii=False) + "\n")
 
     # ---------------------------------------------------------- protocol
 
@@ -258,54 +309,7 @@ class RoadDraftMCP:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": dict(SERVER_INFO),
                 "instructions": (
-                    "RoadDraft is a headless 2D CAD engine for roadway plans. Model "
-                    "space is US survey feet, and a point is [x, y] = [easting, "
-                    "northing] -- the other way round from how coordinates are usually "
-                    "spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches "
-                    "seen through viewports at a feet-per-inch scale. Work through the commands: "
-                    "each one validates its params and explains what was wrong, every "
-                    "change is journaled and undoable. Start with get_document_state "
-                    "to see what is in the document, list_commands for the full "
-                    "surface, and render_sheet or render_model to look at your work."
-                    "\n\n"
-                    "To annotate something, find it before you point at it. In a sheet "
-                    "file the design usually lives in a referenced basefile, so the "
-                    "document owns no geometry of its own; find_entities searches the "
-                    "attachments too. Filter by what a thing IS -- layer, type, or its "
-                    "design anchor -- rather than dumping the document: "
-                    "find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, "
-                    "visible_on: 'C-102'} is the pavement edges that sheet shows. Then "
-                    "pass the id straight to place_callout as target_entity, and the "
-                    "engine puts the leader tip on the geometry. Do not compute the "
-                    "point yourself: the midpoint of a curve's endpoints is not on the "
-                    "curve, and roadway linework runs parallel a few feet apart, so a "
-                    "hand-computed point usually lands on the wrong line rather than on "
-                    "nothing. If you do pass a raw target point, read the warning that "
-                    "comes back -- it names what the tip actually touched."
-                    "\n\n"
-                    "Some things are not entities at all -- a station, a PC, a point at "
-                    "an offset. Ask the design for those: list_alignments with "
-                    "include_references=true names a referenced alignment "
-                    "'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor "
-                    "and get_design_data all accept that name and answer in host "
-                    "coordinates. To call one out, give place_callout a target_anchor "
-                    "('18+00@12R', 'PC-1'; BC-1 and EC-1 name the PC and PT too) and that "
-                    "alignment name. Otherwise commands "
-                    "do not take it: nothing can be drawn, labelled or anchored to an "
-                    "alignment this document does not own."
-                    "\n\n"
-                    "Plan annotation belongs on the sheet, in paper inches, not in the "
-                    "model. Pass the sheet as place_callout's space and still name a "
-                    "model target -- target_entity or target_anchor: the engine sees it "
-                    "through the sheet's viewport (scale and twist included) and puts "
-                    "the tip where it shows on the paper. 'at' then runs along the part "
-                    "of the entity that sheet shows, since a pavement edge runs the "
-                    "whole project and a sheet shows one stretch. find_entities with "
-                    "visible_on gives each row a sheet_point, which is where that tip "
-                    "will land -- use it to choose a position for the text that is "
-                    "clear of the linework. Never work out a viewport by hand: "
-                    "model_to_sheet and sheet_to_model convert, and station_to_xy and "
-                    "point_on_entity take a sheet and answer in paper inches as well.")}
+                    INSTRUCTIONS)}
 
     def serve(self, stdin=None, stdout=None) -> None:
         """Read newline-delimited JSON-RPC from stdin until EOF."""
@@ -338,6 +342,52 @@ def _text(payload) -> dict:
     text = (json.dumps(payload, ensure_ascii=False, indent=2)
             if len(compact) <= 4000 else compact)
     return {"type": "text", "text": text}
+
+
+def result_text(result: dict) -> str:
+    """The text a tool result carries to the model: what call_tool returns."""
+    return _text(result)["text"]
+
+
+#: a string in a traced result longer than this is replaced by a marker. No
+#: result the engine returns is that long except by accident (a render comes
+#: back as a path, not as bytes); the cap keeps a trace readable if one is.
+TRACE_MAX_STRING = 8192
+
+
+def trace_result(result):
+    """A result as a trace keeps it: a copy through JSON, long strings cut."""
+    if isinstance(result, dict):
+        return {str(k): trace_result(v) for k, v in result.items()}
+    if isinstance(result, (list, tuple)):
+        return [trace_result(v) for v in result]
+    if isinstance(result, str) and len(result) > TRACE_MAX_STRING:
+        return f"<{len(result)} characters omitted>"
+    if isinstance(result, float) and result != result:  # NaN is not JSON
+        return None
+    return result
+
+
+def trace_line(name: str, kind: str, arguments: dict, result: dict,
+               said: Optional[str] = None) -> dict:
+    """One line of a trace: the call, its outcome at a glance (message,
+    created, or the error with its hint), and under ``result`` the whole
+    answer the agent was shown. ``said`` is what a scripted solve said
+    before the call (``roaddraft.trajectories``); a model's trace has none."""
+    entry = {"tool": name, "kind": kind, "arguments": trace_result(arguments),
+             "ok": bool(result.get("ok"))}
+    if result.get("ok"):
+        for key in ("message", "warnings", "created"):
+            if result.get(key):
+                entry[key] = trace_result(result[key])
+    else:
+        error = result.get("error") or {}
+        entry["error"] = {k: error.get(k) for k in ("type", "message", "hint")
+                          if error.get(k)}
+    if said:
+        entry["said"] = said
+    entry["result"] = trace_result(result)
+    return entry
 
 
 def _image_content(path) -> Optional[dict]:
@@ -386,7 +436,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "its file after every command, so the work outlives the "
                              "session without the agent having to save")
     parser.add_argument("--trace", help="append one JSON line per tool call to this "
-                                        "file: arguments, outcome, faults and hints")
+                                        "file: arguments, outcome, faults and hints, and "
+                                        "the full result the agent was shown")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool names that would be served, then exit")
     parser.add_argument("--config", metavar="CLIENT", choices=sorted(mcpconfig.CLIENTS),

@@ -50,6 +50,7 @@ from roaddraft.probes import notation as nt
 from roaddraft.probes import plotted as pl
 from roaddraft.probes.base import Probe, Result
 from roaddraft.probes.drafting import run
+from roaddraft.probes.tasks import ensure_layer
 from roaddraft.probes.tier2 import paper_linework, sheet_named, sheet_stations
 
 AIM_FT = 1.0              # where a leader tip or a tick lands, as plotted
@@ -533,9 +534,7 @@ def _bubble_problem(view: pl.Plot, road: Road, vp, number: int, c: dict, name: s
 
 
 def _layer(session: Session) -> str:
-    if LAYER not in session.doc.layers:
-        run(session, "create_layer", {"name": LAYER, "color": "black"})
-    return LAYER
+    return ensure_layer(session, LAYER)
 
 
 def _at(session: Session, qualified: str, sheet: str, raw: float, offset: float = 0.0):

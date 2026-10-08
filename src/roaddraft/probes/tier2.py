@@ -53,7 +53,8 @@ from roaddraft.probes import drafting, fixture
 from roaddraft.probes.base import Probe, Result
 from roaddraft.probes.drafting import (CL, EOP, NOTE, SHLD, along, between, clear, covered,
                                         expected_alignment, first, on_layer, run, verdict)
-from roaddraft.probes.tasks import (TITLE_FIELDS, TOLERANCE_FT, added_by_space, aimed_at, targets)
+from roaddraft.probes.tasks import (TITLE_FIELDS, TOLERANCE_FT, added_by_space, aimed_at,
+                                    ensure_layer, targets)
 
 AIM_FT = TOLERANCE_FT                 # 1.0 ft: where a leader lands
 LINE_FT = drafting.TOLERANCE_FT       # 0.5 ft: where linework lies
@@ -250,9 +251,7 @@ AT = {"the left edge of pavement": 0.2, "the left edge of shoulder": 0.4,
 
 
 def _paper_layer(session: Session) -> str:
-    if "S-ANNO-CALL" not in session.doc.layers:
-        run(session, "create_layer", {"name": "S-ANNO-CALL", "color": "black"})
-    return "S-ANNO-CALL"
+    return ensure_layer(session, "S-ANNO-CALL")
 
 
 def _callout_on(session: Session, sheet: str, what: str, find: dict, dx: float, dy: float,
@@ -711,8 +710,7 @@ def _check_roadway_sheet(baseline, submitted):
 
 def _solve_roadway_sheet(session):
     drafting._solve_roadway(session)
-    a = session.doc.design.alignments[drafting.ELM["name"]]
-    x0, y0, x1, y1 = a.bbox()
+    x0, y0, x1, y1 = session.query("get_extents", {"space": "model"})["extents"]
     run(session, "create_sheet", {"name": RS["sheet"], "size": RS["size"]})
     run(session, "create_viewport", {"sheet": RS["sheet"], "center_paper": [17.0, 11.7],
                                      "width_in": 31.0, "height_in": 18.5,

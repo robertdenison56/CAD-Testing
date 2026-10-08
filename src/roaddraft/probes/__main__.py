@@ -2,6 +2,7 @@
 the harder second tier of both (tier2), and a layout's line and curve data (tier3).
 
     python -m roaddraft.probes list [--tag draft|find|tier2|tier3]
+    python -m roaddraft.probes families [--seed N]
     python -m roaddraft.probes setup edge-curve-c102 --out /tmp/probe
     python -m roaddraft.probes score edge-curve-c102 --doc /tmp/probe/SR-100.sheets.rdoc.json
     python -m roaddraft.probes selftest
@@ -40,6 +41,19 @@ def cmd_list(args) -> int:
     blocked = sum(1 for p in chosen if p.blocked_on)
     print(f"{len(chosen)} probes, {blocked} blocked on a capability that does "
           f"not exist yet")
+    return 0
+
+
+def cmd_families(args) -> int:
+    """The probe families, each with the instance its seed 0 makes."""
+    from roaddraft.probes import families
+    for family in families.FAMILIES:
+        probe = family.instance(args.seed)
+        print(f"{family.id:24} {', '.join(family.tags):34} opens: {family.start}")
+        print(f"  {family.describe}")
+        print(f"  {probe.id}: {probe.prompt}")
+        print()
+    print(f"{len(families.FAMILIES)} families; an instance is family@seed wherever a probe id is")
     return 0
 
 
@@ -176,6 +190,9 @@ def main(argv=None) -> int:
     lister = subs.add_parser("list", help="the probes and what each asks for")
     lister.add_argument("--tag", help="only probes with this tag, e.g. draft, find, paper")
 
+    fams = subs.add_parser("families", help="the probe families and a sample instance of each")
+    fams.add_argument("--seed", type=int, default=0, help="which instance to show")
+
     setup = subs.add_parser("setup", help="write a fresh project for one probe")
     setup.add_argument("probe")
     setup.add_argument("--out", default="probe_out")
@@ -198,6 +215,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.command == "list":
         return cmd_list(args)
+    if args.command == "families":
+        return cmd_families(args)
     if args.command == "setup":
         return cmd_setup(args)
     if args.command == "score":

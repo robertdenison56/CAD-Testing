@@ -156,12 +156,12 @@ Ranking rules:
 
 **Subject model.** Qwen3.5-9B: the weakest model measured (11/17, 0/6), it runs locally and is small enough for LoRA on one rented GPU. A second subject in the 30B class follows if the first climbs.
 
-**Data the app produces**, all in the trace format the server already writes, converted to tool-calling conversations:
+**Data the app produces**, all in the trace format the server writes (`--trace`: one line per call, with the result the agent was shown), converted to tool-calling conversations by `roaddraft.trajectories convert`:
 
 | Source | How it is made | What it teaches |
 |---|---|---|
-| Reference trajectories | every probe's scripted solve and every generated D1 task's reference solution, run through a tracing session so the queries are captured and not just the commands | the schema, the semantic path (anchors, queries), the conventions |
-| Verified rollouts | k samples per task from a strong model (Fable, Haiku) and from the subject itself; only those the scorer passes are kept | the subject's own successful behaviour, and distillation from the stronger model |
+| Reference trajectories | every probe family instance's scripted solve and every generated D1 task's reference solution, recorded under `roaddraft.trajectories` so the queries are captured and not just the commands, and marked *faithful* only when the solve read nothing except through the tool surface (`benchmarks/trajectories/`) | the schema, the semantic path (anchors, queries), the conventions, and the arithmetic the solve says as it goes |
+| Verified rollouts | k samples per task from a strong model (Fable, Haiku) and from the subject itself; only those the scorer passes are kept (a rig's run folders convert with `convert --runs`, the document each left scored on the way) | the subject's own successful behaviour, and distillation from the stronger model |
 | Fault-and-recovery pairs | mined from traces: a schema fault, the teaching error, the corrected call | first-call compliance |
 | Expert sessions | the PE drafts through RoadDraft.app or the GUI; the journal is the trajectory (the eval plan's human playtest, kept under `benchmarks/expert/`) | how a drafter actually works |
 
@@ -176,7 +176,7 @@ Generated tasks are unlimited and carry their own truth, so training data costs 
 | T2 | rejection-sampling fine-tuning: sample, score, keep the passes, retrain; two or three rounds | whether the subject learns from its own verified successes |
 | T3 | GRPO with the verifier as reward through the eval plan's Gymnasium adapter (terminal reward = effective score / 100; probe reward = pass), with TRL or `verifiers` | whether RL closes the gaps imitation did not: arithmetic, scope, restraint |
 
-**Held-out evaluation.** Training draws on `d1-dev` seeds and the find and draft probes; evaluation uses `d1-test` seeds, Tier 2 and Tier 3, which stay out of every training set. Every stage also runs Track X: a checkpoint whose transfer gap widens has memorised tool names, not drafting.
+**Held-out evaluation.** The 33 fixed probes and the `d1-test` seeds are the test and stay out of every training set. Training draws on `d1-dev` seeds and on probe families (`probes/families.py`): the same kinds of task with their particulars drawn from a seed, built so that no instance repeats a fixed probe. Every stage also runs Track X: a checkpoint whose transfer gap widens has memorised tool names, not drafting.
 
 **Serving.** Checkpoints are served through an OpenAI-compatible endpoint (vLLM, or LM Studio for GGUF conversions) and driven by the same native MCP client as every other open model, so a trained model's leaderboard row is produced exactly as a base model's is.
 
@@ -192,7 +192,7 @@ Each phase ends shippable. Targets assume the existing pace of about 8 to 10 hou
 |---|---|---|---|
 | **A. Close Track P** | Fable on Tier 2 and Tier 3 batch A; batch B and C runs; one native MCP runner for Anthropic, OpenAI-compatible and local endpoints, replacing the shell bridge (built Oct 7 2026, `roaddraft.runners`, with a Claude Code headless backend for runs on a subscription; no model has run through it yet); k = 3 reruns of all 33 probes on all four models; the §3.2 measures computed from traces; the leaderboard generated from run folders | RoadDraft-Bench v0.1: probe leaderboard, four or more models, model cards | October 2026 |
 | **B. Track D** | eval plan E0 to E4: finish Phase 1, build `roaddraft.verify` and `roaddraft.eval`, freeze spec v1 after PE review, pin `d1-dev` and `d1-test`, run the leaderboard set | the headline number, best model X/100, with CI and failure taxonomy | November 2026 |
-| **C. Training data and SFT** | trace-to-conversation converter; reference trajectories for every probe and 500+ generated tasks; T0 and T1 on Qwen3.5-9B; re-rank | the first trained checkpoint on the leaderboard, with its delta and transfer gap | December 2026 |
+| **C. Training data and SFT** | trace-to-conversation converter (built Oct 6 2026: `roaddraft.trajectories convert`, and the 33 solves recorded through the server with tracing on); reference trajectories for every probe and 500+ generated tasks; T0 and T1 on Qwen3.5-9B; re-rank | the first trained checkpoint on the leaderboard, with its delta and transfer gap | December 2026 |
 | **D. RFT and RL** | T2 and T3 through the Gymnasium adapter; Track X on every checkpoint | a measured reward curve and a ranked checkpoint | January 2027 |
 | **E. Publish** | writeup, public leaderboard, trajectory dataset and checkpoints on Hugging Face, environment listings (Prime Intellect hub, `verifiers`, Inspect) | the paper and the artefacts | February 2027 |
 
@@ -251,4 +251,4 @@ These decisions stand and are not repeated here. v1 section numbers are listed f
 2. Rerun the 33 probes at k = 3 on all four models through `roaddraft.runners` (built Oct 7 2026): Claude on the `claude-code` backend with a signed-in CLI until an API key is warranted, the open models on `openai`.
 3. Generate the Track P leaderboard and model cards from the run folders; commit the Oct 6 run with them.
 4. Start the eval plan's E0 (finish Phase 1) and E1 (verifier) for Track D.
-5. Write the trace-to-conversation converter and produce the first reference-trajectory dataset from the 33 scripted solves.
+5. Grow the probe families (callouts by entity, turn lanes, curb returns, lettering) and record the first few hundred instances; rehydrate the passing episodes of the seven runs as verified rollouts.

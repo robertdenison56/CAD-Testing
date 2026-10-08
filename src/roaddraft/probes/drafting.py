@@ -312,9 +312,17 @@ def _check_turn_lane(baseline, submitted):
         "taper 30+00 to 31+20, full width to 36+00, squared off, and nothing beyond")
 
 
+def station_point(session: Session, alignment: str, station, offset: float = 0.0):
+    """Where a station and offset is, asked of the engine the way a model asks."""
+    r = session.query("station_to_xy", {"alignment": alignment, "station": station,
+                                        "offset": offset})
+    if not r["ok"]:
+        raise RuntimeError(r["error"]["message"])
+    return r["point"]
+
+
 def _solve_turn_lane(session):
-    a = _sr100(session)
-    p = lambda st, off: a.station_to_xy(st, off)[0]  # noqa: E731
+    p = lambda st, off: station_point(session, fixture.ALIGNMENT, st, off)  # noqa: E731
     run(session, "draw_line", {"space": "model", "layer": EOP,
                                "start": p(TL["taper_from"], TL["edge"]),
                                "end": p(TL["full_from"], TL["lane"])})
@@ -360,9 +368,9 @@ def _solve_cul_de_sac(session):
     run(session, "create_alignment", {"name": CDS["name"], "pis": CDS["pis"],
                                       "begin_station": CDS["begin"]})
     run(session, "draw_alignment", {"alignment": CDS["name"], "layer": CL})
-    a = session.doc.design.alignments[CDS["name"]]
+    end = session.query("resolve_anchor", {"alignment": CDS["name"], "anchor": "END"})
     run(session, "draw_circle", {"space": "model", "layer": EOP,
-                                 "center": a.point_at(a.length), "radius": CDS["bulb"]})
+                                 "center": end["anchor_point"], "radius": CDS["bulb"]})
     throat = _cds_throat()
     run(session, "draw_offset", {"alignment": CDS["name"], "layer": EOP,
                                  "offsets": [-CDS["half_width"], CDS["half_width"]],

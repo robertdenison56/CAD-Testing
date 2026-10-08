@@ -260,6 +260,10 @@ def test_trace_keeps_the_queries_and_the_faults_the_journal_does_not(tmp_path):
     assert rows[1]["arguments"] == {"name": "V-ROAD", "color": "black"}
     assert "already exists" in rows[2]["error"]["message"] and rows[2]["error"]["hint"]
     assert len(srv.session.bus.journal) == 1                          # the journal kept one
+    # and each line carries the whole result the agent was shown, so the run
+    # converts to a conversation without being replayed
+    assert rows[0]["result"]["ok"] and "layers" in rows[0]["result"]
+    assert rows[1]["result"]["created"] and rows[2]["result"]["error"]["message"]
 
 
 def test_autosave_stays_with_the_opened_file_when_the_agent_saves_a_copy(tmp_path):

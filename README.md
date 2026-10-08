@@ -410,7 +410,9 @@ for a probe's fresh project.
   saves a copy elsewhere, which real models do. **`--trace FILE`** appends one
   JSON line per tool call — queries and faults included, which the journal does
   not keep — so a run can be read back for what the agent tripped on rather than
-  taken from what it says it did.
+  taken from what it says it did. Each line carries the full result the agent
+  was shown, so a trace converts straight into a training conversation
+  (`python -m roaddraft.trajectories convert`).
 - **Faults teach instead of failing**: a bad call comes back as a tool error
   carrying the message, the hint, the schema and a valid example, so the model
   corrects itself rather than guessing.
@@ -640,6 +642,56 @@ python -m roaddraft.probes reference curve-data --out /tmp/refs
 its reference no longer passes. The run deliverables in
 `benchmarks/probe_runs/` keep each `<probe>.reference.pdf` beside the same
 solution as a project, `<probe>.reference/`.
+
+### The solves as conversations — trajectories
+
+A scripted solution is also a demonstration: the sequence of questions and
+commands that drafts the answer. `roaddraft.trajectories` runs one through
+the MCP server with tracing on, the way a model's run is recorded, and keeps
+it as a conversation in the tool-calling shape (system = the MCP server's
+instructions, user = the rules and the task as `probes.prompting` hands them
+to a model, one assistant turn per tool call, the tool's text as the server
+returned it, a report), with the queries in it, which the journal does not
+keep. The server's `--trace` carries every result, and the conversation is
+converted from the trace file, so a model's run converts the same way.
+
+```bash
+python -m roaddraft.trajectories audit                      # what each solve asks, sends, and reads directly
+python -m roaddraft.trajectories record --out benchmarks/trajectories/probe_solves
+python -m roaddraft.trajectories convert --runs benchmarks/probe_runs/2026-10-06-haiku-t2-t3a/runs/haiku \
+    --out /tmp/haiku-conversations                          # a model's run folders, one conversation each
+python -m roaddraft.trajectories convert line-data --trace runs/haiku/line-data/trace.jsonl \
+    --report runs/haiku/line-data/report.txt --document runs/haiku/line-data/project/SR-100.sheets.rdoc.json \
+    --out /tmp/line-data                                     # one trace
+```
+
+The recorder audits the one thing a script can do that a model cannot: read
+the document object (`session.doc`) instead of asking a query. A conversation
+with no such read is **faithful**, every number in it came through the tool
+surface; the find and draft solves are held to that in
+`tests/test_trajectories.py`, and `benchmarks/trajectories/probe_solves/README.md`
+lists which Tier 2 and 3 solves still read the plotted sheet directly. A
+trace written before the server kept results in it (the runs through Oct 6
+2026) holds arguments and outcomes only; `convert` replays such a trace on a
+fresh start, and because the engine is deterministic the replay reproduces
+the document the model left (checked with `--document`), so every past run
+turns into a conversation with the results the model saw.
+
+The 33 fixed probes are the test set, so a training set cannot be their
+solutions. **Probe families** (`probes/families.py`) are the same kinds of
+task with their particulars drawn from a seed: a station-and-offset callout
+on one of the sheets, an alignment from northing and easting, bearings,
+distances, deflections and radii, lanes and shoulders from widths. An
+instance is an ordinary probe named `family@seed`, reachable wherever a
+probe id is, and its solve says its arithmetic as it goes, so the recorded
+conversation shows the work. No instance repeats a fixed probe.
+
+```bash
+python -m roaddraft.probes families                        # the families, with seed 0 of each
+python -m roaddraft.probes setup draft-alignment@17 --out /tmp/p
+python -m roaddraft.trajectories record --out benchmarks/trajectories/families/draft-alignment \
+    --family draft-alignment --seeds 0-99
+```
 
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
