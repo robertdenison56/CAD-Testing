@@ -496,6 +496,60 @@ bridge, gpt-oss:120b through Ollama as a native MCP client — are kept under
 it, every tool call as the server saw it, and the documents the models left
 behind, which is what was scored. See its README.
 
+### Run a model through it — one native MCP runner for every vendor
+
+`roaddraft.runners` is the client the research plan's Phase A calls for: the
+same tools, the same words and the same budgets for every model, so the
+leaderboard rows are comparable. It sets up a fresh project per probe, starts
+`roaddraft-mcp` on it with autosave and a trace, hands the server's tools and
+instructions to the model, runs the tool-calling loop to the model's final
+report, and leaves the run folder the scorers read — the layout the rigs under
+`benchmarks/probe_runs/` left (`project/`, `trace.jsonl`, `transcript.json`,
+`report.txt`, `prompt.txt`, `run.json`). Only the backend is vendor-specific:
+
+```bash
+# the bare Anthropic API: ANTHROPIC_API_KEY in the environment, billed per token
+python -m roaddraft.runners run --backend anthropic --model claude-haiku-4-5 \
+    --out benchmarks/probe_runs/2026-10-07-native --label haiku --tag tier2 --repeat 3
+# Claude Code in headless mode, on a subscription: a signed-in CLI, no key
+python -m roaddraft.runners run --backend claude-code --model claude-haiku-4-5 \
+    --out benchmarks/probe_runs/2026-10-07-native --label haiku-cc --claude-bin /path/to/claude line-data
+# anything OpenAI-compatible: LM Studio (with its reload guard), Ollama, vLLM, a fine-tuned checkpoint
+python -m roaddraft.runners run --backend openai --model qwen3.5-9b --lms-context 65536 \
+    --out benchmarks/probe_runs/2026-10-07-native --label qwen --budget 60
+python -m roaddraft.runners score benchmarks/probe_runs/2026-10-07-native/runs/haiku
+```
+
+- **`anthropic`** speaks the Messages API over plain HTTP (the current SDK
+  needs Python 3.10): each MCP tool's JSON Schema as `input_schema`, the
+  server's instructions as the system prompt, a top-level `cache_control` so
+  the 22k-token tool list is read from cache every turn after the first, the
+  assistant's content echoed back verbatim with its thinking blocks. `--effort`
+  and `--vision` (renders go in as images) are the only knobs.
+- **`claude-code`** runs `claude -p` with the probe's server in an MCP config
+  and the harness pared back as far as the CLI allows: `--system-prompt` is the
+  server's instructions, `--tools ""` removes every built-in tool so the server
+  is the whole world, `--restricted` ignores the user's settings, the tools are
+  pre-allowed so nothing prompts. The model calls them natively as
+  `mcp__roaddraft__<tool>`. What remains of the harness is why these rows carry
+  `runner: claude-code`. The CLI must be signed in (`claude login`, or `claude
+  setup-token`); the copy bundled with the desktop app is not, and a run on it
+  ends each probe with that error in `run.json` rather than crashing.
+- **`openai`** is the LM Studio rig's runner generalised: function tools, tool
+  results as `role: tool`, a model's `reasoning_content` kept in the transcript
+  and not sent back, text-only. `--lms-context N` switches on the LM Studio
+  guard that reloads the model at that context when the engine dies.
+
+`--budget MIN` is wall clock per probe, checked between turns; `--max-turns`
+caps the loop; `--repeat K` writes `LABEL-r1` .. `LABEL-rK`; a probe with a
+report already is skipped unless `--force`. `score` diffs each left-behind
+document against a fresh start, as the rigs' `score_runs.py` did, and reads
+the §3.2 measures off the trace: calls, faults and the invalid-call rate,
+recovery (a fault followed within three calls by a success of the same tool),
+the longest run of one fault, renders looked at, and from `run.json` the
+turns, seconds, tokens and list-price cost. `tests/test_runners.py` drives
+each backend with a fake model against the real server.
+
 ### Tier-2 probes — harder, one gap each
 
 For the agents that pass the first seventeen. Six probes, each aimed at

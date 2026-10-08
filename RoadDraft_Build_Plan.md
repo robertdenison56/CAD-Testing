@@ -54,7 +54,7 @@ The engine is no longer the deliverable; the measurements and the trained models
 | Probes | 33 pass/fail tasks in three tiers (9 find, 8 draft, 6 Tier 2, 10 Tier 3), each with a scripted solve that passes its own check, an untouched start that fails it, and tests (Tier 2 and 3 with trap tests that prove each trap fails). References kept as finished projects with journal, PDF and DXF. | `probes/`, `benchmarks/probe_references/` |
 | Task generator | D1 plan-sheet tasks from a seed, with brief, ground truth and a reference solution that replays; draft spec v1 ("Caltrans-flavored but genericized") of 11 weighted checks. | `tasks/` |
 | Knowledge base | The Caltrans PPM indexed by page, so every spec value and probe convention cites its source. | `benchmarks/knowledge/` |
-| Runners | Claude models through a shell bridge (`rd`) over one persistent server; Ollama and LM Studio through a minimal native MCP client. `score_runs.py` scores from disk; `make_deliverables.py` prints every document and reference to PDF with a pass/fail overview. | `benchmarks/probe_runs/<run>/` |
+| Runners | `roaddraft.runners` (Oct 7 2026): one native MCP client with three backends, the Anthropic API, Claude Code headless on a subscription, and any OpenAI-compatible endpoint (LM Studio with its reload guard, Ollama, vLLM); `score` scores from disk and reads the §3.2 measures off the traces. The earlier rigs, a shell bridge (`rd`) for Claude and per-run native clients for Ollama and LM Studio, stay with their runs; `make_deliverables.py` prints every document and reference to PDF with a pass/fail overview. | `runners/`, `benchmarks/probe_runs/<run>/` |
 | Human interfaces | Web GUI, terminal REPL and RoadDraft.app on the same bus, so a human session leaves the same journal an agent does. | `web/`, `cli/`, `desktop/`, `scripts/build_app.sh` |
 
 Not built: the scored verifier (`roaddraft.verify`), the eval harness (`roaddraft.eval`), pinned task sets, the leaderboard generator, and any training code. The eval plan specifies the first four as work packages E0 to E6.
@@ -190,7 +190,7 @@ Each phase ends shippable. Targets assume the existing pace of about 8 to 10 hou
 
 | Phase | Scope | Deliverable | Target |
 |---|---|---|---|
-| **A. Close Track P** | Fable on Tier 2 and Tier 3 batch A; batch B and C runs; one native MCP runner for Anthropic, OpenAI-compatible and local endpoints, replacing the shell bridge; k = 3 reruns of all 33 probes on all four models; the §3.2 measures computed from traces; the leaderboard generated from run folders | RoadDraft-Bench v0.1: probe leaderboard, four or more models, model cards | October 2026 |
+| **A. Close Track P** | Fable on Tier 2 and Tier 3 batch A; batch B and C runs; one native MCP runner for Anthropic, OpenAI-compatible and local endpoints, replacing the shell bridge (built Oct 7 2026, `roaddraft.runners`, with a Claude Code headless backend for runs on a subscription; no model has run through it yet); k = 3 reruns of all 33 probes on all four models; the §3.2 measures computed from traces; the leaderboard generated from run folders | RoadDraft-Bench v0.1: probe leaderboard, four or more models, model cards | October 2026 |
 | **B. Track D** | eval plan E0 to E4: finish Phase 1, build `roaddraft.verify` and `roaddraft.eval`, freeze spec v1 after PE review, pin `d1-dev` and `d1-test`, run the leaderboard set | the headline number, best model X/100, with CI and failure taxonomy | November 2026 |
 | **C. Training data and SFT** | trace-to-conversation converter; reference trajectories for every probe and 500+ generated tasks; T0 and T1 on Qwen3.5-9B; re-rank | the first trained checkpoint on the leaderboard, with its delta and transfer gap | December 2026 |
 | **D. RFT and RL** | T2 and T3 through the Gymnasium adapter; Track X on every checkpoint | a measured reward curve and a ranked checkpoint | January 2027 |
@@ -248,7 +248,7 @@ These decisions stand and are not repeated here. v1 section numbers are listed f
 ## 8. Immediate next actions
 
 1. Run Fable on Tier 2 and Tier 3 batch A through the existing rig, so the batch-A ceiling is measured before batch C runs.
-2. Write the native MCP runner for the Anthropic API (the Ollama and LM Studio runners are the template) and rerun the 33 probes at k = 3 on all four models through it.
+2. Rerun the 33 probes at k = 3 on all four models through `roaddraft.runners` (built Oct 7 2026): Claude on the `claude-code` backend with a signed-in CLI until an API key is warranted, the open models on `openai`.
 3. Generate the Track P leaderboard and model cards from the run folders; commit the Oct 6 run with them.
 4. Start the eval plan's E0 (finish Phase 1) and E1 (verifier) for Track D.
 5. Write the trace-to-conversation converter and produce the first reference-trajectory dataset from the 33 scripted solves.

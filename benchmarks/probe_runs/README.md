@@ -14,6 +14,7 @@ capability probes, not the scored benchmark of `RoadDraft_Eval_Plan.md`.
 | 2026-09-29-lmstudio | Qwen3.5-9B, local through LM Studio | all 17 | 11/17 (T2 8/9, T1 3/8) | [RESULTS.md](2026-09-29-lmstudio/RESULTS.md) |
 | 2026-10-04-lmstudio-tier2 | Qwen3.5-9B, local through LM Studio | the 6 Tier-2 probes | 0/6, each on the gap it measures | [RESULTS.md](2026-10-04-lmstudio-tier2/RESULTS.md) |
 | 2026-10-06-haiku-t2-t3a | Haiku 4.5 | the 6 Tier-2 probes and Tier-3 batch A (line-data, curve-points, curve-data, stationing) | 6/10: Tier 2 5/6, batch A 1/4 | [RESULTS.md](2026-10-06-haiku-t2-t3a/RESULTS.md) |
+| 2026-10-07-runner-smoke | Qwen3.5-9B, Llama 3.1 8B through `roaddraft.runners` | edge-c102 only: the native runner's first live runs, not a benchmark | 1/1, 0/1 (LM Studio could not parse Llama's tool call) | [RESULTS.md](2026-10-07-runner-smoke/RESULTS.md) |
 
 Each folder keeps the rig exactly as it ran, so a writeup and the engine it
 measured stay together. The engine version is named in each RESULTS.md.
@@ -64,7 +65,17 @@ run differently. That is why the documents are kept and not just the numbers.
 
 ## Running a new one
 
-Copy a rig into a new dated folder rather than adding labels to an old one.
+From Oct 7 2026 the runner is in the package, one client for every vendor, and
+leaves this same layout plus `run.json` (stop reason, turns, seconds, tokens,
+cost) and `scores.json`:
+
+    python -m roaddraft.runners run --backend anthropic|claude-code|openai --model MODEL \
+        --out benchmarks/probe_runs/<date>-<name> --label <label> [--tag tier2] [PROBE ...] [--repeat 3]
+    python -m roaddraft.runners score benchmarks/probe_runs/<date>-<name>/runs/<label>
+
+The rigs below are how the earlier runs were made and stay with them. To
+repeat one of those as it was, copy its rig into a new dated folder rather
+than adding labels to an old one.
 
     python setup_runs.py <label> [tag]    runs/<label>/<probe>/ with a fresh project and server.json
     # drive it: a subagent through each probe's `rd`, `python ollama_runner.py <label> <model>`,
