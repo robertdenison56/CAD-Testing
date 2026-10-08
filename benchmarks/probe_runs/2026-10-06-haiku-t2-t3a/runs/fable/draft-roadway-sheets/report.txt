@@ -1,0 +1,49 @@
+## draft-roadway-sheets (Fable) -- complete
+
+Document folder: /Volumes/RobertsExternalSSD/repos/CAD Testing/benchmarks/probe_runs/2026-10-06-haiku-t2-t3a/runs/fable/draft-roadway-sheets/ (autosaved by the engine after each command; render at renders/C-101.png in that folder).
+
+### 1. What I created and drew
+
+- **Alignment ELM-AVE** (design model), begin station 10+00, PIs [x=E, y=N]:
+  - BEGIN [1000.00, 3000.00]
+  - PI-1 [1787.8462, 2861.0815], R = 500
+  - PI-2 [2394.0640, 3211.0815], R = 700
+  - END [2991.7808, 3263.3749]
+  - Engine read-back: T-1 S 80°00'00" E 618.01 ft, C-1 Δ 40°00'00" L R=500 (T 181.99, L 349.07, BC 16+18.01, EC 19+67.08), T-2 N 60°00'00" E 362.83 ft, C-2 Δ 25°00'00" R R=700 (T 155.19, L 305.43, BC 23+29.91, EC 26+35.34), T-3 N 85°00'00" E 444.81 ft. Total 2080.16 ft, 10+00.00 to 30+80.16.
+- **Centerline** on V-ALIGN-CNTR: LN-001, AR-001, LN-002, AR-002, LN-003 (anchored to ELM-AVE).
+- **Edges of pavement** on V-ROAD-EOP: offsets -11/+11 ft (two 11 ft lanes), 6 lines + 4 arcs (LN-004..LN-009, AR-003..AR-006).
+- **Outside edges of shoulder** on V-ROAD-SHLD: offsets -16/+16 ft (11 + 5 ft shoulder), 6 lines + 4 arcs (LN-010..LN-015, AR-007..AR-010).
+- **Stationing** on V-ANNO-TEXT: annotation scale set to 1"=100' first (text 10 ft, ticks 20 ft half-length, label offset 32 ft), then 21 ticks + labels every 100 ft (10+00.00 .. 30+00.00) and 4 BC/EC labels (LN-016..LN-036, TX-001..TX-025).
+- Model extents after drawing: x 977.98-2993.18, y 2844.64-3300.67 ft.
+- **Sheet C-101**, ANSI_D (34 x 22 in, standard title block, usable area x 0.5-33.5, y 1.75-21.5 in), id SH-001.
+- **Viewport VP-001**: center_paper [17.0, 11.625], 32 x 19 in, model_center [1985.58, 3072.65], 100 ft/in, no twist; shows model x 385.6-3585.6, y 2122.7-4022.7, which encloses the full extents (whole alignment, shoulders and station labels included).
+- **Title block**: project ELM AVE, sheet_title ROADWAY PLAN, sheet_number C-101, scale 1" = 100'.
+- Verified by get_sheet_state and by render_sheet (looked at the PNG: full road with shoulders, station ticks/labels, BC/EC labels, filled title block).
+
+### 2. Tool calls that mattered, in order
+
+1. get_document_state {} -- empty model, layers V-ALIGN-CNTR / V-ANNO-TEXT / V-ROAD-EOP / V-ROAD-SHLD already present.
+2. create_alignment {name "ELM-AVE", begin_station "10+00", pis [[1000,3000],[1787.8462,2861.0815,500],[2394.0640,3211.0815,700],[2991.7808,3263.3749]]} -- 5 elements, 2080.16 ft.
+3. get_design_data {kind tangents / kind curves, alignment ELM-AVE} -- bearings and deflections read back exactly as specified.
+4. draw_alignment {alignment ELM-AVE, layer V-ALIGN-CNTR}
+5. draw_offset {alignment ELM-AVE, offsets [-11, 11], layer V-ROAD-EOP}
+6. draw_offset {alignment ELM-AVE, offsets [-16, 16], layer V-ROAD-SHLD}
+7. set_annotation_scale {scale 100}
+8. annotate_stationing {space model, alignment ELM-AVE, interval 100, layer V-ANNO-TEXT}
+9. get_extents {space model}
+10. create_sheet {name C-101, size ANSI_D, title_block_fields {project, sheet_title, sheet_number, scale}}
+11. create_viewport {sheet C-101, center_paper [17, 11.625], width_in 32, height_in 19, model_center [1985.58, 3072.65], feet_per_inch 100, rotation_deg 0}
+12. fill_title_block {sheet C-101, fields {project "ELM AVE", sheet_title "ROADWAY PLAN", sheet_number "C-101", scale "1\" = 100'"}} (stdin form because of the quote marks)
+13. get_sheet_state {sheet C-101}; render_sheet {sheet C-101}
+
+### 3. Failures, confusion, workarounds
+
+Nothing failed; every call returned ok with no warnings. The only hand work was turning the bearing/distance layout into PI coordinates, since create_alignment takes coordinates only:
+
+- S 80°00'00" E = azimuth 100°. 800 ft: dE = 800 sin 80° = 800 x 0.98480775 = 787.8462; dN = -800 cos 80° = -800 x 0.17364818 = -138.9185. PI-1 = [1000 + 787.8462, 3000 - 138.9185] = [1787.8462, 2861.0815].
+- Deflect 40° left: azimuth 100° - 40° = 60° (N 60° E). 700 ft: dE = 700 x 0.86602540 = 606.2178; dN = 700 x 0.5 = 350.0000. PI-2 = [2394.0640, 3211.0815].
+- Deflect 25° right: azimuth 60° + 25° = 85° (N 85° E). 600 ft: dE = 600 x 0.99619470 = 597.7168; dN = 600 x 0.08715574 = 52.2934. END = [2991.7808, 3263.3749].
+- Sanity check before committing: curve tangents T1 = 500 tan 20° = 181.99 and T2 = 700 tan 12.5° = 155.19 fit inside the 800 / 700 / 600 ft PI legs (181.99 + 155.19 = 337.18 < 700). Expected total length 618.01 + 349.07 + 362.83 + 305.43 + 444.81 = 2080.15 vs engine 2080.16.
+- Viewport center = midpoint of get_extents: x (977.98 + 2993.18)/2 = 1985.58, y (2844.64 + 3300.67)/2 = 3072.65; extents are 20.2 x 4.6 in at 1"=100', so a 32 x 19 in viewport inside the 33 x 19.75 in usable area holds everything.
+- Judgment call: I set the annotation scale to 1"=100' before annotate_stationing so station text plots at 0.10 in on the sheet (10 ft in model) instead of the fixed 8 ft default. This also makes the ticks/labels annotative. I passed the title block fields both in create_sheet and again in fill_title_block (the prompt asked for the fill explicitly); the second call simply reaffirmed the same four values.
+- I read the rendered PNG with the Read tool to check the sheet visually (the bridge omits image content and says to open the path); no other programs were run and no files were edited or copied.

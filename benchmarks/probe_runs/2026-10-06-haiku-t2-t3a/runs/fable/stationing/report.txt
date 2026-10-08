@@ -1,0 +1,25 @@
+Stationing probe (SR-100 on sheet C-102) complete. Everything went through `rd call`; the document autosaved after each command (32 journaled commands).
+
+1. What I placed, where, and what it points at
+- Space: sheet C-102 (SH-002), paper inches, layer V-ANNO-TEXT. The document owns no geometry and no alignment; SR-100 is the read-only referenced alignment DESIGN:SR-100 seen through VP-002 (1"=50', no twist, window x 2550..4100 ft).
+- 16 ticks (LN-001..LN-016), one at each 100 ft station the sheet shows: 26+00 through 41+00 (25+00 and 42+00 came back `visible: false`, outside VP-002's window). Each tick runs from the station's 3.5 ft-left point to its 3.5 ft-right point as mapped to paper by the engine, so it is 0.14 in long (7 ft at plot scale), square to the centerline and centred on it; `measure` reads 0.14 on LN-001, LN-005 and LN-016, and `sheet_to_model` at a tick's centre point reports distance 0.0 ft from the referenced centerline DESIGN:LN-002. Ticks on the two curves (26+00, 27+00 on C-1; 41+00 on C-2) follow the local heading there.
+- 16 labels (TX-001..TX-016), rotation 0 (reading left to right), 0.08 in high, halign center / valign top, each centred under its station with its top 0.11 in below the centerline point, so it sits between the tick end and the right edge of pavement (EOP at ±12 ft = 0.24 in, shoulder at ±20 ft). Content left to right: 6, 7, 8, 9, 30, 1, 2, 3, 4, 35, 6, 7, 8, 9, 40, 1 (whole number at 30+00, 35+00, 40+00; ones digit elsewhere).
+- Render for review: /Volumes/RobertsExternalSSD/repos/CAD Testing/benchmarks/probe_runs/2026-10-06-haiku-t2-t3a/runs/fable/stationing/renders/C-102.png
+
+2. Tool calls that mattered, in order
+- get_document_state {} -- no model entities, no owned alignments, 3 sheets.
+- list_alignments {include_references: true} -- DESIGN:SR-100, 10+00 to 56+75.25, read-only.
+- get_sheet_state {sheet: "C-102"} -- VP-002, 50 ft/in, rotation 0, visible bbox [2550, 787.5, 4100, 1712.5].
+- get_design_data {alignment: "DESIGN:SR-100", kind: "curves"} and {kind: "tangents"}; find_entities {visible_on: "C-102", layer: "V-ALIGN-CNTR"} -- the sheet shows part of C-1, all of T-2, part of C-2.
+- station_to_xy {alignment: "DESIGN:SR-100", station: S, sheet: "C-102"} for S = 2500..4200 step 100 -- visibility and the centerline sheet_point per station; 2500 and 4200 not visible.
+- station_to_xy {..., offset: -3.5, sheet: "C-102"} and {..., offset: 3.5, sheet: "C-102"} for S = 2600..4100 -- the two tick ends in paper inches (engine did the offset and viewport mapping).
+- draw_line {space: "C-102", layer: "V-ANNO-TEXT", start: <-3.5 ft sheet_point>, end: <+3.5 ft sheet_point>} x16 -> LN-001..LN-016.
+- find_entities {visible_on: "C-102", layer: ["V-ROAD-EOP", "V-ROAD-SHLD"]} -- EOP at offsets ±12, shoulders at ±20, used to choose the label band.
+- place_text {space: "C-102", layer: "V-ANNO-TEXT", position: [cx, cy - 0.11], content: "6"/"7"/.../"30"/.../"35"/.../"40"/"1", height: 0.08, rotation_deg: 0, halign: "center", valign: "top"} x16 -> TX-001..TX-016.
+- render_sheet {sheet: "C-102"}; measure {entity: "LN-005"} / LN-001 / LN-016 (0.14 each); sheet_to_model {sheet: "C-102", point: [10.153326, 9.251109]} (0.0 ft from DESIGN:LN-002).
+
+3. Failures, confusions, workarounds
+- I did not use annotate_stationing: the engine instructions say "nothing can be drawn, labelled or anchored to an alignment this document does not own", and the only alignment is the referenced DESIGN:SR-100, so I drew the ticks and lettered the numbers by hand on the sheet instead (I did not try the command to confirm the refusal). The Caltrans ones-digit lettering would not have come out of it anyway.
+- measure {from: "LN-005"} failed: "measure needs 'from' and 'to', or a single 'entity'" (hint: "each of from/to is a point [x, y] or an entity id; from_at/to_at say where on the entity"). The tool description says 'from' takes an entity id, but a single entity needs the 'entity' key; retried with {entity: "LN-005"} and it worked.
+- render_sheet returned "[image content omitted by the bridge -- the file path is in the text above; open it to look]", so I opened the PNG with the Read tool to check the result (no copies, no edits).
+- Judgment calls: 0.08 in lettering (Caltrans small text) rather than the document's 0.10 in default, because the band between the tick end and the 12 ft pavement edge on the 18.4-degree tangent is only about 0.17 in tall and a 0.10 in "30" would have grazed the EOP line. Ticks and labels both went on the existing V-ANNO-TEXT layer rather than V-ALIGN-CNTR (red, center linetype) so a 0.14 in tick would not render as a broken dash.
