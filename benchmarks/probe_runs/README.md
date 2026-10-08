@@ -18,6 +18,7 @@ capability probes, not the scored benchmark of `RoadDraft_Eval_Plan.md`.
 | 2026-10-07-lmstudio-t3bc | Qwen3.5-9B, GLM-4.6V-Flash, Gemma-4-E4B, Llama-3.1-8B, local through LM Studio | Tier-3 batches B and C (equation-data, width-dims, row-data, qa-alignment-data, l2-match-lines, l2-alignment-data) | 0/6 each; Llama never completed a turn | [RESULTS.md](2026-10-07-lmstudio-t3bc/RESULTS.md) |
 | 2026-10-08-runner-guards | Qwen3.5-9B through `roaddraft.runners` | edge-c102 only: the LM Studio guards ported into the native runner, not a benchmark | 1/1 (a first attempt's engine died mid-stream; its document still passes) | [RESULTS.md](2026-10-08-runner-guards/RESULTS.md) |
 | 2026-10-08-claude-code-smoke | Haiku 4.5 through `roaddraft.runners --backend claude-code` | edge-c102 only: the claude-code backend's first live run, on a subscription, not a benchmark | 1/1 | [RESULTS.md](2026-10-08-claude-code-smoke/RESULTS.md) |
+| 2026-10-08-k3 | Haiku 4.5 through `roaddraft.runners --backend claude-code`, k = 3 | all 33 probes, three times | 21, 20, 17 of 33; 15 probes pass every time, 9 fail every time, 9 split | [RESULTS.md](2026-10-08-k3/RESULTS.md) |
 
 Each folder keeps the rig exactly as it ran, so a writeup and the engine it
 measured stay together. The engine version is named in each RESULTS.md.
