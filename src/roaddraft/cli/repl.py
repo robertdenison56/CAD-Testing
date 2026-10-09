@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 
-from roaddraft.api.lines import REPL_ALIASES, build_params, print_params
+from roaddraft.api.lines import REPL_ALIASES, build_params, print_params, resolve_verb
 from roaddraft.api.session import QUERIES, Session
 
 HELP = """RoadDraft REPL - same tool surface the AI uses.
@@ -48,6 +48,19 @@ Design (alignments, profiles, anchored labels):
   anchor PC-1 [NAME]                    (dry run of label)
   offset 12L 12R [alignment=NAME]       edge of pavement (right +; edge = offset)
   landxmlin PATH                        landxml [PATH]   (import / export)
+  alignment NAME start=1000,3000 legs='["S80E 800","40L 700 R=500","25R 600 R=700"]'
+                                        (a layout by bearings and distances)
+Coordinate geometry, editing and inquiry:
+  bd 1000,3000 "S 80-00-00 E 800" "40L 700" "CURVE R=300 RIGHT L=200" [close=true]
+                                        draw by bearing & distance (also: cogo, trav)
+  bd LN-003 "15R 200"                   carry on from the end of an entity
+  traverse 0,0 "N45E 100" "90R 100" close=true   compute only: points + closure
+  offset LN-001 12 left | offset LN-001 12L 12R | offset LN-001 through=1200,950
+  offset LN-001 AR-001 LN-002 -12 12    a chain, offset as one path (join=round)
+  fillet LN-001 LN-002 50 [keep=[[x,y],[x,y]] trim=false]   (radius 0 = corner)
+  dist 1300,980 1500,1030 along=LN-001  along & square off a line, chain or alignment
+  snap 1601,1001 [tolerance=5 modes=["endpoint","intersection"] from=X,Y]
+  keypoints LN-001 LN-002 | keypoints alignment=SR-100
 Annotation scale (paper-size annotation at a plot scale):
   annoscale 100 | annoscale 1:1200 | annoscale off     annoscales
   annoadd 25 [name]  annodel 25   annopaper text_height_in=0.12 label_offset_in=0.35
@@ -264,7 +277,9 @@ class Repl:
             print_result(self.session.execute("set_current_layer",
                                               {"name": args[0]}))
         else:
-            name = REPL_ALIASES.get(low, cmd)
+            name = resolve_verb(low, args)
+            if name == low and low not in REPL_ALIASES:
+                name = cmd
             resolved = self.session.bus.resolve(name)
             canonical = resolved.name if resolved else name
             if canonical in QUERIES:

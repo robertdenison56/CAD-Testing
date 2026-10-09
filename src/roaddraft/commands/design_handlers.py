@@ -144,14 +144,23 @@ def create_alignment(doc: Document, p: dict):
     if name in doc.design.alignments:
         raise CommandFault(f"alignment {name!r} already exists",
                            hint="modify_alignment or delete_alignment")
-    has_pis, has_elements = "pis" in p, "elements" in p
-    if has_pis == has_elements:
-        raise CommandFault("give exactly one of pis (PI-based) or elements (from CoordGeom)")
+    given = [k for k in ("pis", "elements", "legs") if k in p]
+    if len(given) != 1:
+        raise CommandFault("give exactly one of pis (PI coordinates), legs (bearings and "
+                           "distances from start) or elements (from CoordGeom)")
+    if ("start" in p) != ("legs" in p):
+        raise CommandFault("start and legs go together: legs run from start",
+                           hint="start: [x, y] of BEGIN; legs: [{bearing, distance}, "
+                                "{deflection, radius, distance}, ...]")
+    has_pis = given[0] in ("pis", "legs")
     begin = _display_station(p.get("begin_station", 0.0))
     description = str(p.get("description", ""))
+    pi_rows = p.get("pis")
+    if given[0] == "legs":
+        pi_rows = _pis_from_legs(p)
     try:
         if has_pis:
-            pis = [PI.from_dict(x) for x in p["pis"]]
+            pis = [PI.from_dict(x) for x in pi_rows]
             elements = compile_pis(pis, angle_points=bool(p.get("angle_points")))
             align = Alignment(name=name, elements=elements, pis=pis, begin_station=begin,
                               description=description, source="pis")
@@ -163,9 +172,37 @@ def create_alignment(doc: Document, p: dict):
         raise _fault(e)
     doc.design.alignments[name] = align
     st = align.stations()
+    laid_out = ""
+    if given[0] == "legs":
+        laid_out = "; PIs " + ", ".join(
+            f"{_pi_name(i, len(pi_rows))} [{row[0]:.2f}, {row[1]:.2f}]"
+            + (f" R={row[2]:g}" if len(row) == 3 else "") for i, row in enumerate(pi_rows))
     return (f"alignment {name} created: {_describe(align)}, {align.length:.2f} ft, "
-            f"{st.begin_text()} to {st.end_text()}",
+            f"{st.begin_text()} to {st.end_text()}{laid_out}",
             _diff(created=[f"alignment:{name}"]), [])
+
+
+def _pi_name(i: int, n: int) -> str:
+    return "BEGIN" if i == 0 else "END" if i == n - 1 else f"PI-{i + 1}"
+
+
+def _pis_from_legs(p: dict) -> list:
+    """PI rows from start + legs, with the faults phrased in legs."""
+    from roaddraft.design import cogo
+    try:
+        legs = [cogo.as_leg(leg, f"legs[{i}]") for i, leg in enumerate(p["legs"])]
+        rows = cogo.pis_from_legs(p["start"], legs)
+    except cogo.CogoError as e:
+        raise CommandFault(str(e), hint=e.hint)
+    if not p.get("angle_points"):
+        for i, row in enumerate(rows[1:-1], start=1):
+            if len(row) < 3:
+                raise CommandFault(
+                    f"legs[{i}] starts at PI-{i + 1}, where the alignment turns, and has no "
+                    f"radius",
+                    hint="give that leg the radius of the curve at its PI, or pass "
+                         "angle_points=true for a layout whose curves come later")
+    return rows
 
 
 def modify_alignment(doc: Document, p: dict):

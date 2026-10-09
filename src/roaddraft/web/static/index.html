@@ -210,6 +210,21 @@
   /* a PI whose curve does not fit its legs, in a preview */
   #ovl .bad { fill: none; stroke: var(--err); stroke-width: 2;
               vector-effect: non-scaling-stroke; }
+  /* object snap: AutoCAD's yellow marker, its shape naming the kind */
+  #ovl .snapmark { fill: none; stroke: #ffde59; stroke-width: 2;
+                   vector-effect: non-scaling-stroke; }
+  #ovl .snapdot { fill: #ffde59; stroke: none; }
+  #ovl .snaplabel, #ovl .measlabel { paint-order: stroke; stroke: #000000cc;
+      stroke-linejoin: round; font-family: -apple-system, "Segoe UI", sans-serif; }
+  #ovl .snaplabel { fill: #ffde59; }
+  /* measurements: they stay on screen until the tool changes or Esc */
+  #ovl .meas { stroke: #6fe3c4; stroke-width: 1.6; fill: none;
+               vector-effect: non-scaling-stroke; }
+  #ovl .measdash { stroke: #6fe3c4; stroke-width: 1.2; fill: none;
+                   stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+  #ovl .measdot { fill: #6fe3c4; stroke: #10121a; stroke-width: 1;
+                  vector-effect: non-scaling-stroke; }
+  #ovl .measlabel { fill: #6fe3c4; }
   #zoomer { position: absolute; right: 14px; bottom: 12px; display: flex;
             gap: 5px; background: rgba(22,23,27,.92);
             border: 1px solid var(--border); border-radius: 7px;
@@ -278,6 +293,18 @@
     font-size: 11px; border: 1px solid var(--dim); border-radius: 4px;
     padding: 1px 4px; cursor: pointer; }
   #st-tool { color: var(--text); }
+  #snapcfg { padding: 1px 5px; margin-left: -10px; }
+  #snapmenu { position: fixed; bottom: 30px; display: none; z-index: 40;
+              background: var(--panel); border: 1px solid var(--border);
+              border-radius: 8px; padding: 8px 12px; color: var(--text);
+              box-shadow: 0 6px 22px rgba(0,0,0,.5); font-size: 12px; }
+  #snapmenu.open { display: block; }
+  #snapmenu h4 { margin: 0 0 6px; font-size: 11px; letter-spacing: .6px;
+                 color: var(--dim); }
+  #snapmenu label { display: flex; gap: 7px; align-items: center;
+                    padding: 2px 0; cursor: pointer; }
+  #snapmenu .snaphint { color: var(--dim); font-size: 10.5px; margin-top: 6px;
+                        max-width: 230px; white-space: normal; }
 
   /* ---------------------------------------------------------- modal */
   #modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55);
@@ -295,6 +322,8 @@
       padding: 5px 8px; outline: none; font: inherit; }
   #modal .row textarea { resize: vertical; font-family: ui-monospace, Menlo,
       monospace; font-size: 12px; }
+  #modal .row.wide { flex-direction: column; align-items: stretch; gap: 5px; }
+  #modal .row.wide textarea { width: 100%; min-width: 420px; }
   #modal .actions { display: flex; justify-content: flex-end; gap: 8px;
                     margin-top: 14px; }
   #modal .actions .zbtn { padding: 4px 16px; }
@@ -365,6 +394,8 @@
   <div id="statusbar">
     <span id="st-coord"></span>
     <span class="sttog" id="tog-ortho" title="Constrain drawing to horizontal/vertical (F8)">ORTHO</span>
+    <span class="sttog on" id="tog-osnap" title="Object snap (F3): picks jump to endpoints, midpoints, centers, intersections and alignment design points; ▾ chooses which">OSNAP</span>
+    <span class="sttog" id="snapcfg" title="Object snap modes">▾</span>
     <select id="st-annoscale" title="Annotation scale"></select>
     <span id="st-tool"></span>
     <span class="grow" style="flex:1"></span>
@@ -372,6 +403,7 @@
     <span id="st-entities"></span>
   </div>
 
+  <div id="snapmenu"></div>
   <div id="modal-bg"><div id="modal"></div></div>
 
 <script>
@@ -383,6 +415,13 @@ const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
             dimBusy: false, selected: null, grip: null, gripHover: null,
             ribbonTab: "Home", dpi: 130, frames: true, dark: true,
             ortho: false, alignRadius: 800,
+            // object snap: on, these modes; the snap under the cursor
+            osnap: true, snap: null, snapBusy: false, snapPending: null,
+            snapModes: new Set(["endpoint", "midpoint", "center", "intersection",
+                                "perpendicular", "insertion", "design"]),
+            // offset / fillet / measure: picked entities and the numbers in use
+            picks: [], meas: [], offsetDist: 12, filletRadius: 25,
+            travLegs: "N 45°00'00\" E 100\n90 R 100",
             tsOpen: { layers: true, sheets: true, refs: true, alignments: true } };
 
 const esc = s => String(s).replace(/[&<>"]/g,
@@ -429,6 +468,12 @@ const ICONS = {
   toolspace: `<rect x="3" y="3.5" width="8" height="17" rx="1"/><path d="M14 5 h7 M14 10 h7 M14 15 h7 M14 20 h7"/>`,
   newlayer: `<path d="M12 5 L19 9 L12 13 L5 9 Z"/><path d="M6 13.5 L12 17 L18 13.5"/><path d="M19.5 16.5 v5 M17 19 h5"/>`,
   edittext: `<path d="M4 19.5 L9 6 L14 19.5 M5.9 15.4 H12.1"/><path d="M13.6 18 L20 11.6 a1.4 1.4 0 0 1 2 2 L15.6 20 l-2.8.8 Z"/>`,
+  cogo: `<path d="M4 20 L13 11 L20 15"/><circle class="f" cx="4" cy="20" r="1.5"/><circle class="f" cx="13" cy="11" r="1.5"/><circle class="f" cx="20" cy="15" r="1.5"/><path d="M6 3.5 V9 M4.3 5.4 L6 3.5 L7.7 5.4"/>`,
+  offset: `<path d="M3.5 20 C7 13 11 10 20.5 9"/><path d="M3.5 14.5 C6.5 8.5 10.5 5.5 20.5 4" stroke-dasharray="2.2 2"/><path d="M12.5 9.6 L11.6 6.4"/>`,
+  fillet: `<path d="M4 21 V13 A8.5 8.5 0 0 1 12.5 4.5 H21"/><path d="M4 9.5 V4.5 H8.5" stroke-dasharray="1.6 1.8"/><circle class="f" cx="4" cy="13" r="1.4"/><circle class="f" cx="12.5" cy="4.5" r="1.4"/>`,
+  measure: `<path d="M2.8 16.4 L16.4 2.8 L21.2 7.6 L7.6 21.2 Z"/><path d="M7.2 12 l2 2 M10.2 9 l2.6 2.6 M13.2 6 l2 2"/>`,
+  measurealong: `<path d="M3 19.5 L21 9.5"/><path d="M10.8 15.2 L8.4 10.8" stroke-dasharray="1.6 1.6"/><circle class="f" cx="8.1" cy="10.2" r="1.6"/><path d="M14.5 13.3 l-1.1-2"/>`,
+  snap: `<rect x="7.5" y="7.5" width="9" height="9"/><path d="M12 2.5 v3.5 M12 18 v3.5 M2.5 12 h3.5 M18 12 h3.5"/>`,
   props: `<path d="M4 7 h16 M4 12 h16 M4 17 h16"/><circle class="f" cx="9.5" cy="7" r="1.9"/><circle class="f" cx="15" cy="12" r="1.9"/><circle class="f" cx="7.5" cy="17" r="1.9"/>`,
 };
 const icon = (name, size) =>
@@ -570,7 +615,8 @@ const RIBBON = {
       { t: "big", icon: "line", label: "Line", tool: "line" },
       { t: "big", icon: "pline", label: "Polyline", tool: "pline" },
       { t: "big", icon: "circle", label: "Circle", tool: "circle" },
-      { t: "big", icon: "arc", label: "Arc", tool: "arc" }] },
+      { t: "big", icon: "arc", label: "Arc", tool: "arc" },
+      { t: "big", icon: "cogo", label: "Brg & Dist", tool: "traverse" }] },
     { caption: "Create Design", items: [
       { t: "big", icon: "alignment", label: "Alignment", tool: "alignment" },
       { t: "big", icon: "station", label: "Station­ing", tool: "station" },
@@ -581,11 +627,18 @@ const RIBBON = {
     { caption: "Modify", items: [
       { t: "big", icon: "select", label: "Select", tool: "select" },
       { t: "big", icon: "move", label: "Move", tool: "move" },
+      { t: "big", icon: "offset", label: "Offset", tool: "offset" },
+      { t: "big", icon: "fillet", label: "Fillet", tool: "fillet" },
       { t: "big", icon: "erase", label: "Erase", tool: "erase" },
       { t: "stack", items: [
         { icon: "undo", label: "Undo", act: "undo" },
         { icon: "redo", label: "Redo", act: "redo" },
         { icon: "props", label: "Properties", act: "props" }] }] },
+    { caption: "Measure", items: [
+      { t: "big", icon: "measure", label: "Distance", tool: "measure" },
+      { t: "stack", items: [
+        { icon: "measurealong", label: "Along / Square Off", tool: "measurealong" },
+        { icon: "snap", label: "Snap Settings…", act: "snaps" }] }] },
     { caption: "Layers", items: [{ t: "layerctl" }] },
     { caption: "Annotation", items: [
       { t: "big", icon: "text", label: "Text", tool: "text" },
@@ -910,6 +963,7 @@ async function ribbonAct(act) {
     logResult(await postJSON("/api/query",
       { query: "export_landxml", params: {} }));
   }
+  else if (act === "snaps") toggleSnapMenu(true);
   else if (act === "zoomin") zoomBtn(0.8);
   else if (act === "zoomout") zoomBtn(1.25);
   else if (act === "zoomfit") { S.zoom = 0; S.modelBounds = null;
@@ -1253,13 +1307,37 @@ const TOOLS = {
                     "(inside it draws across, outside draws a leader)" },
   refclip: { hint: "click polygon vertices around the reference area; " +
                    "Enter applies it as a clip boundary or mask" },
+  traverse:{ hint: "click the start point (a snapped line end carries its " +
+                   "direction on), then enter courses: N 45°30'E 250, " +
+                   "40 L 250, CURVE R=300 RIGHT L=200" },
+  offset:  { hint: "click a line, polyline, arc or circle (Shift-click adds " +
+                   "pieces that join on), then click the side; type a distance " +
+                   "to change it, or T to offset through the click" },
+  fillet:  { hint: "click the two lines on the parts to keep; type a radius " +
+                   "to change it (0 makes a sharp corner)" },
+  measure: { hint: "click two points — they snap — for the distance, bearing " +
+                   "and ΔX/ΔY; Esc clears" },
+  measurealong:{ hint: "click the line, curve or alignment to measure against " +
+                       "(Shift-click adds pieces), then points: how far along " +
+                       "it and square off it; Esc clears" },
 };
+const POINT_TOOLS = new Set(["line", "pline", "alignment", "traverse", "measure",
+                             "refclip", "circle", "arc", "text", "insblock",
+                             "measurealong"]);
 function setTool(key) {
   S.tool = key; S.pts = []; S.stationPicks = []; S.dimPick = null;
   S.dimBusy = false; S.selected = null; S.grip = null; S.gripHover = null;
+  S.picks = []; S.meas = []; S.snap = null;
   renderRibbon(); drawOverlay(); renderProps();
   $("st-tool").textContent = `${key.toUpperCase()}: ${TOOLS[key].hint}`;
+  if (key === "offset") logHint(offsetSays());
+  if (key === "fillet") logHint(`fillet radius ${S.filletRadius} — type a ` +
+                                `number to change it`);
 }
+const offsetSays = () => S.offsetDist === null
+  ? "offset through the point clicked — type a distance to offset by one"
+  : `offset distance ${S.offsetDist} ${S.space === "model" ? "ft" : "in"} — ` +
+    `type a number to change it, or T to offset through the click`;
 function cancelTool() {
   if (S.grip) {          // Esc lets go of a grip before it clears the pick
     S.grip = null; drawOverlay();
@@ -1267,7 +1345,7 @@ function cancelTool() {
     return;
   }
   S.pts = []; S.stationPicks = []; S.dimPick = null; S.selected = null;
-  S.gripHover = null;
+  S.gripHover = null; S.picks = []; S.meas = [];
   drawOverlay(); renderProps();
 }
 // Constrain a point to horizontal or vertical from an anchor — what ORTHO
@@ -1315,19 +1393,27 @@ async function hitAt(pt, tolPx, withRefs) {
   return r.ok && r.hits.length ? r.hits : [];
 }
 async function toolClick(pt, ev) {
+  // A snap showing near the click wins -- over ORTHO too -- and a point typed
+  // on the command line is exact as it stands. Entities are still picked at
+  // the raw click, so a shared endpoint cannot pick the neighbour.
+  const raw = pt;
+  const sp = ev.typed ? null : snapped(pt);
+  const exact = !!(sp || ev.typed);
+  if (sp) pt = sp;
+  const ortho = p => exact ? p : orthoAdjust(p, ev);
   if (S.grip) {                    // a picked-up grip owns the click
-    await commitGrip(orthoFrom(S.grip.grip.pt, pt, ev));
+    await commitGrip(exact ? pt : orthoFrom(S.grip.grip.pt, pt, ev));
     return;
   }
   const tool = S.tool;
   if (tool === "line") {
-    S.pts.push(orthoAdjust(pt, ev));
+    S.pts.push(ortho(pt));
     if (S.pts.length === 2) {
       const [a, b] = S.pts; S.pts = [];
       await exec("draw_line", { start: a, end: b });
     }
   } else if (tool === "pline" || tool === "alignment") {
-    S.pts.push(orthoAdjust(pt, ev));
+    S.pts.push(ortho(pt));
   } else if (tool === "circle") {
     S.pts.push(pt);
     if (S.pts.length === 2) {
@@ -1460,8 +1546,358 @@ async function toolClick(pt, ev) {
     } else { S.selected = null; renderProps(); }
   } else if (tool === "refclip") {
     S.pts.push(pt);
+  } else if (tool === "traverse") {
+    // started from a snapped line end, the traverse carries on from that line
+    const fromEnd = sp && S.snap && S.snap.kind === "endpoint" && S.snap.ids &&
+      S.snap.ids.length === 1 && /^(start|end) of /.test(S.snap.label)
+      ? { id: S.snap.ids[0], at: S.snap.label.startsWith("start") ? "start" : "end" }
+      : null;
+    await traverseDialog(pt, fromEnd);
+  } else if (tool === "offset") {
+    await offsetClick(raw, ev, sp);
+  } else if (tool === "fillet") {
+    await filletClick(raw);
+  } else if (tool === "measure") {
+    S.pts.push(pt);
+    if (S.pts.length === 2) {
+      const [a, b] = S.pts; S.pts = [];
+      await measureBetween(a, b);
+    }
+  } else if (tool === "measurealong") {
+    await measureAlongClick(raw, ev, sp);
   }
   drawOverlay();
+}
+
+// ---------------------------------------- traverse / offset / fillet / measure
+const PATH_TYPES = ["line", "polyline", "arc", "circle"];
+// An entity under a click, with its JSON (for the highlight), or null.
+async function pickEntity(pt, types) {
+  const hits = await hitAt(pt, 8, true);
+  const hit = hits.find(h => types.includes(h.type));
+  if (!hit) return null;
+  const info = await postJSON("/api/query", { query: "get_entity",
+                                              params: { id: hit.id } });
+  return info.ok ? { id: hit.id, entity: info.entity, pt,
+                     reference: info.reference || null } : null;
+}
+// Bearing & distance: the courses for a traverse from the point picked.
+async function traverseDialog(pt, fromEnd) {
+  const layers = S.state ? S.state.layers.map(l => l.name) : ["0"];
+  const start = fromEnd ? `the ${fromEnd.at} of ${fromEnd.id}` : fmtPt(pt);
+  const v = await openForm(`Bearing & distance from ${start}`, [
+    { key: "legs", wide: true, multiline: true, value: S.travLegs,
+      label: "Courses, one per line: N 45°30'15\" E 250 · AZ 75.5 250 · " +
+             "40 L 250 (turned from the course before) · CURVE R=300 RIGHT " +
+             "L=200 (or DELTA=, CHORD=; CB= for a non-tangent chord bearing)" },
+    { key: "close", label: "Close on the start (report the misclosure, " +
+      "draw the closing course)", value: "no", options: ["no", "yes"] },
+    { key: "as", label: "Draw as", value: "lines & arcs",
+      options: ["lines & arcs", "one polyline"] },
+    { key: "layer", label: "Layer", value: S.state ? S.state.current_layer : "0",
+      options: layers }]);
+  if (!v) return;
+  S.travLegs = v.legs.trim();
+  const legs = v.legs.split("\n").map(x => x.trim()).filter(Boolean);
+  if (!legs.length) { logHint("no courses entered"); return; }
+  const params = { legs, layer: v.layer };
+  if (v.close === "yes") params.close = true;
+  if (v.as === "one polyline") params.polyline = true;
+  if (fromEnd) { params.start = fromEnd.id; params.start_at = fromEnd.at; }
+  else params.start = pt;
+  logEcho(`draw_traverse ${JSON.stringify(params)}`);
+  await exec("draw_traverse", params);
+}
+// Offset: pick what to copy (Shift adds pieces of a chain), then the side.
+async function offsetClick(raw, ev, sp) {
+  if (!S.picks.length || ev.shiftKey) {
+    const pick = await pickEntity(raw, PATH_TYPES);
+    if (!pick) {
+      logHint(S.picks.length ? "Shift-click adds a piece that joins on"
+                             : "click a line, polyline, arc or circle to offset");
+      return;
+    }
+    if (S.picks.some(p => p.id === pick.id)) return;
+    S.picks.push(pick);
+    logHint(`${S.picks.map(p => p.id).join(" > ")} — click the side to offset to` +
+            (S.picks.length === 1 ? " (Shift-click adds pieces that join on)" : ""));
+    drawOverlay();
+    return;
+  }
+  const ids = S.picks.map(p => p.id);
+  const params = S.offsetDist === null ? { ids, through: sp || raw }
+                                       : { ids, distance: S.offsetDist, toward: raw };
+  S.picks = [];
+  logEcho(`offset_entity ${JSON.stringify(params)}`);
+  logResult(await postJSON("/api/execute", { command: "offset_entity", params }));
+  drawOverlay();
+}
+// Fillet: two lines, each clicked on the part to keep.
+async function filletClick(raw) {
+  const pick = await pickEntity(raw, ["line"]);
+  if (!pick) { logHint("click a line — fillet joins two lines"); return; }
+  if (S.picks.some(p => p.id === pick.id)) return;
+  S.picks.push(pick);
+  if (S.picks.length < 2) {
+    logHint(`${pick.id} — now the other line`); drawOverlay(); return; }
+  const [a, b] = S.picks; S.picks = [];
+  const params = { ids: [a.id, b.id], radius: S.filletRadius, keep: [a.pt, b.pt] };
+  logEcho(`fillet ${JSON.stringify(params)}`);
+  logResult(await postJSON("/api/execute", { command: "fillet", params }));
+  drawOverlay();
+}
+const fmtLen = v => `${v.toFixed(2)}${S.space === "model" ? "'" : "\""}`;
+async function measureBetween(a, b) {
+  const r = await postJSON("/api/query", { query: "measure",
+                                           params: { from: a, to: b } });
+  if (!r.ok) { logResult(r); return; }
+  logHTML(`<span class="ok">distance ${esc(r.text)} · ${esc(r.bearing)} · ` +
+          `ΔX ${r.dx.toFixed(2)} · ΔY ${r.dy.toFixed(2)}</span>`);
+  S.meas.push({ kind: "dist", a, b, label: `${r.text}  ${r.bearing}` });
+}
+// Along / square off: pick the line, curve or alignment, then points.
+async function measureAlongClick(raw, ev, sp) {
+  if (!S.picks.length || ev.shiftKey) {
+    const pick = await pickEntity(raw, PATH_TYPES);
+    if (!pick) { logHint("click the line, curve or alignment to measure against");
+                 return; }
+    const anchor = !pick.reference && pick.entity.anchor;
+    if (!S.picks.length && anchor && anchor.kind === "element" &&
+        alignmentOf(anchor.alignment))
+      pick.alignment = anchor.alignment;  // a drawn alignment: in stations
+    if (S.picks.some(p => p.id === pick.id)) return;
+    S.picks.push(pick); S.pts = [];
+    logHint((pick.alignment ? `measuring against alignment ${pick.alignment} ` +
+             `(stations)` : `measuring against ` +
+             S.picks.map(p => p.id).join(" > ")) + " — click points");
+    drawOverlay();
+    return;
+  }
+  S.pts.push(sp || raw);
+  const first = S.picks[0];
+  const along = first.alignment ||
+    (S.picks.length > 1 ? S.picks.map(p => p.id) : first.id);
+  const params = { from: S.pts[0], along };
+  if (S.pts.length === 2) params.to = S.pts[1];
+  const r = await postJSON("/api/query", { query: "measure", params });
+  if (!r.ok) { logResult(r); S.pts = []; return; }
+  const where = row => (row.station_text ? `STA ${row.station_text}`
+                                         : `${fmtLen(row.along)} along`) +
+                       `, ${row.offset_text}` + (row.beyond ? ` (past its ` +
+                       `${row.beyond})` : "");
+  if (S.pts.length === 1) {
+    logHTML(`<span class="ok">${esc(where(r.from))}</span>`);
+    S.meas.push({ kind: "perp", a: r.from.point, b: r.from.foot,
+                  label: r.from.offset_text });
+  } else {
+    logHTML(`<span class="ok">${esc(where(r.to))}; between the two: ` +
+            `${esc(r.along_text)} along, ${esc(r.perpendicular_text)} across ` +
+            `(${esc(r.text)} direct)</span>`);
+    S.meas.push({ kind: "perp", a: r.to.point, b: r.to.foot,
+                  label: r.to.offset_text });
+    S.meas.push({ kind: "along", a: r.from.foot, b: r.to.foot,
+                  label: `${r.along_text} along` });
+    S.pts = [];
+  }
+}
+
+// ---------------------------------------------------------- object snaps
+// The cursor asks the engine for the key point under it -- endpoint,
+// midpoint, center, intersection, alignment PI/BC/EC... -- one request at a
+// time, the latest position winning. A click near the marker takes the snap.
+const SNAP_PX = 12;
+const SNAP_KINDS = ["endpoint", "midpoint", "center", "quadrant", "intersection",
+                    "perpendicular", "tangent", "nearest", "insertion", "node",
+                    "design"];
+const SNAP_NAMES = { design: "design point (PI, BC, EC…)",
+                     node: "node (dimension points)" };
+function snapWanted() {
+  return S.osnap && S.view && (S.grip || POINT_TOOLS.has(S.tool) ||
+    (S.tool === "move" && S.selected) || S.tool === "dim" ||
+    S.tool === "dimaligned" || (S.tool === "offset" && S.offsetDist === null &&
+                                S.picks.length));
+}
+async function requestSnap(pt) {
+  if (!snapWanted()) { if (S.snap) { S.snap = null; drawOverlay(); } return; }
+  S.snapPending = pt;
+  if (S.snapBusy) return;
+  S.snapBusy = true;
+  try {
+    while (S.snapPending) {
+      const at = S.snapPending; S.snapPending = null;
+      const params = { space: S.space, point: at, tolerance: SNAP_PX * unitsPerPx(),
+                       modes: [...S.snapModes] };
+      const from = !S.grip && S.pts.length ? S.pts[S.pts.length - 1] : null;
+      if (from) params.from = from;
+      if (!params.modes.length) { S.snap = null; break; }
+      const r = await postJSON("/api/query", { query: "snap", params });
+      if (S.snapPending) continue;          // the cursor moved on: ask again
+      S.snap = r.ok && r.snapped ? { ...r, at } : null;
+      if (S.snap && S.hoverPt === at) {     // still there: the cursor jumps to it
+        S.cursor = S.snap.point;
+        if (S.grip) S.grip.at = S.snap.point;
+        $("st-coord").textContent = fmtPt(S.snap.point);
+      }
+      drawOverlay();
+    }
+  } finally { S.snapBusy = false; }
+}
+// The snap a pick at pt takes, or null when none is showing near it.
+function snapped(pt) {
+  if (!snapWanted() || !S.snap) return null;
+  return dist(S.snap.at, pt) <= SNAP_PX * unitsPerPx() * 1.5 ? S.snap.point : null;
+}
+function snapSVG() {
+  if (!S.snap || !snapWanted()) return "";
+  const k = pxScale(), r = 6 * k;
+  const [x, y] = spacePx(S.snap.point);
+  const pts = a => `<polygon points="${a.map(q => q.map(v => v.toFixed(2))
+                                                 .join(",")).join(" ")}" ` +
+                   `class="snapmark"/>`;
+  const line = (a, b) => seg(a, b, "snapmark");
+  let g;
+  switch (S.snap.kind) {
+    case "endpoint": g = pts([[x - r, y - r], [x + r, y - r], [x + r, y + r],
+                              [x - r, y + r]]); break;
+    case "midpoint": g = pts([[x, y - r], [x + r, y + r * .8], [x - r, y + r * .8]]);
+      break;
+    case "center": g = `<circle cx="${x}" cy="${y}" r="${r}" class="snapmark"/>`;
+      break;
+    case "quadrant": g = pts([[x, y - r], [x + r, y], [x, y + r], [x - r, y]]); break;
+    case "intersection": g = line([x - r, y - r], [x + r, y + r]) +
+                             line([x - r, y + r], [x + r, y - r]); break;
+    case "perpendicular": g = line([x - r, y - r], [x - r, y + r]) +
+      line([x - r, y + r], [x + r, y + r]) + line([x - r, y], [x, y]) +
+      line([x, y], [x, y + r]); break;
+    case "tangent": g = `<circle cx="${x}" cy="${y + r * .25}" r="${r * .75}" ` +
+      `class="snapmark"/>` + line([x - r, y - r * .5], [x + r, y - r * .5]); break;
+    case "nearest": g = pts([[x - r, y - r], [x + r, y - r], [x - r, y + r],
+                             [x + r, y + r]]); break;
+    case "insertion": g = pts([[x - r, y - r], [x + r * .2, y - r],
+      [x + r * .2, y - r * .2], [x + r, y - r * .2], [x + r, y + r],
+      [x - r, y + r]]); break;
+    case "node": g = `<circle cx="${x}" cy="${y}" r="${r}" class="snapmark"/>` +
+      line([x - r * .7, y - r * .7], [x + r * .7, y + r * .7]) +
+      line([x - r * .7, y + r * .7], [x + r * .7, y - r * .7]); break;
+    default: g = pts([[x, y - r * 1.2], [x + r * 1.2, y], [x, y + r * 1.2],
+                      [x - r * 1.2, y]]) +
+      `<circle cx="${x}" cy="${y}" r="${r * .35}" class="snapdot"/>`;
+  }
+  const label = S.snap.label.replace(/ \(through VP-\d+\)$/, "");
+  return g + `<text x="${(x + r * 1.7).toFixed(2)}" y="${(y - r * 1.3).toFixed(2)}" ` +
+    `class="snaplabel" font-size="${(11 * k).toFixed(2)}" ` +
+    `stroke-width="${(3 * k).toFixed(2)}">${esc(label)}</text>`;
+}
+// Entities picked by offset / fillet / measure-along, highlighted.
+function picksSVG() {
+  return S.picks.map(pk => outlineSVG(pk.entity, 0, 0) || "").join("");
+}
+// Measurements on screen: the line measured, or the square-off and the run
+// along, each labelled.
+function measSVG() {
+  const k = pxScale();
+  return S.meas.map(m => {
+    const a = spacePx(m.a), b = spacePx(m.b);
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const dot = q => `<circle cx="${q[0].toFixed(2)}" cy="${q[1].toFixed(2)}" ` +
+                     `r="${(3.5 * k).toFixed(2)}" class="measdot"/>`;
+    return seg(a, b, m.kind === "perp" ? "measdash" : "meas") + dot(a) + dot(b) +
+      `<text x="${(mid[0] + 6 * k).toFixed(2)}" y="${(mid[1] - 6 * k).toFixed(2)}" ` +
+      `class="measlabel" font-size="${(11.5 * k).toFixed(2)}" ` +
+      `stroke-width="${(3 * k).toFixed(2)}">${esc(m.label)}</text>`;
+  }).join("");
+}
+function renderSnapMenu() {
+  const menu = $("snapmenu");
+  menu.innerHTML = `<h4>OBJECT SNAP (F3)</h4>` + SNAP_KINDS.map(kd =>
+    `<label><input type="checkbox" data-kind="${kd}"` +
+    `${S.snapModes.has(kd) ? " checked" : ""}> ${esc(SNAP_NAMES[kd] || kd)}</label>`)
+    .join("") +
+    `<div class="snaphint">perpendicular and tangent work from the last point ` +
+    `picked; on a sheet, snaps see the model through the viewport</div>`;
+  menu.querySelectorAll("input").forEach(box => box.onchange = () => {
+    if (box.checked) S.snapModes.add(box.dataset.kind);
+    else S.snapModes.delete(box.dataset.kind);
+    S.snap = null; drawOverlay();
+  });
+}
+function toggleSnapMenu(force) {
+  const menu = $("snapmenu");
+  const open = force === undefined ? !menu.classList.contains("open") : force;
+  if (open) {
+    renderSnapMenu();
+    const r = $("snapcfg").getBoundingClientRect();
+    menu.style.left = `${Math.max(8, r.left - 120)}px`;
+  }
+  menu.classList.toggle("open", open);
+}
+
+// ------------------------------------------------ typed points and numbers
+// While a tool waits for a point, the command line takes one: x,y ·
+// N 3000 E 1000 · @dx,dy · @dist<angle (degrees CCW from east) ·
+// @dist<N45E · a course (N 45°30' E 250, AZ 75 250, 40 L 250 -- turned from
+// the last segment) · or just a distance, along the rubber band.
+const NUM = "[-+]?(?:\\d+\\.?\\d*|\\.\\d+)";
+async function typedPoint(text) {
+  const t = text.trim();
+  const last = S.pts.length ? S.pts[S.pts.length - 1] : null;
+  let m;
+  if ((m = t.match(new RegExp(`^(${NUM})\\s*,\\s*(${NUM})$`))))
+    return [+m[1], +m[2]];
+  if ((m = t.match(new RegExp(`^N\\s*(${NUM})\\s*,?\\s*E\\s*(${NUM})$`, "i"))))
+    return [+m[2], +m[1]];                 // northing first, as it is said
+  if ((m = t.match(new RegExp(`^E\\s*(${NUM})\\s*,?\\s*N\\s*(${NUM})$`, "i"))))
+    return [+m[1], +m[2]];
+  if (!last) return null;
+  if ((m = t.match(new RegExp(`^@(${NUM})\\s*,\\s*(${NUM})$`))))
+    return [last[0] + +m[1], last[1] + +m[2]];
+  if ((m = t.match(new RegExp(`^@(${NUM})\\s*<\\s*(${NUM})$`)))) {
+    const a = +m[2] * Math.PI / 180;
+    return [last[0] + +m[1] * Math.cos(a), last[1] + +m[1] * Math.sin(a)];
+  }
+  if ((m = t.match(new RegExp(`^(${NUM})$`)))) {
+    if (!S.cursor) return null;           // direct distance: along the cursor
+    const v = sub2(S.cursor, last), len = Math.hypot(v[0], v[1]);
+    if (!len) return null;
+    return add2(last, mul2(v, +m[1] / len));
+  }
+  let leg = t;                            // the engine reads bearings
+  if ((m = t.match(new RegExp(`^@(${NUM})\\s*<\\s*(.+)$`)))) leg = `${m[2]} ${m[1]}`;
+  // only something shaped like a course: a command typed meanwhile still runs
+  if (!/^(?:[NS]\s*\d|AZ[\s=:]*\d|\d[\d.°'"\- ]*\s*(?:LT|RT|LEFT|RIGHT|L|R)\b|(?:LT|RT|LEFT|RIGHT|L|R)\s*\d)/i
+        .test(leg)) return null;
+  const params = { start: last, legs: [leg] };
+  if (S.pts.length >= 2) {                // a deflection turns from the last segment
+    const a = S.pts[S.pts.length - 2];
+    params.initial_azimuth =
+      ((90 - Math.atan2(last[1] - a[1], last[0] - a[0]) * 180 / Math.PI) % 360 + 360) % 360;
+  }
+  const r = await postJSON("/api/query", { query: "traverse", params });
+  if (!r.ok) { logResult(r); return "error"; }
+  return r.end;
+}
+// What the command line means while a tool is active, or false to run it.
+async function toolInput(line) {
+  const t = line.trim();
+  if (S.tool === "fillet" && new RegExp(`^${NUM}$`).test(t) && +t >= 0) {
+    S.filletRadius = +t; logEcho(line);
+    logHint(`fillet radius ${t} — click the two lines`); return true;
+  }
+  if (S.tool === "offset" && (/^t(hrough)?$/i.test(t) ||
+                              (new RegExp(`^${NUM}$`).test(t) && +t > 0))) {
+    S.offsetDist = /^t/i.test(t) ? null : +t; logEcho(line);
+    logHint(offsetSays()); return true;
+  }
+  const waiting = POINT_TOOLS.has(S.tool) && !["measurealong"].includes(S.tool)
+    || (S.tool === "move" && S.selected) ||
+    (S.tool === "measurealong" && S.picks.length);
+  if (!waiting) return false;
+  const pt = await typedPoint(t);
+  if (pt === null) return false;
+  if (pt === "error") return true;
+  logEcho(line);
+  await toolClick(pt, { shiftKey: false, typed: true });
+  return true;
 }
 async function finishTool() {
   if (S.tool === "select" && S.selected) {
@@ -2537,6 +2973,7 @@ function drawOverlay() {
   if (S.selected) out += highlightSVG(0, 0);
   if (S.grip) out += gripGhostSVG(S.grip);
   out += gripsSVG();
+  out += picksSVG() + measSVG() + snapSVG();
   svg.innerHTML = out;
 }
 
@@ -2564,12 +3001,15 @@ stage.addEventListener("pointerdown", ev => {
 stage.addEventListener("pointermove", ev => {
   const pt = evtSpace(ev);
   if (pt) {
-    if (S.grip) S.grip.at = orthoFrom(S.grip.grip.pt, pt, ev);
+    S.hoverPt = pt;
+    requestSnap(pt);
+    const sp = snapped(pt);
+    if (S.grip) S.grip.at = sp || orthoFrom(S.grip.grip.pt, pt, ev);
     S.gripHover = S.grip ? null : gripAt(pt);
     stage.style.cursor = S.gripHover ? "pointer" : "";
-    S.cursor = ["line", "pline", "alignment"].includes(S.tool)
-      ? orthoAdjust(pt, ev) : pt;
-    $("st-coord").textContent = fmtPt(pt);
+    S.cursor = sp || (["line", "pline", "alignment"].includes(S.tool)
+      ? orthoAdjust(pt, ev) : pt);
+    $("st-coord").textContent = fmtPt(sp || pt);
     drawOverlay();
   }
   if (pan) {
@@ -2605,7 +3045,8 @@ stage.addEventListener("pointerup", ev => {
                                ev.clientY - S.grip.down[1]) > 3;
     const drop = evtSpace(ev);   // where it was let go, not where it last drew
     if (dragged)
-      commitGrip(drop ? orthoFrom(S.grip.grip.pt, drop, ev) : S.grip.at);
+      commitGrip(drop ? (snapped(drop) || orthoFrom(S.grip.grip.pt, drop, ev))
+                      : S.grip.at);
     else {
       S.grip.hot = true;
       logHint(`${S.grip.grip.label} — click where it goes (Esc lets go)`);
@@ -2636,7 +3077,7 @@ stage.addEventListener("dblclick", async ev => {
 stage.addEventListener("contextmenu", ev => { ev.preventDefault();
                                               finishTool(); });
 stage.addEventListener("pointerleave", () => { S.cursor = null;
-  S.gripHover = null; stage.style.cursor = "";
+  S.gripHover = null; stage.style.cursor = ""; S.snap = null;
   $("st-coord").textContent = ""; drawOverlay(); });
 
 // Wheel zoom: factor proportional to scroll delta (smooth on trackpads and
@@ -2739,7 +3180,7 @@ function openForm(title, fields) {
   return new Promise(resolve => {
     const modal = $("modal");
     modal.innerHTML = `<h3>${esc(title)}</h3>` + fields.map((f, i) =>
-      `<div class="row"><label>${esc(f.label)}</label>` +
+      `<div class="row${f.wide ? " wide" : ""}"><label>${esc(f.label)}</label>` +
       (f.multiline
         ? `<textarea id="mf${i}" rows="${Math.min(8, Math.max(3,
             String(f.value).split("\n").length + 1))}">\n${esc(f.value)}` +
@@ -2887,7 +3328,7 @@ $("cmd").addEventListener("keydown", ev => {
     const line = input.value.trim();
     if (!line) return;
     S.history.push(line); S.hIdx = S.history.length; input.value = "";
-    sendLine(line);
+    toolInput(line).then(done => { if (!done) sendLine(line); });
   } else if (ev.key === "ArrowUp") {
     if (S.hIdx > 0) { S.hIdx--; input.value = S.history[S.hIdx]; }
     ev.preventDefault();
@@ -2910,7 +3351,8 @@ $("cmd").addEventListener("keydown", ev => {
 $("run").onclick = () => {
   const line = $("cmd").value.trim();
   if (line) { S.history.push(line); S.hIdx = S.history.length;
-              $("cmd").value = ""; sendLine(line); }
+              $("cmd").value = "";
+              toolInput(line).then(done => { if (!done) sendLine(line); }); }
 };
 
 // -------------------------------------------------------------- QAT etc.
@@ -2928,6 +3370,13 @@ $("q-undo").onclick = () => ribbonAct("undo");
 $("q-redo").onclick = () => ribbonAct("redo");
 $("tog-ortho").onclick = () => { S.ortho = !S.ortho;
   $("tog-ortho").classList.toggle("on", S.ortho); };
+$("tog-osnap").onclick = () => { S.osnap = !S.osnap; S.snap = null;
+  $("tog-osnap").classList.toggle("on", S.osnap); drawOverlay(); };
+$("snapcfg").onclick = ev => { ev.stopPropagation(); toggleSnapMenu(); };
+document.addEventListener("pointerdown", ev => {
+  if (!$("snapmenu").contains(ev.target) && ev.target !== $("snapcfg"))
+    toggleSnapMenu(false);
+});
 $("st-annoscale").onchange = async ev => {
   const v = ev.target.value;
   logEcho(`annoscale ${v}`);
@@ -2953,7 +3402,8 @@ document.addEventListener("keydown", ev => {
 const TOOL_KEYS = { v: "select", h: "pan", l: "line", p: "pline",
                     c: "circle", a: "arc", t: "text", s: "station",
                     m: "move", e: "erase", i: "insblock", x: "edittext",
-                    g: "alignment" };
+                    g: "alignment", o: "offset", f: "fillet", d: "measure",
+                    b: "traverse" };
 document.addEventListener("keydown", ev => {
   if ($("modal-bg").style.display === "flex") return;  // dialog owns the keys
   if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" ||
@@ -2963,6 +3413,7 @@ document.addEventListener("keydown", ev => {
     ev.preventDefault(); ribbonAct("print");
   }
   else if (ev.key === "F8") { ev.preventDefault(); $("tog-ortho").click(); }
+  else if (ev.key === "F3") { ev.preventDefault(); $("tog-osnap").click(); }
   else if (TOOL_KEYS[key] && !ev.metaKey && !ev.ctrlKey)
     setTool(TOOL_KEYS[key]);
   else if (ev.key === "Enter") finishTool();
@@ -3010,15 +3461,21 @@ function connect() {
    "pdf","print","plot","save","undo","redo","station","xref","refs","alignment",
    "drawalign","profile","label","curvetable","landxmlin","landxml","sta2xy",
    "xy2sta","design","anchor","alignments","annoscale","annoscales","annoadd",
-   "annodel","annopaper"].forEach(n =>
+   "annodel","annopaper","bd","cogo","traverse","offset","fillet","dist",
+   "snap","keypoints"].forEach(n =>
     names.add(n));
   S.names = [...names].sort();
   await refresh();
   connect();
   logHint("RoadDraft ready. Ribbon tools are selectable (or keys " +
-    "V/H/L/P/C/A/T/S/M/E/I/G); click the canvas to draw. Select an entity " +
-    "and drag its grips to edit it. ORTHO and F8 constrain to horizontal/" +
-    "vertical. The command line speaks the full language — 'help' lists it.");
+    "V/H/L/P/C/A/T/S/M/E/I/G, B bearing & distance, O offset, F fillet, " +
+    "D measure); click the canvas to draw. Picks snap to endpoints, " +
+    "midpoints, centers, intersections and alignment PIs/BCs/ECs (OSNAP, " +
+    "F3; ▾ picks the modes). While a tool waits for a point, type one: " +
+    "x,y · N 3000 E 1000 · @dx,dy · N 45°30' E 250 · 40 L 250 · or a " +
+    "distance along the cursor. Select an entity and drag its grips to edit " +
+    "it. ORTHO and F8 constrain to horizontal/vertical. The command line " +
+    "speaks the full language — 'help' lists it.");
 })();
 </script>
 </body>

@@ -81,6 +81,35 @@ KIND = {"enum": list(LABEL_KINDS)}
 ROTATION = {"enum": ["along", "perpendicular", "horizontal"]}
 SIDE = {"enum": ["left", "right"]}
 
+# --- alignment legs: a layout given by bearings and distances ---------------
+
+ANGLE_TEXT = {"type": ["number", "string"],
+              "description": "degrees as a number, or DMS text: 40°30'15\", 40-30-15"}
+ALIGNMENT_LEG = {
+    "type": ["object", "string"],
+    "description": "one tangent, from one PI to the next: a direction (exactly one of "
+                   "bearing, azimuth, deflection, angle_right) and the distance to the next "
+                   "PI; radius is the curve at the PI where this leg starts (a leg after the "
+                   "first). Or as text: \"S 80°00'00\\\" E 800\", \"40 L 700 R=500\"",
+    "properties": {
+        "bearing": {"type": "string",
+                    "description": "quadrant bearing: N 45°30'15\" E, S45-30-15W, N45E"},
+        "azimuth": {**ANGLE_TEXT, "description": "degrees clockwise from north, 0-360"},
+        "deflection": {**ANGLE_TEXT,
+                       "description": "the angle the alignment turns at the PI where this "
+                                      "leg starts: '40 L', '25°00'00\" RT', or a number with "
+                                      "right positive; or its size with turn"},
+        "turn": {"type": "string", "enum": ["left", "right", "L", "R"],
+                 "description": "which way a deflection turns"},
+        "angle_right": {**ANGLE_TEXT, "description": "angle clockwise from the backsight"},
+        "distance": {**POS, "description": "feet from this leg's PI to the next PI"},
+        "radius": {"type": "number", "minimum": 0,
+                   "description": "the curve at the PI where this leg starts (0 or omitted: "
+                                  "none, which needs angle_points)"},
+    },
+    "additionalProperties": False,
+}
+
 # --- command schemas (spec sections 4.1 - 4.9) ------------------------------
 
 DESIGN_SCHEMAS = {
@@ -88,6 +117,14 @@ DESIGN_SCHEMAS = {
         {"name": NSTR,
          "pis": {"type": "array", "items": PI_ITEM, "minItems": 2},
          "elements": {"type": "array", "items": ELEMENT, "minItems": 1},
+         "start": {**POINT, "description": "BEGIN, where legs start: [x, y] = [easting, "
+                                           "northing]"},
+         "legs": {"type": "array", "items": ALIGNMENT_LEG, "minItems": 1,
+                  "description": "the layout as bearings and distances, PI to PI from "
+                                 "start -- as a report describes it: 'S 80° E 800 ft to PI-2, "
+                                 "where it deflects 40° left on a 500 ft curve; then 700 "
+                                 "ft...' is [{bearing: 'S 80 E', distance: 800}, "
+                                 "{deflection: '40 L', radius: 500, distance: 700}, ...]"},
          "begin_station": STATION,
          "equations": {"type": "array", "items": EQUATION},
          "description": STR,

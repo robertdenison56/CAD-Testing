@@ -110,7 +110,11 @@ def test_fragments_match_spec_preamble():
 def test_create_alignment_properties_and_required():
     s = ds.DESIGN_SCHEMAS["create_alignment"]
     assert set(s["properties"]) == {"name", "pis", "elements", "begin_station",
-                                    "equations", "description", "angle_points"}
+                                    "equations", "description", "angle_points",
+                                    "start", "legs"}
+    # a layout by bearings and distances: start + legs (added Oct 2026)
+    assert s["properties"]["start"]["type"] == "array"
+    assert s["properties"]["legs"]["items"] == ds.ALIGNMENT_LEG
     assert s["properties"]["angle_points"]["type"] == "boolean"
     assert s["required"] == ["name"]
     assert s["properties"]["pis"] == {"type": "array", "items": ds.PI_ITEM, "minItems": 2}

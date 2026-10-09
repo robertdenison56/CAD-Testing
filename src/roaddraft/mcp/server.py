@@ -3,7 +3,7 @@
 This is the natural-language front door. The bus already carries, per command,
 a description, a JSON Schema and a worked example -- which is exactly an MCP
 tool definition -- so the tool list is derived from ``Session.manifest()``
-rather than written twice. 43 commands + 26 queries, no name collisions.
+rather than written twice: every command and query, no name collisions.
 
 A tool call goes straight through the bus, so everything the engine already
 guarantees still holds for an agent: schema validation with teaching errors,
@@ -149,6 +149,20 @@ INSTRUCTIONS = (
     "clear of the linework. Never work out a viewport by hand: "
     "model_to_sheet and sheet_to_model convert, and station_to_xy and "
     "point_on_entity take a sheet and answer in paper inches as well."
+    "\n\n"
+    "Drafting from a description works the same way: give the engine the "
+    "description, not coordinates you worked out. A bearing and distance "
+    "goes in as written -- create_alignment takes start + legs (each leg a "
+    "bearing, azimuth or deflection and the distance to the next PI, with "
+    "the radius of the curve at the PI it starts from), draw_traverse "
+    "draws lines and curves course by course, and traverse computes the "
+    "points without drawing. offset_entity copies linework parallel at a "
+    "distance (one entity, or a chain offset as one path), fillet rounds "
+    "the corner between two lines with a curve (a curb return), and "
+    "measure with along gives distances along a line, chain or alignment "
+    "and square off it. key_points and snap give the exact endpoints, "
+    "intersections, centers and alignment design points (PI, BC, EC) to "
+    "build on."
 )
 
 

@@ -23,7 +23,9 @@ from jsonschema.exceptions import best_match
 
 from roaddraft.commands.bus import CommandBus
 from roaddraft.commands.design_schemas import ANCHOR, KIND, POINT, ROTATION, SIDE, STATION
-from roaddraft.commands.schemas import NSTR, NUM, POS, SPACE, STR, obj
+from roaddraft.commands.schemas import (
+    IDS, NSTR, NUM, POS, SPACE, STR, TRAVERSE_PROPS, obj,
+)
 from roaddraft.core.units import LENGTH_FORMATS
 from roaddraft.document import fileformat
 from roaddraft.document.annotation import DEFAULT_SCALES, format_scale, parse_scale
@@ -233,12 +235,24 @@ QUERIES = {
                        "entity's own length, radius and sweep. 'from' and 'to' each take "
                        "a point or an entity id (with from_at/to_at: start|mid|end or a "
                        "fraction), so a curve is measured from a point genuinely on it. "
+                       "With along -- a line, a chain of entities or an alignment -- the "
+                       "points are measured relative to it instead (MicroStation Measure "
+                       "Distance along an element / perpendicular): how far along it each "
+                       "one falls and how far off it, square, left or right; with two "
+                       "points, the distance between them along it and across it. "
                        "The formatted reading is the same string place_dimension would "
                        "draw, which makes it the way to check a dimension before or "
                        "after placing it.",
         "schema": obj({
             "from": {"description": "a point [x, y] or an entity id"},
             "to": {"description": "a point [x, y] or an entity id"},
+            "along": {"description": "measure relative to this: an entity id (line, polyline, "
+                                     "arc, circle; reference elements 'DESIGN:LN-004'), a "
+                                     "list of ids that join end to end, or an alignment name "
+                                     "('SR-100', 'DESIGN:SR-100'). Each point is projected "
+                                     "square onto it: along = distance from its start (the "
+                                     "station, on an alignment), offset = perpendicular "
+                                     "distance, right of its direction positive"},
             "from_at": {"description": "where on the 'from' entity (default mid)"},
             "to_at": {"description": "where on the 'to' entity (default mid)"},
             "entity": {**NSTR,
@@ -250,6 +264,74 @@ QUERIES = {
         }),
         "example": {"from": "LN-002", "to": "LN-003", "from_at": "start",
                     "to_at": "start"},
+    },
+    "traverse": {
+        "description": "Coordinate geometry without drawing: from a start point (or the end "
+                       "of an entity) run courses by bearing, azimuth or deflection and "
+                       "distance, and curve courses by radius and delta, length or chord, and "
+                       "get back every point, bearing and length -- point + bearing + "
+                       "distance -> point, with no trigonometry by hand. close=true adds the "
+                       "misclosure of a boundary and its precision (1:N). draw_traverse draws "
+                       "the same courses; create_alignment takes start + legs directly.",
+        "schema": obj(TRAVERSE_PROPS, ["start", "legs"]),
+        "example": {"start": [1000.0, 3000.0],
+                    "legs": [{"bearing": "S 80°00'00\" E", "distance": 800.0}, "40 L 700"]},
+    },
+    "key_points": {
+        "description": "The exact points a drafter snaps to, listed: endpoints and vertices, "
+                       "midpoints, centers, quadrants, insertion points, dimension "
+                       "definition points (node), intersections between the entities, and "
+                       "the design points of alignments (BEGIN, PI, BC/PC, EC/PT, radius "
+                       "points, END -- points with no entity at them, each carrying the "
+                       "anchor that names it). Name entities (id / ids), an alignment, or a "
+                       "space and bounds. Use the points directly instead of computing a "
+                       "corner or a curve's end by hand.",
+        "schema": obj({
+            "id": {**NSTR, "description": "one entity (reference elements 'DESIGN:LN-004')"},
+            "ids": {**IDS, "description": "several entities; their intersections with each "
+                                          "other are listed too"},
+            "alignment": {**NSTR, "description": "an alignment's design points ('SR-100', or "
+                                                 "a referenced 'DESIGN:SR-100')"},
+            "space": {**NSTR, "description": "with no ids: every entity in this space "
+                                             "(default model)"},
+            "bounds": BOUNDS,
+            "kinds": {"type": "array", "items": {"type": "string", "enum": [
+                "endpoint", "midpoint", "center", "quadrant", "intersection", "insertion",
+                "node", "design"]},
+                "description": "only these kinds of point"},
+            "include_references": {"type": "boolean",
+                                   "description": "with no ids: attachments too (default "
+                                                  "true)"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 2000,
+                      "description": "rows to return (default 200)"},
+        }),
+        "example": {"ids": ["LN-001", "LN-002"]},
+    },
+    "snap": {
+        "description": "Object snap: the exact key point nearest a rough point, as a cursor "
+                       "snaps in CAD -- endpoint, midpoint, center, quadrant, intersection, "
+                       "insertion, node, design (alignment PI/BC/EC...), and with 'from' (the "
+                       "point a line is drawn from) perpendicular and tangent; nearest is the "
+                       "fallback when nothing else is in reach. On a sheet it also snaps "
+                       "through the viewport to the model and its references, answering in "
+                       "paper inches with the model point beside it.",
+        "schema": obj({
+            "space": {**NSTR, "description": "space to snap in (default model)"},
+            "point": POINT,
+            "tolerance": {**POS, "description": "how far to look, in space units (default 5 "
+                                                "ft in model, 0.1 in on a sheet)"},
+            "modes": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": [
+                "endpoint", "midpoint", "center", "quadrant", "intersection", "insertion",
+                "node", "design", "perpendicular", "tangent", "nearest"]},
+                "description": "snap modes to use (default endpoint, midpoint, center, "
+                               "intersection, perpendicular, insertion, design)"},
+            "from": {**POINT, "description": "the point the line is being drawn from, for "
+                                             "perpendicular and tangent"},
+            "viewport": {**NSTR, "description": "on a sheet: snap through this viewport"},
+            "include_references": {"type": "boolean",
+                                   "description": "snap to attachments too (default true)"},
+        }, ["point"]),
+        "example": {"point": [1601.0, 1001.0], "tolerance": 5.0},
     },
     "get_sheet_state": {
         "description": "One sheet: size, usable area, title block fields, "
@@ -873,6 +955,8 @@ class Session:
 
         fmt = p.get("unit_format", "feet")
         precision = int(p.get("precision", 2))
+        if "along" in p:
+            return self._measure_along(p)
         if "entity" in p:
             entity, owner, ref, space_key = self._locate(p["entity"])
             from roaddraft.document.locate import entity_length, point_at
@@ -926,6 +1010,217 @@ class Session:
         except ValueError as ex:
             raise _QueryFault(str(ex),
                               hint=f"{at_key} is start|mid|end or a fraction 0-1")
+
+    def _measure_along(self, p):
+        """Points measured against a line, a chain or an alignment: along it
+        and square off it."""
+        from roaddraft.core.geometry import distance
+        from roaddraft.core.units import format_length, format_station
+        from roaddraft.design.angles import direction_to_azimuth, format_bearing
+        from roaddraft.design.errors import DesignError
+        from roaddraft.document import paths
+        from roaddraft.document.locate import resolve_entity
+        if "entity" in p:
+            raise _QueryFault("entity measures one entity on its own; along measures points "
+                              "against a line -- give from (and to) with along")
+        if "from" not in p:
+            raise _QueryFault("measuring along needs from (and to, for the distance between "
+                              "two points)",
+                              hint="from/to are points [x, y] or entity ids")
+        fmt = p.get("unit_format", "feet")
+        precision = int(p.get("precision", 2))
+        points = [("from", self._measure_point(p, "from", "from_at"))]
+        if "to" in p:
+            points.append(("to", self._measure_point(p, "to", "to_at")))
+        target = p["along"]
+        out = {}
+        rows = {}
+        if isinstance(target, list) or resolve_entity(self.doc, str(target)) is not None:
+            ids = list(target) if isinstance(target, list) else [str(target)]
+            if not ids:
+                raise _QueryFault("along needs at least one entity id")
+            entities = [self._locate(str(eid))[0] for eid in ids]
+            try:
+                path = paths.Path.of_chain(entities) if len(entities) > 1 \
+                    else paths.Path.of_entity(entities[0])
+            except paths.PathError as e:
+                raise _QueryFault(str(e), hint=e.hint)
+            out["along"] = ids if isinstance(target, list) else ids[0]
+            out["length"] = round(path.length, 6)
+            for key, point in points:
+                proj = path.project(point)
+                row = {"point": [round(v, 6) for v in point],
+                       "along": round(proj.along, 6), "offset": round(proj.offset, 6),
+                       "side": proj.side, "foot": [round(v, 6) for v in proj.foot],
+                       "perpendicular": proj.perpendicular,
+                       "bearing": format_bearing(direction_to_azimuth(proj.direction))}
+                if proj.beyond:
+                    row["beyond"] = proj.beyond
+                rows[key] = row
+        else:
+            a, placement = self._alignment_placed({"alignment": target})
+            out["along"] = str(target)
+            out["alignment"] = a.name
+            for key, point in points:
+                base = point if placement.is_identity else placement.to_base(point)
+                try:
+                    r = a.xy_to_station(base)
+                except DesignError as e:
+                    raise _QueryFault(str(e), hint=e.hint)
+                disp, _region = a.stations().to_display(r["station"])
+                foot = r["on_point"] if placement.is_identity else placement.to_host(r["on_point"])
+                off = r["offset"]
+                rows[key] = {"point": [round(v, 6) for v in point],
+                             "along": round(r["station"] - a.begin_station, 6),
+                             "station": round(r["station"], 6),
+                             "station_text": format_station(disp),
+                             "offset": round(off, 6),
+                             "side": "on" if abs(off) < 1e-9 else ("right" if off > 0 else "left"),
+                             "foot": [round(v, 6) for v in foot], "perpendicular": True,
+                             "bearing": format_bearing(direction_to_azimuth(r["direction_deg"]))}
+        for key, row in rows.items():
+            row["offset_text"] = (f"{format_length(abs(row['offset']), fmt, precision)} "
+                                  f"{row['side'].upper() if row['side'] != 'on' else 'ON'}")
+            out[key] = row
+        if "to" in rows:
+            a_from, a_to = rows["from"], rows["to"]
+            along = a_to["along"] - a_from["along"]
+            across = a_to["offset"] - a_from["offset"]
+            straight = distance(a_from["point"], a_to["point"])
+            out.update(
+                along_distance=round(abs(along), 6), along_change=round(along, 6),
+                along_text=format_length(abs(along), fmt, precision),
+                perpendicular_distance=round(abs(across), 6),
+                offset_change=round(across, 6),
+                perpendicular_text=format_length(abs(across), fmt, precision),
+                distance=round(straight, 6),
+                text=format_length(straight, fmt, precision))
+        return out
+
+    def _q_traverse(self, p):
+        from roaddraft.commands import edit_handlers as eh
+        from roaddraft.commands.handlers import CommandFault
+        try:
+            traverse, described = eh.compute_traverse(self.doc, p)
+        except CommandFault as fault:
+            raise _QueryFault(str(fault), hint=fault.hint)
+        courses = [c.to_dict() for c in traverse.courses]
+        out = {"start": [round(v, 6) for v in traverse.start], "from": described,
+               "courses": courses, "end": [round(v, 6) for v in traverse.end],
+               "length": round(traverse.length, 6),
+               "points": [[round(v, 6) for v in traverse.start]]
+               + [c["end"] for c in courses]}
+        m = traverse.misclosure()
+        if p.get("close") or m["distance"] <= 1.0:
+            out["closure"] = {k: (round(v, 6) if isinstance(v, float) else v)
+                              for k, v in m.items()}
+            out["closure"]["text"] = eh.closure_text(traverse)
+            if traverse.closing is not None:
+                out["closing_course"] = traverse.closing.to_dict()
+        return out
+
+    def _q_key_points(self, p):
+        from roaddraft.document import snaps
+        kinds = set(p["kinds"]) if "kinds" in p else None
+        given = [k for k in ("id", "ids", "alignment") if k in p]
+        if len(given) > 1:
+            raise _QueryFault("give one of id, ids or alignment (or neither, for a space)")
+        notes = []
+        rows = []
+        if "alignment" in p:
+            a, placement = self._alignment_placed(p)
+            rows = snaps.alignment_key_points(a, p["alignment"], placement)
+        else:
+            if given:
+                ids = [p["id"]] if "id" in p else list(p["ids"])
+                items = []
+                for eid in ids:
+                    entity, owner, _ref, _space = self._locate(eid)
+                    items.append(snaps.Item(eid, entity, owner))
+            else:
+                space_ref = p.get("space", "model")
+                resolved = self.doc.resolve_space(space_ref)
+                if resolved is None:
+                    raise _QueryFault(f"space {space_ref!r} not found",
+                                      hint=f"valid spaces: {self.doc.space_refs()}")
+                items = snaps.space_items(self.doc, resolved[0],
+                                          p.get("include_references", True),
+                                          tuple(p["bounds"]) if "bounds" in p else None)
+            for item in items:
+                rows += snaps.entity_key_points(item.entity, item.eid)
+            if len(items) > 1 and (kinds is None or "intersection" in kinds):
+                if len(items) <= 400:
+                    rows += snaps.intersection_points(items)
+                else:
+                    notes.append(f"{len(items)} entities: intersections are listed for 400 "
+                                 f"or fewer -- narrow with bounds or ids")
+            if not given and p.get("space", "model") == "model" and \
+                    (kinds is None or "design" in kinds):
+                design = snaps.design_key_points(self.doc)
+                if "bounds" in p:
+                    b = p["bounds"]
+                    design = [sp for sp in design
+                              if b[0] <= sp.point[0] <= b[2] and b[1] <= sp.point[1] <= b[3]]
+                rows += design
+        if kinds is not None:
+            rows = [sp for sp in rows if sp.kind in kinds]
+        limit = int(p.get("limit", 200))
+        out = {"total": len(rows), "count": min(len(rows), limit),
+               "points": [sp.to_dict() for sp in rows[:limit]]}
+        if notes:
+            out["notes"] = notes
+        return out
+
+    def _q_snap(self, p):
+        from roaddraft.document import snaps
+        space_ref = p.get("space", "model")
+        resolved = self.doc.resolve_space(space_ref)
+        if resolved is None:
+            raise _QueryFault(f"space {space_ref!r} not found",
+                              hint=f"valid spaces: {self.doc.space_refs()}")
+        space_key = resolved[0]
+        tolerance = float(p.get("tolerance", 5.0 if space_key == "model" else 0.1))
+        modes = list(p.get("modes", snaps.DEFAULT_MODES))
+        from_point = p.get("from")
+        if from_point is None and set(modes) & set(snaps.FROM_MODES) \
+                and "modes" in p and set(modes) <= set(snaps.FROM_MODES):
+            raise _QueryFault("perpendicular and tangent snaps need from: the point the "
+                              "line is drawn from")
+        if "viewport" in p and space_key == "model":
+            raise _QueryFault("viewport is for snapping on a sheet through to the model")
+        include = p.get("include_references", True)
+        try:
+            found = snaps.snap(self.doc, space_key, p["point"], tolerance, modes,
+                               from_point, include, p.get("viewport"),
+                               pool_for=lambda key: self._snap_pool(key, include))
+        except Exception as ex:  # a bad viewport name
+            hint = getattr(ex, "hint", None)
+            raise _QueryFault(str(ex), hint=hint)
+        if not found:
+            return {"snapped": False, "space": space_key,
+                    "point": [round(v, 6) for v in p["point"]], "candidates": [],
+                    "hint": f"nothing to snap to within {tolerance:g}; raise tolerance, or "
+                            f"add modes such as nearest"}
+        best = found[0]
+        return {"snapped": True, "space": space_key, **best.to_dict(),
+                "candidates": [sp.to_dict() for sp in found[1:8]]}
+
+    def _snap_pool(self, space_key: str, include_references: bool):
+        """What a space offers to snap to, made once per document state.
+
+        A cursor asks for a snap many times a second, and re-reading every
+        attachment each time is most of the cost. Every change goes through
+        the journal -- undo, redo and reload_references included -- and an
+        undo swaps in a new document, so (document, journal length) names a
+        state exactly; attachments are cached on the document the same way."""
+        from roaddraft.document import snaps
+        state = (id(self.doc), len(self.bus.journal))
+        if getattr(self, "_pools_state", None) != state:
+            self._pools_state, self._pools = state, {}
+        key = (space_key, include_references)
+        if key not in self._pools:
+            self._pools[key] = snaps.space_items(self.doc, space_key, include_references)
+        return self._pools[key]
 
     def _locate(self, eid: str):
         """``(entity, owning document, reference name or None, space)``."""

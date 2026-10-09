@@ -21,6 +21,7 @@ from jsonschema.exceptions import best_match
 from roaddraft.commands import annotation_handlers as ah
 from roaddraft.commands import design_handlers as dh
 from roaddraft.commands import dimension_handlers as dim
+from roaddraft.commands import edit_handlers as eh
 from roaddraft.commands import handlers as h
 from roaddraft.commands.schemas import EXAMPLES, SCHEMAS
 from roaddraft.document.document import Document
@@ -80,6 +81,17 @@ REGISTRY: List[CommandSpec] = [
                 {"c3d": ["ARC"], "ord": ["place arc"]}),
     CommandSpec("draw_circle", "Draw a circle.", h.draw_circle,
                 {"c3d": ["CIRCLE"], "ord": ["place circle"]}),
+    CommandSpec("draw_traverse",
+                "Draw lines and curves by bearing and distance (COGO), the way a deed, a "
+                "field book or a design report gives them: start at a point -- or at the end "
+                "of an entity, to carry on from it -- and run course after course, each a "
+                "quadrant bearing, an azimuth or a deflection from the previous course, and "
+                "a distance; a curve course by radius, turn and delta, length or chord. The "
+                "engine computes every point, so there is no trigonometry to do by hand, and "
+                "close=true reports how well a boundary closes (precision 1:N). The traverse "
+                "query computes the same points without drawing.",
+                eh.draw_traverse,
+                {"c3d": ["BD", "AD", "DD"], "ord": ["place line by bearing and distance"]}),
     CommandSpec("place_text",
                 "Place a text annotation. Height is in space units: feet in model "
                 "space, inches on sheets. Supports \\n for multi-line.",
@@ -122,6 +134,27 @@ REGISTRY: List[CommandSpec] = [
                 {"c3d": ["TABLE"], "ord": ["place table"]}),
     CommandSpec("move_entities", "Translate entities by [dx, dy].",
                 h.move_entities, {"c3d": ["MOVE"], "ord": ["move element"]}),
+    CommandSpec("offset_entity",
+                "Copy a line, polyline, arc or circle parallel to itself at a distance "
+                "(AutoCAD OFFSET, MicroStation Copy Parallel): say the side as left/right of "
+                "the direction it runs, or give a point on that side (toward) or one the copy "
+                "passes through (through), or several signed offsets at once. Several "
+                "entities that join end to end are offset together as one path, corners "
+                "mitred (or rounded) so the copy stays continuous; curves keep their centre "
+                "and change radius. Works on reference elements too, copying them into this "
+                "document. For an alignment's own offsets, tied to the design, use "
+                "draw_offset.",
+                eh.offset_entity, {"c3d": ["O"], "ord": ["copy parallel"]}),
+    CommandSpec("fillet",
+                "Round the corner between two lines with a curve of a given radius, tangent "
+                "to both, and trim or extend the lines to meet it (AutoCAD FILLET, "
+                "MicroStation Construct Circular Fillet) -- a curb return, a driveway "
+                "flare, the corner of a parking area. The lines need not touch; keep says "
+                "which part of each line stays when they cross. Radius 0 extends or trims "
+                "them to a sharp corner. The answer gives the tangent points, delta, "
+                "tangent length and arc length.",
+                eh.fillet,
+                {"c3d": ["FILLET", "F"], "ord": ["construct circular fillet", "fillet single"]}),
     CommandSpec("modify_entity",
                 "Change fields of one entity (geometry, content, layer, style...).",
                 h.modify_entity, {"c3d": ["PROPERTIES"], "ord": ["modify element"]}),
@@ -156,14 +189,16 @@ REGISTRY: List[CommandSpec] = [
                 {"c3d": ["ADDALIGNMENTLABELS"], "ord": ["annotate stationing"]}),
     CommandSpec("create_alignment",
                 "Create a horizontal alignment in the design model from PIs "
-                "([x, y] at BEGIN/END, [x, y, R] interior) or from CoordGeom "
-                "elements; optional begin station (display, '10+00') and station "
-                "equations. x is the easting and y the northing, so N 5000, E 2000 is "
-                "[2000, 5000]. PIs are coordinates: a bearing and distance has to be "
-                "turned into one first (E + d sin az, N + d cos az), and "
-                "get_design_data kind=tangents reads the bearings and lengths back to "
-                "check. Alignments are pure design data: draw_alignment puts "
-                "linework in model space, annotate_stationing/place_label label it.",
+                "([x, y] at BEGIN/END, [x, y, R] interior), from bearings and distances "
+                "(start + legs: each leg a bearing, azimuth or deflection and the distance "
+                "to the next PI, with the radius of the curve at the PI it starts from), "
+                "or from CoordGeom elements; optional begin station (display, '10+00') and "
+                "station equations. x is the easting and y the northing, so N 5000, E 2000 "
+                "is [2000, 5000]. Given legs, the engine computes the PIs -- no "
+                "trigonometry by hand -- and get_design_data kind=tangents reads the "
+                "bearings and lengths back. Alignments are pure design data: "
+                "draw_alignment puts linework in model space, annotate_stationing/"
+                "place_label label it.",
                 dh.create_alignment,
                 {"c3d": ["CREATEALIGNMENTLAYOUT"], "ord": ["complex by pi"]}),
     CommandSpec("modify_alignment",

@@ -12,6 +12,7 @@ Session and returns a structured result (never prints).
 from __future__ import annotations
 
 import json
+import re
 import shlex
 
 # Convenience first-token aliases (bus aliases like LINE/PLINE also resolve).
@@ -34,7 +35,11 @@ REPL_ALIASES = {
     "sta2xy": "station_to_xy", "xy2sta": "xy_to_station",
     "design": "get_design_data", "anchor": "resolve_anchor",
     "offset": "draw_offset", "edge": "draw_offset", "callout": "place_callout",
-    "dim": "place_dimension", "dist": "measure",
+    "dim": "place_dimension", "dist": "measure", "di": "measure",
+    # coordinate geometry and editing
+    "cogo": "draw_traverse", "trav": "draw_traverse", "fillet": "fillet",
+    "parallel": "offset_entity", "offsetent": "offset_entity",
+    "keypoints": "key_points", "kp": "key_points", "snap": "snap",
     # annotation scales
     "annoscale": "set_annotation_scale", "annoadd": "add_annotation_scale",
     "annodel": "delete_annotation_scale", "annopaper": "set_annotation_defaults",
@@ -70,6 +75,9 @@ POSITIONAL = {
     "get_design_data": ["kind", "alignment"],
     "resolve_anchor": ["anchor", "alignment"],
     "export_landxml": ["path"],
+    "draw_traverse": ["start"],
+    "traverse": ["start"],
+    "snap": ["point"],
     "set_annotation_scale": ["scale"],
     "add_annotation_scale": ["scale", "name"],
     "delete_annotation_scale": ["scale"],
@@ -83,6 +91,9 @@ VARIADIC = {  # commands whose positional args collect into one list param
     "create_alignment": "pis",
     "create_profile": "pvis",
     "draw_offset": "offsets",
+    "draw_traverse": "legs",
+    "traverse": "legs",
+    "key_points": "ids",
 }
 
 FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param
@@ -91,7 +102,7 @@ FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param
 }
 
 SPATIAL = {"draw_line", "draw_polyline", "draw_arc", "draw_circle", "place_text",
-           "place_callout", "place_dimension",
+           "place_callout", "place_dimension", "draw_traverse", "snap",
            "insert_block", "place_table", "annotate_stationing",
            "attach_reference", "place_label", "place_curve_table", "resolve_anchor"}
 
@@ -141,7 +152,86 @@ def _schema_props(name: str):
     return SCHEMAS.get(name, {}).get("properties", {})
 
 
+#: An entity id as the commands print them: LN-001, or DESIGN:LN-004 for an
+#: element of a reference.
+ENTITY_ID = re.compile(r"^(?:[^:\s]+:)*[A-Z]{2}-\d+$")
+SIDES = ("left", "right")
+
+
+def _is_kv(token: str) -> bool:
+    key, eq, _raw = token.partition("=")
+    return bool(eq) and key.isidentifier()
+
+
+def resolve_verb(low: str, args: list) -> str:
+    """The command a typed verb means. ``offset`` is two commands: with
+    alignment offsets (``offset 12L 12R``) it draws an alignment's edges, and
+    with an entity first (``offset LN-001 12 left``) it copies that entity
+    parallel, as AutoCAD's OFFSET does."""
+    if low in ("offset", "o") and args and ENTITY_ID.match(args[0]):
+        return "offset_entity"
+    if low == "o":
+        return "offset_entity"
+    return REPL_ALIASES.get(low, low)
+
+
+def _offset_entity_params(args: list):
+    """``offset LN-001 [AR-002 ...] 12 left`` / ``12L 12R`` / key=value."""
+    params, ids, numbers, unexpected = {}, [], [], []
+    side = None
+    for token in args:
+        if _is_kv(token):
+            key, _, raw = token.partition("=")
+            params[key] = parse_value(raw)
+        elif ENTITY_ID.match(token):
+            ids.append(token)
+        elif token.lower() in SIDES:
+            side = token.lower()
+        else:
+            value = parse_value(token)
+            if isinstance(value, (int, float)) or re.match(r"^\d+(\.\d*)?[LlRr]$", token):
+                numbers.append(value)
+            else:
+                unexpected.append(token)
+    if ids:
+        params.setdefault("ids", ids)
+    if side is not None:
+        params["side"] = side
+        if numbers:
+            params.setdefault("distance", abs(float(numbers[0])))
+            unexpected += [str(n) for n in numbers[1:]]
+    elif numbers:
+        params.setdefault("offsets", numbers)
+    return params, unexpected
+
+
+def _fillet_params(args: list):
+    """``fillet LN-001 LN-002 50`` / key=value."""
+    params, ids, unexpected = {}, [], []
+    for token in args:
+        if _is_kv(token):
+            key, _, raw = token.partition("=")
+            params[key] = parse_value(raw)
+        elif ENTITY_ID.match(token):
+            ids.append(token)
+        elif isinstance(parse_value(token), (int, float)) and "radius" not in params:
+            params["radius"] = parse_value(token)
+        else:
+            unexpected.append(token)
+    if ids:
+        params.setdefault("ids", ids)
+    return params, unexpected
+
+
+SPECIAL = {"offset_entity": _offset_entity_params, "fillet": _fillet_params}
+
+
 def build_params(name: str, args: list, current_space: str):
+    if name in SPECIAL:
+        params, unexpected = SPECIAL[name](args)
+        if name in SPATIAL:
+            params.setdefault("space", current_space)
+        return params, unexpected
     params = {}
     extras = {}
     unexpected = []
@@ -149,7 +239,8 @@ def build_params(name: str, args: list, current_space: str):
     variadic = VARIADIC.get(name)
     var_list = []
     for token in args:
-        if "=" in token and not token[0].isdigit() and token[0] not in "-[{,":
+        if "=" in token and not token[0].isdigit() and token[0] not in "-[{," \
+                and _is_kv(token):
             key, _, raw = token.partition("=")
             value = parse_value(raw)
             if name in FOLD_EXTRA_KWARGS and key not in _schema_props(name):
@@ -276,7 +367,9 @@ def route_line(session, line: str, current_space: str = "model") -> dict:
     if low in BUILTIN_QUERIES:
         return {"kind": "result", "result": session.query(BUILTIN_QUERIES[low])}
 
-    name = REPL_ALIASES.get(low, cmd)
+    name = resolve_verb(low, args)
+    if name == low and low not in REPL_ALIASES:
+        name = cmd
     spec = session.bus.resolve(name)
     canonical = spec.name if spec else name
     params, unexpected = build_params(canonical, args, current_space)

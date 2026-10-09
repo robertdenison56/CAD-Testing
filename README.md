@@ -70,6 +70,13 @@ Beyond the 2D primitives, the bus carries roadway-semantic actions:
   `from_entity`/`to_entity` for two, two lines for the angle between them),
   and reference geometry works as a target. See
   [Dimensioning](#dimensioning) below.
+- **Coordinate geometry and editing** — `draw_traverse` (lines and curves
+  by bearing and distance, closure reported), `offset_entity` (AutoCAD
+  OFFSET / MicroStation Copy Parallel, chains included), `fillet` (the curve
+  between two lines, trimmed to it), `measure along=` (distance along a line,
+  chain or alignment and square off it), and `key_points` / `snap` (object
+  snaps: endpoints, intersections, alignment PIs/BCs/ECs). See
+  [Coordinate geometry, offsets, fillets and snaps](#coordinate-geometry-offsets-fillets-and-snaps).
 - **Design model (Phase 1)** — `create_alignment` / `modify_alignment` /
   `delete_alignment`, `create_profile` / `delete_profile`, `draw_alignment`,
   `place_label`, `place_curve_table`, `import_landxml`, plus
@@ -97,7 +104,7 @@ Every state change is a named JSON command (PRD section 5.1):
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"     # add ,desktop for the app window
-.venv/bin/pytest                      # 787 tests
+.venv/bin/pytest                      # 963 tests
 .venv/bin/python examples/demo_plan_sheet.py   # drafts a full plan sheet
 .venv/bin/python examples/caltrans_l2/build_all.py  # rebuilds a real Caltrans sheet
 .venv/bin/python -m roaddraft.tasks 42         # generates a D1 task + reference solution
@@ -358,6 +365,71 @@ distance, dx/dy, bearing and azimuth between two points or entities, or one
 entity's own length, radius and sweep — formatted with the same string
 `place_dimension` would draw.
 
+## Coordinate geometry, offsets, fillets and snaps
+
+The drafting tools that work from a description or from linework already
+drawn. None of them asks for a coordinate worked out by hand.
+
+**Bearings and distances go in as written.** A course is a quadrant bearing
+(`N 45°30'15" E`, `S45-30-15W`, `N45E`), an azimuth, a deflection from the
+course before (`40 L`, `25°00'00" RT`, or a number, right positive) or an
+angle right from the backsight, and a distance; a curve course is a radius,
+a turn and one of delta / length / chord, tangent to the course before unless
+`chord_bearing` places it, as a deed calls a non-tangent curve. Courses are
+objects, or one line of text each:
+
+```python
+s.execute("create_alignment", {"name": "ELM-AVE", "begin_station": "10+00",
+    "start": [1000, 3000],                       # N 3000, E 1000
+    "legs": ["S 80°00'00\" E 800", "40 L 700 R=500", "25 R 600 R=700"]})
+# -> PIs BEGIN [1000.00, 3000.00], PI-2 [1787.85, 2861.08] R=500,
+#    PI-3 [2394.06, 3211.08] R=700, END [2991.78, 3263.37]
+s.execute("draw_traverse", {"space": "model", "start": [0, 0], "close": True,
+    "polyline": True, "legs": ["N 0 E 100", "90 R 100", "90 R 100.02", "90 R 99.97"]})
+# -> ...; misses its start by 0.036' (N 56°18'36" W), precision 1:11,094
+```
+
+A leg of `create_alignment` runs PI to PI, and its `radius` is the curve at
+the PI where it starts -- where the alignment deflects -- which is how a
+report describes a layout. `draw_traverse` draws lines and arcs (or one
+polyline), starting at a point or carrying on from the end of an entity in
+its direction (`start: "LN-003"`); `traverse` computes the same points
+without drawing, which is the forward computation (point + bearing +
+distance -> point).
+
+**`offset_entity`** copies a line, polyline, arc or circle parallel to itself:
+`distance` with `side` (left/right of the direction it runs) or `toward` (a
+point on that side), `through` a point, or several signed `offsets` at once
+(`[-12, 12]`, `"12L"`). Several entities that join end to end are offset as
+one path: tangent joints meet exactly (a drawn alignment's line-arc-line
+chain offsets to exactly `draw_offset`'s edges), corners are mitred or, with
+`join: "round"`, rounded, and a piece too short for the distance drops out
+with its neighbours joined across it, as AutoCAD does. Reference elements
+can be copied into the host. The copies are plain linework; `draw_offset`
+stays the way to draw offsets tied to an alignment.
+
+**`fillet`** rounds the corner between two lines with a tangent curve and
+trims or extends both to it -- a curb return in one call. `keep` says which
+part of each line stays when they cross (the GUI passes the clicks); radius
+0 makes a sharp corner; a radius too big to fit is refused with the largest
+one that does. The answer gives the tangent points, delta, T and L.
+
+**Measuring along and square off.** `measure` with `along` -- an entity, a
+list of entities that join end to end, or an alignment (`SR-100`,
+`DESIGN:SR-100`) -- projects each point square onto it: how far along (the
+station, on an alignment) and how far off, left or right; with two points,
+the distance between them along it and across it (MicroStation's Measure
+Distance *Along Element* and *Perpendicular*).
+
+**Object snaps.** `key_points` lists the exact points of entities --
+endpoints and vertices, midpoints, centers, quadrants, insertion points,
+dimension nodes, the intersections between them -- and of alignments, whose
+BEGIN, PIs, BCs, ECs, radius points and END have no entity at them (each
+carries the anchor that names it, ready for `place_callout target_anchor`).
+`snap` returns the best one near a rough point, the way a cursor snaps, with
+perpendicular and tangent from a `from` point; on a sheet it snaps through
+the viewport to the model and its references and answers in paper inches.
+
 ### Drive it as an agent — MCP mode (natural language)
 
 `roaddraft-mcp` serves the whole command surface to any MCP client as tools, so
@@ -400,7 +472,7 @@ that follows you across projects. Clients: `claude-code` (the project
 `mcpServers` table. `python -m roaddraft.probes setup` prints the same line
 for a probe's fresh project.
 
-- **78 tools**: 45 commands + 32 queries straight from `Session.manifest()` —
+- **84 tools**: 48 commands + 35 queries straight from `Session.manifest()` —
   the same descriptions, JSON Schemas and worked examples the REPL and the web
   GUI use, so there is no second copy to drift — plus `open_document`.
 - **`--autosave`** writes the document, and its journal beside it, back to the
@@ -756,6 +828,20 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   re-render at the new window, not pixel scaling), and a live coordinate
   readout in feet/inches. Every click emits the same journaled command an AI
   would send.
+- **Drafting aids**: **OSNAP** (status bar, F3; ▾ picks the modes) snaps
+  every pick -- drawing tools, grips, measuring -- to endpoints, midpoints,
+  centers, intersections, perpendicular/tangent from the last point, and
+  alignment PIs/BCs/ECs, with AutoCAD's yellow marker naming what it found;
+  on a sheet it snaps through the viewport to the referenced design. While a
+  tool waits for a point the command line takes one: `x,y`, `N 3000 E 1000`,
+  `@dx,dy`, `@100<45`, a course (`N 45°30' E 250`, `40 L 250` turned from
+  the last segment), or a bare distance along the cursor. **Brg & Dist**
+  (key B) draws a traverse from a dialog of courses, carrying on from a
+  snapped line end; **Offset** (O: pick, Shift-pick to chain, click the
+  side; type a distance or T for through); **Fillet** (F: type a radius,
+  click the two lines on the parts to keep); **Measure ▸ Distance** (D) and
+  **Along / Square Off** (pick a line, curve or drawn alignment -- stations,
+  then -- and click points), each leaving its measurement drawn until Esc.
 - **Properties panel**: selecting an entity docks an AutoCAD-style
   Properties palette under the Toolspace — Layer, Color (named colors, a
   custom picker, or back to ByLayer), and Linetype dropdowns plus the
@@ -939,7 +1025,7 @@ src/roaddraft/
   probes/      capability probes (find, drafting, tier 2, tier 3), their fixture
                documents, the plotted-sheet reader and the notation parsers;
                l2/ builds Caltrans sheet L-2 (python -m roaddraft.probes)
-tests/         787 tests: geometry, design math, commands, dimensions,
+tests/         963 tests: geometry, design math, commands, dimensions,
                determinism, LandXML, renders, DXF, web server, tasks
 examples/      demo_plan_sheet.py — a full sheet drafted from the design model;
                caltrans_l2/ — a published Caltrans plan sheet rebuilt as a
