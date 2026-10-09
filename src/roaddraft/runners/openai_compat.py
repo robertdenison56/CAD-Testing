@@ -64,7 +64,7 @@ from roaddraft.runners.core import Backend, Episode, Outcome, register
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 LMS = str(Path.home() / ".lmstudio" / "bin" / "lms")
 RELOAD_MARKERS = ("exceed_context_size_error", "fetch failed", "terminated",
-                  "LM Link client transport disposed")
+                  "LM Link client transport disposed", "Model is unloaded")
 #: a 400 that is the model's fault, not the request's: LM Studio could not
 #: parse the tool call the model wrote (seen with Llama 3.1 8B, Oct 7 2026).
 #: Sampling again is the only answer, so it is retried like a 5xx. Streamed,
@@ -262,11 +262,15 @@ def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmS
         if guard and overflows(text) and guard.loaded_context() >= guard.context:
             raise ContextFull(text[:300])
         # streamed, an engine that dies mid-turn says so after the 200: reload
-        # only if it took the model with it
-        if (guard and any(m in text for m in RELOAD_MARKERS) and not last
-                and (code == 400 or guard.loaded_context() < guard.context)):
-            print(f"{where}, reloading the model: {text[:140]}", flush=True)
-            guard.reload()
+        # if it took the model with it, else ask again -- LM Studio can still
+        # list the model for a moment after the engine stopped (2026-10-08 19:48,
+        # pc-by-station), and the retry then meets "Model is unloaded" and reloads
+        if guard and any(m in text for m in RELOAD_MARKERS) and not last:
+            if code == 400 or guard.loaded_context() < guard.context:
+                print(f"{where}, reloading the model: {text[:140]}", flush=True)
+                guard.reload()
+            else:
+                print(f"{where} with the model still loaded; asking again: {text[:140]}", flush=True)
             sleep(5)
             continue
         if any(m in text for m in RESAMPLE_MARKERS) and not last:

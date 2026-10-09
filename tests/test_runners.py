@@ -553,13 +553,22 @@ def test_an_engine_that_dies_mid_stream_is_reloaded_when_it_took_the_model(monke
     reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
                                     guard=guard, sleep=lambda s: None)
     assert reply["choices"][0]["message"]["content"] == "back" and reloads == [1]
-    # the model still loaded at the run's context: a reload would change nothing, so it is the end
-    streams = iter([Stream(sse({"error": {"message": "terminated"}}))])
+    # pc-by-station, 2026-10-08 19:48: "terminated" with the model still listed at the run's
+    # context, then "Model is unloaded." on the next request. Ask again, then reload.
+    streams = iter([Stream(sse({"error": {"message": "terminated"}})),
+                    Stream(sse({"error": {"message": "Model is unloaded."}})),
+                    Stream(sse(chunk(content="again"), chunk(finish="stop"), USAGE))])
+    contexts = iter([65536, 0])
+    monkeypatch.setattr(guard, "loaded_context", lambda: next(contexts))
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                    guard=guard, sleep=lambda s: None)
+    assert reply["choices"][0]["message"]["content"] == "again" and reloads == [1, 1]
+    # an engine that keeps dying still ends the episode once the attempts run out
+    streams = iter([Stream(sse({"error": {"message": "terminated"}})) for _ in range(4)])
     monkeypatch.setattr(guard, "loaded_context", lambda: 65536)
     with pytest.raises(RuntimeError, match="stream error"):
         openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
                                 guard=guard, sleep=lambda s: None)
-    assert reloads == [1]
 
 
 def test_openai_runs_the_first_four_calls_of_a_cut_turn(tmp_path, monkeypatch):
