@@ -571,6 +571,37 @@ def test_an_engine_that_dies_mid_stream_is_reloaded_when_it_took_the_model(monke
                                 guard=guard, sleep=lambda s: None)
 
 
+def test_a_model_reloaded_from_the_lm_studio_window_is_waited_for_not_given_up_on(monkeypatch):
+    import io
+    import urllib.error
+    from roaddraft.runners import openai_compat
+    # 2026-10-08 22:30: the model reloaded by hand ended seven probes in 27 s with these three
+    streams = iter([Stream(sse({"error": {"message": "Model unloaded by user or API request."}})),
+                    Stream(sse({"error": {"message": "Instance does not exist or is not LLM."}})),
+                    Stream(sse(chunk(content="back"), chunk(finish="stop"), USAGE))])
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", lambda req, timeout: next(streams))
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    reloads = []
+    monkeypatch.setattr(guard, "reload", lambda: reloads.append(1))
+    monkeypatch.setattr(guard, "loaded_context", lambda: 0)
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                    guard=guard, sleep=lambda s: None)
+    assert reply["choices"][0]["message"]["content"] == "back" and reloads == [1, 1]
+    # and a load that failed: "Failed to load model ... Engine protocol startup was aborted."
+    failed = b'{"error": {"message": "Failed to load model \\"qwen/qwen3.5-9b\\". Error: Engine protocol startup was aborted."}}'
+    calls = []
+
+    def urlopen(req, timeout):
+        calls.append(1)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(failed))
+        return Stream(sse(chunk(content="loaded"), chunk(finish="stop"), USAGE))
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", urlopen)
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                    guard=guard, sleep=lambda s: None)
+    assert reply["choices"][0]["message"]["content"] == "loaded" and reloads == [1, 1, 1]
+
+
 def test_openai_runs_the_first_four_calls_of_a_cut_turn(tmp_path, monkeypatch):
     from roaddraft.runners import openai_compat
     first = [chunk(reasoning="go")] + [

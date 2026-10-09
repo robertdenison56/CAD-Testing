@@ -63,8 +63,13 @@ from roaddraft.runners.core import Backend, Episode, Outcome, register
 
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 LMS = str(Path.home() / ".lmstudio" / "bin" / "lms")
+#: the model is gone or going: an engine that died, or a reload from the LM Studio
+#: window (Qwen's k = 3 run, 2026-10-08 22:30:44 to 22:31:11: the last three ended
+#: seven probes in 27 s, one after another, while the model came back)
 RELOAD_MARKERS = ("exceed_context_size_error", "fetch failed", "terminated",
-                  "LM Link client transport disposed", "Model is unloaded")
+                  "LM Link client transport disposed", "Model is unloaded",
+                  "Model unloaded by user or API request", "Instance does not exist",
+                  "Failed to load model")
 #: a 400 that is the model's fault, not the request's: LM Studio could not
 #: parse the tool call the model wrote (seen with Llama 3.1 8B, Oct 7 2026).
 #: Sampling again is the only answer, so it is retried like a 5xx. Streamed,
