@@ -76,6 +76,13 @@ cost) and `scores.json`:
     python -m roaddraft.runners run --backend anthropic|claude-code|openai --model MODEL \
         --out benchmarks/probe_runs/<date>-<name> --label <label> [--tag tier2] [PROBE ...] [--repeat 3]
     python -m roaddraft.runners score benchmarks/probe_runs/<date>-<name>/runs/<label>
+    python -m roaddraft.runners leaderboard     # regenerate benchmarks/leaderboard/ from every run folder here
+
+The Track P leaderboard (`benchmarks/leaderboard/TRACK_P.md`, with a model
+card per row) is generated from these folders and never edited by hand. A
+model's k = 3 attempts belong in one folder as `runs/<model>-r1..r3`, the
+labels `--repeat 3` writes; a label without `-rN` is a single run and stays
+off the board.
 
 The rigs below are how the earlier runs were made and stay with them. To
 repeat one of those as it was, copy its rig into a new dated folder rather

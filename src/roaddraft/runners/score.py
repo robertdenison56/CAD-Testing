@@ -5,7 +5,8 @@ The document the model left is diffed against a fresh start, as the rigs'
 The trace gives the measures the model cards need: calls, faults and the
 invalid-call rate, fault recovery (a fault followed within three calls by a
 successful call of the same tool), the longest run of the same fault, renders
-looked at, queries against commands. ``run.json`` gives the price of the
+looked at and whether a change followed, design queries asked before the first
+change, queries against commands. ``run.json`` gives the price of the
 sheet: turns, seconds, tokens, cost.
 """
 from __future__ import annotations
@@ -21,6 +22,32 @@ from roaddraft.probes import fixture, tasks
 
 RECOVERY_WINDOW = 3
 LOOP = 5
+#: the queries that answer the arithmetic a drafter would otherwise do by hand
+DESIGN_QUERIES = frozenset({"station_to_xy", "xy_to_station", "resolve_anchor",
+                            "get_design_data", "measure", "point_on_entity"})
+RENDERS = frozenset({"render_sheet", "render_model"})
+
+
+def query_first(calls: List[dict]) -> Optional[bool]:
+    """Whether a design query answered before the first change was made; None
+    for a trace that changed nothing."""
+    for c in calls:
+        if c.get("ok") and c.get("kind") == "command":
+            return False
+        if c.get("ok") and c["tool"] in DESIGN_QUERIES:
+            return True
+    return None
+
+
+def renders_fixed(calls: List[dict]) -> int:
+    """Renders followed by a change before the next render or the end."""
+    fixed, looking = 0, False
+    for c in calls:
+        if c["tool"] in RENDERS and c.get("ok"):
+            looking = True
+        elif looking and c.get("ok") and c.get("kind") == "command":
+            fixed, looking = fixed + 1, False
+    return fixed
 
 
 def measures(calls: List[dict]) -> dict:
@@ -43,7 +70,10 @@ def measures(calls: List[dict]) -> dict:
             "queries": kinds.get("query", 0), "faults": len(faults),
             "invalid_rate": round(len(faults) / len(calls), 3) if calls else None,
             "recovered": recovered, "fault_streak": best, "fault_loop": best >= LOOP,
-            "renders": sum(c["tool"] in ("render_sheet", "render_model") for c in calls),
+            "renders": sum(c["tool"] in RENDERS for c in calls),
+            "renders_fixed": renders_fixed(calls),
+            "design_queries": sum(c["tool"] in DESIGN_QUERIES for c in calls),
+            "query_first": query_first(calls),
             "tools": dict(Counter(c["tool"] for c in calls))}
 
 

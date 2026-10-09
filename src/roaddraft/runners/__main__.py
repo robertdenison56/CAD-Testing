@@ -7,11 +7,14 @@
         claude-code:  [--claude-bin PATH] [--max-budget-usd D] [--claude-arg ARG ...]
         openai:       [--base-url URL] [--api-key-env NAME] [--lms-context N]
     python -m roaddraft.runners score DIR/runs/LABEL [PROBE ...]
+    python -m roaddraft.runners leaderboard [--runs benchmarks/probe_runs] [--out benchmarks/leaderboard] [--check]
     python -m roaddraft.runners backends
 
 A run writes ``DIR/runs/LABEL/<probe>/`` per probe (``--repeat K`` writes
 ``LABEL-r1`` .. ``LABEL-rK``); a probe with a report already is skipped unless
 ``--force``. ``score`` reads the folders back and writes ``scores.json``.
+``leaderboard`` re-scores every run folder the runner wrote and writes the
+Track P board and its model cards; ``--check`` exits 1 while they are stale.
 """
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ from typing import List, Optional, Sequence
 
 from roaddraft.mcp import config as mcpconfig
 from roaddraft.probes import tasks
-from roaddraft.runners import anthropic_api, claude_code, openai_compat  # noqa: F401  (register)
+from roaddraft.runners import anthropic_api, claude_code, leaderboard, openai_compat  # noqa: F401  (register)
 from roaddraft.runners.core import BACKENDS, Options, run_probe
 from roaddraft.runners.score import format_table, score_label
 
@@ -76,6 +79,20 @@ def cmd_score(args) -> int:
     return 0 if rows and all(r.get("passed") for r in rows) else 1
 
 
+def cmd_leaderboard(args) -> int:
+    b = leaderboard.board(*leaderboard.collect(Path(args.runs)))
+    if args.check:
+        stale = leaderboard.check(b, Path(args.out))
+        for rel in stale:
+            print(f"stale: {Path(args.out) / rel}")
+        return 1 if stale else 0
+    for path in leaderboard.write(b, Path(args.out)):
+        print(path)
+    print(f"{len(b['ranked'])} ranked, {len(b['unranked'])} not ranked yet, "
+          f"{len(b['others'])} other run folders")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m roaddraft.runners",
                                      description="run probes through one native MCP client")
@@ -104,6 +121,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     score.add_argument("folder", help="runs/LABEL")
     score.add_argument("probes", nargs="*")
     score.set_defaults(func=cmd_score)
+    board = subs.add_parser("leaderboard", help="the Track P leaderboard and model cards, from the run folders")
+    board.add_argument("--runs", default="benchmarks/probe_runs", help="the folder holding the run folders")
+    board.add_argument("--out", default="benchmarks/leaderboard")
+    board.add_argument("--check", action="store_true",
+                       help="write nothing; exit 1 if the files differ from what the run folders give")
+    board.set_defaults(func=cmd_leaderboard)
     subs.add_parser("backends", help="list the backends").set_defaults(
         func=lambda a: print("\n".join(f"{name}: {cls.__module__}" for name, cls in sorted(BACKENDS.items()))) or 0)
     args = parser.parse_args(argv)

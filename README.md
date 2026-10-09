@@ -548,9 +548,30 @@ report already is skipped unless `--force`. `score` diffs each left-behind
 document against a fresh start, as the rigs' `score_runs.py` did, and reads
 the §3.2 measures off the trace: calls, faults and the invalid-call rate,
 recovery (a fault followed within three calls by a success of the same tool),
-the longest run of one fault, renders looked at, and from `run.json` the
-turns, seconds, tokens and list-price cost. `tests/test_runners.py` drives
-each backend with a fake model against the real server.
+the longest run of one fault, renders looked at and whether a change
+followed, design queries asked before the first change, and from `run.json`
+the turns, seconds, tokens and list-price cost. `run.json` also pins what the
+episode ran on: the engine commit and any files under `src/` changed past it,
+and digests of the tool surface and the server's instructions.
+`tests/test_runners.py` drives each backend with a fake model against the
+real server.
+
+```bash
+python -m roaddraft.runners leaderboard            # benchmarks/leaderboard/: TRACK_P.md, track_p.json, track_p.svg, cards/
+python -m roaddraft.runners leaderboard --check    # exit 1 while those files differ from what the run folders give
+```
+
+`leaderboard` is the research plan's Track P board, and nobody edits its
+files. It re-scores every episode the native runner left under
+`benchmarks/probe_runs/<run>/runs/<label>-rN/`, groups them by model, and
+ranks a row once all 33 probes have k = 3 attempts that count. Ties break on
+the hard-fail rate (probes failed on every attempt), then the invalid-call
+rate, then cost per task. An attempt the infrastructure ended is excluded; an
+attempt the budget ended is a failure. Each row's class and runner are on the
+board, its 95% interval comes from a seeded bootstrap, and its model card
+carries the §3.2 measures, the pins and every probe's attempts. Single runs
+without `--repeat`, and the earlier rigs' folders, are listed with the reason
+they are not rows. `tests/test_leaderboard.py` covers the rules.
 
 ### Tier-2 probes — harder, one gap each
 

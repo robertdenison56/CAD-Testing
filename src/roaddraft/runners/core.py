@@ -11,11 +11,13 @@ the scorers read::
         trace.jsonl         every tool call as the server saw it (``--trace``)
         transcript.json     every message, thinking included, and the seconds each turn took
         report.txt          the model's final answer
-        run.json            stop reason, turns, seconds, tokens, cost
+        run.json            stop reason, turns, seconds, tokens, cost, and the pins
         renders/            what the model looked at (not tracked)
 """
 from __future__ import annotations
 
+import functools
+import hashlib
 import json
 import shutil
 import subprocess
@@ -241,6 +243,34 @@ def estimate_cost(model: str, usage: Dict[str, int]) -> Optional[float]:
     return round(dollars, 4)
 
 
+@functools.lru_cache(maxsize=1)
+def pins() -> Dict[str, Any]:
+    """What an episode ran on, for the leaderboard to compare rows by: the
+    package version, the engine commit and the files under ``src/`` changed
+    past it, and digests of the tools and the instructions the server serves.
+    The commit is None outside a git checkout."""
+    from roaddraft import __version__
+    from roaddraft.api.session import Session
+    from roaddraft.mcp.server import INSTRUCTIONS
+    from roaddraft.trajectories.convert import tool_list, tools_digest
+    root = Path(__file__).resolve().parents[3]
+
+    def git(*args: str) -> Optional[str]:
+        try:
+            out = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                                 text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return out.stdout if out.returncode == 0 else None
+
+    commit = git("rev-parse", "HEAD")
+    status = git("status", "--porcelain", "--", "src") if commit else None
+    return {"roaddraft": __version__, "commit": commit.strip() if commit else None,
+            "dirty": [line[3:] for line in (status or "").splitlines() if line.strip()],
+            "tools_sha256": tools_digest(tool_list(Session())),
+            "instructions_sha256": "sha256:" + hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest()}
+
+
 def run_probe(backend: Backend, folder: Path, probe: Probe, server_command: Sequence[str],
               force: bool = False, log=None) -> dict:
     """Set the probe up, run it on the backend, and leave the run folder.
@@ -269,7 +299,8 @@ def run_probe(backend: Backend, folder: Path, probe: Probe, server_command: Sequ
             "stop": outcome.stop, "turns": outcome.turns, "seconds": episode.seconds(),
             "tokens": outcome.usage, "cost_usd": outcome.cost_usd,
             "max_turns": backend.options.max_turns, "budget_s": backend.options.budget,
-            "vision": backend.options.vision, "effort": backend.options.effort}
+            "vision": backend.options.vision, "effort": backend.options.effort,
+            "pins": pins()}
     if episode.server is not None:
         meta["truncated_results"] = episode.server.truncated
     meta.update(outcome.extra)
