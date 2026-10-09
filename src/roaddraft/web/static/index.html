@@ -60,7 +60,8 @@
   #rpanels { flex: 1; display: flex; align-items: stretch; gap: 0;
              padding: 5px 6px 3px; overflow-x: auto; }
   .rpanel { display: flex; flex-direction: column; padding: 0 7px;
-            border-right: 1px solid var(--border); min-width: 60px; }
+            border-right: 1px solid var(--border); min-width: 60px;
+            flex-shrink: 0; }
   .rpanel:last-child { border-right: none; }
   .rtools { flex: 1; display: flex; align-items: stretch; gap: 3px; }
   .rcap { text-align: center; font-size: 10px; color: var(--dim);
@@ -422,6 +423,10 @@ const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
             // offset / fillet / measure: picked entities and the numbers in use
             picks: [], meas: [], offsetDist: 12, filletRadius: 25,
             travLegs: "N 45°00'00\" E 100\n90 R 100",
+            // modify tools: is the selection settled, and the numbers in use
+            selDone: false, chamfer: [10, 10], lengthenBy: 10,
+            hatchPattern: "ANSI31", hatchScale: null, pointDesc: "",
+            staoffPts: "30+00@12R\n31+20@24R\n36+00@24R\n36+00@12R",
             tsOpen: { layers: true, sheets: true, refs: true, alignments: true } };
 
 const esc = s => String(s).replace(/[&<>"]/g,
@@ -475,6 +480,27 @@ const ICONS = {
   measurealong: `<path d="M3 19.5 L21 9.5"/><path d="M10.8 15.2 L8.4 10.8" stroke-dasharray="1.6 1.6"/><circle class="f" cx="8.1" cy="10.2" r="1.6"/><path d="M14.5 13.3 l-1.1-2"/>`,
   snap: `<rect x="7.5" y="7.5" width="9" height="9"/><path d="M12 2.5 v3.5 M12 18 v3.5 M2.5 12 h3.5 M18 12 h3.5"/>`,
   props: `<path d="M4 7 h16 M4 12 h16 M4 17 h16"/><circle class="f" cx="9.5" cy="7" r="1.9"/><circle class="f" cx="15" cy="12" r="1.9"/><circle class="f" cx="7.5" cy="17" r="1.9"/>`,
+  trim: `<path d="M3 15 H10"/><path d="M14 15 H21" stroke-dasharray="1.6 1.8"/><path d="M12 3 V21"/><path d="M15.5 18.5 l5-7 M18 18.5 l2.5-3.5" />`,
+  extend: `<path d="M3 12 H13"/><path d="M13 12 H19" stroke-dasharray="1.6 1.8"/><path d="M20 4 V20"/><path class="f" d="M19 12 L15.6 10.2 V13.8 Z"/>`,
+  copy: `<rect x="3.5" y="3.5" width="11" height="11" rx="1"/><rect x="9.5" y="9.5" width="11" height="11" rx="1" stroke-dasharray="2 1.6"/>`,
+  rotate: `<path d="M19.5 12 a7.5 7.5 0 1 1-2.3-5.4"/><path class="f" d="M18.6 3.2 L19.4 8.4 L14.4 7.4 Z"/><circle class="f" cx="12" cy="12" r="1.5"/>`,
+  mirror: `<path d="M12 3 V21" stroke-dasharray="2 1.6"/><path d="M9.5 6 L3.5 18 H9.5 Z"/><path d="M14.5 6 L20.5 18 H14.5 Z"/>`,
+  scale: `<rect x="3.5" y="10.5" width="10" height="10" rx="1"/><path d="M10 14 L20.5 3.5 M14.5 3.5 H20.5 V9.5"/>`,
+  array: `<rect x="3.5" y="3.5" width="5" height="5"/><rect x="15.5" y="3.5" width="5" height="5"/><rect x="3.5" y="15.5" width="5" height="5"/><rect x="15.5" y="15.5" width="5" height="5"/>`,
+  break: `<path d="M3 12 H9.5 M14.5 12 H21"/><path d="M9.5 8.5 V15.5 M14.5 8.5 V15.5"/>`,
+  join: `<path d="M3 16 L10 9"/><path d="M14 9 H21"/><path d="M10 9 H14" stroke-dasharray="1.4 1.4"/><circle class="f" cx="10" cy="9" r="1.5"/><circle class="f" cx="14" cy="9" r="1.5"/>`,
+  explode: `<path d="M12 12 L5 5 M12 12 L19 5 M12 12 L5 19 M12 12 L19 19"/><circle cx="12" cy="12" r="2.2"/>`,
+  chamfer: `<path d="M4 21 V11 L11 4 H21"/><path d="M4 6 V4 H6" stroke-dasharray="1.6 1.8"/>`,
+  lengthen: `<path d="M3 12 H15"/><path class="f" d="M21 12 L16 9 V15 Z"/><path d="M3 8.5 V15.5"/>`,
+  hatch: `<rect x="3.5" y="3.5" width="17" height="17" rx="1"/><path d="M3.5 11 L11 3.5 M3.5 18.5 L18.5 3.5 M10 20.5 L20.5 10 M17 20.5 L20.5 17"/>`,
+  area: `<path d="M4 19 L6 6 L15 4 L20 12 L13 20 Z"/><path d="M8.5 13 h6 M11.5 10 v6"/>`,
+  points: `<path d="M4 8 L8 4 M4 4 L8 8 M15 16 L19 20 M15 20 L19 16"/><path d="M10 6 h4 M17 13 v-3" stroke-dasharray="1.4 1.4"/>`,
+  pointtable: `<rect x="3.5" y="5" width="17" height="14" rx="1"/><path d="M3.5 10 H20.5 M8.5 10 V19"/><path d="M5 6.5 l2 2 M7 6.5 l-2 2"/>`,
+  labelseg: `<path d="M3 18 L21 9"/><path d="M6 13 l9-4.5 M9 18.5 l7-3.5" stroke-dasharray="1.2 1.4"/>`,
+  linetable: `<path d="M3 9 L10 4"/><path d="M7 2.5 h3"/><rect x="11" y="10" width="10" height="10" rx="1"/><path d="M11 14 H21 M15 14 V20"/>`,
+  staoff: `<path d="M3 17 H21"/><path d="M8 14.5 V19.5 M16 14.5 V19.5"/><path d="M8 17 L8 7 L16 7" stroke-dasharray="1.6 1.6"/><circle class="f" cx="16" cy="7" r="1.7"/>`,
+  along: `<path d="M3 18 Q12 4 21 18"/><circle class="f" cx="5.6" cy="13.6" r="1.5"/><circle class="f" cx="12" cy="11" r="1.5"/><circle class="f" cx="18.4" cy="13.6" r="1.5"/>`,
+  list: `<path d="M8 6 h12 M8 12 h12 M8 18 h12"/><path d="M3.5 6 h1.5 M3.5 12 h1.5 M3.5 18 h1.5"/>`,
 };
 const icon = (name, size) =>
   `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24">` +
@@ -627,25 +653,58 @@ const RIBBON = {
     { caption: "Modify", items: [
       { t: "big", icon: "select", label: "Select", tool: "select" },
       { t: "big", icon: "move", label: "Move", tool: "move" },
+      { t: "big", icon: "copy", label: "Copy", tool: "copy" },
+      { t: "big", icon: "trim", label: "Trim", tool: "trim" },
       { t: "big", icon: "offset", label: "Offset", tool: "offset" },
       { t: "big", icon: "fillet", label: "Fillet", tool: "fillet" },
+      { t: "stack", items: [
+        { icon: "rotate", label: "Rotate", tool: "rotate" },
+        { icon: "mirror", label: "Mirror", tool: "mirror" },
+        { icon: "erase", label: "Erase", tool: "erase" }] }] },
+    { caption: "Measure", items: [
+      { t: "stack", items: [
+        { icon: "measure", label: "Distance", tool: "measure" },
+        { icon: "measurealong", label: "Along / Square Off", tool: "measurealong" },
+        { icon: "area", label: "Area", tool: "area" }] }] },
+    { caption: "Layers", items: [{ t: "layerctl" }] },
+    { caption: "Annotation", items: [
+      { t: "stack", items: [
+        { icon: "text", label: "Text", tool: "text" },
+        { icon: "dim", label: "Dimension", tool: "dim" },
+        { icon: "edittext", label: "Edit Text", tool: "edittext" }] }] },
+  ],
+  Modify: [
+    { caption: "Transform", items: [
+      { t: "big", icon: "move", label: "Move", tool: "move" },
+      { t: "big", icon: "copy", label: "Copy", tool: "copy" },
+      { t: "big", icon: "rotate", label: "Rotate", tool: "rotate" },
+      { t: "big", icon: "mirror", label: "Mirror", tool: "mirror" },
+      { t: "big", icon: "scale", label: "Scale", tool: "scale" },
+      { t: "big", icon: "array", label: "Array", tool: "array" }] },
+    { caption: "Cut & Join", items: [
+      { t: "big", icon: "trim", label: "Trim", tool: "trim" },
+      { t: "big", icon: "extend", label: "Extend", tool: "extend" },
+      { t: "big", icon: "break", label: "Break", tool: "break" },
+      { t: "big", icon: "join", label: "Join", tool: "join" },
+      { t: "big", icon: "explode", label: "Explode", tool: "explode" },
+      { t: "big", icon: "lengthen", label: "Lengthen", tool: "lengthen" }] },
+    { caption: "Corners & Parallels", items: [
+      { t: "big", icon: "offset", label: "Offset", tool: "offset" },
+      { t: "big", icon: "fillet", label: "Fillet", tool: "fillet" },
+      { t: "big", icon: "chamfer", label: "Chamfer", tool: "chamfer" }] },
+    { caption: "Inquiry", items: [
+      { t: "big", icon: "measure", label: "Distance", tool: "measure" },
+      { t: "big", icon: "area", label: "Area", tool: "area" },
+      { t: "big", icon: "list", label: "List", act: "list" },
+      { t: "stack", items: [
+        { icon: "measurealong", label: "Along / Square Off", tool: "measurealong" },
+        { icon: "props", label: "Properties", act: "props" }] }] },
+    { caption: "Edit", items: [
+      { t: "big", icon: "select", label: "Select", tool: "select" },
       { t: "big", icon: "erase", label: "Erase", tool: "erase" },
       { t: "stack", items: [
         { icon: "undo", label: "Undo", act: "undo" },
-        { icon: "redo", label: "Redo", act: "redo" },
-        { icon: "props", label: "Properties", act: "props" }] }] },
-    { caption: "Measure", items: [
-      { t: "big", icon: "measure", label: "Distance", tool: "measure" },
-      { t: "stack", items: [
-        { icon: "measurealong", label: "Along / Square Off", tool: "measurealong" },
-        { icon: "snap", label: "Snap Settings…", act: "snaps" }] }] },
-    { caption: "Layers", items: [{ t: "layerctl" }] },
-    { caption: "Annotation", items: [
-      { t: "big", icon: "text", label: "Text", tool: "text" },
-      { t: "big", icon: "dim", label: "Dimen­sion", tool: "dim" },
-      { t: "big", icon: "table", label: "Table", act: "table" },
-      { t: "stack", items: [
-        { icon: "edittext", label: "Edit Text", tool: "edittext" }] }] },
+        { icon: "redo", label: "Redo", act: "redo" }] }] },
   ],
   Insert: [
     { caption: "Block", items: [
@@ -670,6 +729,18 @@ const RIBBON = {
       { t: "big", icon: "table", label: "Curve Table", act: "curvetable" },
       { t: "stack", items: [
         { icon: "table", label: "Add Table", act: "table" }] }] },
+    { caption: "Survey & Right of Way", items: [
+      { t: "big", icon: "points", label: "Points", tool: "points" },
+      { t: "big", icon: "labelseg", label: "Brg / Dist Labels", tool: "labelseg" },
+      { t: "big", icon: "linetable", label: "Line & Curve Table", tool: "linetable" },
+      { t: "stack", items: [
+        { icon: "pointtable", label: "Point Table", tool: "pointtable" },
+        { icon: "along", label: "Place Along…", act: "along" },
+        { icon: "staoff", label: "Sta / Offset…", act: "staoff" }] }] },
+    { caption: "Fill", items: [
+      { t: "big", icon: "hatch", label: "Hatch", tool: "hatch" },
+      { t: "stack", items: [
+        { icon: "area", label: "Area", tool: "area" }] }] },
     { caption: "Dimensions", items: [
       { t: "big", icon: "dim", label: "Linear", tool: "dim" },
       { t: "big", icon: "dim", label: "Aligned", tool: "dimaligned" },
@@ -773,6 +844,7 @@ function ribbonItem(item) {
       `<label><input type="checkbox" id="rdark"` +
       `${S.dark ? " checked" : ""}> dark model canvas</label>`;
     setTimeout(() => {
+      if (!$("rdpi")) return;  // the tab was left before this ran
       $("rdpi").onchange = e => { S.dpi = +e.target.value; updateCanvas(); };
       $("rframes").onchange = e => { S.frames = e.target.checked;
                                      updateCanvas(); };
@@ -792,6 +864,9 @@ async function ribbonAct(act) {
   const prefill = v => { $("cmd").value = v; $("cmd").focus(); };
   if (act === "undo" || act === "redo")
     logResult(await postJSON("/api/execute", { command: act, params: {} }));
+  else if (act === "staoff") await staoffDialog();
+  else if (act === "along") await alongDialog();
+  else if (act === "list") await listSelected();
   else if (act === "props") {
     if (S.selected) renderProps();
     else logHint("select an entity first (Select tool) — its properties " +
@@ -1320,19 +1395,69 @@ const TOOLS = {
   measurealong:{ hint: "click the line, curve or alignment to measure against " +
                        "(Shift-click adds pieces), then points: how far along " +
                        "it and square off it; Esc clears" },
+  trim:    { hint: "click the part to cut away — it is cut where other linework " +
+                   "crosses it (Shift-click: the part to keep)" },
+  extend:  { hint: "click near the end to run on — it extends to the nearest edge" },
+  copy:    { hint: "click what to copy (Enter when done; a selected entity is " +
+                   "used as it is), then a base point and where it goes — click " +
+                   "again for more copies, Esc ends" },
+  rotate:  { hint: "click what to rotate (Enter when done), the base point, " +
+                   "then click the angle or type it (degrees CCW, or 30 CW)" },
+  mirror:  { hint: "click what to mirror (Enter when done), then two points on " +
+                   "the mirror line — the original stays" },
+  scale:   { hint: "click what to scale (Enter when done), the base point, then " +
+                   "type the factor" },
+  array:   { hint: "click what to repeat (Enter when done), then choose rows " +
+                   "and columns, round a center, or along a path" },
+  break:   { hint: "click the entity where it breaks, then a second point to cut " +
+                   "out the part between — or Enter to split it at the first" },
+  join:    { hint: "click the pieces to join, Enter joins them" },
+  explode: { hint: "click a polyline, block, dimension, table, point or hatch " +
+                   "to take it apart" },
+  chamfer: { hint: "click the two lines on the parts to keep; type the distances " +
+                   "(10, or 10,20) to change them" },
+  lengthen:{ hint: "click near the end to change; type how much (12.5, or -10 " +
+                   "to shorten)" },
+  hatch:   { hint: "click inside an area to hatch it; type a pattern (ANSI31, " +
+                   "AR-CONC, SOLID…) or a scale to change them" },
+  area:    { hint: "click inside an area for its area and perimeter — closed " +
+                   "shapes inside subtract" },
+  points:  { hint: "click to set COGO points, numbered as they go; type x,y or " +
+                   "N 3000 E 1000 for exact ones, desc TEXT for the description" },
+  pointtable:{ hint: "click the top-left corner of the point table" },
+  labelseg:{ hint: "click lines, arcs and polylines to letter their bearings " +
+                   "and distances" },
+  linetable:{ hint: "click the lines and curves to tag, Enter when done, then " +
+                    "the table's top-left corner" },
 };
 const POINT_TOOLS = new Set(["line", "pline", "alignment", "traverse", "measure",
                              "refclip", "circle", "arc", "text", "insblock",
-                             "measurealong"]);
+                             "measurealong", "points", "pointtable"]);
+// Tools that work on a selection: pick entities, Enter, then points.
+const SEL_TOOLS = new Set(["copy", "rotate", "mirror", "scale", "array", "join",
+                           "linetable"]);
+const EVERY_TYPE = ["line", "polyline", "arc", "circle", "text", "blockref", "table",
+                    "dimension", "point", "hatch"];
 function setTool(key) {
+  // a selection made beforehand is what copy, rotate, mirror... work on
+  const pre = S.selected && !S.selected.alignment && !S.selected.reference
+    ? S.selected : null;
   S.tool = key; S.pts = []; S.stationPicks = []; S.dimPick = null;
   S.dimBusy = false; S.selected = null; S.grip = null; S.gripHover = null;
-  S.picks = []; S.meas = []; S.snap = null;
+  S.picks = []; S.meas = []; S.snap = null; S.selDone = false; S.breakPick = null;
+  if (pre && SEL_TOOLS.has(key) && key !== "join" && key !== "linetable") {
+    S.picks = [{ id: pre.id, entity: pre.entity, pt: null }];
+    S.selDone = true;
+  }
   renderRibbon(); drawOverlay(); renderProps();
   $("st-tool").textContent = `${key.toUpperCase()}: ${TOOLS[key].hint}`;
   if (key === "offset") logHint(offsetSays());
   if (key === "fillet") logHint(`fillet radius ${S.filletRadius} — type a ` +
                                 `number to change it`);
+  if (key === "chamfer") logHint(chamferSays());
+  if (key === "lengthen") logHint(lengthenSays());
+  if (key === "hatch") logHint(hatchSays());
+  if (S.selDone) logHint(selNext());
 }
 const offsetSays = () => S.offsetDist === null
   ? "offset through the point clicked — type a distance to offset by one"
@@ -1345,7 +1470,8 @@ function cancelTool() {
     return;
   }
   S.pts = []; S.stationPicks = []; S.dimPick = null; S.selected = null;
-  S.gripHover = null; S.picks = []; S.meas = [];
+  S.gripHover = null; S.picks = []; S.meas = []; S.selDone = false;
+  S.breakPick = null;
   drawOverlay(); renderProps();
 }
 // Constrain a point to horizontal or vertical from an anchor — what ORTHO
@@ -1529,7 +1655,8 @@ async function toolClick(pt, ev) {
       }
       if (info.ok) {
         S.selected = { id: hits[0].id, bbox: info.bbox, entity: info.entity,
-                       reference: info.reference || null };
+                       reference: info.reference || null,
+                       properties: info.properties || null };
         renderProps();
         if (info.reference)
           logHTML(`<span class="hint">located ${esc(hits[0].id)} (` +
@@ -1565,6 +1692,31 @@ async function toolClick(pt, ev) {
     }
   } else if (tool === "measurealong") {
     await measureAlongClick(raw, ev, sp);
+  } else if (tool === "trim" || tool === "extend") {
+    await trimExtendClick(tool, raw, ev);
+  } else if (SEL_TOOLS.has(tool)) {
+    await selToolClick(tool, pt, raw);
+  } else if (tool === "break") {
+    await breakClick(pt, raw);
+  } else if (tool === "explode") {
+    const pick = await pickEntity(raw, ["polyline", "blockref", "dimension", "table",
+                                        "point", "hatch"]);
+    if (pick) await run("explode_entities", { ids: [pick.id] });
+    else logHint("click a polyline, block, dimension, table, point or hatch");
+  } else if (tool === "chamfer") {
+    await chamferClick(raw);
+  } else if (tool === "lengthen") {
+    await lengthenClick(raw);
+  } else if (tool === "hatch") {
+    await hatchClick(raw);
+  } else if (tool === "area") {
+    await areaClick(raw);
+  } else if (tool === "points") {
+    await pointsClick(pt);
+  } else if (tool === "pointtable") {
+    await pointTableClick(pt);
+  } else if (tool === "labelseg") {
+    await labelSegClick(raw);
   }
   drawOverlay();
 }
@@ -1701,6 +1853,350 @@ async function measureAlongClick(raw, ev, sp) {
   }
 }
 
+// ------------------------------------------------------------- modify tools
+// A command with no space of its own (the entity ids say where).
+async function run(command, params) {
+  logEcho(`${command} ${JSON.stringify(params)}`);
+  const r = await postJSON("/api/execute", { command, params });
+  logResult(r);
+  return r;
+}
+// Trim cuts the part clicked (Shift: keeps it); extend runs on the end clicked.
+// Every line, arc and circle in the space is an edge, as in AutoCAD's quick trim.
+async function trimExtendClick(tool, raw, ev) {
+  const pick = await pickEntity(raw, PATH_TYPES);
+  if (!pick) {
+    logHint(tool === "trim" ? "click the part of a line, polyline, arc or circle to cut away"
+                            : "click near the end of a line, arc or polyline");
+    return;
+  }
+  const target = { id: pick.id };
+  target[tool === "trim" && ev.shiftKey ? "keep" : "at"] = raw;
+  await run(tool, { targets: [target] });
+}
+const selNext = () => ({
+  copy: "now the base point, then where it goes",
+  rotate: "now the base point, then the angle",
+  mirror: "now the first point of the mirror line",
+  scale: "now the base point, then type the factor",
+  linetable: "now click the table's top-left corner" }[S.tool] || "");
+function finishSel() { S.picks = []; S.pts = []; S.selDone = false; drawOverlay(); }
+// Copy, rotate, mirror, scale, array, join, line table: pick, Enter, then act.
+async function selToolClick(tool, pt, raw) {
+  if (!S.selDone) {
+    const pick = tool === "linetable" ? await pickSegment(raw)
+                                      : await pickEntity(raw, EVERY_TYPE);
+    if (!pick) { logHint("nothing there to pick"); return; }
+    const k = S.picks.findIndex(p => p.id === pick.id);
+    if (k >= 0) S.picks.splice(k, 1); else S.picks.push(pick);
+    logHint(`${S.picks.length} picked (${S.picks.map(p => p.id).join(", ")}) — ` +
+            `click more, Enter when done`);
+    return;
+  }
+  const ids = S.picks.map(p => p.id);
+  if (tool === "copy") {
+    if (!S.pts.length) { S.pts = [pt]; logHint("where does it go? (more clicks: more copies)");
+                         return; }
+    await run("copy_entities", { ids, from: S.pts[0], to: pt });
+  } else if (tool === "rotate") {
+    if (!S.pts.length) { S.pts = [pt]; logHint("click the angle, or type it"); return; }
+    await run("rotate_entities", { ids, base: S.pts[0],
+                                   angle: +angDeg(S.pts[0], pt).toFixed(6) });
+    finishSel();
+  } else if (tool === "mirror") {
+    if (!S.pts.length) { S.pts = [pt]; logHint("the second point of the mirror line");
+                         return; }
+    await run("mirror_entities", { ids, line: [S.pts[0], pt] });
+    finishSel();
+  } else if (tool === "scale") {
+    if (!S.pts.length) { S.pts = [pt]; logHint("type the scale factor"); return; }
+    logHint("type the scale factor (a number) on the command line");
+  } else if (tool === "linetable") {
+    await run("label_segments", { ids, style: "tags", space: S.space,
+                                  table: { position: pt } });
+    finishSel();
+  }
+}
+// Enter on a selection tool: the selection is settled (or, for join, joined).
+async function finishSelection() {
+  if (!S.picks.length) { logHint("pick something first"); return; }
+  if (S.tool === "join") {
+    await run("join_entities", { ids: S.picks.map(p => p.id) }); finishSel(); return;
+  }
+  S.selDone = true;
+  if (S.tool === "array") { await arrayDialog(); return; }
+  logHint(selNext()); drawOverlay();
+}
+// Break: the first click picks the entity and the first point.
+async function breakClick(pt, raw) {
+  if (!S.breakPick) {
+    const pick = await pickEntity(raw, PATH_TYPES);
+    if (!pick) { logHint("click a line, polyline, arc or circle where it breaks"); return; }
+    S.breakPick = { id: pick.id, at: pt }; S.picks = [pick];
+    logHint(`${pick.id} — click a second point to cut out the part between, or Enter ` +
+            `to split it here`);
+    return;
+  }
+  const b = S.breakPick; S.breakPick = null; S.picks = [];
+  await run("break_entity", { id: b.id, at: b.at, to: pt });
+}
+const chamferSays = () => `chamfer ${S.chamfer[0]} and ${S.chamfer[1]} back from the ` +
+  `corner — type a distance (10) or two (10,20) to change them`;
+async function chamferClick(raw) {
+  const pick = await pickEntity(raw, ["line"]);
+  if (!pick) { logHint("click a line — chamfer joins two lines"); return; }
+  if (S.picks.some(p => p.id === pick.id)) return;
+  S.picks.push(pick);
+  if (S.picks.length < 2) { logHint(`${pick.id} — now the other line`); drawOverlay();
+                            return; }
+  const [a, b] = S.picks; S.picks = [];
+  await run("chamfer", { ids: [a.id, b.id], distance: S.chamfer[0],
+                         distance2: S.chamfer[1], keep: [a.pt, b.pt] });
+}
+const lengthenSays = () => `lengthen by ${S.lengthenBy} ` +
+  `${S.space === "model" ? "ft" : "in"} — type a number to change it (negative shortens)`;
+async function lengthenClick(raw) {
+  const pick = await pickEntity(raw, ["line", "arc", "polyline"]);
+  if (!pick) { logHint("click near the end of a line, arc or open polyline"); return; }
+  await run("lengthen", { id: pick.id, at: raw, delta: S.lengthenBy });
+}
+const hatchSays = () => `hatch ${S.hatchPattern}` +
+  (S.hatchScale ? ` at scale ${S.hatchScale}` : " at the drawing's scale") +
+  ` — type a pattern (ANSI31, AR-CONC, GRAVEL, SOLID…) or a scale to change it`;
+async function hatchClick(raw) {
+  const params = { space: S.space, at: raw, pattern: S.hatchPattern };
+  if (S.hatchScale) params.scale = S.hatchScale;
+  await run("hatch", params);
+}
+const areaText = p => p.units === "ft"
+  ? `${p.area.toLocaleString(undefined, { maximumFractionDigits: 2 })} sq ft` +
+    (p.acres !== undefined ? ` (${p.acres.toFixed(4)} ac)` : "")
+  : `${p.area.toFixed(3)} sq in`;
+async function areaClick(raw) {
+  const r = await postJSON("/api/query", { query: "area",
+                                           params: { space: S.space, at: raw } });
+  if (!r.ok) { logResult(r); return; }
+  const islands = r.loops.filter(l => l.kind === "island").length;
+  logHTML(`<span class="ok">area ${esc(r.text)} · perimeter ${esc(fmtLen(r.perimeter))}` +
+          (islands ? ` · ${islands} island${islands > 1 ? "s" : ""} taken out` : "") +
+          `</span><br><span class="hint">${esc(r.boundary)}</span>`);
+  S.meas.push({ kind: "area", a: r.centroid, b: r.centroid, label: r.text });
+}
+async function pointsClick(pt) {
+  const params = { space: S.space, points: [{ point: pt }] };
+  if (S.pointDesc) params.description = S.pointDesc;
+  await run("create_points", params);
+}
+async function pointTableClick(pt) {
+  const v = await openForm("Point table", [
+    { key: "points", label: "Points: all, or numbers and ranges (1-20, 25)", value: "all" },
+    { key: "title", label: "Title", value: "POINT TABLE" }]);
+  if (!v) return;
+  const params = { space: S.space, position: pt, title: v.title };
+  if (v.points.trim() && v.points.trim().toLowerCase() !== "all")
+    params.points = v.points.trim();
+  await run("place_point_table", params);
+}
+// A line or curve under the click -- on a sheet, the model's seen through
+// the viewport too, which is how right of way is lettered on a plan sheet.
+async function pickSegment(raw) {
+  const pick = await pickEntity(raw, ["line", "polyline", "arc"]);
+  if (pick || S.space === "model") return pick;
+  const r = await postJSON("/api/query", { query: "sheet_to_model",
+                                           params: { sheet: S.space, point: raw } });
+  if (!r.ok || !r.inside || !r.nearest || r.nearest.distance_in > 10 * unitsPerPx())
+    return null;
+  const info = await postJSON("/api/query", { query: "get_entity",
+                                              params: { id: r.nearest.id } });
+  if (!info.ok || !["line", "polyline", "arc"].includes(info.entity.type)) return null;
+  return { id: r.nearest.id, entity: null, pt: raw };  // model coordinates: no outline
+}
+async function labelSegClick(raw) {
+  const pick = await pickSegment(raw);
+  if (!pick) { logHint("click a line, arc or polyline"); return; }
+  await run("label_segments", { ids: [pick.id], space: S.space });
+}
+async function arrayDialog() {
+  const ids = S.picks.map(p => p.id);
+  const aligns = alignNames();
+  const v = await openForm(`Array ${ids.join(", ")}`, [
+    { key: "kind", label: "Kind", value: "rectangular",
+      options: ["rectangular", "polar", "path"] },
+    { key: "grid", label: "Rectangular: rows x columns", value: "1 x 4" },
+    { key: "spacing", label: "Rectangular: row spacing, column spacing", value: "10, 10" },
+    { key: "center", label: "Polar: center x,y", value: "" },
+    { key: "count", label: "Polar: items, the original included · Path: how many copies",
+      value: "4" },
+    { key: "path", label: "Path: an alignment or entity id(s), comma separated",
+      value: aligns[0] || "" },
+    { key: "every", label: "Path: every (blank: count, evenly spaced)", value: "100" },
+    { key: "offset", label: "Path: offset from it (2R, 2L)", value: "" }]);
+  if (!v) { finishSel(); return; }
+  const params = { ids, kind: v.kind };
+  const nums = t => t.split(/[^-+0-9.eE]+/).filter(Boolean).map(Number);
+  if (v.kind === "rectangular") {
+    const [rows, cols] = nums(v.grid), [dr, dc] = nums(v.spacing);
+    Object.assign(params, { rows: rows || 1, columns: cols || 1,
+                            row_spacing: dr || 0, column_spacing: dc ?? dr ?? 0 });
+  } else if (v.kind === "polar") {
+    const c = nums(v.center);
+    if (c.length !== 2) { logHint("a polar array needs a center x,y"); finishSel(); return; }
+    Object.assign(params, { center: c, count: Math.round(nums(v.count)[0] || 4) });
+  } else {
+    const path = v.path.split(",").map(x => x.trim()).filter(Boolean);
+    params.path = path.length === 1 ? path[0] : path;
+    if (v.every.trim()) params.every = parseFloat(v.every);
+    else params.count = Math.round(nums(v.count)[0] || 4);
+    if (v.offset.trim()) params.offset = v.offset.trim();
+  }
+  await run("array_entities", params);
+  finishSel();
+}
+async function staoffDialog() {
+  const aligns = alignNames();
+  if (!aligns.length) { logHint("there is no alignment to count stations along"); return; }
+  const layers = S.state ? S.state.layers.map(l => l.name) : ["0"];
+  const v = await openForm("Draw by station and offset", [
+    { key: "alignment", label: "Alignment", value: aligns[0], options: aligns },
+    { key: "points", wide: true, multiline: true, value: S.staoffPts,
+      label: "Points in order, one per line: 30+00@12R · PC-1@12L · END@14R " +
+             "(12R = 12 ft right of the direction of stationing)" },
+    { key: "follow", label: "Where the offset holds, follow the alignment (arcs on " +
+      "its curves)", value: "yes", options: ["yes", "no"] },
+    { key: "as", label: "Draw as", value: "lines & arcs",
+      options: ["lines & arcs", "one polyline"] },
+    { key: "close", label: "Close back to the first point", value: "no",
+      options: ["no", "yes"] },
+    { key: "layer", label: "Layer", value: S.state ? S.state.current_layer : "0",
+      options: layers }]);
+  if (!v) return;
+  S.staoffPts = v.points.trim();
+  const points = v.points.split("\n").map(x => x.trim()).filter(Boolean);
+  const params = { alignment: v.alignment, points, layer: v.layer };
+  if (v.follow === "no") params.follow = false;
+  if (v.as === "one polyline") params.polyline = true;
+  if (v.close === "yes") params.close = true;
+  await run("draw_station_offset", params);
+}
+async function alongDialog() {
+  const aligns = alignNames();
+  const picked = S.selected && !S.selected.alignment ? S.selected.id : null;
+  const blocks = S.state ? S.state.blocks : [];
+  const v = await openForm("Place along a path (measure / divide)", [
+    { key: "path", label: "Path: an alignment, or entity id(s) comma separated",
+      value: picked || aligns[0] || "" },
+    { key: "every", label: "Every (blank: use count)", value: "100" },
+    { key: "count", label: "Count, evenly spaced (when every is blank)", value: "" },
+    { key: "from", label: "From: station or distance (blank: the start)", value: "" },
+    { key: "to", label: "To (blank: the end)", value: "" },
+    { key: "offset", label: "Offset (2R, 2L; blank: on it)", value: "" },
+    { key: "what", label: "Place", value: "COGO points", options: ["COGO points", ...blocks] },
+    { key: "description", label: "Point description", value: "" }]);
+  if (!v) return;
+  const path = v.path.split(",").map(x => x.trim()).filter(Boolean);
+  if (!path.length) { logHint("name a path"); return; }
+  const params = { path: path.length === 1 ? path[0] : path };
+  if (v.every.trim()) params.every = parseFloat(v.every);
+  else params.count = parseInt(v.count, 10) || 2;
+  const num = t => (/^[-+]?\d*\.?\d+$/.test(t.trim()) ? parseFloat(t) : t.trim());
+  if (v.from.trim()) params.from = num(v.from);
+  if (v.to.trim()) params.to = num(v.to);
+  if (v.offset.trim()) params.offset = v.offset.trim();
+  if (v.what !== "COGO points") params.block = v.what;
+  else if (v.description.trim()) params.description = v.description.trim();
+  await run("place_along", params);
+}
+// LIST: what the engine reads off the selected entity.
+async function listSelected() {
+  if (!S.selected || S.selected.alignment) {
+    logHint("select an entity first (Select tool), then List"); return; }
+  const info = await postJSON("/api/query", { query: "get_entity",
+                                              params: { id: S.selected.id } });
+  if (!info.ok) { logResult(info); return; }
+  const p = info.properties || {};
+  const show = v => Array.isArray(v) ? (v.length === 2 && typeof v[0] === "number"
+    ? fmtPt(v) : JSON.stringify(v)) : (typeof v === "number" ? fmtNum(v) : String(v));
+  const rows = Object.entries(p).filter(([k]) => !["segments", "extents", "units"].includes(k))
+    .map(([k, v]) => `<b>${esc(k.replace(/_/g, " "))}</b> ${esc(show(v))}`);
+  logHTML(`<span class="ok">${esc(info.entity.type)} ${esc(S.selected.id)} on ` +
+          `${esc(info.entity.layer)}</span><br><span class="hint">${rows.join(" · ")}` +
+          `</span>` + (p.segments ? jsonBlock(p.segments, "segments") : ""));
+}
+// A station and offset typed for a point: 30+00@12R, SR-100:PC-1@12L,
+// STA 30+00 OFF 12R -- Civil 3D's transparent 'SO.
+async function typedStation(t) {
+  let anchor = null, align = null, m;
+  if ((m = t.match(/^STA\.?\s*(\S+)\s+(?:OFF(?:SET)?\.?\s*)?(\S+)$/i)))
+    anchor = `${m[1]}@${m[2]}`;
+  else if (t.includes("@")) {
+    const k = t.lastIndexOf(":", t.indexOf("@"));
+    if (k > 0) { align = t.slice(0, k); anchor = t.slice(k + 1); } else anchor = t;
+  }
+  if (!anchor || !/^(\d+\+\d+(\.\d*)?|BEGIN|END|(PI|PC|PT|BC|EC|MC)-\d+)@[-+]?\d*\.?\d+\s*[LR]?$/i
+        .test(anchor.replace(/\s+/g, ""))) return null;
+  const aligns = alignNames();
+  if (!align) {
+    if (!aligns.length) { logHint("no alignment to count stations along"); return "error"; }
+    align = aligns[0];
+    if (aligns.length > 1) logHint(`on ${align} — name another: SR-200:30+00@12R`);
+  }
+  const r = await postJSON("/api/query", { query: "resolve_anchor",
+    params: { anchor: anchor.replace(/\s+/g, ""), alignment: align } });
+  if (!r.ok) { logResult(r); return "error"; }
+  return r.anchor_point;
+}
+// A typed number or word while a modify tool waits: true when it was taken.
+function modifyInput(t, line) {
+  const num = new RegExp(`^${NUM}$`).test(t) ? +t : null;
+  if (S.tool === "chamfer") {
+    const parts = t.split(/[\s,]+/).filter(Boolean).map(Number);
+    if (parts.length && parts.length <= 2 && parts.every(x => x > 0)) {
+      S.chamfer = [parts[0], parts[1] || parts[0]]; logEcho(line); logHint(chamferSays());
+      return true;
+    }
+  }
+  if (S.tool === "lengthen" && num !== null && num !== 0) {
+    S.lengthenBy = num; logEcho(line); logHint(lengthenSays()); return true; }
+  if (S.tool === "hatch") {
+    if (num !== null && num > 0) { S.hatchScale = num; logEcho(line); logHint(hatchSays());
+                                   return true; }
+    if (/^[A-Z][A-Z0-9_\-.]*$/i.test(t) && !/^(hatch|help|undo|redo)$/i.test(t)) {
+      S.hatchPattern = t.toUpperCase(); logEcho(line); logHint(hatchSays()); return true; }
+  }
+  if (S.tool === "points" && /^desc(ription)?\b/i.test(t)) {
+    S.pointDesc = t.replace(/^desc(ription)?\s*=?\s*/i, ""); logEcho(line);
+    logHint(S.pointDesc ? `points are described ${S.pointDesc}` : "no description");
+    return true;
+  }
+  if (S.tool === "rotate" && S.selDone && S.pts.length === 1 && t &&
+      /^[-+]?[\d.°'"\- ]+\s*(CW|CCW)?$/i.test(t)) {
+    logEcho(line);
+    run("rotate_entities", { ids: S.picks.map(p => p.id), base: S.pts[0],
+                             angle: num !== null ? num : t }).then(finishSel);
+    return true;
+  }
+  if (S.tool === "scale" && S.selDone && S.pts.length === 1 && num !== null && num > 0) {
+    logEcho(line);
+    run("scale_entities", { ids: S.picks.map(p => p.id), base: S.pts[0], factor: num })
+      .then(finishSel);
+    return true;
+  }
+  return false;
+}
+// A bare tool name typed on the command line starts the tool, as in AutoCAD.
+const TOOL_WORDS = { trim: "trim", tr: "trim", extend: "extend", ex: "extend",
+  copy: "copy", co: "copy", cp: "copy", rotate: "rotate", ro: "rotate",
+  mirror: "mirror", mi: "mirror", scale: "scale", sc: "scale", array: "array",
+  ar: "array", break: "break", br: "break", join: "join", j: "join",
+  explode: "explode", x: "explode", chamfer: "chamfer", cha: "chamfer",
+  lengthen: "lengthen", len: "lengthen", hatch: "hatch", h: "hatch", area: "area",
+  aa: "area", points: "points", point: "points", po: "points",
+  pointtable: "pointtable", labelseg: "labelseg", linetable: "linetable",
+  offset: "offset", o: "offset", fillet: "fillet", f: "fillet", line: "line",
+  l: "line", pline: "pline", pl: "pline", circle: "circle", c: "circle", arc: "arc",
+  a: "arc", move: "move", m: "move", erase: "erase", e: "erase", dist: "measure",
+  di: "measure" };
+
 // ---------------------------------------------------------- object snaps
 // The cursor asks the engine for the key point under it -- endpoint,
 // midpoint, center, intersection, alignment PI/BC/EC... -- one request at a
@@ -1715,7 +2211,8 @@ function snapWanted() {
   return S.osnap && S.view && (S.grip || POINT_TOOLS.has(S.tool) ||
     (S.tool === "move" && S.selected) || S.tool === "dim" ||
     S.tool === "dimaligned" || (S.tool === "offset" && S.offsetDist === null &&
-                                S.picks.length));
+                                S.picks.length) ||
+    (SEL_TOOLS.has(S.tool) && S.selDone) || S.tool === "break");
 }
 async function requestSnap(pt) {
   if (!snapWanted()) { if (S.snap) { S.snap = null; drawOverlay(); } return; }
@@ -1797,6 +2294,14 @@ function picksSVG() {
 function measSVG() {
   const k = pxScale();
   return S.meas.map(m => {
+    if (m.kind === "area") {              // a label at the area's centroid
+      const c = spacePx(m.a);
+      return `<circle cx="${c[0].toFixed(2)}" cy="${c[1].toFixed(2)}" ` +
+        `r="${(4 * k).toFixed(2)}" class="measdot"/><text x="${(c[0] + 7 * k).toFixed(2)}" ` +
+        `y="${(c[1] - 7 * k).toFixed(2)}" class="measlabel" ` +
+        `font-size="${(12 * k).toFixed(2)}" stroke-width="${(3 * k).toFixed(2)}">` +
+        `${esc(m.label)}</text>`;
+    }
     const a = spacePx(m.a), b = spacePx(m.b);
     const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
     const dot = q => `<circle cx="${q[0].toFixed(2)}" cy="${q[1].toFixed(2)}" ` +
@@ -1848,6 +2353,8 @@ async function typedPoint(text) {
     return [+m[2], +m[1]];                 // northing first, as it is said
   if ((m = t.match(new RegExp(`^E\\s*(${NUM})\\s*,?\\s*N\\s*(${NUM})$`, "i"))))
     return [+m[1], +m[2]];
+  const station = await typedStation(t);  // 30+00@12R: by station and offset
+  if (station) return station;
   if (!last) return null;
   if ((m = t.match(new RegExp(`^@(${NUM})\\s*,\\s*(${NUM})$`))))
     return [last[0] + +m[1], last[1] + +m[2]];
@@ -1879,6 +2386,10 @@ async function typedPoint(text) {
 // What the command line means while a tool is active, or false to run it.
 async function toolInput(line) {
   const t = line.trim();
+  if (TOOL_WORDS[t.toLowerCase()] && TOOLS[TOOL_WORDS[t.toLowerCase()]]) {
+    logEcho(line); setTool(TOOL_WORDS[t.toLowerCase()]); return true;
+  }
+  if (modifyInput(t, line)) return true;
   if (S.tool === "fillet" && new RegExp(`^${NUM}$`).test(t) && +t >= 0) {
     S.filletRadius = +t; logEcho(line);
     logHint(`fillet radius ${t} — click the two lines`); return true;
@@ -1890,7 +2401,8 @@ async function toolInput(line) {
   }
   const waiting = POINT_TOOLS.has(S.tool) && !["measurealong"].includes(S.tool)
     || (S.tool === "move" && S.selected) ||
-    (S.tool === "measurealong" && S.picks.length);
+    (S.tool === "measurealong" && S.picks.length) ||
+    (SEL_TOOLS.has(S.tool) && S.selDone);
   if (!waiting) return false;
   const pt = await typedPoint(t);
   if (pt === null) return false;
@@ -1900,6 +2412,11 @@ async function toolInput(line) {
   return true;
 }
 async function finishTool() {
+  if (SEL_TOOLS.has(S.tool) && !S.selDone) { await finishSelection(); return; }
+  if (S.tool === "break" && S.breakPick) {
+    const b = S.breakPick; S.breakPick = null; S.picks = [];
+    await run("break_entity", { id: b.id, at: b.at }); drawOverlay(); return;
+  }
   if (S.tool === "select" && S.selected) {
     if (S.selected.alignment) {
       logHint("edit the alignment by its grips or in the Properties panel");
@@ -2028,7 +2545,7 @@ async function reselect(id) {
   if (!S.selected || S.selected.id !== id) return;  // selection moved on
   S.selected = info.ok
     ? { id, bbox: info.bbox, entity: info.entity,
-        reference: info.reference || null } : null;
+        reference: info.reference || null, properties: info.properties || null } : null;
   drawOverlay(); renderProps();
 }
 
@@ -2393,6 +2910,7 @@ function renderProps() {
     v => applyProp({ linetype: v === "ByLayer" ? null : v })));
 
   const unit = S.view && S.view.kind === "model" ? "ft" : "in";
+  const pr = S.selected.properties || {};
   if (e.type === "line") {
     sec("GEOMETRY");
     add(propNum("Start X", e.start[0],
@@ -2404,6 +2922,7 @@ function renderProps() {
     add(propRO("Length", `${fmtNum(dist(e.start, e.end))} ${unit}`));
     add(propRO("Angle",
       fmtNum(((angDeg(e.start, e.end) % 360) + 360) % 360) + "°"));
+    if (pr.bearing) add(propRO("Bearing", pr.bearing));
   } else if (e.type === "circle") {
     sec("GEOMETRY");
     add(propNum("Center X", e.center[0],
@@ -2424,6 +2943,11 @@ function renderProps() {
       v => applyProp({ start_angle_deg: v })));
     add(propNum("End angle", e.end_angle_deg,
       v => applyProp({ end_angle_deg: v })));
+    if (pr.length !== undefined) {
+      add(propRO("Length", `${fmtNum(pr.length)} ${unit}`));
+      add(propRO("Delta", pr.delta));
+      add(propRO("Chord", `${fmtNum(pr.chord)} ${unit} ${pr.chord_bearing}`));
+    }
   } else if (e.type === "polyline") {
     sec("GEOMETRY");
     add(propRO("Vertices", String(e.vertices.length)));
@@ -2433,7 +2957,9 @@ function renderProps() {
       len += dist(e.vertices[i - 1], e.vertices[i]);
     if (e.closed && e.vertices.length > 2)
       len += dist(e.vertices[e.vertices.length - 1], e.vertices[0]);
-    add(propRO("Length", `${fmtNum(len)} ${unit}`));
+    add(propRO("Length", `${fmtNum(pr.length !== undefined ? pr.length : len)} ${unit}`));
+    if (pr.arc_segments) add(propRO("Arc segments", String(pr.arc_segments)));
+    if (pr.area !== undefined) add(propRO("Area", areaText(pr)));
     hint("drag a vertex grip to move it, a hollow midpoint grip to add " +
          "one; double-click the polyline for the raw editor");
   } else if (e.type === "text") {
@@ -2467,6 +2993,32 @@ function renderProps() {
       { positive: true }));
     add(propNum("Rotation", e.rotation_deg,
       v => applyProp({ rotation_deg: v })));
+  } else if (e.type === "point") {
+    sec("POINT");
+    add(propNum("Number", e.number || 0, v => applyProp({ number: Math.round(v) }),
+      { positive: true }));
+    add(propNum("Northing", e.position[1],
+      v => applyProp({ position: [e.position[0], v] })));
+    add(propNum("Easting", e.position[0],
+      v => applyProp({ position: [v, e.position[1]] })));
+    add(propInput("Elevation", e.elevation === null ? "" : fmtNum(e.elevation),
+      v => applyProp({ elevation: v.trim() === "" ? null : parseFloat(v) })));
+    add(propInput("Description", e.description || "",
+      v => applyProp({ description: v })));
+    add(propSelect("Marker", e.marker, ["x", "cross", "circle", "circle_x", "dot", "none"],
+      v => applyProp({ marker: v })));
+    add(propNum("Label height", e.text_height, v => applyProp({ text_height: v }),
+      { positive: true }));
+  } else if (e.type === "hatch") {
+    sec("HATCH");
+    add(propInput("Pattern", e.pattern,
+      v => v.trim() ? applyProp({ pattern: v.trim().toUpperCase() }) : renderProps()));
+    add(propNum("Scale", e.scale, v => applyProp({ scale: v }), { positive: true }));
+    add(propNum("Angle", e.angle_deg, v => applyProp({ angle_deg: v })));
+    add(propNum("Opacity", e.opacity, v => applyProp({ opacity: Math.min(1, v) }),
+      { positive: true }));
+    add(propRO("Loops", String(e.loops.length)));
+    if (pr.area !== undefined) add(propRO("Area", areaText(pr)));
   } else if (e.type === "table") {
     sec("TABLE");
     add(propInput("Title", e.title || "", v => applyProp({ title: v })));
@@ -2513,17 +3065,26 @@ function gripsFor(e) {
       g(e.end, "vertex", "end point", p => ({ end: p }))];
   }
   if (e.type === "polyline" && e.vertices.length) {
-    const v = e.vertices;
+    const v = e.vertices, bl = e.bulges || null;
     const out = v.map((w, i) => g(w, "vertex", `vertex ${i + 1} of ${v.length}`,
       p => ({ vertices: v.map((x, j) => j === i ? p : x) })));
     // a closed polyline has one more segment: the one back to the start
     const segs = e.closed && v.length > 2 ? v.length : v.length - 1;
-    for (let i = 0; i < segs; i++)   // a midpoint grip adds a vertex there
-      out.push(g(mid(v[i], v[(i + 1) % v.length]), "insert",
-        `midpoint of segment ${i + 1} (adds a vertex)`,
-        p => ({ vertices: [...v.slice(0, i + 1), p, ...v.slice(i + 1)] })));
+    for (let i = 0; i < segs; i++) {  // a midpoint grip adds a vertex there
+      const a = v[i], b = v[(i + 1) % v.length], bu = bl ? bl[i] || 0 : 0;
+      const arc = bulgeArc(a, b, bu);
+      out.push(g(arc ? arcAt(arc.c, arc.r, arc.a0 + arc.sweep / 2) : mid(a, b), "insert",
+        `midpoint of segment ${i + 1} (adds a vertex)`, p => {
+          const patch = { vertices: [...v.slice(0, i + 1), p, ...v.slice(i + 1)] };
+          if (bl) patch.bulges = [...bl.slice(0, i), ...splitBulge(a, p, b, bu),
+                                  ...bl.slice(i + 1)];
+          return patch;
+        }));
+    }
     return out;
   }
+  if (e.type === "point")
+    return [g(e.position, "move", "point", p => ({ position: p }))];
   if (e.type === "circle")
     return [g(e.center, "move", "center", p => ({ center: p }))].concat(
       [0, 90, 180, 270].map(deg => g(at(e.center, e.radius, deg), "radius",
@@ -2772,11 +3333,57 @@ function sampleArcPts(c, r, a0, a1) {
 }
 // Space-coordinate polylines tracing an entity's real shape; null means the
 // caller should fall back to the bbox (text, tables, block references).
+// A polyline segment's arc from its bulge (tan(sweep/4)), or null if straight.
+function bulgeArc(a, b, bulge) {
+  const chord = dist(a, b);
+  if (!bulge || Math.abs(bulge) < 1e-12 || chord < 1e-12) return null;
+  const ux = (b[0] - a[0]) / chord, uy = (b[1] - a[1]) / chord;
+  const k = chord * (1 - bulge * bulge) / (4 * bulge);
+  const c = [(a[0] + b[0]) / 2 - uy * k, (a[1] + b[1]) / 2 + ux * k];
+  return { c, r: chord * (1 + bulge * bulge) / (4 * Math.abs(bulge)),
+           a0: angDeg(c, a), sweep: 4 * Math.atan(bulge) * 180 / Math.PI };
+}
+const arcAt = (c, r, deg) => [c[0] + r * Math.cos(deg * Math.PI / 180),
+                              c[1] + r * Math.sin(deg * Math.PI / 180)];
+// Vertices with arc segments sampled, for tracing (closed: not repeated).
+function bulgedPts(verts, bulges, closed) {
+  const out = [], n = verts.length;
+  const segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    out.push(a);
+    const arc = bulgeArc(a, b, bulges ? bulges[i] : 0);
+    if (!arc) continue;
+    const steps = Math.max(4, Math.ceil(Math.abs(arc.sweep) / 6));
+    for (let j = 1; j < steps; j++)
+      out.push(arcAt(arc.c, arc.r, arc.a0 + arc.sweep * j / steps));
+  }
+  if (!closed) out.push(verts[n - 1]);
+  return out;
+}
+// The bulges of the two halves of an arc segment split at p (the arc from a
+// through p to b), or two straight ones.
+function splitBulge(a, p, b, bulge) {
+  if (!bulge || Math.abs(bulge) < 1e-12) return [0, 0];
+  const c = circumcenter(a, p, b);
+  if (!c) return [0, 0];
+  const ccw = (p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0]) > 0;
+  const sweep = (x, y) => { const d = (((angDeg(c, y) - angDeg(c, x)) % 360) + 360) % 360;
+                            return ccw ? d : d - 360; };
+  return [Math.tan(sweep(a, p) * Math.PI / 720), Math.tan(sweep(p, b) * Math.PI / 720)];
+}
 function entityOutline(e) {
   if (!e) return null;
   if (e.type === "line") return [{ pts: [e.start, e.end] }];
   if (e.type === "polyline" && e.vertices.length >= 2)
-    return [{ pts: e.vertices, closed: e.closed }];
+    return [{ pts: e.bulges ? bulgedPts(e.vertices, e.bulges, e.closed) : e.vertices,
+              closed: e.closed }];
+  if (e.type === "point")
+    return [{ pts: sampleArcPts(e.position, Math.max(e.size, 1e-6) * 0.8, 0, 360),
+              closed: true }];
+  if (e.type === "hatch")
+    return e.loops.map(loop => ({ pts: bulgedPts(loop.vertices, loop.bulges, true),
+                                  closed: true }));
   if (e.type === "circle")
     return [{ pts: sampleArcPts(e.center, e.radius, 0, 360), closed: true }];
   if (e.type === "arc") {
@@ -2964,6 +3571,29 @@ function drawOverlay() {
     if (S.cursor)
       out += highlightSVG(S.cursor[0] - S.pts[0][0],
                           S.cursor[1] - S.pts[0][1], "rb");
+  }
+  if (SEL_TOOLS.has(S.tool) && S.selDone && S.pts.length === 1 && S.cursor &&
+      ["copy", "rotate", "mirror"].includes(S.tool)) {
+    const b = S.pts[0], c = S.cursor;
+    let fn;
+    if (S.tool === "copy") fn = q => [q[0] + c[0] - b[0], q[1] + c[1] - b[1]];
+    else if (S.tool === "rotate") {
+      const t = Math.atan2(c[1] - b[1], c[0] - b[0]), co = Math.cos(t), si = Math.sin(t);
+      fn = q => [b[0] + (q[0] - b[0]) * co - (q[1] - b[1]) * si,
+                 b[1] + (q[0] - b[0]) * si + (q[1] - b[1]) * co];
+    } else {
+      const L = dist(b, c) || 1, ux = (c[0] - b[0]) / L, uy = (c[1] - b[1]) / L;
+      fn = q => { const dx = q[0] - b[0], dy = q[1] - b[1], d = dx * ux + dy * uy;
+                  return [b[0] + 2 * d * ux - dx, b[1] + 2 * d * uy - dy]; };
+    }
+    out += seg(spacePx(b), cur, "rb");
+    S.picks.forEach(pk => {
+      (entityOutline(pk.entity) || []).forEach(sh => {
+        const pts = sh.pts.map(q => spacePx(fn(q)).map(v => v.toFixed(2)).join(","))
+          .join(" ");
+        out += `<${sh.closed ? "polygon" : "polyline"} points="${pts}" class="rb"/>`;
+      });
+    });
   }
   S.stationPicks.forEach(sp => {
     const p = spacePx(sp.pt);
@@ -3462,7 +4092,9 @@ function connect() {
    "drawalign","profile","label","curvetable","landxmlin","landxml","sta2xy",
    "xy2sta","design","anchor","alignments","annoscale","annoscales","annoadd",
    "annodel","annopaper","bd","cogo","traverse","offset","fillet","dist",
-   "snap","keypoints"].forEach(n =>
+   "snap","keypoints","trim","extend","copy","rotate","mirror","scale","array",
+   "break","join","explode","chamfer","lengthen","hatch","area","point","points",
+   "pointtable","labelseg","linetable","so","along","divide","list"].forEach(n =>
     names.add(n));
   S.names = [...names].sort();
   await refresh();
@@ -3473,9 +4105,11 @@ function connect() {
     "midpoints, centers, intersections and alignment PIs/BCs/ECs (OSNAP, " +
     "F3; ▾ picks the modes). While a tool waits for a point, type one: " +
     "x,y · N 3000 E 1000 · @dx,dy · N 45°30' E 250 · 40 L 250 · or a " +
-    "distance along the cursor. Select an entity and drag its grips to edit " +
-    "it. ORTHO and F8 constrain to horizontal/vertical. The command line " +
-    "speaks the full language — 'help' lists it.");
+    "distance along the cursor, or a station and offset: 30+00@12R. Select an " +
+    "entity and drag its grips to edit it. Type a tool's name (trim, copy, " +
+    "rotate, mirror, hatch, area…) to start it. ORTHO and F8 constrain to " +
+    "horizontal/vertical. The command line speaks the full language — 'help' " +
+    "lists it.");
 })();
 </script>
 </body>

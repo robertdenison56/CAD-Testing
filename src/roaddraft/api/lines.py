@@ -40,6 +40,15 @@ REPL_ALIASES = {
     "cogo": "draw_traverse", "trav": "draw_traverse", "fillet": "fillet",
     "parallel": "offset_entity", "offsetent": "offset_entity",
     "keypoints": "key_points", "kp": "key_points", "snap": "snap",
+    "trim": "trim", "extend": "extend", "break": "break_entity",
+    "join": "join_entities", "explode": "explode_entities", "chamfer": "chamfer",
+    "lengthen": "lengthen", "copy": "copy_entities", "rotate": "rotate_entities",
+    "mirror": "mirror_entities", "scale": "scale_entities", "array": "array_entities",
+    "point": "create_points", "points": "create_points",
+    "pointtable": "place_point_table", "labelseg": "label_segments",
+    "linetable": "label_segments", "so": "draw_station_offset",
+    "along": "place_along", "divide": "place_along", "hatch": "hatch",
+    "area": "area", "list": "get_entity", "props": "get_entity",
     # annotation scales
     "annoscale": "set_annotation_scale", "annoadd": "add_annotation_scale",
     "annodel": "delete_annotation_scale", "annopaper": "set_annotation_defaults",
@@ -78,6 +87,10 @@ POSITIONAL = {
     "draw_traverse": ["start"],
     "traverse": ["start"],
     "snap": ["point"],
+    "break_entity": ["id", "at", "to"],
+    "place_point_table": ["position"],
+    "place_along": ["path"],
+    "get_entity": ["id"],
     "set_annotation_scale": ["scale"],
     "add_annotation_scale": ["scale", "name"],
     "delete_annotation_scale": ["scale"],
@@ -94,6 +107,11 @@ VARIADIC = {  # commands whose positional args collect into one list param
     "draw_traverse": "legs",
     "traverse": "legs",
     "key_points": "ids",
+    "join_entities": "ids",
+    "explode_entities": "ids",
+    "array_entities": "ids",
+    "label_segments": "ids",
+    "draw_station_offset": "points",
 }
 
 FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param
@@ -104,7 +122,8 @@ FOLD_EXTRA_KWARGS = {  # unknown key=value pairs fold into this dict param
 SPATIAL = {"draw_line", "draw_polyline", "draw_arc", "draw_circle", "place_text",
            "place_callout", "place_dimension", "draw_traverse", "snap",
            "insert_block", "place_table", "annotate_stationing",
-           "attach_reference", "place_label", "place_curve_table", "resolve_anchor"}
+           "attach_reference", "place_label", "place_curve_table", "resolve_anchor",
+           "hatch", "create_points", "place_point_table", "label_segments", "area"}
 
 # bare words that map straight to queries
 BUILTIN_QUERIES = {
@@ -223,13 +242,208 @@ def _fillet_params(args: list):
     return params, unexpected
 
 
-SPECIAL = {"offset_entity": _offset_entity_params, "fillet": _fillet_params}
+def _is_point(value) -> bool:
+    return isinstance(value, list) and len(value) == 2 and all(
+        isinstance(v, (int, float)) for v in value)
+
+
+def _ids_value(raw: str):
+    """``CI-001`` / ``CI-001,LN-002`` / a JSON list -> a list of ids."""
+    value = parse_value(raw)
+    if isinstance(value, list):
+        return value
+    return [part for part in str(raw).split(",") if part]
+
+
+LIST_KEYS = {"boundaries", "boundary", "ids", "from_entities", "boundary_layers"}
+
+
+def _split(args: list):
+    """``(key=value params, entity ids, points, numbers, words)`` of a line,
+    in order of appearance within each kind."""
+    params, ids, points, numbers, words = {}, [], [], [], []
+    for token in args:
+        if _is_kv(token):
+            key, _, raw = token.partition("=")
+            params[key] = _ids_value(raw) if key in LIST_KEYS else parse_value(raw)
+        elif ENTITY_ID.match(token):
+            ids.append(token)
+        else:
+            value = parse_value(token)
+            if _is_point(value):
+                points.append(value)
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                numbers.append(value)
+            else:
+                words.append(token)
+    return params, ids, points, numbers, words
+
+
+def _trim_params(args: list):
+    """``trim LN-005 2986,2399 [keep] [LN-006 3014,2399 ...] boundaries=CI-001``:
+    each id takes the point after it -- the part to cut away, or with the
+    word keep the part to keep."""
+    params, targets, unexpected = {}, [], []
+    keep = False
+    for token in args:
+        if _is_kv(token):
+            key, _, raw = token.partition("=")
+            params[key] = _ids_value(raw) if key in LIST_KEYS else parse_value(raw)
+        elif ENTITY_ID.match(token):
+            targets.append({"id": token})
+        elif token.lower() == "keep":
+            keep = True
+        elif token.lower() in ("start", "end") and targets:
+            targets[-1]["end"] = token.lower()
+        else:
+            value = parse_value(token)
+            if _is_point(value) and targets and not ({"at", "keep"} & set(targets[-1])):
+                targets[-1]["keep" if keep else "at"] = value
+                keep = False
+            else:
+                unexpected.append(token)
+    if targets:
+        params.setdefault("targets", targets)
+    return params, unexpected
+
+
+def _extend_params(args: list):
+    params, unexpected = _trim_params(args)
+    for t in params.get("targets", []):
+        if "keep" in t:
+            unexpected.append("keep")
+    return params, unexpected
+
+
+def _chamfer_params(args: list):
+    params, ids, points, numbers, words = _split(args)
+    if ids:
+        params.setdefault("ids", ids)
+    for key, value in zip(("distance", "distance2"), numbers):
+        params.setdefault(key, value)
+    return params, [str(v) for v in points] + [str(v) for v in numbers[2:]] + words
+
+
+def _lengthen_params(args: list):
+    params, ids, points, numbers, words = _split(args)
+    if ids:
+        params.setdefault("id", ids[0])
+    ends = [w.lower() for w in words if w.lower() in ("start", "end")]
+    if ends:
+        params.setdefault("end", ends[0])
+    if numbers and not {"delta", "total", "percent", "to"} & set(params):
+        params["delta"] = numbers[0]
+    if points and "to" not in params:
+        params["to"] = points[0]
+    rest = [w for w in words if w.lower() not in ("start", "end")] + ids[1:]
+    return params, rest
+
+
+def _copy_params(args: list):
+    """``copy LN-001 LN-002 20,0`` (a displacement) or ``... 0,0 20,0`` (from,
+    to) [count=3]."""
+    params, ids, points, numbers, words = _split(args)
+    if ids:
+        params.setdefault("ids", ids)
+    if len(points) == 1:
+        params.setdefault("delta", points[0])
+    elif len(points) >= 2:
+        params.setdefault("from", points[0])
+        params.setdefault("to", points[1])
+    if numbers:
+        params.setdefault("count", int(numbers[0]))
+    return params, [str(p) for p in points[2:]] + words
+
+
+def _rotate_params(args: list):
+    """``rotate LN-001 0,0 90 [copy=true]``."""
+    params, ids, points, numbers, words = _split(args)
+    if ids:
+        params.setdefault("ids", ids)
+    if points:
+        params.setdefault("base", points[0])
+    if numbers:
+        params.setdefault("angle", numbers[0])
+    elif words and "angle" not in params and "to_direction" not in params:
+        params["angle"] = " ".join(words)  # '30 CW', DMS text
+        words = []
+    return params, words
+
+
+def _mirror_params(args: list):
+    """``mirror LN-001 0,0 0,10 [keep_original=false]``."""
+    params, ids, points, numbers, words = _split(args)
+    if ids:
+        params.setdefault("ids", ids)
+    if len(points) >= 2:
+        params.setdefault("line", points[:2])
+    return params, [str(n) for n in numbers] + words
+
+
+def _scale_params(args: list):
+    """``scale LN-001 0,0 0.5``."""
+    params, ids, points, numbers, words = _split(args)
+    if ids:
+        params.setdefault("ids", ids)
+    if points:
+        params.setdefault("base", points[0])
+    if numbers:
+        params.setdefault("factor", numbers[0])
+    return params, words
+
+
+def _points_params(args: list):
+    """``point 1500,2000 [1534,2059 ...] description=MON``."""
+    params, ids, points, numbers, words = _split(args)
+    if points:
+        params.setdefault("points", [{"point": q} for q in points])
+    if ids:
+        params.setdefault("from_entities", ids)
+    return params, [str(n) for n in numbers] + words
+
+
+def _hatch_params(args: list):
+    """``hatch 1700,988 ANSI31`` (a point inside) or ``hatch PL-002 CI-001 SOLID``."""
+    params, ids, points, numbers, words = _split(args)
+    if points:
+        if len(points) >= 3:
+            params.setdefault("points", points)
+        else:
+            params.setdefault("at", points[0])
+    if ids:
+        params.setdefault("boundary", ids)
+    if words:
+        params.setdefault("pattern", words[0])
+        words = words[1:]
+    if numbers:
+        params.setdefault("scale", numbers[0])
+    return params, words
+
+
+def _area_params(args: list):
+    params, ids, points, numbers, words = _split(args)
+    if points:
+        if len(points) >= 3:
+            params.setdefault("points", points)
+        else:
+            params.setdefault("at", points[0])
+    if ids:
+        params.setdefault("ids", ids)
+    return params, [str(n) for n in numbers] + words
+
+
+SPECIAL = {"offset_entity": _offset_entity_params, "fillet": _fillet_params,
+           "trim": _trim_params, "extend": _extend_params, "chamfer": _chamfer_params,
+           "lengthen": _lengthen_params, "copy_entities": _copy_params,
+           "rotate_entities": _rotate_params, "mirror_entities": _mirror_params,
+           "scale_entities": _scale_params, "create_points": _points_params,
+           "hatch": _hatch_params, "area": _area_params}
 
 
 def build_params(name: str, args: list, current_space: str):
     if name in SPECIAL:
         params, unexpected = SPECIAL[name](args)
-        if name in SPATIAL:
+        if name in SPATIAL and not (name == "area" and "ids" in params):
             params.setdefault("space", current_space)
         return params, unexpected
     params = {}

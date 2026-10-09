@@ -146,7 +146,12 @@ SCHEMAS = {
     "draw_polyline": obj(
         {**_ENTITY_COMMON,
          "vertices": {"type": "array", "items": POINT, "minItems": 2},
-         "closed": {"type": "boolean"}},
+         "closed": {"type": "boolean"},
+         "bulges": {"type": "array", "items": NUM,
+                    "description": "arc segments, the DXF way: one value per vertex for the "
+                                   "segment that starts there, tan(sweep/4) -- 0 straight, 1 a "
+                                   "half circle, positive counter-clockwise. Omit for straight "
+                                   "segments"}},
         ["space", "vertices"]),
     "draw_arc": obj(
         {**_ENTITY_COMMON, "center": POINT, "radius": POS,
@@ -604,3 +609,10 @@ EXAMPLES = {
 # tables, LandXML): schemas and examples live in design_schemas.py.
 SCHEMAS.update(DESIGN_SCHEMAS)
 EXAMPLES.update(DESIGN_EXAMPLES)
+
+# Editing, COGO points, segment labels, hatching and placement along a path:
+# schemas and examples live in modify_schemas.py.
+from roaddraft.commands.modify_schemas import MODIFY_EXAMPLES, MODIFY_SCHEMAS  # noqa: E402
+
+SCHEMAS.update(MODIFY_SCHEMAS)
+EXAMPLES.update(MODIFY_EXAMPLES)

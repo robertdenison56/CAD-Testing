@@ -103,6 +103,74 @@ def arc_bbox(center, radius, start_deg, end_deg):
     return bbox_of_points(pts)
 
 
+# ------------------------------------------------------------------- bulges
+# A polyline segment may be a circular arc, stored the DXF way as a *bulge*:
+# tan(sweep / 4), where sweep is the arc's central angle from the segment's
+# start vertex to its end vertex, positive counter-clockwise. 0 is straight,
+# 1 a half circle; the sign says which way it bows (positive: to the right of
+# the chord, travelling start to end).
+
+
+def bulge_of_sweep(sweep_deg):
+    """The bulge of an arc segment with signed central angle ``sweep_deg``."""
+    return math.tan(math.radians(sweep_deg) / 4.0)
+
+
+def bulge_arc(a, b, bulge):
+    """``(center, radius, start_angle_deg, sweep_deg)`` of the arc segment
+    from ``a`` to ``b`` with ``bulge``; None when it is straight (or has no
+    chord to bow)."""
+    chord = distance(a, b)
+    if abs(bulge) < 1e-12 or chord < 1e-12:
+        return None
+    ux, uy = (b[0] - a[0]) / chord, (b[1] - a[1]) / chord
+    mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+    k = chord * (1.0 - bulge * bulge) / (4.0 * bulge)  # signed, along the left normal
+    center = [mx - uy * k, my + ux * k]
+    radius = chord * (1.0 + bulge * bulge) / (4.0 * abs(bulge))
+    start = math.degrees(math.atan2(a[1] - center[1], a[0] - center[0]))
+    sweep = math.degrees(4.0 * math.atan(bulge))
+    return center, radius, start, sweep
+
+
+def bulge_points(a, b, bulge, step_deg=4.0):
+    """Points along a polyline segment from ``a`` to ``b`` (both included):
+    the two ends when straight, else the arc sampled every ``step_deg``."""
+    arc = bulge_arc(a, b, bulge)
+    if arc is None:
+        return [list(a), list(b)]
+    center, radius, start, sweep = arc
+    n = max(2, int(math.ceil(abs(sweep) / step_deg)))
+    pts = [list(a)]
+    for i in range(1, n):
+        pts.append(arc_point(center, radius, start + sweep * i / n))
+    pts.append(list(b))
+    return pts
+
+
+def bulge_bbox(a, b, bulge):
+    """Bounding box of one polyline segment, arc or straight."""
+    arc = bulge_arc(a, b, bulge)
+    if arc is None:
+        return bbox_of_points([a, b])
+    center, radius, start, sweep = arc
+    lo, hi = (start, start + sweep) if sweep >= 0 else (start + sweep, start)
+    return arc_bbox(center, radius, lo, hi)
+
+
+def dist_point_to_arc(p, center, radius, start_deg, sweep_deg):
+    """Distance from ``p`` to the arc from ``start_deg`` sweeping
+    ``sweep_deg`` (signed) about ``center``."""
+    lo, hi = (start_deg, start_deg + sweep_deg) if sweep_deg >= 0 \
+        else (start_deg + sweep_deg, start_deg)
+    s, e = arc_sweep(lo, hi) if abs(hi - lo) < 360.0 - 1e-12 else (0.0, 360.0)
+    ang = math.degrees(math.atan2(p[1] - center[1], p[0] - center[0])) % 360.0
+    if s <= ang <= e or s <= ang + 360.0 <= e:
+        return abs(distance(p, center) - radius)
+    return min(distance(p, arc_point(center, radius, s)),
+               distance(p, arc_point(center, radius, e)))
+
+
 def upright(angle_deg):
     """Fold a rotation into (-90, 90] so text never reads upside down."""
     a = angle_deg % 360.0

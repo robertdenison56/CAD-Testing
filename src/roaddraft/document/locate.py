@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple
 
 from roaddraft.core import geometry as geo
 from roaddraft.document.entities import (
-    Arc, BlockRef, Circle, Entity, Line, Polyline, Table, Text,
+    Arc, BlockRef, Circle, Entity, Hatch, Line, Point, Polyline, Table, Text,
 )
 
 WHERE_NAMES = {"start": 0.0, "mid": 0.5, "middle": 0.5, "end": 1.0, "center": 0.5}
@@ -48,6 +48,9 @@ def entity_length(doc, entity: Entity) -> Optional[float]:
     if isinstance(entity, Line):
         return geo.distance(entity.start, entity.end)
     if isinstance(entity, Polyline):
+        if entity.has_arcs:
+            from roaddraft.document import paths
+            return paths.Path.of_entity(entity).length
         points = _polyline_points(entity)
         return sum(geo.distance(a, b) for a, b in zip(points, points[1:]))
     if isinstance(entity, Arc):
@@ -68,6 +71,10 @@ def point_at(doc, entity: Entity, where="mid") -> Tuple[List[float], Optional[fl
     if isinstance(entity, Line):
         return _lerp(entity.start, entity.end, t), _heading(entity.start, entity.end)
     if isinstance(entity, Polyline):
+        if entity.has_arcs:
+            from roaddraft.document import paths
+            path = paths.Path.of_entity(entity)
+            return path.point_at(path.length * t), path.dir_at(path.length * t) % 360.0
         return _along_polyline(entity, t)
     if isinstance(entity, Arc):
         s, e = geo.arc_sweep(entity.start_angle_deg, entity.end_angle_deg)
@@ -79,6 +86,11 @@ def point_at(doc, entity: Entity, where="mid") -> Tuple[List[float], Optional[fl
         return geo.arc_point(entity.center, entity.radius, angle), (angle + 90.0) % 360.0
     if isinstance(entity, (Text, BlockRef, Table)):
         return list(entity.position), getattr(entity, "rotation_deg", 0.0) or 0.0
+    if isinstance(entity, Point):
+        return list(entity.position), None
+    if isinstance(entity, Hatch):
+        from roaddraft.document.regions import region_measure
+        return region_measure(entity.loops)["centroid"], None
     bbox = entity.bbox(doc)
     if bbox is None:
         raise ValueError(f"{entity.TYPE} {entity.id} has no position to point at")

@@ -26,7 +26,7 @@ from roaddraft.core import colors as colorlib  # noqa: E402
 from roaddraft.core import geometry as geo  # noqa: E402
 from roaddraft.core.units import lineweight_points  # noqa: E402
 from roaddraft.document.entities import (  # noqa: E402
-    Arc, Circle, Line, Polyline, Text, expand_entities,
+    Arc, Circle, Hatch, Line, Point, Polyline, Text, expand_entities, loop_points,
 )
 from roaddraft.document.sheets import SHEET_SIZES  # noqa: E402
 
@@ -90,10 +90,16 @@ def draw_primitives(ax, doc, prims, ppd, clip=None, dark=False, mono=False,
                               color=color, lw=lw, linestyle=_linestyle(dashes),
                               solid_capstyle="butt")
         elif isinstance(e, Polyline):
-            verts = list(e.vertices) + ([e.vertices[0]] if e.closed else [])
+            verts = e.points()
             artists = ax.plot([v[0] for v in verts], [v[1] for v in verts],
                               color=color, lw=lw, linestyle=_linestyle(dashes),
                               solid_capstyle="butt")
+        elif isinstance(e, Point):
+            draw_primitives(ax, doc, e.primitives(doc), ppd, clip=clip, dark=dark,
+                            mono=mono, lw_scale=lw_scale)
+            continue
+        elif isinstance(e, Hatch):
+            artists = _hatch_artists(ax, e, color, lw)
         elif isinstance(e, Arc):
             s, end = geo.arc_sweep(e.start_angle_deg, e.end_angle_deg)
             patch = MplArc(tuple(e.center), 2 * e.radius, 2 * e.radius,
@@ -120,6 +126,37 @@ def draw_primitives(ax, doc, prims, ppd, clip=None, dark=False, mono=False,
         if clip is not None:
             for artist in artists:
                 artist.set_clip_path(clip)
+
+
+def _hatch_artists(ax, e, color, lw):
+    """A hatch: its fill (SOLID) or its pattern's dashes, inside its loops."""
+    from matplotlib.collections import LineCollection
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path as MplPath
+
+    from roaddraft.document import hatching, regions
+
+    loops = regions.oriented(e.loops)  # outer CCW, islands CW: holes stay holes
+    polygons = [loop_points(loop, 3.0) for loop in loops]
+    if e.solid:
+        verts, codes = [], []
+        for poly in polygons:
+            verts += [tuple(v) for v in poly] + [tuple(poly[0])]
+            codes += [MplPath.MOVETO] + [MplPath.LINETO] * (len(poly) - 1) + \
+                [MplPath.CLOSEPOLY]
+        patch = PathPatch(MplPath(verts, codes), facecolor=color, edgecolor="none",
+                          alpha=e.opacity, lw=0)
+        ax.add_patch(patch)
+        return [patch]
+    segments, _too_dense = hatching.pattern_segments(polygons, e.pattern, e.scale,
+                                                     e.angle_deg)
+    if not segments:
+        return []
+    collection = LineCollection([(tuple(a), tuple(b)) for a, b in segments],
+                                colors=color, linewidths=max(lw * 0.6, 0.3),
+                                alpha=e.opacity, capstyle="round")
+    ax.add_collection(collection)
+    return [collection]
 
 
 def _new_axes(width_in, height_in):

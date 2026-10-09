@@ -160,7 +160,7 @@ QUERIES = {
             "space": {**NSTR, "description": "space to search (default 'model')"},
             "layer": {"description": "layer name, or a list of them"},
             "type": {"description": "line|polyline|arc|circle|text|blockref|table|"
-                                    "dimension, or a list"},
+                                    "dimension|point|hatch, or a list"},
             "anchor": {"type": "object",
                        "description": "match the design anchor: any of alignment, "
                                       "kind (element|offset|station|tick|pc|pt|...), "
@@ -340,12 +340,46 @@ QUERIES = {
         "example": {"sheet": "C-101"},
     },
     "get_entity": {
-        "description": "One entity by id, with its space and bounding box. "
-                       "Reference elements are addressed as 'REFNAME:ID' (as "
-                       "returned by hit_test) and come back in host "
-                       "coordinates, read-only.",
+        "description": "One entity by id, with its space, bounding box and properties -- "
+                       "what AutoCAD's LIST reads off it: a line's length and bearing, a "
+                       "curve's radius, delta, length, chord and tangent, a polyline's "
+                       "segments (and area when closed), a circle's area, a point's "
+                       "northing, easting and elevation, a hatch's area. Reference elements "
+                       "are addressed as 'REFNAME:ID' (as returned by hit_test) and come "
+                       "back in host coordinates, read-only.",
         "schema": obj({"id": NSTR}, ["id"]),
         "example": {"id": "LN-001"},
+    },
+    "area": {
+        "description": "Area and perimeter without drawing anything (AutoCAD AREA, "
+                       "MicroStation Measure Area): of closed entities or entities that join "
+                       "into closed loops (ids; a loop inside another is an island and "
+                       "subtracts), a hatch, a polygon of points, or the region of linework "
+                       "around a point (at) -- the area a pick-a-point hatch would fill. "
+                       "Square feet, square yards and acres in model space (square inches "
+                       "on a sheet), with the centroid and each loop's figures.",
+        "schema": obj({
+            "ids": {**IDS, "description": "closed entities (closed polylines, circles, "
+                                          "hatches) or entities that join end to end into "
+                                          "closed loops"},
+            "points": {"type": "array", "items": POINT, "minItems": 3,
+                       "description": "a polygon"},
+            "at": {**POINT, "description": "a point inside linework that closes around "
+                                           "it"},
+            "space": {**NSTR, "description": "with points or at: the space (default "
+                                             "model)"},
+            "islands": {"type": "boolean",
+                        "description": "with at: closed shapes inside subtract (default "
+                                       "true)"},
+            "gap_tolerance": {**POS, "description": "largest gap that still closes a loop "
+                                                    "(default 0.01)"},
+            "boundary_layers": {"type": "array", "items": NSTR,
+                                "description": "with at: only linework on these layers"},
+            "include_references": {"type": "boolean",
+                                   "description": "with at: reference linework too "
+                                                  "(default true)"},
+        }),
+        "example": {"at": [1700.0, 988.0]},
     },
     "get_extents": {
         "description": "Bounding box of all entities in a space.",
@@ -1252,8 +1286,10 @@ class Session:
                                    "get_sheet_state; reference elements are "
                                    "'REFNAME:ID' as returned by hit_test")
         space_key, entity = found
+        from roaddraft.document.inquiry import properties
         return {"space": space_key, "entity": entity.to_dict(),
-                "bbox": entity.bbox(self.doc)}
+                "bbox": entity.bbox(self.doc),
+                "properties": properties(self.doc, entity, space_key)}
 
     def _reference_element(self, eid: str):
         """A basefile element seen through an attachment, in host coordinates
@@ -1270,10 +1306,50 @@ class Session:
                     continue
                 for prim in prims:
                     if prim.id == sub_id:
+                        from roaddraft.document.inquiry import properties
                         return {"space": ref.space, "entity": prim.to_dict(),
                                 "bbox": prim.bbox(base), "reference": ref.name,
-                                "read_only": True}
+                                "read_only": True,
+                                "properties": properties(base, prim, ref.space)}
         return None
+
+    def _q_area(self, p):
+        from roaddraft.commands import cogo_handlers as ch
+        from roaddraft.commands.handlers import CommandFault
+        from roaddraft.document import regions
+        ways = [k for k in ("ids", "points", "at") if k in p]
+        if len(ways) != 1:
+            raise _QueryFault("give the area with exactly one of ids, points or at",
+                              hint="ids: closed entities or a chain that closes; points: a "
+                                   "polygon; at: a point inside linework that closes around "
+                                   "it")
+        params = dict(p)
+        if "ids" in params:
+            params["boundary"] = params.pop("ids")
+            space_key = self._locate(params["boundary"][0])[3]
+        else:
+            resolved = self.doc.resolve_space(p.get("space", "model"))
+            if resolved is None:
+                raise _QueryFault(f"space {p.get('space')!r} not found",
+                                  hint=f"valid spaces: {self.doc.space_refs()}")
+            space_key = resolved[0]
+        try:
+            loops, ids, how = ch.build_loops(self.doc, space_key, params)
+        except CommandFault as fault:
+            raise _QueryFault(str(fault), hint=fault.hint)
+        m = regions.region_measure(loops)
+        out = {"space": space_key, "area": round(m["area"], 6),
+               "perimeter": round(m["perimeter"], 6),
+               "centroid": [round(v, 6) for v in m["centroid"]] if m["centroid"] else None,
+               "text": ch.area_text(m["area"], space_key), "boundary": how,
+               "loops": [{"kind": row["kind"], "area": round(row["area"], 6),
+                          "perimeter": round(row["perimeter"], 6)} for row in m["loops"]]}
+        if ids:
+            out["ids"] = ids
+        if space_key == "model":
+            out["square_yards"] = round(m["area"] / 9.0, 6)
+            out["acres"] = round(m["area"] / 43560.0, 8)
+        return out
 
     def _q_get_extents(self, p):
         from roaddraft.document.references import extents_with_references
@@ -1319,8 +1395,17 @@ class Session:
         space_key, entities = resolved
         tol = p.get("tolerance", 5.0)
         hits = []
+
+        def inside_hatch(e, d):
+            # a click inside a hatch picks it, but any linework near the click wins
+            if e.TYPE == "hatch" and d > tol * 0.95:
+                from roaddraft.document.regions import point_in_loop
+                if sum(1 for loop in e.loops if point_in_loop(p["point"], loop)) % 2:
+                    return tol * 0.95
+            return d
+
         for e in entities.values():
-            d = entity_distance(self.doc, e, p["point"])
+            d = inside_hatch(e, entity_distance(self.doc, e, p["point"]))
             if d <= tol:
                 hits.append({"id": e.id, "type": e.TYPE, "layer": e.layer,
                              "distance": round(d, 4)})
@@ -1328,12 +1413,15 @@ class Session:
             from roaddraft.document.references import reference_groups
             for ref, base, prims in reference_groups(self.doc, space_key):
                 for e in prims:
-                    d = entity_distance(base, e, p["point"])
+                    d = inside_hatch(e, entity_distance(base, e, p["point"]))
                     if d <= tol:
                         hits.append({"id": f"{ref.name}:{e.id}", "type": e.TYPE,
                                      "layer": e.layer, "distance": round(d, 4),
                                      "reference": ref.name, "read_only": True})
-        hits.sort(key=lambda h: h["distance"])
+        # a tie goes to the thing with a place of its own -- a point, a block, a
+        # text set on a line -- over the line it sits on
+        rank = {"point": 0, "blockref": 1, "text": 2}
+        hits.sort(key=lambda h: (h["distance"], rank.get(h["type"], 3)))
         return {"count": len(hits), "hits": hits[:5]}
 
     def _q_get_journal(self, p):

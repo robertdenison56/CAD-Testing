@@ -234,16 +234,47 @@ class Line(Entity):
                     start=fn(self.start), end=fn(self.end))
 
 
+def as_bulges(value, n_vertices: int, closed: bool) -> Optional[list]:
+    """Validate a polyline's bulges: one per vertex (the segment that starts
+    there; an open polyline's last one is unused and may be left off), each
+    tan(sweep / 4) of an arc segment, 0 for a straight one. Returns None when
+    every segment is straight, so straight polylines serialize as before."""
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"bulges must be a list of numbers, got {value!r}")
+    out = []
+    for i, b in enumerate(value):
+        if not _is_number(b) or not math.isfinite(b):
+            raise ValueError(f"bulges[{i}] must be a number, got {b!r}")
+        out.append(float(b))
+    if len(out) == n_vertices - 1 and not closed:
+        out.append(0.0)
+    if len(out) != n_vertices:
+        raise ValueError(f"bulges needs one value per vertex ({n_vertices}), got {len(out)}")
+    if not any(abs(b) > 1e-12 for b in out):
+        return None
+    return out
+
+
 @dataclass
 class Polyline(Entity):
+    """Vertices joined by segments, each straight or a circular arc. An arc
+    segment is stored the DXF/LWPOLYLINE way, as the bulge of the segment that
+    starts at a vertex: tan(sweep / 4), positive counter-clockwise (see
+    ``geometry.bulge_arc``). ``bulges`` is None when every segment is
+    straight."""
     vertices: list = field(default_factory=list)
     closed: bool = False
+    bulges: Optional[list] = None
 
     TYPE = "polyline"
 
     def to_dict(self):
         d = self._base_dict()
         d.update(vertices=[list(v) for v in self.vertices], closed=self.closed)
+        if self.has_arcs:
+            d["bulges"] = list(self.bulges)
         return d
 
     @classmethod
@@ -251,17 +282,57 @@ class Polyline(Entity):
         vertices = [as_point(v) for v in d["vertices"]]
         if len(vertices) < 2:
             raise ValueError("polyline needs at least 2 vertices")
-        return cls(vertices=vertices,
-                   closed=bool(d.get("closed", False)), **cls._base_kwargs(d))
+        closed = bool(d.get("closed", False))
+        return cls(vertices=vertices, closed=closed,
+                   bulges=as_bulges(d.get("bulges"), len(vertices), closed),
+                   **cls._base_kwargs(d))
+
+    @property
+    def has_arcs(self) -> bool:
+        return bool(self.bulges) and any(abs(b) > 1e-12 for b in self.bulges)
+
+    def bulge(self, i: int) -> float:
+        if not self.bulges or i >= len(self.bulges):
+            return 0.0
+        return self.bulges[i]
+
+    def segments(self):
+        """``[(start, end, bulge)]`` for every segment, the closing one
+        included when the polyline is closed."""
+        verts = self.vertices
+        out = [(verts[i], verts[i + 1], self.bulge(i)) for i in range(len(verts) - 1)]
+        if self.closed and len(verts) > 2:
+            out.append((verts[-1], verts[0], self.bulge(len(verts) - 1)))
+        return out
+
+    def points(self, step_deg: float = 4.0):
+        """The polyline as points to draw through, arcs sampled every
+        ``step_deg`` (the first point repeated at the end when closed)."""
+        if not self.has_arcs:
+            pts = [list(v) for v in self.vertices]
+            if self.closed and len(pts) > 2:
+                pts.append(list(pts[0]))
+            return pts
+        pts = [list(self.vertices[0])]
+        for a, b, bulge in self.segments():
+            pts.extend(geo.bulge_points(a, b, bulge, step_deg)[1:])
+        return pts
 
     def bbox(self, doc):
         if not self.vertices:
             return None
-        return geo.bbox_of_points(self.vertices)
+        if not self.has_arcs:
+            return geo.bbox_of_points(self.vertices)
+        bb = geo.bbox_of_points(self.vertices)
+        for a, b, bulge in self.segments():
+            if abs(bulge) > 1e-12:
+                bb = geo.bbox_union(bb, geo.bulge_bbox(a, b, bulge))
+        return bb
 
     def transformed(self, fn, angle_delta_deg, scale):
         return Polyline(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor, annotative=self.annotative,
-                        vertices=[fn(v) for v in self.vertices], closed=self.closed)
+                        vertices=[fn(v) for v in self.vertices], closed=self.closed,
+                        bulges=list(self.bulges) if self.bulges else None)
 
 
 @dataclass
@@ -371,10 +442,16 @@ class Text(Entity):
 
 @dataclass
 class BlockRef(Entity):
+    """An insertion of a block definition: its base point lands on
+    ``position``, scaled and rotated. ``mirrored`` flips the symbol across its
+    own vertical axis first (AutoCAD's negative X scale), which is what
+    mirror_entities makes of a block -- a left-turn arrow becomes a right-turn
+    arrow."""
     block_name: str = ""
     position: list = field(default_factory=lambda: [0.0, 0.0])
     scale: float = 1.0
     rotation_deg: float = 0.0
+    mirrored: bool = False
 
     TYPE = "blockref"
 
@@ -382,13 +459,16 @@ class BlockRef(Entity):
         d = self._base_dict()
         d.update(block_name=self.block_name, position=list(self.position),
                  scale=self.scale, rotation_deg=self.rotation_deg)
+        if self.mirrored:
+            d["mirrored"] = True
         return d
 
     @classmethod
     def from_dict(cls, d):
         return cls(block_name=d["block_name"], position=as_point(d["position"]),
                    scale=as_positive(d.get("scale", 1.0), "scale"),
-                   rotation_deg=float(d.get("rotation_deg", 0.0)), **cls._base_kwargs(d))
+                   rotation_deg=float(d.get("rotation_deg", 0.0)),
+                   mirrored=bool(d.get("mirrored", False)), **cls._base_kwargs(d))
 
     def bbox(self, doc):
         prims = expand_entities(doc, [self])
@@ -401,7 +481,8 @@ class BlockRef(Entity):
         return BlockRef(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype, anchor=self.anchor, annotative=self.annotative,
                         block_name=self.block_name, position=fn(self.position),
                         scale=self.scale * scale,
-                        rotation_deg=self.rotation_deg + angle_delta_deg)
+                        rotation_deg=self.rotation_deg + angle_delta_deg,
+                        mirrored=self.mirrored)
 
 
 @dataclass
@@ -658,9 +739,246 @@ class Dimension(Entity):
             measure_scale=(self.measure_scale / scale if scale else self.measure_scale))
 
 
+POINT_MARKERS = ("x", "cross", "circle", "circle_x", "dot", "none")
+POINT_LABEL_FIELDS = ("number", "elevation", "description")
+
+
+def _as_point_number(value):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or float(value) != int(value) or int(value) < 1:
+        raise ValueError(f"a point number is a whole number from 1 up, got {value!r}")
+    return int(value)
+
+
+def _as_label_fields(value):
+    if value is None:
+        return list(POINT_LABEL_FIELDS)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"label must be a list of {list(POINT_LABEL_FIELDS)}, got {value!r}")
+    out = []
+    for item in value:
+        if item not in POINT_LABEL_FIELDS:
+            raise ValueError(f"label fields are {list(POINT_LABEL_FIELDS)}, got {item!r}")
+        if item in out:
+            raise ValueError(f"label lists {item!r} twice")
+        out.append(item)
+    return out
+
+
+@dataclass
+class Point(Entity):
+    """A COGO point (Civil 3D point, MicroStation/ORD survey point): a
+    numbered location with an optional elevation and description (the raw
+    description code a survey carries, e.g. 'EP', 'MON'), drawn as a marker
+    with its label stacked beside it -- point number, elevation, description.
+
+    ``size`` is the marker's width and ``text_height`` the label's, both in
+    space units (feet in model space); ``label`` lists which fields show."""
+    position: list = field(default_factory=lambda: [0.0, 0.0])
+    number: Optional[int] = None
+    elevation: Optional[float] = None
+    description: str = ""
+    marker: str = "x"
+    size: float = 1.0
+    text_height: float = 1.0
+    label: list = field(default_factory=lambda: list(POINT_LABEL_FIELDS))
+    style: str = "STANDARD"
+
+    TYPE = "point"
+
+    def to_dict(self):
+        d = self._base_dict()
+        d.update(position=list(self.position), number=self.number,
+                 elevation=self.elevation, description=self.description,
+                 marker=self.marker, size=self.size, text_height=self.text_height,
+                 label=list(self.label), style=self.style)
+        return d
+
+    @classmethod
+    def from_dict(cls, d):
+        elevation = d.get("elevation")
+        if elevation is not None and (not _is_number(elevation)
+                                      or not math.isfinite(elevation)):
+            raise ValueError(f"elevation must be a number or null, got {elevation!r}")
+        return cls(position=as_point(d["position"]),
+                   number=_as_point_number(d.get("number")),
+                   elevation=None if elevation is None else float(elevation),
+                   description=str(d.get("description") or ""),
+                   marker=_in_enum(d.get("marker", "x"), POINT_MARKERS, "marker"),
+                   size=as_positive(d.get("size", 1.0), "size"),
+                   text_height=as_positive(d.get("text_height", 1.0), "text_height"),
+                   label=_as_label_fields(d.get("label")),
+                   style=d.get("style", "STANDARD"), **cls._base_kwargs(d))
+
+    def label_lines(self) -> List[str]:
+        lines = []
+        for name in self.label:
+            if name == "number" and self.number is not None:
+                lines.append(str(self.number))
+            elif name == "elevation" and self.elevation is not None:
+                lines.append(f"{self.elevation:.2f}")
+            elif name == "description" and self.description:
+                lines.append(self.description)
+        return lines
+
+    def primitives(self, doc) -> List[Entity]:
+        """The marker and the label, as Line/Circle/Text primitives."""
+        x, y = self.position
+        h = self.size / 2.0
+        base = dict(layer=self.layer, color=self.color, linetype=None)
+        out: List[Entity] = []
+
+        def line(tag, a, b):
+            out.append(Line(id=f"{self.id}:{tag}", start=a, end=b, **base))
+
+        if self.marker in ("x", "circle_x"):
+            k = h * math.sqrt(0.5) if self.marker == "circle_x" else h
+            line("m1", [x - k, y - k], [x + k, y + k])
+            line("m2", [x - k, y + k], [x + k, y - k])
+        if self.marker == "cross":
+            line("m1", [x - h, y], [x + h, y])
+            line("m2", [x, y - h], [x, y + h])
+        if self.marker in ("circle", "circle_x"):
+            out.append(Circle(id=f"{self.id}:m3", center=[x, y], radius=h, **base))
+        if self.marker == "dot":
+            out.append(Circle(id=f"{self.id}:m3", center=[x, y], radius=h * 0.3, **base))
+        lines = self.label_lines()
+        spacing = self.text_height * 1.5
+        for k, content in enumerate(lines):
+            dy = ((len(lines) - 1) / 2.0 - k) * spacing
+            out.append(Text(id=f"{self.id}:t{k + 1}", position=[x + h + self.text_height * 0.5,
+                                                                  y + dy],
+                            content=content, height=self.text_height, style=self.style,
+                            halign="left", valign="middle", **base))
+        return out
+
+    def bbox(self, doc):
+        bb = geo.bbox_of_points([self.position])
+        for prim in self.primitives(doc):
+            bb = geo.bbox_union(bb, prim.bbox(doc))
+        return bb
+
+    def transformed(self, fn, angle_delta_deg, scale):
+        return Point(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+                     anchor=self.anchor, annotative=self.annotative,
+                     position=fn(self.position), number=self.number,
+                     elevation=self.elevation, description=self.description,
+                     marker=self.marker, size=self.size * scale,
+                     text_height=self.text_height * scale, label=list(self.label),
+                     style=self.style)
+
+
+def as_loops(value) -> list:
+    """Validate hatch boundary loops: ``[{"vertices": [[x, y], ...], "bulges":
+    [...]}]``, each implicitly closed, bulges optional (one per vertex, for the
+    segment that starts there)."""
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("a hatch needs at least one boundary loop")
+    loops = []
+    for i, loop in enumerate(value):
+        if not isinstance(loop, dict) or "vertices" not in loop:
+            raise ValueError(f"loops[{i}] must be an object with vertices (and optional "
+                             f"bulges), got {loop!r}")
+        unknown = set(loop) - {"vertices", "bulges"}
+        if unknown:
+            raise ValueError(f"loops[{i}]: unknown keys {sorted(unknown)}")
+        vertices = [as_point(v) for v in loop["vertices"]]
+        try:
+            bulges = as_bulges(loop.get("bulges"), len(vertices), True)
+        except ValueError as ex:
+            raise ValueError(f"loops[{i}]: {ex}")
+        if len(vertices) < (2 if bulges else 3):
+            raise ValueError(f"loops[{i}] needs at least 3 vertices (2 when its segments "
+                             f"are arcs)")
+        out = {"vertices": vertices}
+        if bulges:
+            out["bulges"] = bulges
+        loops.append(out)
+    return loops
+
+
+def loop_segments(loop):
+    """``[(start, end, bulge)]`` of a closed boundary loop."""
+    verts = loop["vertices"]
+    bulges = loop.get("bulges") or [0.0] * len(verts)
+    return [(verts[i], verts[(i + 1) % len(verts)], bulges[i]) for i in range(len(verts))]
+
+
+def loop_points(loop, step_deg: float = 4.0):
+    """A loop as a polygon (arcs sampled), not repeating its first point."""
+    pts = []
+    for a, b, bulge in loop_segments(loop):
+        pts.extend(geo.bulge_points(a, b, bulge, step_deg)[:-1])
+    return pts
+
+
+@dataclass
+class Hatch(Entity):
+    """An area filled solid or with a pattern (AutoCAD HATCH, MicroStation
+    Pattern Area / Fill): pavement, removals, a legend swatch.
+
+    ``loops`` are closed boundaries; an area inside an even number of them is
+    left open, so a loop inside another is an island. ``pattern`` is SOLID or
+    an AutoCAD pattern name (ANSI31, AR-CONC, GRAVEL, ...); ``scale`` sizes it
+    the AutoCAD way (pattern units times scale), ``angle_deg`` turns it.
+    ``opacity`` below 1 screens it, as a shaded area on a plan often is."""
+    loops: list = field(default_factory=list)
+    pattern: str = "SOLID"
+    scale: float = 1.0
+    angle_deg: float = 0.0
+    opacity: float = 1.0
+
+    TYPE = "hatch"
+
+    def to_dict(self):
+        d = self._base_dict()
+        d.update(loops=[{k: [list(v) for v in loop["vertices"]] if k == "vertices"
+                         else list(loop[k]) for k in loop} for loop in self.loops],
+                 pattern=self.pattern, scale=self.scale, angle_deg=self.angle_deg,
+                 opacity=self.opacity)
+        return d
+
+    @classmethod
+    def from_dict(cls, d):
+        from roaddraft.document.hatching import canonical_pattern
+        opacity = float(d.get("opacity", 1.0))
+        if not 0.0 < opacity <= 1.0:
+            raise ValueError(f"opacity must be more than 0 and at most 1, got {opacity:g}")
+        return cls(loops=as_loops(d["loops"]),
+                   pattern=canonical_pattern(d.get("pattern", "SOLID")),
+                   scale=as_positive(d.get("scale", 1.0), "scale"),
+                   angle_deg=float(d.get("angle_deg", 0.0)), opacity=opacity,
+                   **cls._base_kwargs(d))
+
+    @property
+    def solid(self) -> bool:
+        return self.pattern == "SOLID"
+
+    def bbox(self, doc):
+        bb = None
+        for loop in self.loops:
+            for a, b, bulge in loop_segments(loop):
+                bb = geo.bbox_union(bb, geo.bulge_bbox(a, b, bulge))
+        return bb
+
+    def transformed(self, fn, angle_delta_deg, scale):
+        loops = []
+        for loop in self.loops:
+            moved = {"vertices": [fn(v) for v in loop["vertices"]]}
+            if loop.get("bulges"):
+                moved["bulges"] = list(loop["bulges"])
+            loops.append(moved)
+        return Hatch(id=self.id, layer=self.layer, color=self.color, linetype=self.linetype,
+                     anchor=self.anchor, annotative=self.annotative, loops=loops,
+                     pattern=self.pattern, scale=self.scale * scale,
+                     angle_deg=self.angle_deg + angle_delta_deg, opacity=self.opacity)
+
+
 ENTITY_TYPES = {
     cls.TYPE: cls
-    for cls in (Line, Polyline, Arc, Circle, Text, BlockRef, Table, Dimension)
+    for cls in (Line, Polyline, Arc, Circle, Text, BlockRef, Table, Dimension, Point, Hatch)
 }
 
 
@@ -671,6 +989,14 @@ def entity_from_dict(d) -> Entity:
     return ENTITY_TYPES[t].from_dict(d)
 
 
+def _segment_distance(p, a, b, bulge) -> float:
+    arc = geo.bulge_arc(a, b, bulge)
+    if arc is None:
+        return geo.dist_point_to_segment(p, a, b)
+    center, radius, start, sweep = arc
+    return geo.dist_point_to_arc(p, center, radius, start, sweep)
+
+
 def entity_distance(doc, entity: Entity, p) -> float:
     """Distance from a point to an entity, for screen picking (hit tests)."""
     if isinstance(entity, Line):
@@ -679,10 +1005,12 @@ def entity_distance(doc, entity: Entity, p) -> float:
         verts = entity.vertices
         if len(verts) < 2:
             return geo.distance(p, verts[0]) if verts else float("inf")
-        segs = list(zip(verts, verts[1:]))
-        if entity.closed:
-            segs.append((verts[-1], verts[0]))
-        return min(geo.dist_point_to_segment(p, a, b) for a, b in segs)
+        return min(_segment_distance(p, a, b, bulge) for a, b, bulge in entity.segments())
+    if isinstance(entity, Point):
+        return geo.distance(p, entity.position)
+    if isinstance(entity, Hatch):
+        return min(_segment_distance(p, a, b, bulge)
+                   for loop in entity.loops for a, b, bulge in loop_segments(loop))
     if isinstance(entity, Arc):
         s, e = geo.arc_sweep(entity.start_angle_deg, entity.end_angle_deg)
         ang = math.degrees(math.atan2(p[1] - entity.center[1],
@@ -705,8 +1033,10 @@ def entity_distance(doc, entity: Entity, p) -> float:
 
 
 def expand_entities(doc, entities, depth: int = 0) -> List[Entity]:
-    """Recursively expand BlockRefs and Tables into drawable primitives.
-    Line/Polyline/Arc/Circle/Text pass through unchanged."""
+    """Recursively expand BlockRefs, Tables and Dimensions into drawable
+    primitives. Line/Polyline/Arc/Circle/Text pass through unchanged, and so
+    do Point and Hatch, which every renderer draws itself (a point is found
+    and snapped to as one thing, a hatch fills rather than strokes)."""
     out: List[Entity] = []
     for e in entities:
         if isinstance(e, BlockRef):
@@ -717,13 +1047,25 @@ def expand_entities(doc, entities, depth: int = 0) -> List[Entity]:
                 continue
             bx, by = block.base_point
             s, rot = e.scale, e.rotation_deg
+            inner = expand_entities(doc, block.entities, depth + 1)
+            if e.mirrored:
+                # x -> -x in the block, then rotate and place: R(rot) M = R(rot + 180) F
+                from roaddraft.document.transform import Similarity, transform_entity
+                place = Similarity(scale=s, rotation_deg=rot + 180.0, mirror=True)
+                origin = place.apply([bx, by])
+                place = place.then_translate([e.position[0] - origin[0],
+                                              e.position[1] - origin[1]])
+                for prim in inner:
+                    t = transform_entity(prim, place)
+                    t.id = f"{e.id}:{prim.id}"
+                    out.append(t)
+                continue
 
             def fn(p, e=e, bx=bx, by=by, s=s, rot=rot):
                 local = [(p[0] - bx) * s, (p[1] - by) * s]
                 local = geo.rotate_point(local, rot)
                 return [e.position[0] + local[0], e.position[1] + local[1]]
 
-            inner = expand_entities(doc, block.entities, depth + 1)
             for prim in inner:
                 t = prim.transformed(fn, rot, s)
                 t.id = f"{e.id}:{prim.id}"

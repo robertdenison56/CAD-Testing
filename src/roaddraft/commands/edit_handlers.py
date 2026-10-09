@@ -242,8 +242,8 @@ def _describe_side(path: paths.Path, d: float) -> str:
 
 def _entities_for(doc: Document, space_key: str, path: paths.Path, groups, sources,
                   fields: dict) -> List[str]:
-    """Draw the parallel: a polyline stays one polyline (when its corners stay
-    sharp), every other piece becomes a line or an arc."""
+    """Draw the parallel: a polyline's copy is one polyline (its arcs and any
+    round joins as bulges); every other piece becomes a line or an arc."""
     created: List[str] = []
     by_source = {}
     for i, group in enumerate(groups):
@@ -251,27 +251,15 @@ def _entities_for(doc: Document, space_key: str, path: paths.Path, groups, sourc
             by_source.setdefault(path.owners[i], []).append(group)
     for index in sorted(by_source):
         source = sources[index]
-        source_groups = by_source[index]
-        joins_inside = any(len(g) > 1 for g in source_groups[:-1]) or (
-            path.closed and len(source_groups[-1]) > 1)
-        mains = [g[0] for g in source_groups]
-        if isinstance(source, Polyline) and not joins_inside \
-                and all(isinstance(piece, paths.Seg) for piece in mains):
-            if path.closed and len(sources) == 1:
-                vertices = [piece.start for piece in mains]
-            else:
-                vertices = [mains[0].start] + [piece.end for piece in mains]
+        pieces = [piece for group in by_source[index] for piece in group]
+        if isinstance(source, Polyline):
+            closed = bool(path.closed and len(sources) == 1)
             _, e = _add(doc, space_key, "polyline", Polyline,
-                        {**fields, "vertices": vertices,
-                         "closed": bool(path.closed and len(sources) == 1)})
+                        {**fields, **paths.polyline_fields_of(pieces, closed)})
             created.append(e.id)
-            if len(source_groups[-1]) > 1:  # a round join out of this polyline
-                for piece in source_groups[-1][1:]:
-                    created.append(_draw_piece(doc, space_key, piece, fields))
             continue
-        for group in source_groups:
-            for piece in group:
-                created.append(_draw_piece(doc, space_key, piece, fields))
+        for piece in pieces:
+            created.append(_draw_piece(doc, space_key, piece, fields))
     return created
 
 
@@ -444,8 +432,11 @@ def fillet(doc: Document, p: dict):
                 new_start, new_end = list(line.start), list(t)
             _key, container = doc.resolve_space(space_key)
             container[eid] = Line(id=line.id, layer=line.layer, color=line.color,
-                                  linetype=line.linetype, anchor=line.anchor,
+                                  linetype=line.linetype,
+                                  anchor=dict(line.anchor) if line.anchor else None,
                                   annotative=line.annotative, start=new_start, end=new_end)
+            from roaddraft.commands.modify_handlers import _restation
+            _restation(doc, container[eid])  # an edge cut back starts at a new station
             modified.append(eid)
 
     created: List[str] = []

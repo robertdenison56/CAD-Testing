@@ -19,10 +19,12 @@ import jsonschema
 from jsonschema.exceptions import best_match
 
 from roaddraft.commands import annotation_handlers as ah
+from roaddraft.commands import cogo_handlers as ch
 from roaddraft.commands import design_handlers as dh
 from roaddraft.commands import dimension_handlers as dim
 from roaddraft.commands import edit_handlers as eh
 from roaddraft.commands import handlers as h
+from roaddraft.commands import modify_handlers as mh
 from roaddraft.commands.schemas import EXAMPLES, SCHEMAS
 from roaddraft.document.document import Document
 
@@ -33,7 +35,12 @@ UNDO_LIMIT = 100
 # creates (_stamp_provenance), which makes provenance the bus's to write
 # rather than the handler's or the caller's.
 ANCHOR_PRODUCERS = ("draw_alignment", "draw_offset", "annotate_stationing",
-                    "place_label", "place_curve_table")
+                    "place_label", "place_curve_table", "draw_station_offset")
+# Commands that cut new pieces out of existing linework. A piece of an edge a
+# producer placed is still that producer's: the stamp it carried survives. A
+# piece of anything else is stamped with the cutting command, which no
+# verifier trusts -- so cutting cannot launder a hand-made anchor.
+CUTTERS = ("trim", "break_entity")
 
 
 @dataclass
@@ -81,6 +88,16 @@ REGISTRY: List[CommandSpec] = [
                 {"c3d": ["ARC"], "ord": ["place arc"]}),
     CommandSpec("draw_circle", "Draw a circle.", h.draw_circle,
                 {"c3d": ["CIRCLE"], "ord": ["place circle"]}),
+    CommandSpec("hatch",
+                "Fill or pattern an area (AutoCAD HATCH, MicroStation Pattern Area / Fill): "
+                "SOLID or an AutoCAD pattern -- ANSI31 for removal or new pavement, AR-CONC for "
+                "concrete, GRAVEL, EARTH and the rest. Name the boundary entities, give a "
+                "polygon, or give a point inside the area and the engine traces the linework "
+                "around it (dangling lines ignored, closed shapes inside left as islands). The "
+                "answer gives the area in square feet, square yards and acres; DXF export "
+                "writes a real HATCH.",
+                ch.hatch, {"c3d": ["HATCH", "H", "BHATCH"],
+                           "ord": ["pattern area", "fill", "hatch area"]}),
     CommandSpec("draw_traverse",
                 "Draw lines and curves by bearing and distance (COGO), the way a deed, a "
                 "field book or a design report gives them: start at a point -- or at the end "
@@ -132,6 +149,31 @@ REGISTRY: List[CommandSpec] = [
                 "Place a data table (e.g. curve data). Position is the top-left "
                 "corner; column widths are in space units.", h.place_table,
                 {"c3d": ["TABLE"], "ord": ["place table"]}),
+    CommandSpec("create_points",
+                "Create COGO points -- numbered points with an optional elevation and "
+                "description (Civil 3D points, ORD survey points) -- from a list, from a point "
+                "file's text (PNEZD and the other column orders), or on the ends and vertices "
+                "of linework. Each draws a marker with its number, elevation and description "
+                "beside it. find_entities type=point finds them, snap lands on them (node), "
+                "place_point_table lists them.",
+                ch.create_points, {"c3d": ["CREATEPOINTS", "COGOPOINT", "IMPORTPOINTS", "PO"],
+                                   "ord": ["place point", "import survey points"]}),
+    CommandSpec("place_point_table",
+                "Place a table of COGO points -- number, northing, easting, elevation, "
+                "description -- for all of them, a list or a range ('1-20, 25'). Column widths "
+                "fit the contents; position is the top-left corner.",
+                ch.place_point_table, {"c3d": ["ADDPOINTTABLE"],
+                                       "ord": ["place point table"]}),
+    CommandSpec("label_segments",
+                "Letter lines and curves with their bearings and distances -- right of way, "
+                "easements, a deed's courses: bearing over distance along each line, radius and "
+                "delta over length on each curve, or L1/C1 tags on the linework with a line "
+                "table and a curve table (Civil 3D segment labels and line/curve tables). "
+                "Bearings run the way each line was drawn. Given a sheet as space, model "
+                "linework is lettered on the sheet through its viewports, in paper inches.",
+                ch.label_segments,
+                {"c3d": ["ADDSEGMENTLABELS", "ADDLINETABLE", "ADDCURVETABLE"],
+                 "ord": ["label element", "place line table"]}),
     CommandSpec("move_entities", "Translate entities by [dx, dy].",
                 h.move_entities, {"c3d": ["MOVE"], "ord": ["move element"]}),
     CommandSpec("offset_entity",
@@ -155,6 +197,85 @@ REGISTRY: List[CommandSpec] = [
                 "tangent length and arc length.",
                 eh.fillet,
                 {"c3d": ["FILLET", "F"], "ord": ["construct circular fillet", "fillet single"]}),
+    CommandSpec("chamfer",
+                "Cut the corner between two lines with a straight line, a distance back along "
+                "each from where they meet, or a distance and an angle (AutoCAD CHAMFER, "
+                "MicroStation Construct Chamfer) -- a corner cut-off, a building corner -- and "
+                "trim the lines to it.",
+                mh.chamfer, {"c3d": ["CHAMFER", "CHA"], "ord": ["construct chamfer"]}),
+    CommandSpec("trim",
+                "Cut linework back to where it crosses other linework (AutoCAD TRIM, "
+                "MicroStation Trim to Element): each target names the entity and at, a point on "
+                "the part to cut away (or keep, the part to keep). The cutting edges are every "
+                "line, polyline, arc and circle in the space -- references included -- unless "
+                "boundaries names them. Pavement edges drawn through a cul-de-sac bulb or past "
+                "a cross street are trimmed this way; a circle cut twice becomes an arc. Design "
+                "linework keeps its anchor, re-stationed.",
+                mh.trim, {"c3d": ["TRIM", "TR"],
+                          "ord": ["trim to element", "trim multiple", "intellitrim"]}),
+    CommandSpec("extend",
+                "Run lines, arcs and open polylines on to the nearest boundary edge (AutoCAD "
+                "EXTEND, MicroStation Extend Element to Intersection) -- a curb line to the "
+                "cross street's edge. A line runs straight on, an arc round its circle; "
+                "extend_boundaries also counts an edge where it would cross if it ran on.",
+                mh.extend, {"c3d": ["EXTEND", "EX"],
+                            "ord": ["extend element to intersection", "extend line"]}),
+    CommandSpec("lengthen",
+                "Change the length of a line, arc or open polyline at one end: by delta "
+                "(negative shortens), to a total, by percent, or to where a point falls (AutoCAD "
+                "LENGTHEN) -- 'extend the edge 25 ft', 'make the taper 120 ft long'.",
+                mh.lengthen, {"c3d": ["LENGTHEN", "LEN"], "ord": ["extend line by key-in"]}),
+    CommandSpec("break_entity",
+                "Split an entity in two at a point, or cut out the part between two points "
+                "(AutoCAD BREAK / BREAKATPOINT, MicroStation Partial Delete). A circle loses "
+                "the part from at counter-clockwise to to and becomes an arc; a closed polyline "
+                "opens.",
+                mh.break_entity, {"c3d": ["BREAK", "BREAKATPOINT"],
+                                  "ord": ["partial delete", "break element"]}),
+    CommandSpec("join_entities",
+                "Join pieces into one (AutoCAD JOIN / PEDIT Join, MicroStation Create Complex "
+                "Chain): collinear lines into one line, arcs on one circle into one arc (a "
+                "circle when they close it), and anything that meets end to end into one "
+                "polyline that keeps its arcs as arc segments -- a curb line drawn in pieces "
+                "becomes one thing to offset, measure or hatch.",
+                mh.join_entities, {"c3d": ["JOIN", "J", "PEDIT"],
+                                   "ord": ["create complex chain", "join elements"]}),
+    CommandSpec("explode_entities",
+                "Take compound entities apart (AutoCAD EXPLODE, MicroStation Drop Element): "
+                "a polyline into lines and arcs, a block reference into what the block is "
+                "drawn with, a dimension or table into lines and text, a point into its marker "
+                "and label, a hatch into its boundary polylines.",
+                mh.explode_entities, {"c3d": ["EXPLODE", "X"],
+                                      "ord": ["drop element", "drop complex status"]}),
+    CommandSpec("copy_entities",
+                "Copy entities by a displacement -- delta, or from a base point to another -- "
+                "count times over (AutoCAD COPY, MicroStation Copy Element). Reference elements "
+                "are copied into this document. Copies are drawing, not design: no anchor, and "
+                "COGO points get new numbers.",
+                mh.copy_entities, {"c3d": ["COPY", "CO", "CP"], "ord": ["copy element"]}),
+    CommandSpec("rotate_entities",
+                "Rotate entities about a base point by an angle (degrees counter-clockwise), or "
+                "turn one direction onto another -- 'turn the building so this side runs "
+                "N 30°00'00\" E' (AutoCAD ROTATE Reference, MicroStation Rotate). copy=true "
+                "rotates a copy.",
+                mh.rotate_entities, {"c3d": ["ROTATE", "RO"], "ord": ["rotate element"]}),
+    CommandSpec("mirror_entities",
+                "Mirror entities across a line through two points, keeping the original unless "
+                "keep_original is false (AutoCAD MIRROR, MicroStation Mirror) -- the other half "
+                "of a symmetric layout, a right-turn arrow from a left one. Text stays "
+                "readable; blocks turn over.",
+                mh.mirror_entities, {"c3d": ["MIRROR", "MI"], "ord": ["mirror element"]}),
+    CommandSpec("scale_entities",
+                "Scale entities about a base point by a factor, or so one length becomes "
+                "another (AutoCAD SCALE Reference, MicroStation Scale). copy=true scales a copy.",
+                mh.scale_entities, {"c3d": ["SCALE", "SC"], "ord": ["scale element"]}),
+    CommandSpec("array_entities",
+                "Repeat entities in rows and columns, round a center, or along a path -- a "
+                "line, a chain or an alignment, every so many feet or a count, each copy turned "
+                "to the path (AutoCAD ARRAY / ARRAYPATH, MicroStation Construct Array). The "
+                "original stays; copies are added.",
+                mh.array_entities, {"c3d": ["ARRAY", "ARRAYRECT", "ARRAYPOLAR", "ARRAYPATH"],
+                                    "ord": ["construct array", "array"]}),
     CommandSpec("modify_entity",
                 "Change fields of one entity (geometry, content, layer, style...).",
                 h.modify_entity, {"c3d": ["PROPERTIES"], "ord": ["modify element"]}),
@@ -187,6 +308,15 @@ REGISTRY: List[CommandSpec] = [
                 "points.",
                 h.annotate_stationing,
                 {"c3d": ["ADDALIGNMENTLABELS"], "ord": ["annotate stationing"]}),
+    CommandSpec("place_along",
+                "Place a symbol (a block) or COGO points along a path -- a line, a chain or an "
+                "alignment -- every so many feet (AutoCAD MEASURE) or a count of them evenly "
+                "spaced (DIVIDE), on it or offset square to it: delineators every 200 ft 2 ft "
+                "outside the edge, guard rail posts, station markers. On an alignment the "
+                "positions fall on round stations; blocks turn with the path.",
+                ch.place_along, {"c3d": ["DIVIDE", "ME", "DIV"],
+                                 "ord": ["construct points along element",
+                                         "place cell along element"]}),
     CommandSpec("create_alignment",
                 "Create a horizontal alignment in the design model from PIs "
                 "([x, y] at BEGIN/END, [x, y, R] interior), from bearings and distances "
@@ -236,6 +366,15 @@ REGISTRY: List[CommandSpec] = [
                 dh.draw_offset,
                 {"c3d": ["CREATEOFFSETALIGNMENT", "OFFSET"],
                  "ord": ["single offset entire element", "offset element"]}),
+    CommandSpec("draw_station_offset",
+                "Draw linework through station-and-offset points of an alignment "
+                "('30+00@12R', 'PC-1@12L', 'END@14R') -- Civil 3D's transparent station-offset "
+                "('SO) with no coordinates worked out by hand. Where consecutive points share "
+                "an offset the run follows the alignment exactly (arcs on its curves, anchored "
+                "like draw_offset); where the offset changes it is a straight taper. A turn "
+                "lane is one call: ['30+00@12R', '31+20@24R', '36+00@24R', '36+00@12R'].",
+                ch.draw_station_offset, {"c3d": ["SO", "LINEBYSTATIONOFFSET"],
+                                         "ord": ["place line by station offset"]}),
     CommandSpec("place_label",
                 "Place a design-anchored label: name a point on an alignment "
                 "(PC-1, T-2, '18+00@25L', ...) and a kind (station, pc, pt, pi, "
@@ -410,6 +549,8 @@ class CommandBus:
         for eid in created:
             found = self.doc.find_entity(eid)
             if found is not None and found[1].anchor is not None:
+                if name in CUTTERS and found[1].anchor.get("placed_by") in ANCHOR_PRODUCERS:
+                    continue  # a piece cut from a producer's linework stays its
                 found[1].anchor["placed_by"] = name
 
     def _restore(self, snapshot: dict):

@@ -126,6 +126,10 @@ class Seg:
     def reversed(self) -> "Seg":
         return Seg(self.b, self.a)
 
+    def cut(self, s0: float, s1: float) -> "Seg":
+        """The part from ``s0`` to ``s1`` along it (either may be beyond an end)."""
+        return Seg(self.point_at(s0), self.point_at(s1))
+
     def with_start(self, p) -> "Seg":
         return Seg(p, self.b)
 
@@ -224,6 +228,10 @@ class ArcSeg:
     def reversed(self) -> "ArcSeg":
         return ArcSeg(self.center, self.radius, self.a1, self.a0)
 
+    def cut(self, s0: float, s1: float) -> "ArcSeg":
+        """The part from ``s0`` to ``s1`` along it (either may be beyond an end)."""
+        return ArcSeg(self.center, self.radius, self.angle_at(s0), self.angle_at(s1))
+
     def _angle_of(self, p) -> float:
         return math.degrees(math.atan2(p[1] - self.center[1], p[0] - self.center[0]))
 
@@ -253,17 +261,23 @@ class ArcSeg:
 Piece = object  # Seg | ArcSeg
 
 
+def segment_piece(a, b, bulge: float = 0.0) -> Piece:
+    """The piece a polyline segment is: straight, or the arc its bulge makes."""
+    arc = geo.bulge_arc(a, b, bulge)
+    if arc is None:
+        return Seg(a, b)
+    center, radius, start, sweep = arc
+    return ArcSeg(center, radius, start, start + sweep)
+
+
 def pieces_of(entity: Entity) -> Tuple[List[Piece], bool]:
     """``(pieces, closed)`` for a line, polyline, arc or circle."""
     if isinstance(entity, Line):
         return [Seg(entity.start, entity.end)], False
     if isinstance(entity, Polyline):
-        verts = [list(v) for v in entity.vertices]
-        pieces = [Seg(a, b) for a, b in zip(verts, verts[1:])
+        pieces = [segment_piece(a, b, bulge) for a, b, bulge in entity.segments()
                   if geo.distance(a, b) > EPS]
-        closed = bool(entity.closed) and len(verts) > 2
-        if closed and geo.distance(verts[-1], verts[0]) > EPS:
-            pieces.append(Seg(verts[-1], verts[0]))
+        closed = bool(entity.closed) and len(entity.vertices) > 2
         if not pieces:
             raise PathError(f"{entity.id} has no length")
         return pieces, closed
@@ -396,6 +410,19 @@ class Path:
     @property
     def end(self):
         return self.pieces[-1].end
+
+    def sub(self, s0: float, s1: float) -> List[Piece]:
+        """The pieces between distances ``s0`` and ``s1`` along the path
+        (``s0 < s1``). On a closed path ``s0 > s1`` wraps past the start."""
+        if self.closed and s0 > s1:
+            return self.sub(s0, self.length) + self.sub(0.0, s1)
+        out = []
+        for i, piece in enumerate(self.pieces):
+            a = self.starts[i]
+            lo, hi = max(s0, a), min(s1, a + piece.length)
+            if hi - lo > 1e-12:
+                out.append(piece.cut(lo - a, hi - a))
+        return out
 
     # ------------------------------------------------------------ projecting
 
@@ -661,8 +688,32 @@ def entity_fields_of(piece: Piece) -> Tuple[type, dict]:
                  "start_angle_deg": lo, "end_angle_deg": lo + abs(piece.sweep)}
 
 
+def polyline_fields_of(pieces: Sequence[Piece], closed: bool = False) -> dict:
+    """``{vertices, bulges, closed}`` of one polyline drawing pieces that join
+    end to end, arcs as bulges (a full circle as two half circles)."""
+    split: List[Piece] = []
+    for piece in pieces:
+        if isinstance(piece, ArcSeg) and abs(piece.sweep) > 180.0 + 1e-9:
+            mid = piece.a0 + piece.sweep / 2.0
+            split += [ArcSeg(piece.center, piece.radius, piece.a0, mid),
+                      ArcSeg(piece.center, piece.radius, mid, piece.a1)]
+        else:
+            split.append(piece)
+    vertices = [piece.start for piece in split]
+    bulges = [0.0 if isinstance(piece, Seg) else geo.bulge_of_sweep(piece.sweep)
+              for piece in split]
+    if not closed:
+        vertices.append(split[-1].end)
+        bulges.append(0.0)
+    fields = {"vertices": vertices, "closed": bool(closed)}
+    if any(abs(b) > 1e-12 for b in bulges):
+        fields["bulges"] = bulges
+    return fields
+
+
 __all__ = [
-    "PathError", "Seg", "ArcSeg", "Path", "Projection", "pieces_of", "line_line",
+    "PathError", "Seg", "ArcSeg", "Path", "Projection", "pieces_of", "segment_piece",
+    "polyline_fields_of", "line_line",
     "line_circle", "circle_circle", "piece_intersections", "entity_fields_of",
     "PATH_ENTITY_TYPES",
 ]

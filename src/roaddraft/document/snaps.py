@@ -26,7 +26,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from roaddraft.core import geometry as geo
 from roaddraft.document.entities import (
-    Arc, BlockRef, Circle, Dimension, Entity, Line, Polyline, Table, Text,
+    Arc, BlockRef, Circle, Dimension, Entity, Line, Point, Polyline, Table, Text,
 )
 from roaddraft.document import paths
 
@@ -86,12 +86,24 @@ def entity_key_points(entity: Entity, eid: Optional[str] = None) -> List[SnapPoi
         verts = entity.vertices
         for i, v in enumerate(verts):
             out.append(SnapPoint("endpoint", list(v), ids, f"vertex {i + 1} of {eid}"))
-        segs = list(zip(verts, verts[1:]))
-        if entity.closed and len(verts) > 2:
-            segs.append((verts[-1], verts[0]))
-        for i, (a, b) in enumerate(segs):
-            out.append(SnapPoint("midpoint", [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], ids,
-                                 f"midpoint of {eid} segment {i + 1}"))
+        for i, (a, b, bulge) in enumerate(entity.segments()):
+            arc = geo.bulge_arc(a, b, bulge)
+            if arc is None:
+                out.append(SnapPoint("midpoint", [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0],
+                                     ids, f"midpoint of {eid} segment {i + 1}"))
+                continue
+            center, radius, start, sweep = arc
+            piece = paths.ArcSeg(center, radius, start, start + sweep)
+            out.append(SnapPoint("midpoint", geo.arc_point(center, radius, start + sweep / 2.0),
+                                 ids, f"midpoint of {eid} segment {i + 1}"))
+            out.append(SnapPoint("center", list(center), ids,
+                                 f"center of {eid} segment {i + 1}"))
+            out += [SnapPoint("quadrant", q, ids, f"quadrant {angle:g}° of {eid} segment "
+                                                  f"{i + 1}")
+                    for angle, q in _quadrants(center, radius, piece)]
+    elif isinstance(entity, Point):
+        number = f" (point {entity.number})" if entity.number is not None else ""
+        out.append(SnapPoint("node", list(entity.position), ids, f"{eid}{number}"))
     elif isinstance(entity, Arc):
         piece = paths.pieces_of(entity)[0][0]
         mid_angle = piece.a0 + piece.sweep / 2.0

@@ -61,6 +61,27 @@ Coordinate geometry, editing and inquiry:
   dist 1300,980 1500,1030 along=LN-001  along & square off a line, chain or alignment
   snap 1601,1001 [tolerance=5 modes=["endpoint","intersection"] from=X,Y]
   keypoints LN-001 LN-002 | keypoints alignment=SR-100
+  so 30+00@12R 31+20@24R 36+00@24R 36+00@12R [alignment=SR-100 polyline=true]
+                                        draw through stations and offsets
+Modify:
+  trim LN-005 2986,2399 [LN-006 3014,2399] [boundaries=CI-001]   cut the part clicked
+  trim LN-005 keep 2986,2100            keep the part at the point, cut the rest
+  extend LN-005 end [boundaries=LN-003 extend_boundaries=true]
+  break LN-004 1500,1012 [1560,1012]   split at a point, or cut out the part between
+  join LN-001 AR-001 LN-002             one line / arc, or one polyline with arcs
+  explode PL-003 BR-001                 into lines, arcs, text (hatch: boundaries)
+  chamfer LN-001 LN-002 10 [20]   lengthen LN-005 end 12.5 (or total= percent= to=x,y)
+  copy LN-001 20,0 [count=3] | copy LN-001 0,0 20,0     (from, to)
+  rotate PL-001 1500,1200 30 [copy=true] | rotate ... angle="30 CW"
+  mirror LN-020 AR-005 1000,1000 1600,1000 [keep_original=false]
+  scale BR-002 31.5,19 0.5 | array BR-003 kind=path path=SR-100 every=50 offset=2R
+COGO points, labels, hatching:
+  point 1500,2000 [1534,2059 ...] description=MON | points text="1,2000,1500,101.2,MON"
+  pointtable 26,20 [points=1-12]        a table of points (on the current space)
+  labelseg PL-004 [style=tags table={"position":[2500,1400]} order_along=SR-100]
+  along SR-100 every=200 offset=14R [block=DELINEATOR] | divide LN-001 count=5
+  hatch 1700,988 ANSI31 [40] | hatch PL-002 CI-001 SOLID opacity=0.5
+  area 1700,988 | area PL-002 | list LN-001   area, perimeter; LIST properties
 Annotation scale (paper-size annotation at a plot scale):
   annoscale 100 | annoscale 1:1200 | annoscale off     annoscales
   annoadd 25 [name]  annodel 25   annopaper text_height_in=0.12 label_offset_in=0.35

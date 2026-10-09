@@ -162,7 +162,16 @@ INSTRUCTIONS = (
     "measure with along gives distances along a line, chain or alignment "
     "and square off it. key_points and snap give the exact endpoints, "
     "intersections, centers and alignment design points (PI, BC, EC) to "
-    "build on."
+    "build on. Station-and-offset drafting is draw_station_offset with the "
+    "stations and offsets given ('30+00@12R'). Linework drawn through "
+    "something is cut back with trim (a point on the part to cut away) or "
+    "run on with extend, not redrawn from computed points; break, join, "
+    "lengthen, chamfer, copy, rotate, mirror, scale and array edit what is "
+    "there. create_points sets COGO points, label_segments letters bearings "
+    "and distances or L1/C1 tags with line and curve tables, place_along "
+    "sets blocks or points at an interval, hatch fills an area (a point "
+    "inside is enough), and area and get_entity read areas, lengths, "
+    "bearings and curve data off the drawing."
 )
 
 

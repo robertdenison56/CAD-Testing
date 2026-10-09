@@ -50,6 +50,9 @@ def test_every_producer_stamps_its_own_name():
     r = s.execute("place_curve_table", {"space": "C-101", "alignment": "ALIGN-1",
                                         "position": [24.0, 8.5]})
     stamps["place_curve_table"] = anchor_of(s, r)["placed_by"]
+    r = s.execute("draw_station_offset", {"alignment": "ALIGN-1",
+                                          "points": ["11+00@24R", "12+00@24R"]})
+    stamps["draw_station_offset"] = anchor_of(s, r)["placed_by"]
     assert stamps == {name: name for name in ANCHOR_PRODUCERS}
 
 
@@ -147,3 +150,22 @@ def test_every_anchor_a_reference_solution_places_is_stamped(seed):
     assert {e.anchor.get("placed_by") for e in anchored} <= set(ANCHOR_PRODUCERS)
     labels = [e for e in anchored if isinstance(e, Text)]
     assert len(labels) == len(task.truth.labels)
+
+
+def test_a_piece_cut_from_design_linework_keeps_its_producer():
+    s = design_session()
+    r = s.execute("draw_offset", {"alignment": "ALIGN-1", "offsets": [-12]})
+    edge = r["created"][0]  # the first tangent's edge
+    s.execute("draw_line", {"space": "model", "start": [1300, 900], "end": [1300, 1100]})
+    s.execute("draw_line", {"space": "model", "start": [1340, 900], "end": [1340, 1100]})
+    r = s.execute("trim", {"targets": [{"id": edge, "at": [1320, 1012]}]})
+    assert r["ok"], r
+    piece = s.doc.model_entities[r["created"][0]]
+    assert piece.anchor["placed_by"] == "draw_offset" and piece.anchor["kind"] == "offset"
+    # a hand-made anchor cut in two gains nothing a verifier trusts
+    t = s.execute("draw_line", {"space": "model", "start": [1200, 950], "end": [1400, 950]})
+    tid = t["created"][0]
+    s.execute("modify_entity", {"id": tid, "changes": {"anchor": {
+        "alignment": "ALIGN-1", "ref": "T-1", "kind": "offset", "offset": 50.0}}})
+    r = s.execute("break_entity", {"id": tid, "at": [1250, 950]})
+    assert s.doc.model_entities[r["created"][0]].anchor["placed_by"] == "break_entity"
