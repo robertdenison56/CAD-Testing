@@ -16,9 +16,7 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 
 ## Not ranked yet
 
-| model | class | runner | run folder | attempts | passed | why not ranked | card |
-|---|---|---|---|---|---|---|---|
-| Qwen3.5-9B | local small | runners · openai (LM Studio) | `2026-10-08-k3` | 33 on 33 probes | 13/33 | k = 3 on 0 of 33 probes | [card](cards/qwen-qwen3.5-9b.md) |
+None.
 
 ## Run folders not on the board
 
