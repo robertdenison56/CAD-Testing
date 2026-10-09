@@ -43,6 +43,67 @@ def obj(props, required=(), extra=False):
             "additionalProperties": extra}
 
 
+# --- coordinate geometry (bearings and distances) ---------------------------
+
+ANGLE_TEXT = {"type": ["number", "string"],
+              "description": "degrees as a number, or DMS text: 40°30'15\", 40-30-15"}
+DIRECTION_PROPS = {
+    "bearing": {"type": "string",
+                "description": "quadrant bearing: N 45°30'15\" E, S45-30-15W, N45E"},
+    "azimuth": {**ANGLE_TEXT, "description": "degrees clockwise from north, 0-360 (a "
+                                             "number or DMS text)"},
+    "deflection": {**ANGLE_TEXT,
+                   "description": "the angle turned from the previous course, with its side: "
+                                  "'40 L', '25°00'00\" RT', or a number with right "
+                                  "(clockwise) positive; or its size with turn"},
+    "turn": {"type": "string", "enum": ["left", "right", "L", "R"],
+             "description": "which way a deflection or a curve turns"},
+    "angle_right": {**ANGLE_TEXT, "description": "angle measured clockwise from the "
+                                                 "backsight (the previous course run "
+                                                 "backwards), as a field traverse records it"},
+}
+COURSE = {
+    "type": ["object", "string"],
+    "description": "one course. Straight: a direction (exactly one of bearing, azimuth, "
+                   "deflection, angle_right) and distance. Curve: radius, turn and one of "
+                   "delta, length or chord; it continues the previous course's direction "
+                   "unless chord_bearing places it (a non-tangent curve). Or the course as "
+                   "text: \"N 45°30'15\\\" E 250\", \"AZ 75.5 250\", \"40 L 700\", "
+                   "\"CURVE R=500 LEFT DELTA=40\"",
+    "properties": {
+        **DIRECTION_PROPS,
+        "distance": {**POS, "description": "length of a straight course (feet in model)"},
+        "radius": {**POS, "description": "radius of a curve course -- giving one makes the "
+                                         "course a curve"},
+        "delta": {**ANGLE_TEXT, "description": "a curve's central angle"},
+        "length": {**POS, "description": "a curve's arc length"},
+        "chord": {**POS, "description": "a curve's chord length"},
+        "chord_bearing": {"type": ["string", "number"],
+                          "description": "a non-tangent curve's chord bearing (or azimuth)"},
+    },
+    "additionalProperties": False,
+}
+TRAVERSE_PROPS = {
+    "start": {"description": "where the traverse begins: a point [x, y] (x = easting, y = "
+                             "northing), or an entity id to continue from its end (start_at "
+                             "says which end; the entity's direction there is the course a "
+                             "leading deflection turns from)"},
+    "start_at": {"type": "string", "enum": ["start", "end"],
+                 "description": "with a start entity: continue from its end (default) or "
+                                "its start"},
+    "legs": {"type": "array", "items": COURSE, "minItems": 1,
+             "description": "the courses in order, each from where the last one ended"},
+    "initial_bearing": {"type": "string",
+                        "description": "the direction a leading deflection or tangent curve "
+                                       "turns from, as a quadrant bearing"},
+    "initial_azimuth": {**ANGLE_TEXT, "description": "the same as an azimuth"},
+    "close": {"type": "boolean",
+              "description": "the traverse should close on its start: report the "
+                             "misclosure (distance, bearing, precision 1:N) and, when "
+                             "drawing, add the closing course"},
+}
+
+
 _ENTITY_COMMON = {
     "space": SPACE,
     "layer": {**NSTR, "description": "layer name; defaults to the current layer"},
@@ -85,7 +146,12 @@ SCHEMAS = {
     "draw_polyline": obj(
         {**_ENTITY_COMMON,
          "vertices": {"type": "array", "items": POINT, "minItems": 2},
-         "closed": {"type": "boolean"}},
+         "closed": {"type": "boolean"},
+         "bulges": {"type": "array", "items": NUM,
+                    "description": "arc segments, the DXF way: one value per vertex for the "
+                                   "segment that starts there, tan(sweep/4) -- 0 straight, 1 a "
+                                   "half circle, positive counter-clockwise. Omit for straight "
+                                   "segments"}},
         ["space", "vertices"]),
     "draw_arc": obj(
         {**_ENTITY_COMMON, "center": POINT, "radius": POS,
@@ -236,6 +302,55 @@ SCHEMAS = {
                                           "sheet, set it to the viewport's plot scale "
                                           "(50 for 1\"=50') to dimension in model feet"}},
         ["space", "kind", "line_point"]),
+    "draw_traverse": obj(
+        {**_ENTITY_COMMON, **TRAVERSE_PROPS,
+         "polyline": {"type": "boolean",
+                      "description": "draw one polyline instead of separate lines (straight "
+                                     "courses only; with close it is a closed polyline)"}},
+        ["space", "start", "legs"]),
+    "offset_entity": obj(
+        {"ids": {**IDS,
+                 "description": "what to copy parallel: one line, polyline, arc or circle, or "
+                                "several that join end to end (in order along them), offset "
+                                "together as one path. Reference elements ('DESIGN:LN-004') "
+                                "may be copied into this document"},
+         "distance": {**POS, "description": "how far, with side or toward"},
+         "side": {"type": "string", "enum": ["left", "right"],
+                  "description": "left or right of the direction the path runs: a line "
+                                 "start to end, a polyline in vertex order, an arc or circle "
+                                 "counter-clockwise, a chain in the order of ids"},
+         "toward": {**POINT, "description": "a point on the side to offset to, the way a "
+                                            "drafter clicks the side"},
+         "through": {**POINT, "description": "a point the parallel passes through; the "
+                                             "distance is measured square to the path"},
+         "offsets": {"type": "array", "minItems": 1, "items": {"type": ["number", "string"]},
+                     "description": "several parallels at once, right of the path's "
+                                    "direction positive ('12L', '12R' say the side): "
+                                    "[-12, 12] is both edges of a 24 ft pavement"},
+         "join": {"type": "string", "enum": ["sharp", "round"],
+                  "description": "outside corners: sharp extends the pieces to meet (default), "
+                                 "round swings an arc about the corner"},
+         "connect_tolerance": {**POS, "description": "largest gap between chained pieces "
+                                                     "(default 0.01)"},
+         "layer": {**NSTR, "description": "layer of the copies; default the source's layer"},
+         "color": COLOR, "linetype": LINETYPE},
+        ["ids"]),
+    "fillet": obj(
+        {"ids": {"type": "array", "items": NSTR, "minItems": 2, "maxItems": 2,
+                 "description": "the two lines to join"},
+         "radius": {"type": "number", "minimum": 0,
+                    "description": "curve radius; 0 extends or trims the lines to a sharp "
+                                   "corner"},
+         "keep": {"type": "array", "items": POINT, "minItems": 2, "maxItems": 2,
+                  "description": "a point on the part of each line to keep, in the order of "
+                                 "ids (where a drafter clicks them); default: each line's end "
+                                 "farther from where they meet"},
+         "trim": {"type": "boolean",
+                  "description": "trim or extend the lines to the tangent points (default "
+                                 "true); false draws only the curve"},
+         "layer": {**NSTR, "description": "layer of the curve; default the first line's"},
+         "color": COLOR, "linetype": LINETYPE},
+        ["ids", "radius"]),
     "insert_block": obj(
         {**_ENTITY_COMMON, "block_name": NSTR, "position": POINT,
          "scale": POS, "rotation_deg": NUM},
@@ -442,6 +557,14 @@ EXAMPLES = {
     "place_dimension": {"space": "model", "kind": "linear", "from_entity": "LN-002",
                         "to_entity": "LN-003", "line_point": [1250.0, 880.0],
                         "layer": "V-ANNO-DIMS"},
+    "draw_traverse": {"space": "model", "start": [1000.0, 3000.0],
+                      "legs": [{"bearing": "S 80°00'00\" E", "distance": 800.0},
+                               {"deflection": "40 L", "distance": 700.0},
+                               "N 85°00'00\" E 600"],
+                      "layer": "V-SURV-LINE"},
+    "offset_entity": {"ids": ["LN-001"], "distance": 12.0, "side": "right",
+                      "layer": "V-ROAD-EOP"},
+    "fillet": {"ids": ["LN-001", "LN-002"], "radius": 50.0},
     "insert_block": {"space": "SH-001", "block_name": "NORTH_ARROW",
                      "position": [31.5, 19.0], "scale": 1.0},
     "place_table": {"space": "SH-001", "position": [26.0, 8.0], "title": "CURVE DATA",
@@ -486,3 +609,10 @@ EXAMPLES = {
 # tables, LandXML): schemas and examples live in design_schemas.py.
 SCHEMAS.update(DESIGN_SCHEMAS)
 EXAMPLES.update(DESIGN_EXAMPLES)
+
+# Editing, COGO points, segment labels, hatching and placement along a path:
+# schemas and examples live in modify_schemas.py.
+from roaddraft.commands.modify_schemas import MODIFY_EXAMPLES, MODIFY_SCHEMAS  # noqa: E402
+
+SCHEMAS.update(MODIFY_SCHEMAS)
+EXAMPLES.update(MODIFY_EXAMPLES)

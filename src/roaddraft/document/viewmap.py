@@ -191,6 +191,10 @@ def visible_spans(owner, entity: Entity, vp) -> Optional[List[Span]]:
                             transform.to_paper(entity.end), box)
         return [] if cut is None else [cut]
     if isinstance(entity, Polyline):
+        if entity.has_arcs:
+            from roaddraft.document.locate import entity_length
+            return _sampled_spans(owner, entity, vp,
+                                  (entity_length(owner, entity) or 0.0) / vp.feet_per_inch)
         return _polyline_spans(entity, transform.to_paper, box)
     if isinstance(entity, (Arc, Circle)):
         if isinstance(entity, Arc):

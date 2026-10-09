@@ -239,11 +239,20 @@ def draw_line(doc: Document, p: dict):
 
 
 def draw_polyline(doc: Document, p: dict):
+    from roaddraft.document.entities import as_bulges
+    vertices = [list(v) for v in p["vertices"]]
+    closed = p.get("closed", False)
+    try:
+        bulges = as_bulges(p.get("bulges"), len(vertices), closed)
+    except ValueError as ex:
+        raise CommandFault(str(ex), hint="one bulge per vertex, for the segment that starts "
+                                         "there: 0 straight, tan(sweep/4) for an arc")
     space_key, e = _add(doc, p["space"], "polyline", Polyline, {
-        **_entity_common(doc, p),
-        "vertices": [list(v) for v in p["vertices"]],
-        "closed": p.get("closed", False)})
+        **_entity_common(doc, p), "vertices": vertices, "closed": closed,
+        "bulges": bulges})
+    arcs = sum(1 for b in (bulges or []) if abs(b) > 1e-12)
     return (f"polyline {e.id} ({len(e.vertices)} vertices"
+            f"{f', {arcs} arc segments' if arcs else ''}"
             f"{', closed' if e.closed else ''}) on layer {e.layer!r} in "
             f"{_space_label(doc, space_key)}", _diff(created=[e.id]), [])
 
@@ -644,6 +653,12 @@ def modify_entity(doc: Document, p: dict):
     _linetype_ok(new_entity.linetype)
     if isinstance(new_entity, (Text, Table, Dimension)):
         _style(doc, new_entity.style)
+    if new_entity.TYPE == "point" and new_entity.number is not None:
+        from roaddraft.commands.cogo_handlers import point_numbers
+        owner = point_numbers(doc).get(new_entity.number)
+        if owner is not None and owner != eid:
+            raise CommandFault(f"point {new_entity.number} already exists ({owner})",
+                               hint="point numbers are unique in a drawing")
     _, container = doc.resolve_space(space_key)
     container[eid] = new_entity
     warnings = _annotation_warnings(doc, space_key, new_entity)
@@ -816,6 +831,14 @@ def _element_pieces(entity, reverse: bool) -> List[_Piece]:
         a, b = (entity.end, entity.start) if reverse else (entity.start, entity.end)
         return [_line_piece(a, b)]
     if isinstance(entity, Polyline):
+        if entity.has_arcs:
+            from roaddraft.document import paths
+            pieces, _closed = paths.pieces_of(entity)
+            if reverse:
+                pieces = [pc.reversed() for pc in reversed(pieces)]
+            return [_line_piece(pc.a, pc.b) if isinstance(pc, paths.Seg)
+                    else _arc_piece(pc.center, pc.radius, pc.a0, pc.sweep, pc.sweep >= 0)
+                    for pc in pieces]
         verts = list(reversed(entity.vertices)) if reverse else list(entity.vertices)
         return [_line_piece(a, b) for a, b in zip(verts, verts[1:])]
     if isinstance(entity, Arc):

@@ -10,7 +10,7 @@ from ezdxf.enums import TextEntityAlignment
 
 from roaddraft.core import colors as colorlib
 from roaddraft.document.entities import (
-    Arc, BlockRef, Circle, Dimension, Line, Polyline, Table, Text,
+    Arc, BlockRef, Circle, Dimension, Hatch, Line, Point, Polyline, Table, Text,
 )
 
 LINETYPE_MAP = {
@@ -83,12 +83,26 @@ def _add_entities(space, dxf, doc, entities):
             # instead of being re-drawn by the consumer's dimension style.
             _add_entities(space, dxf, doc, e.primitives(doc))
             continue
+        if isinstance(e, Point):
+            # a COGO point is a DXF POINT (to snap to as a node) with its marker
+            # and label drawn as plain linework and text
+            point = space.add_point(tuple(e.position), dxfattribs=_attribs(dxf, e))
+            _apply_color(point, e.color)
+            _add_entities(space, dxf, doc, e.primitives(doc))
+            continue
         attribs = _attribs(dxf, e)
-        if isinstance(e, Line):
+        if isinstance(e, Hatch):
+            out = _add_hatch(space, e, attribs)
+        elif isinstance(e, Line):
             out = space.add_line(tuple(e.start), tuple(e.end), dxfattribs=attribs)
         elif isinstance(e, Polyline):
-            out = space.add_lwpolyline([tuple(v) for v in e.vertices], format="xy",
-                                       close=e.closed, dxfattribs=attribs)
+            if e.has_arcs:
+                out = space.add_lwpolyline(
+                    [(v[0], v[1], e.bulge(i)) for i, v in enumerate(e.vertices)],
+                    format="xyb", close=e.closed, dxfattribs=attribs)
+            else:
+                out = space.add_lwpolyline([tuple(v) for v in e.vertices], format="xy",
+                                           close=e.closed, dxfattribs=attribs)
         elif isinstance(e, Arc):
             out = space.add_arc(tuple(e.center), e.radius, e.start_angle_deg,
                                 e.end_angle_deg, dxfattribs=attribs)
@@ -96,8 +110,8 @@ def _add_entities(space, dxf, doc, entities):
             out = space.add_circle(tuple(e.center), e.radius, dxfattribs=attribs)
         elif isinstance(e, BlockRef):
             out = space.add_blockref(e.block_name, tuple(e.position), dxfattribs={
-                **attribs, "xscale": e.scale, "yscale": e.scale,
-                "rotation": e.rotation_deg})
+                **attribs, "xscale": -e.scale if e.mirrored else e.scale,
+                "yscale": e.scale, "rotation": e.rotation_deg})
         elif isinstance(e, Text):
             style = e.style if dxf.styles.has_entry(e.style) else "STANDARD"
             key = (e.halign, e.valign)
@@ -119,6 +133,36 @@ def _add_entities(space, dxf, doc, entities):
         else:
             continue
         _apply_color(out, e.color)
+
+
+def _add_hatch(space, e: Hatch, attribs):
+    """A real DXF HATCH: the loops as polyline boundary paths (arcs as bulges),
+    AutoCAD's own pattern definition, solid or patterned."""
+    from ezdxf.tools import pattern as ezpattern
+
+    from roaddraft.document import regions
+
+    hatch = space.add_hatch(dxfattribs=attribs)
+    loops = regions.oriented(e.loops)
+    depths = regions.nesting_depths(loops)
+    for loop, depth in zip(loops, depths):
+        bulges = loop.get("bulges") or [0.0] * len(loop["vertices"])
+        flags = 1 if depth == 0 else 0  # the external boundary, then its islands
+        hatch.paths.add_polyline_path(
+            [(v[0], v[1], b) for v, b in zip(loop["vertices"], bulges)],
+            is_closed=True, flags=flags)
+    if e.solid:
+        hatch.set_solid_fill(color=256, style=0)  # ByLayer; style 0: even-odd
+    else:
+        definition = ezpattern.load(measurement=0).get(e.pattern)
+        hatch.set_pattern_fill(e.pattern, color=256, angle=e.angle_deg, scale=e.scale,
+                               style=0, definition=definition)
+    if e.opacity < 1.0:
+        try:
+            hatch.transparency = 1.0 - e.opacity
+        except Exception:
+            pass  # transparency is cosmetic
+    return hatch
 
 
 def _ensure_layer(dxf, name, layer):
@@ -171,6 +215,7 @@ def export_dxf(doc, path):
     from roaddraft.render.titleblock import title_block_entities
 
     dxf = ezdxf.new("R2018", setup=True)
+    dxf.header["$MEASUREMENT"] = 0  # imperial: hatch patterns in inch units
 
     for layer in doc.layers.values():
         _ensure_layer(dxf, layer.name, layer)

@@ -19,7 +19,7 @@ from roaddraft.design.errors import DesignError
 from roaddraft.design.labels import LABEL_KINDS, compile_label
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import Document
-from roaddraft.document.entities import Dimension, Line, Text
+from roaddraft.document.entities import Dimension, Line, Point, Text
 
 
 # ---------------------------------------------------------------- helpers
@@ -102,6 +102,13 @@ def rescale_entities(doc: Document, scale: float) -> List[str]:
                 value = getattr(e, key)
                 if value is not None:
                     setattr(e, key, value * factor)
+            e.annotative = dict(rec, scale=scale, height_in=height_in)
+        elif isinstance(e, Point):
+            # the marker and the label are sized on paper together
+            height_in = float(rec.get("height_in", e.text_height / old))
+            factor = (height_in * scale) / e.text_height if e.text_height else 1.0
+            e.text_height = height_in * scale
+            e.size *= factor
             e.annotative = dict(rec, scale=scale, height_in=height_in)
         elif isinstance(e, Line):
             length = math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1])

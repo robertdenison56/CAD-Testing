@@ -111,7 +111,7 @@ def test_conversation_is_the_run_as_a_model_would_see_it(tmp_path):
     assert msgs[-1]["role"] == "assistant" and msgs[-1]["content"].startswith("Done.")
     assert "place_callout" in msgs[-1]["content"]
     assert conv["faithful"] and conv["outcome"]["passed"] and conv["report"] == "templated"
-    assert conv["tools_sha256"].startswith("sha256:") and len(tools) == 78
+    assert conv["tools_sha256"].startswith("sha256:") and len(tools) == 103
     # the station the solve asked for is in the conversation as a query, not a number from nowhere
     asked = [m["tool_calls"][0] for m in msgs if m.get("tool_calls")]
     assert asked[0]["name"] == "station_to_xy" and asked[0]["arguments"]["station"] == "18+00"

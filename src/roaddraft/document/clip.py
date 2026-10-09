@@ -15,7 +15,9 @@ from __future__ import annotations
 from typing import List
 
 from roaddraft.core import geometry as geo
-from roaddraft.document.entities import Arc, Circle, Entity, Line, Polyline, Text
+from roaddraft.document.entities import (
+    Arc, Circle, Entity, Hatch, Line, Point, Polyline, Text,
+)
 
 EPS = 1e-9
 
@@ -95,7 +97,29 @@ def _clip_line(e: Line, region: ClipRegion):
             for k, (t0, t1) in enumerate(pieces, 1)]
 
 
+def _clip_bulged_polyline(e: Polyline, region: ClipRegion):
+    """A polyline with arc segments: whole if nothing cuts it, else its
+    segments clipped one by one as lines and arcs."""
+    from roaddraft.document import paths
+    pieces = [paths.segment_piece(a, b, bulge) for a, b, bulge in e.segments()]
+    parts = []
+    for k, piece in enumerate(pieces, 1):
+        cls, fields = paths.entity_fields_of(piece)
+        parts.append(_carry(e, cls(id=f"{e.id}~{k}", **fields, **_props(e))))
+    clipped = []
+    for part in parts:
+        clipped.extend(_clip_line(part, region) if isinstance(part, Line)
+                       else _clip_arc(part, region))
+    if len(clipped) == len(parts) and all(a is b for a, b in zip(clipped, parts)):
+        return [e]
+    for k, part in enumerate(clipped, 1):
+        part.id = f"{e.id}#{k}"
+    return clipped
+
+
 def _clip_polyline(e: Polyline, region: ClipRegion):
+    if e.has_arcs:
+        return _clip_bulged_polyline(e, region)
     verts = e.vertices
     segs = list(zip(verts, verts[1:]))
     if e.closed and len(verts) > 2:
@@ -184,8 +208,13 @@ def clip_primitives(prims, boundary=None, masks=None) -> List[Entity]:
             out.extend(_clip_arc(e, region))
         elif isinstance(e, Circle):
             out.extend(_clip_circle(e, region))
-        elif isinstance(e, Text):
+        elif isinstance(e, (Text, Point)):
             if region.contains(e.position):
+                out.append(e)
+        elif isinstance(e, Hatch):
+            # an area is not cut up: it shows when the middle of its first loop does
+            from roaddraft.document.regions import loop_centroid
+            if region.contains(loop_centroid(e.loops[0])):
                 out.append(e)
         else:  # compound entity that escaped expansion: keep by bbox center
             try:
