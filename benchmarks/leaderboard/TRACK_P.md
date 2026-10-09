@@ -12,6 +12,7 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | 58.6% [42.4, 73.7] | 46/51 (90%) | 8/18 (44%) | 4/30 (13%) | 27% (9/33) | 6.4% | $0.11 | 99 (k = 3) | [card](cards/claude-haiku-4-5.md) |
 
+- Ran on server instructions or task prompts that differ from the current ones: Claude Haiku 4.5.
 - Engine commit not recorded (episodes from before run.json carried pins): Claude Haiku 4.5.
 
 ## Not ranked yet

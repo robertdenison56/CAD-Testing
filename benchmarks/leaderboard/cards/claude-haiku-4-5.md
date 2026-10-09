@@ -12,7 +12,7 @@
 | standing | rank 1 of 1 |
 | engine commit | not recorded (99) |
 | tool surface | not recorded |
-| server instructions | current |
+| server instructions | 99 of 99 episodes differ from the current server's |
 | task prompts | current |
 
 ## Score
