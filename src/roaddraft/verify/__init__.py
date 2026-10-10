@@ -1,0 +1,115 @@
+"""The RoadDraft verifier: a deterministic score for a drafted D1 task.
+
+``verify(doc, truth)`` judges a document against a task's ground truth and
+returns a ``VerifyReport``: per-check credit and findings, the rubric score,
+whether the sheet hard-failed, and the effective score (0 if hard-failed,
+otherwise the rubric score), which is the headline number.  The truth's
+``scope`` says which groups of work the task asked for; only the checks
+those drive are graded, renormalised to 100.  No model call, no session, no
+network: it runs on a saved ``.rdoc.json`` and the same document always
+gets the same report (eval plan section 3).
+
+The layers, outermost first: ``context`` (the deliverable sheets, viewports,
+the given design, the scope), ``match`` (anchored labels), ``geometry``
+(linework and ticks), ``legibility`` (paper-space footprints), ``checks``
+(one formula per check id), ``rubric`` (weights and scope), ``audit`` (the
+journal), ``report``.
+"""
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import List, Optional, Union
+
+from roaddraft.commands.bus import ANCHOR_PRODUCERS
+from roaddraft.document.document import Document
+from roaddraft.tasks.brief import GroundTruth
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
+from roaddraft.tasks.types import GROUPS
+from roaddraft.verify.audit import audit_journal
+from roaddraft.verify.checks import CHECKS, analyze
+from roaddraft.verify.context import Context, given_design
+from roaddraft.verify.normalize import normalize
+from roaddraft.verify.report import (
+    FINDING_CODES, VALUE_CODES, CheckResult, Finding, VerifyReport,
+)
+from roaddraft.verify.rubric import score_checks
+
+VERIFIER_VERSION = "d1-verify-v2"
+DEFAULT_LEVEL = "explicit"
+
+
+def verify(doc: Document, truth: Union[GroundTruth, dict], spec: Optional[dict] = None,
+           journal: Optional[List[dict]] = None, prompt_level: str = DEFAULT_LEVEL) -> VerifyReport:
+    """Score ``doc`` against ``truth`` under ``spec`` (default ``DRAFTING_SPEC_V1``).
+
+    ``prompt_level`` is the level the task was posed at (the spec's
+    ``prompt_levels``): conventions that prompt did not state are graded by
+    the spec's lenient rules.  ``journal`` (a bus journal or the records of a
+    saved one) adds the informational audit.  The document is not modified."""
+    t0 = time.perf_counter()
+    spec = DRAFTING_SPEC_V1 if spec is None else spec
+    if isinstance(truth, dict):
+        truth = GroundTruth.from_dict(truth)
+    ctx = Context.build(doc, truth, spec, prompt_level)
+    scope = [g for g in GROUPS if g in ctx.scope]
+    fingerprint_ok = given_design(doc, truth).fingerprint() == truth.design_fingerprint
+    findings: List[Finding] = []
+    if fingerprint_ok:
+        analysis = analyze(ctx)
+        checks = score_checks(spec, analysis, scope)
+        labels = analysis.labels
+        counts = {"required_labels": len(labels.matches),
+                  "matched": sum(1 for m in labels.matches if m.credited),
+                  "anchored_entities": _anchored_entities(doc, ctx),
+                  "unanchored_text": len(labels.unanchored),
+                  "required_ticks": len(analysis.ticks) if ctx.asks("ticks") else 0,
+                  "matched_ticks": (sum(1 for t in analysis.ticks if t.hits)
+                                    if ctx.asks("ticks") else 0),
+                  "elements": (len(analysis.linework.elements)
+                               if analysis.linework and ctx.asks("linework") else 0),
+                  "matched_elements": (sum(1 for e in analysis.linework.elements if e.hits)
+                                       if analysis.linework and ctx.asks("linework") else 0),
+                  "sheets": len(truth.sheets)}
+    else:
+        checks = score_checks(spec, None, scope)
+        findings.append(Finding("design_tampered",
+                                note="the given design was changed; a drafter draws it as given"))
+        counts = {"required_labels": len(truth.labels), "sheets": len(truth.sheets)}
+    report = VerifyReport(verifier_version=VERIFIER_VERSION, spec_version=spec.get("version", ""),
+                          spec_hash=spec_hash(spec), task_id=truth.task_id,
+                          prompt_level=prompt_level, scope=scope,
+                          design_fingerprint_ok=fingerprint_ok, checks=checks, counts=counts,
+                          findings=findings)
+    if journal is not None:
+        report.audit = audit_journal(journal, doc)
+    report.timing_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+    return report
+
+
+def _anchored_entities(doc: Document, ctx: Context) -> int:
+    spaces = [doc.model_entities] + [sv.sheet.entities for sv in ctx.sheets
+                                     if sv.sheet is not None]
+    return sum(1 for ents in spaces for e in ents.values()
+               if e.anchor and e.anchor.get("placed_by") in ANCHOR_PRODUCERS)
+
+
+def read_journal(path) -> List[dict]:
+    """The records of a saved journal file (JSON lines)."""
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def verify_files(document_path, truth_path, journal_path=None, spec: Optional[dict] = None,
+                 prompt_level: str = DEFAULT_LEVEL) -> VerifyReport:
+    """``verify`` on files: a saved document, a ``.truth.json``, optionally a journal."""
+    from roaddraft.document.fileformat import read_document
+    doc = Document.from_dict(read_document(document_path))
+    truth = GroundTruth.from_dict(json.loads(Path(truth_path).read_text()))
+    journal = read_journal(journal_path) if journal_path else None
+    return verify(doc, truth, spec=spec, journal=journal, prompt_level=prompt_level)
+
+
+__all__ = ["VERIFIER_VERSION", "DEFAULT_LEVEL", "verify", "verify_files", "read_journal",
+           "VerifyReport", "CheckResult", "Finding", "FINDING_CODES", "VALUE_CODES", "CHECKS",
+           "normalize"]

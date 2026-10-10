@@ -1,10 +1,10 @@
-"""``python -m roaddraft.tasks SEED [--out DIR] [--curves N] [--equations] [--speed V]``
+"""``python -m roaddraft.tasks SEED [--out DIR] [--type T] [--sheets N] [--curves N] [--equations] [--speed V]``
 
-Generates a D1 task, runs the reference solution, and writes
-``<task_id>.brief.json``, ``.truth.json``, ``.journal.jsonl``, ``.rdoc.json``,
-``.xml`` (LandXML) and ``C-101.png`` into ``--out`` (default ``./tasks_out``),
-then checks that the journal replays and prints how the reference document
-matches the ground truth.
+Generates a D1 task, runs the reference solution on its starting document,
+and writes ``<task_id>.brief.json``, ``.truth.json``, ``.journal.jsonl``,
+``.rdoc.json``, ``.xml`` (LandXML) and a PNG per sheet into ``--out``
+(default ``./tasks_out``), then checks that the journal replays and prints
+how the reference document matches the ground truth.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from pathlib import Path
 from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.ground_truth import match_truth
 from roaddraft.tasks.reference import check_replay, reference_solution, session_for_task
+from roaddraft.tasks.types import DEFAULT_TYPE, TASK_TYPES
 
 
 def write_task(task, out_dir, render: bool = True) -> dict:
@@ -36,12 +37,14 @@ def write_task(task, out_dir, render: bool = True) -> dict:
             raise SystemExit(f"{query} failed: {result['error']['message']}")
         paths[key] = Path(result["path"])
     if render:
-        sheet = task.brief.deliverable["sheet_name"]
-        result = session.query("render_sheet", {"sheet": sheet, "dpi": 150,
-                                                "path": str(out / f"{tid}.{sheet}.png")})
-        if not result["ok"]:
-            raise SystemExit(f"render_sheet failed: {result['error']['message']}")
-        paths["png"] = Path(result["path"])
+        for sh in task.brief.deliverable["sheets"]:
+            if session.doc.sheet_by_ref(sh["name"]) is None:
+                continue  # a model-only task has no sheet to plot yet
+            result = session.query("render_sheet", {"sheet": sh["name"], "dpi": 150,
+                                                    "path": str(out / f"{tid}.{sh['name']}.png")})
+            if not result["ok"]:
+                raise SystemExit(f"render_sheet failed: {result['error']['message']}")
+            paths[f"png {sh['name']}"] = Path(result["path"])
     replay_ok = check_replay(session, out / f"{tid}.journal.jsonl")
     match = match_truth(session.doc, task.truth)
     return {"task_id": tid, "paths": paths, "replay_ok": replay_ok, "match": match,
@@ -54,17 +57,21 @@ def main(argv=None) -> int:
                                                  "reference solution")
     parser.add_argument("seed", type=int)
     parser.add_argument("--out", default="tasks_out", help="output directory")
+    parser.add_argument("--type", default=DEFAULT_TYPE, choices=sorted(TASK_TYPES),
+                        help="task type: what is given and what is asked for")
+    parser.add_argument("--sheets", type=int, default=1, help="plan sheets (1 or 2)")
     parser.add_argument("--curves", type=int, default=None, help="number of curves (1-3)")
     parser.add_argument("--equations", action="store_true", help="add a station equation")
     parser.add_argument("--speed", type=int, default=None, help="design speed (35..55 mph)")
     parser.add_argument("--no-render", action="store_true", help="skip the PNG render")
     ns = parser.parse_args(argv)
     task = generate_task(ns.seed, curves=ns.curves, equations=ns.equations,
-                         design_speed_mph=ns.speed)
+                         design_speed_mph=ns.speed, task_type=ns.type, sheets=ns.sheets)
     report = write_task(task, ns.out, render=not ns.no_render)
-    print(f"task {report['task_id']}: {task.brief.project['name']}, "
-          f"{task.truth.counts['curves']} curve(s), {task.truth.counts['tangents']} tangents, "
-          f"{task.truth.counts['equations']} equation(s), 1\"={task.brief.deliverable['feet_per_inch']:.0f}'")
+    print(f"task {report['task_id']} ({ns.type}, {ns.sheets} sheet(s)): "
+          f"{task.brief.project['name']}, {task.truth.counts['curves']} curve(s), "
+          f"{task.truth.counts['tangents']} tangents, {task.truth.counts['equations']} "
+          f"equation(s), 1\"={task.brief.deliverable['feet_per_inch']:.0f}'")
     for key, path in report["paths"].items():
         print(f"  {key:9s} {path}")
     print(f"  reference: {report['commands']} commands, replay "

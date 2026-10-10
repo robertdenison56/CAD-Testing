@@ -30,10 +30,10 @@ def test_check_weights_sum_to_100():
     assert all(isinstance(w, int) and w > 0 for w in weights)
 
 
-def test_check_ids_unique_D1_01_to_D1_11():
+def test_check_ids_unique_D1_00_to_D1_11():
     ids = [c["id"] for c in DRAFTING_SPEC_V1["checks"]]
-    assert len(ids) == len(set(ids)) == 11
-    assert ids == ["D1-%02d" % i for i in range(1, 12)]
+    assert len(ids) == len(set(ids)) == 12
+    assert ids == ["D1-%02d" % i for i in range(0, 12)]
     for check in DRAFTING_SPEC_V1["checks"]:
         assert set(check) == {"id", "name", "weight", "hard_fail"}
         assert isinstance(check["hard_fail"], bool)
@@ -118,6 +118,15 @@ def test_tolerances_0_005_ft_1_sec_0_05_position_1_deg():
                    "position_model_ft": 0.05, "position_paper_in": 0.05, "rotation_deg": 1.0}
 
 
+def test_sheet_setup_check_and_reweighting_decided_2026_10_09():
+    weights = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
+    assert weights["D1-00"] == 5 and weights["D1-02"] == 9 and weights["D1-11"] == 1
+    hard = {c["id"] for c in DRAFTING_SPEC_V1["checks"] if c["hard_fail"]}
+    assert hard == {"D1-01", "D1-03", "D1-04", "D1-05", "D1-06"}
+    scoring = DRAFTING_SPEC_V1["scoring"]
+    assert "hard fail" in scoring["hard_fail"] and scoring["effective_score"].startswith("0 if hard")
+
+
 def test_spec_is_json_serializable_round_trip():
     text = json.dumps(DRAFTING_SPEC_V1)
     assert json.loads(text) == DRAFTING_SPEC_V1
@@ -149,10 +158,10 @@ def test_spec_hash_independent_of_key_order_but_changes_with_content():
 
 # --- spec_subset -------------------------------------------------------------------------------
 
-def test_spec_subset_default_10_sections_omits_id_version_status():
+def test_spec_subset_default_11_sections_omits_id_version_status():
     subset = spec_subset()
     assert list(subset) == list(SPEC_SUBSET_KEYS)
-    assert len(subset) == 10
+    assert len(subset) == 11
     assert set(subset).isdisjoint({"spec_id", "version", "status"})
     for key in subset:
         assert subset[key] == DRAFTING_SPEC_V1[key]
@@ -165,7 +174,7 @@ def test_spec_subset_is_deep_copy_and_orders_by_keys():
     assert DRAFTING_SPEC_V1["layers"]["alignment"] == "V-ALIGN-CNTR"
     nested = spec_subset(("checks",))
     nested["checks"][0]["weight"] = 0
-    assert DRAFTING_SPEC_V1["checks"][0]["weight"] == 10
+    assert DRAFTING_SPEC_V1["checks"][0]["weight"] == 5
 
 
 def test_spec_subset_unknown_key_raises_listing_sections():

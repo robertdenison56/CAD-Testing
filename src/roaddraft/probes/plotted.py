@@ -52,10 +52,7 @@ class PText:
         return self.content.split("\n") or [""]
 
     def size(self) -> Tuple[float, float]:
-        n = max(len(line) for line in self.lines)
-        w = max(n, 1) * self.height * geo.TEXT_WIDTH_RATIO * self.width_factor
-        h = self.height + (len(self.lines) - 1) * self.height * geo.TEXT_LINE_SPACING
-        return w, h
+        return geo.text_size(self.content, self.height, self.width_factor)
 
     def frame(self):
         """``(origin, u, v, w, h)``: the box's lower-left corner in paper, the

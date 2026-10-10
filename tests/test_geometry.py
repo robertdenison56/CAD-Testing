@@ -51,10 +51,12 @@ def test_visible_model_bbox():
 
 
 def test_text_bbox_alignment():
+    w = geo.text_size("ABCD", 1.0)[0]   # 3.89: DejaVu Sans capitals run ~0.97 cap heights
+    assert 3.8 < w < 4.0
     bb = geo.text_bbox([0, 0], "ABCD", 1.0, halign="left", valign="bottom")
-    assert bb[0] == 0 and bb[1] == 0 and abs(bb[2] - 2.8) < 1e-9 and bb[3] == 1.0
+    assert bb[0] == 0 and bb[1] == 0 and abs(bb[2] - w) < 1e-9 and bb[3] == 1.0
     bb = geo.text_bbox([0, 0], "ABCD", 1.0, halign="center", valign="middle")
-    assert abs(bb[0] + 1.4) < 1e-9 and abs(bb[1] + 0.5) < 1e-9
+    assert abs(bb[0] + w / 2) < 1e-9 and abs(bb[1] + 0.5) < 1e-9
 
 
 def test_bbox_utils():

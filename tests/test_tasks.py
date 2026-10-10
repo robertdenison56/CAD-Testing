@@ -142,7 +142,8 @@ def test_reference_matches_truth_missing_empty_content_empty_position_empty(tmp_
         sheet = next(iter(session.doc.sheets.values()))
         tables = [e for e in sheet.entities.values() if e.TYPE == "table"]
         assert tables[0].rows == task.truth.curve_table["rows"]
-        assert sheet.title_block_fields["scale"] == task.brief.deliverable["title_block_fields"]["scale"]
+        assert (sheet.title_block_fields["scale"]
+                == task.brief.deliverable["sheets"][0]["title_block_fields"]["scale"])
     # a moved label shows up as a position mismatch, a missing one as missing
     tid = next(e.id for e in session.doc.model_entities.values()
                if e.anchor and e.anchor["kind"] == "pc")

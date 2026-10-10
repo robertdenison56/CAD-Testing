@@ -24,6 +24,7 @@ from matplotlib.patches import Rectangle  # noqa: E402
 
 from roaddraft.core import colors as colorlib  # noqa: E402
 from roaddraft.core import geometry as geo  # noqa: E402
+from roaddraft.core import textmetrics  # noqa: E402
 from roaddraft.core.units import lineweight_points  # noqa: E402
 from roaddraft.document.entities import (  # noqa: E402
     Arc, Circle, Hatch, Line, Point, Polyline, Text, expand_entities, loop_points,
@@ -38,8 +39,6 @@ DASH_PATTERNS = {
     "dot": (1, 3),
     "phantom": (12, 3, 3, 3, 3, 3),
 }
-
-_VALIGN = {"bottom": "bottom", "middle": "center", "top": "top"}
 
 # AutoCAD-style dark model background; near-black linework flips to light so
 # 'black/white' (ACI 7) reads correctly on both paper and screen.
@@ -113,19 +112,39 @@ def draw_primitives(ax, doc, prims, ppd, clip=None, dark=False, mono=False,
             ax.add_patch(patch)
             artists = [patch]
         elif isinstance(e, Text):
-            style = doc.text_styles.get(e.style)
-            stretch = style.width_factor if style else 1.0
-            artist = ax.text(e.position[0], e.position[1], e.content,
-                             fontsize=max(e.height * ppd, 1.0),
-                             rotation=e.rotation_deg, rotation_mode="anchor",
-                             ha=e.halign, va=_VALIGN.get(e.valign, "bottom"),
-                             color=color, clip_on=clip is not None,
-                             linespacing=geo.TEXT_LINE_SPACING,
-                             stretch=int(min(max(stretch * 100, 50), 200)))
-            artists = [artist]
+            artists = _text_artists(ax, doc, e, color, ppd, clip is not None)
         if clip is not None:
             for artist in artists:
                 artist.set_clip_path(clip)
+
+
+def _text_artists(ax, doc, e, color, ppd, clip_on):
+    """A text lettered as CAD letters it, inside its box (geo.text_bbox):
+    capitals e.height tall, each line on its own baseline, TEXT_LINE_SPACING
+    heights apart. matplotlib's fontsize is the em, taller than the capitals,
+    and its vertical alignment and line spacing go by the font's ascender and
+    descender, so the size is scaled up and every line is set on its
+    baseline here."""
+    style = doc.text_styles.get(e.style)
+    stretch = style.width_factor if style else 1.0
+    fontsize = max(e.height * ppd / textmetrics.cap_height_ratio(), 1.0)
+    lines = e.content.split("\n")
+    pitch = e.height * geo.TEXT_LINE_SPACING
+    box_h = e.height + (len(lines) - 1) * pitch
+    bottom = {"middle": -box_h / 2.0, "top": -box_h}.get(e.valign, 0.0)
+    artists = []
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        baseline = bottom + (len(lines) - 1 - i) * pitch
+        x, y = geo.translate_point(geo.rotate_point([0.0, baseline], e.rotation_deg),
+                                   e.position)
+        artists.append(ax.text(x, y, line, fontsize=fontsize,
+                               rotation=e.rotation_deg, rotation_mode="anchor",
+                               ha=e.halign, va="baseline", color=color,
+                               clip_on=clip_on,
+                               stretch=int(min(max(stretch * 100, 50), 200))))
+    return artists
 
 
 def _hatch_artists(ax, e, color, lw):

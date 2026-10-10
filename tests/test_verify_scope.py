@@ -1,0 +1,268 @@
+"""Task types and two-sheet layouts (decided 2026-10-10): a task starts from a
+document with some drafting done and asks for one piece of work; only the
+checks that work drives are graded, renormalised to 100; a two-sheet layout
+breaks at a match line that D1-00 wants drawn and labelled on each sheet."""
+from __future__ import annotations
+
+import pytest
+
+from roaddraft.document.document import Document
+from roaddraft.document.entities import Line, Text
+from roaddraft.tasks.generator import generate_task
+from roaddraft.tasks.prompts import LEVELS
+from roaddraft.tasks.reference import reference_solution, session_for_task
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
+from roaddraft.tasks.types import CHECK_GROUPS, GROUPS, TASK_TYPES, checks_in_scope, task_type
+from roaddraft.verify import verify
+from tests.verify_mutations import Base
+
+WEIGHTS = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
+TYPES = sorted(TASK_TYPES)
+#: a two-sheet seed whose alignment puts a curve on each sheet (two curve tables)
+TWO_TABLE_SEED = next(sd for sd in range(1, 30)
+                      if len(generate_task(sd, curves=[1, 2, 3][sd % 3], equations=bool(sd % 2),
+                                           sheets=2).truth.curve_tables) == 2)
+
+
+def _drafted(seed, ttype, sheets):
+    task = generate_task(seed, curves=[1, 2, 3][seed % 3], equations=bool(seed % 2),
+                         task_type=ttype, sheets=sheets)
+    session = session_for_task(task)
+    reference_solution(task, session)
+    return task, session
+
+
+# ---------------------------------------------------------------- the catalog
+
+
+def test_every_group_is_asked_for_by_some_type_and_plan_sheet_asks_for_all():
+    assert set(GROUPS) == {g for t in TASK_TYPES.values() for g in t.asks}
+    assert task_type("plan-sheet").asks == frozenset(GROUPS)
+    assert task_type("plan-sheet").given == frozenset()
+    assert task_type("annotate-sheet").given == {"layers", "linework", "sheet"}
+    assert task_type("draw-alignment").start == "model" and task_type("bearings").start == "sheet"
+    assert set(DRAFTING_SPEC_V1["task_types"]) == set(TASK_TYPES)
+    with pytest.raises(ValueError, match="unknown task type"):
+        task_type("coffee")
+
+
+def test_checks_in_scope_follow_the_groups():
+    ids = list(WEIGHTS)
+    assert checks_in_scope([], ids) == ids
+    assert checks_in_scope(["bearings"], ids) == ["D1-05", "D1-07", "D1-08", "D1-09"]
+    assert checks_in_scope(["linework"], ids) == ["D1-01", "D1-09"]
+    assert checks_in_scope(["title", "north"], ids) == ["D1-08", "D1-10", "D1-11"]
+    assert checks_in_scope(["sheet"], ids) == ["D1-00", "D1-08"]
+    assert set(CHECK_GROUPS) == set(ids)
+
+
+# --------------------------------------------------------- oracle and null
+
+
+@pytest.mark.parametrize("sheets", [1, 2])
+@pytest.mark.parametrize("ttype", TYPES)
+def test_reference_scores_100_and_the_starting_document_0(ttype, sheets):
+    for seed in (1, 2, 3, 4, 5, 6):
+        task, session = _drafted(seed, ttype, sheets)
+        assert task.truth.scope == sorted(task_type(ttype).asks, key=GROUPS.index)
+        assert task.brief.task_type == ttype and task.brief.sheets == sheets
+        assert len(task.truth.sheets) == sheets
+        base = Document.from_dict(task.baseline)
+        for level in LEVELS:
+            r = verify(session.doc, task.truth, prompt_level=level)
+            assert r.effective_score == 100.0 and not r.all_findings(), (
+                seed, ttype, sheets, level, [f.to_dict() for f in r.all_findings()])
+            assert r.scope == task.truth.scope
+            assert {c.id for c in r.in_scope()} == set(checks_in_scope(r.scope, list(WEIGHTS)))
+            assert r.scope_weight == sum(WEIGHTS[c.id] for c in r.in_scope())
+            r0 = verify(base, task.truth, prompt_level=level)
+            assert r0.effective_score == 0.0 and not r0.hard_failed, (seed, ttype, sheets, level)
+
+
+def test_starting_documents_carry_exactly_the_given_phases():
+    for ttype in TYPES:
+        task = generate_task(7, curves=2, equations=True, task_type=ttype)
+        doc = Document.from_dict(task.baseline)
+        given = task_type(ttype).given
+        assert bool(doc.sheets) == ("sheet" in given)
+        assert (len(doc.layers) > 1) == ("layers" in given)
+        kinds = {e.anchor["kind"] for e in doc.model_entities.values() if e.anchor}
+        assert ("element" in kinds) == ("linework" in given)
+        assert ("tick" in kinds) == ("stationing" in given)
+        assert ("bearing" in kinds) == ("bearings" in given)
+        assert ("mc" in kinds) == ("callouts" in given)
+        if doc.sheets:
+            sheet = next(iter(doc.sheets.values()))
+            assert any(e.TYPE == "table" for e in sheet.entities.values()) == ("table" in given)
+            assert any(e.TYPE == "blockref" for e in sheet.entities.values()) == ("north" in given)
+            assert bool(sheet.title_block_fields) == ("title" in given)
+        assert doc.design.fingerprint() == task.truth.design_fingerprint
+
+
+def test_task_ids_differ_by_type_and_sheets():
+    ids = {generate_task(1, task_type=t, sheets=s).task_id for t in TYPES for s in (1, 2)}
+    assert len(ids) == 2 * len(TYPES)
+
+
+# ------------------------------------------------------------- renormalising
+
+
+def test_a_bearings_task_scores_only_its_checks_on_100():
+    task, session = _drafted(1, "bearings", 1)
+    b = Base.__new__(Base)
+    b.task, b.session, b.truth, b.D, b.A = task, session, task.truth, task.brief.deliverable, "ALIGN-1"
+    n = len(b.labels("bearing"))
+    b.ex("delete_entities", {"ids": [b.labels("bearing")[0].id]})
+    r = b.verify()
+    assert [c.id for c in r.in_scope()] == ["D1-05", "D1-07", "D1-08", "D1-09"]
+    assert r.scope_weight == 30
+    assert r.check("D1-05").credit == pytest.approx((n - 1) / n)
+    assert r.check("D1-07").credit == 1.0 and r.check("D1-08").credit == 1.0
+    assert r.check("D1-09").credit == 1.0  # the bearings left are on the right layer and height
+    assert r.rubric_score == pytest.approx(100.0 * (10 * (n - 1) / n + 8 + 6 + 6) / 30, abs=1e-3)
+    # a wrong bearing hard-fails the task
+    e = b.labels("bearing")[0]
+    b.ex("modify_entity", {"id": e.id, "changes": {"content": e.content.replace("E", "W")
+                                                   if e.content.endswith("E")
+                                                   else e.content.replace("W", "E")}})
+    assert b.verify().effective_score == 0.0
+
+
+def test_given_work_is_not_graded_in_a_partial_task():
+    task, session = _drafted(2, "curve-callouts", 1)
+    b = Base.__new__(Base)
+    b.task, b.session, b.truth, b.D, b.A = task, session, task.truth, task.brief.deliverable, "ALIGN-1"
+    # wreck the given stationing and bearings: out of scope, no effect
+    b.ex("delete_entities", {"ids": [e.id for e in b.labels("station")[:5]]
+                             + [e.id for e in b.labels("bearing")]})
+    assert b.verify().effective_score == 100.0
+    # but the asked-for callouts count
+    b.ex("delete_entities", {"ids": [b.labels("mc")[0].id]})
+    r = b.verify()
+    n = b.truth.counts["curves"]
+    assert r.check("D1-04").credit == pytest.approx((n - 1) / n)
+    assert r.effective_score < 100.0
+
+
+def test_draw_alignment_task_is_linework_and_standards_only():
+    task, session = _drafted(3, "draw-alignment", 1)
+    r = verify(session.doc, task.truth)
+    assert [c.id for c in r.in_scope()] == ["D1-01", "D1-09"] and r.scope_weight == 16
+    assert r.effective_score == 100.0
+    # the agent's view shows only the checks in play
+    assert [c["id"] for c in r.agent_view()["checks"]] == ["D1-01", "D1-09"]
+
+
+# ------------------------------------------------------------- two sheets
+
+
+def _two_sheet(seed=TWO_TABLE_SEED, ttype="plan-sheet"):
+    task, session = _drafted(seed, ttype, 2)
+    b = Base.__new__(Base)
+    b.task, b.session, b.truth, b.D, b.A = task, session, task.truth, task.brief.deliverable, "ALIGN-1"
+    return b
+
+
+def _match_line(b):
+    m = b.truth.sheets[0]["matches"][0]
+    for e in b.doc.model_entities.values():
+        if isinstance(e, Line) and e.anchor is None and abs(
+                (e.start[0] + e.end[0]) / 2 - (m["start"][0] + m["end"][0]) / 2) < 1e-6:
+            return e, m
+    raise AssertionError("no match line")
+
+
+def test_two_sheet_truth_shape():
+    b = _two_sheet()
+    t = b.truth
+    assert [s["name"] for s in t.sheets] == ["C-101", "C-102"]
+    assert t.sheets[0]["station_range"][1] == t.sheets[1]["station_range"][0]
+    assert t.sheets[0]["matches"][0]["other_sheet"] == "C-102"
+    assert t.sheets[1]["matches"][0]["other_sheet"] == "C-101"
+    assert t.sheets[0]["matches"][0]["station"] == t.sheets[1]["matches"][0]["station"]
+    assert t.counts["match_lines"] == 1 and t.counts["sheets"] == 2
+    curves = sorted(c for tb in t.curve_tables for c in tb["curves"])
+    assert curves == list(range(1, t.counts["curves"] + 1))  # every curve tabled once
+    for tb in t.curve_tables:
+        assert len(tb["rows"]) == len(tb["curves"])
+    fields = [s["title_block_fields"] for s in t.sheets]
+    assert fields[0]["sheet_number"] == "C-101" and fields[0]["total_sheets"] == "2"
+    assert fields[1]["sheet_number"] == "C-102"
+
+
+def test_match_line_deleted_costs_both_sheets_their_match_line_credit():
+    b = _two_sheet()
+    line, m = _match_line(b)
+    b.ex("delete_entities", {"ids": [line.id]})
+    r = b.verify()
+    assert r.check("D1-00").credit == pytest.approx(0.9)  # 0.2 x 0.5 on each of two sheets
+    codes = [(f.code, f.anchor["kind"]) for f in r.check("D1-00").findings]
+    assert codes == [("missing", "match_line"), ("missing", "match_line")]
+    assert r.effective_score == pytest.approx(100.0 - 0.5)
+
+
+def test_match_label_wrong_or_missing_on_one_sheet():
+    b = _two_sheet()
+    sheet = b.doc.sheet_by_ref("C-101")
+    label = next(e for e in sheet.entities.values()
+                 if isinstance(e, Text) and e.anchor and e.anchor["kind"] == "custom")
+    b.ex("modify_entity", {"id": label.id, "changes": {"content": label.content.replace(
+        "C-102", "C-103")}})
+    r = b.verify()
+    assert r.check("D1-00").credit == pytest.approx(0.95)
+    assert [f.code for f in r.check("D1-00").findings] == ["wrong_value"]
+    assert not r.hard_failed  # D1-00 is not a hard-fail check
+    b.ex("delete_entities", {"ids": [label.id]})
+    r = b.verify()
+    assert r.check("D1-00").credit == pytest.approx(0.95)
+    assert [f.code for f in r.check("D1-00").findings] == ["missing"]
+
+
+def test_vague_level_reads_the_match_label_by_meaning_and_takes_any_long_line():
+    b = _two_sheet()
+    sheet = b.doc.sheet_by_ref("C-101")
+    label = next(e for e in sheet.entities.values()
+                 if isinstance(e, Text) and e.anchor and e.anchor["kind"] == "custom")
+    m = b.truth.sheets[0]["matches"][0]
+    short = m["station_text"].replace(".00", "")
+    b.ex("modify_entity", {"id": label.id, "changes": {"content": f"MATCH LINE {short} - SEE C-102"}})
+    assert b.verify("vague").check("D1-00").credit == 1.0
+    assert b.verify("explicit").check("D1-00").credit == pytest.approx(0.95)
+    # a match line of another length: fine when the length was not stated
+    line, _ = _match_line(b)
+    b.ex("scale_entities", {"ids": [line.id], "base": [(line.start[0] + line.end[0]) / 2,
+                                                       (line.start[1] + line.end[1]) / 2],
+                            "factor": 0.75})
+    assert b.verify("vague").check("D1-00").credit == 1.0
+    # explicit: the reworded label (0.05) and the short line on both sheets (0.1)
+    assert b.verify("explicit").check("D1-00").credit == pytest.approx(0.85)
+
+
+def test_second_sheet_deleted_halves_the_per_sheet_checks():
+    b = _two_sheet()
+    assert len(b.truth.curve_tables) == 2  # a curve on each sheet for this seed
+    b.ex("delete_sheet", {"sheet": "C-102"})
+    r = b.verify()
+    assert r.check("D1-10").credit == 0.5 and r.check("D1-11").credit == 0.5
+    assert r.check("D1-06").credit == 0.5
+    # sheet 1 is whole (its match line and label still stand), sheet 2 is gone
+    assert r.check("D1-00").credit == pytest.approx(0.5)
+    assert {f.code for f in r.check("D1-00").findings} == {"sheet_missing"}
+    assert r.counts["matched"] < r.counts["required_labels"]  # sheet 2's labels unseen
+
+
+def test_labels_seen_on_either_sheet_count_once():
+    b = _two_sheet()
+    r = b.verify()
+    assert r.counts["matched"] == r.counts["required_labels"] == len(b.truth.labels)
+    assert r.check("D1-08").credit == 1.0
+
+
+def test_two_sheet_partial_types_grade_both_sheets():
+    b = _two_sheet(seed=5, ttype="curve-table")
+    r = b.verify()
+    assert r.effective_score == 100.0 and r.scope == ["table"]
+    tables = [e for sh in b.doc.sheets.values() for e in sh.entities.values() if e.TYPE == "table"]
+    b.ex("delete_entities", {"ids": [tables[0].id]})
+    r = b.verify()
+    assert r.check("D1-06").credit == pytest.approx(0.5 if len(tables) == 2 else 0.0)

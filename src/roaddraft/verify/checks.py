@@ -1,0 +1,663 @@
+"""One function per check id (D1-00 ... D1-11), over one shared analysis.
+
+Each check returns ``(credit, findings)`` with credit in [0, 1]; ``rubric``
+weighs the checks the task's scope puts in play.  The formulas follow the
+eval plan's section 3.4 table, with these readings made precise:
+
+- D1-03/04/05 credit a truth label when its chosen candidate is visible on
+  a deliverable sheet with the right content.  A visible label (chosen or
+  duplicate) with the wrong content is ``wrong_value``: wrong work on the
+  sheet.
+- D1-07, D1-08 and D1-09 judge the quality of the work that is there, so
+  they are ratios over present, in-scope work; with none present there is
+  nothing to judge and they score 0 (an empty sheet earns nothing).
+  D1-07 is consistent labels over matched labels plus hand-rewritten
+  anchors; D1-09 is conforming items over matched items plus the four spec
+  layers.
+- D1-01 credits an element matched on any layer and reports ``wrong_layer``
+  when no match is on the alignment layer (D1-09 takes the points).
+  Linework on the alignment layer that strays off the design is
+  ``geometry_mismatch`` while some element is still unmatched (a wrong
+  attempt at it) and ``extra_linework`` once every element is matched; both
+  are value findings.
+- Per-sheet checks (D1-00, D1-06, D1-10, D1-11) average over the deliverable
+  sheets; D1-08 adds up overlaps across them.  With two sheets D1-00 also
+  wants the match line drawn at the break and labelled on each sheet.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Tuple
+
+from roaddraft.commands.bus import ANCHOR_PRODUCERS
+from roaddraft.document.entities import BlockRef, Entity, Line, Polyline, Table
+from roaddraft.verify.context import Context, SheetView, rect_inside
+from roaddraft.verify.geometry import (
+    LineworkResult, TickMatch, crosses_at, match_linework, match_ticks, pieces_of, same_piece,
+)
+from roaddraft.verify.legibility import outside, overlapping_pairs, sheet_items
+from roaddraft.verify.match import LabelIndex, index_labels
+from roaddraft.verify.normalize import normalize
+from roaddraft.verify.report import Finding
+from roaddraft.verify.semantic import column_key, same_cell, same_match_label, scale_fpi
+
+_CURVE_NO = re.compile(r"^C(?:URVE)?\s*(?:NO\.?)?\s*[-#]?\s*(\d+)$", re.I)
+
+Result = Tuple[float, List[Finding]]
+
+NO_SHEET = "the deliverable sheet does not exist"
+
+
+def _no_sheet(sv: SheetView) -> str:
+    return f"sheet {sv.name} does not exist"
+
+
+# ------------------------------------------------------------------- tables
+
+
+@dataclass
+class TableEval:
+    table: Table
+    headers_ok: bool
+    correct_rows: int
+    n_rows: int
+    findings: List[Finding] = field(default_factory=list)
+
+    @property
+    def score(self) -> float:
+        rows = self.correct_rows / self.n_rows if self.n_rows else 1.0
+        return (0.2 if self.headers_ok else 0.0) + 0.8 * rows
+
+
+@dataclass
+class TableResult:
+    truth: dict
+    chosen: Optional[TableEval] = None
+    others: List[TableEval] = field(default_factory=list)
+    unanchored: List[Table] = field(default_factory=list)
+
+
+def evaluate_table(table: Table, truth_table: dict, exact: bool = True,
+                   core: Optional[List[str]] = None) -> TableEval:
+    """Compare one anchored table with a sheet's truth curve table, cell by cell.
+
+    ``exact`` (the prompt stated the columns): the headers must be the
+    spec's, in order, and cells must read exactly.  Otherwise columns are
+    recognised by what their headers mean, only the ``core`` columns are
+    required, and cells are compared by value."""
+    align = truth_table["anchor"]["alignment"]
+    headers = [c["header"] for c in table.columns]
+    keys = list(truth_table["columns"])
+    truth_rows = list(truth_table["rows"])
+    table_anchor = dict(truth_table["anchor"])
+    if exact:
+        by_header = {normalize(h): k for h, k in zip(truth_table["headers"], keys)}
+        header_key = lambda h: by_header.get(normalize(h))
+        required = keys
+        cell_ok = lambda key, a, e: normalize(a) == normalize(e)
+        row_name = lambda text: normalize(text)
+        headers_ok = ([normalize(h) for h in headers]
+                      == [normalize(h) for h in truth_table["headers"]])
+    else:
+        header_key = column_key
+        required = [k for k in (core or keys)]
+        cell_ok = same_cell
+        row_name = lambda text: (lambda m: int(m.group(1)) if m else normalize(text))(
+            _CURVE_NO.match(normalize(text)))
+        headers_ok = all(any(column_key(h) == k for h in headers) for k in required)
+    ev = TableEval(table=table, correct_rows=0, n_rows=len(truth_rows), headers_ok=headers_ok)
+    if not headers_ok:
+        ev.findings.append(Finding("wrong_field", anchor=table_anchor, entity_ids=[table.id],
+                                   expected=list(truth_table["headers"]), actual=headers,
+                                   note="the table's column headers are not the spec's"))
+    col: Dict[str, int] = {}
+    for j, h in enumerate(headers):
+        k = header_key(h)
+        if k is not None:
+            col.setdefault(k, j)
+    missing_cols = [k for k in required if k not in col]
+    curve_col = col.get("curve")
+    names = [row_name(r[keys.index("curve")]) if "curve" in keys else None for r in truth_rows]
+    by_name: Dict[object, List[int]] = {}
+    if curve_col is not None:
+        for i, row in enumerate(table.rows):
+            by_name.setdefault(row_name(row[curve_col]), []).append(i)
+    used = set()
+
+    def compare(i: int, trow: List[str], anchor: dict, note_extra: str = "") -> bool:
+        ok = not missing_cols
+        for j, k in enumerate(keys):
+            if k not in col:
+                continue
+            cell = table.rows[i][col[k]]
+            if not cell_ok(k, cell, trow[j]):
+                ev.findings.append(Finding("wrong_value", anchor=anchor, entity_ids=[table.id],
+                                           expected=trow[j], actual=cell,
+                                           note=f"curve table column {truth_table['headers'][j]}"
+                                                f"{note_extra}"))
+                ok = False
+        return ok
+
+    for t, trow in enumerate(truth_rows):
+        anchor = {"alignment": align, "ref": trow[0], "kind": "curve_table"}
+        if curve_col is not None:
+            rows = by_name.get(names[t], [])
+        else:
+            rows = [t] if t < len(table.rows) else []
+        if not rows:
+            ev.findings.append(Finding("missing", anchor=anchor, entity_ids=[table.id],
+                                       note="the curve table has no row for this curve"))
+            continue
+        used.update(rows)
+        if compare(rows[0], trow, anchor):
+            ev.correct_rows += 1
+        for extra in rows[1:]:
+            ev.findings.append(Finding("duplicate", anchor=anchor, entity_ids=[table.id],
+                                       note="the curve table repeats this curve's row"))
+            compare(extra, trow, anchor, " (a repeated row)")
+    for i, row in enumerate(table.rows):
+        if i not in used:
+            ev.findings.append(Finding("wrong_value", anchor=table_anchor, entity_ids=[table.id],
+                                       actual=list(row),
+                                       note="the curve table has a row for a curve this sheet "
+                                            "does not show"))
+    if missing_cols:
+        ev.findings.append(Finding("wrong_field", anchor=table_anchor, entity_ids=[table.id],
+                                   expected=missing_cols,
+                                   note="the curve table lacks columns the spec requires"))
+    return ev
+
+
+def analyze_tables(ctx: Context) -> Dict[str, TableResult]:
+    """Per deliverable sheet that must carry a curve table: the anchored
+    tables on it, best first."""
+    out: Dict[str, TableResult] = {}
+    for want in ctx.truth.curve_tables:
+        res = TableResult(truth=want)
+        out[want["sheet"]] = res
+        sv = ctx.sheet_view(want["sheet"])
+        if sv is None:
+            continue
+        evals = []
+        for e in sv.sheet.entities.values():
+            if not isinstance(e, Table):
+                continue
+            rec = e.anchor or {}
+            if rec.get("placed_by") not in ANCHOR_PRODUCERS or rec.get("kind") != "curve_table":
+                res.unanchored.append(e)
+            elif rec.get("alignment") == want["anchor"]["alignment"]:
+                evals.append(evaluate_table(e, want, exact=ctx.states("table_columns"),
+                                            core=ctx.lenient["table_core_columns"]))
+        evals.sort(key=lambda ev: (-ev.score, ev.table.id))
+        if evals:
+            res.chosen, res.others = evals[0], evals[1:]
+    return out
+
+
+# ----------------------------------------------------------------- analysis
+
+
+@dataclass
+class Analysis:
+    ctx: Context
+    labels: LabelIndex
+    linework: Optional[LineworkResult]
+    ticks: List[TickMatch]
+    tables: Dict[str, TableResult]
+
+    def anchor(self, ref: str, kind: str) -> dict:
+        return {"alignment": self.ctx.alignment_name, "ref": ref, "kind": kind}
+
+    def chosen_tables(self) -> List[TableEval]:
+        return [t.chosen for t in self.tables.values() if t.chosen is not None]
+
+
+def analyze(ctx: Context) -> Analysis:
+    model = list(ctx.doc.model_entities.values())
+    tol = float(ctx.tol["position_model_ft"])
+    linework = (match_linework(ctx.alignment, model, ctx.layers["alignment"], tol)
+                if ctx.alignment is not None else None)
+    lo, hi = ctx.lenient["tick_length_in"]
+    ticks = match_ticks(ctx.truth.ticks, model, tol, exact=ctx.states("tick_length"),
+                        rot_tol_deg=float(ctx.tol["rotation_deg"]),
+                        length_range=(lo * ctx.fpi_used, hi * ctx.fpi_used))
+    return Analysis(ctx=ctx, labels=index_labels(ctx), linework=linework, ticks=ticks,
+                    tables=analyze_tables(ctx))
+
+
+def _mean(values: List[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+# ------------------------------------------------------------------- checks
+
+
+def _match_line(a: Analysis, sv: SheetView, m: dict) -> Tuple[float, List[Finding]]:
+    """Half the match credit for the line across the centerline at the break
+    (seen on this sheet), half for this sheet's label at it."""
+    ctx = a.ctx
+    tol = float(ctx.tol["position_model_ft"])
+    anchor = a.anchor(m["station_text"], "match_line")
+    findings: List[Finding] = []
+    credit = 0.0
+    truth_piece = pieces_of(Line(id="truth", start=m["start"], end=m["end"]))[0]
+    station_pt = truth_piece.m
+    lines = [p for e in ctx.doc.model_entities.values()
+             if isinstance(e, (Line, Polyline)) for p in pieces_of(e) if p.kind == "line"]
+    if ctx.states("match_line"):
+        hits = [p for p in lines if same_piece(p, truth_piece, tol)]
+    else:
+        min_len = float(ctx.lenient["match_line_min_in"]) * sv.fpi
+        hits = [p for p in lines if p.length >= min_len
+                and crosses_at(p, truth_piece, tol, float(ctx.tol["rotation_deg"]))]
+    if hits and sv.model_view(station_pt) is not None:
+        credit += 0.5
+    elif hits:
+        findings.append(Finding("not_visible", anchor=anchor,
+                                entity_ids=sorted({h.entity.id for h in hits}),
+                                note=f"the match line is not seen on sheet {sv.name}"))
+    else:
+        findings.append(Finding("missing", anchor=anchor,
+                                note="no match line across the centerline at the break"))
+    label_anchor = a.anchor(m["station_text"], "match_label")
+    cands = [c for c in a.labels.custom.get(sv.sheet.id, [])
+             if c.station is not None
+             and abs(c.station - float(m["station"])) <= float(ctx.tol["station_ft"])]
+    if not cands:
+        findings.append(Finding("missing", anchor=label_anchor,
+                                note=f"no match line label on sheet {sv.name}"))
+        return credit, findings
+    exact = ctx.states("match_line")
+
+    def ok(c) -> bool:
+        if exact:
+            return normalize(c.entity.content) == normalize(m["label"])
+        return same_match_label(c.entity.content, m["station_text"], m["other_sheet"])
+
+    good = [c for c in cands if c.visible and ok(c)]
+    if good:
+        return credit + 0.5, findings
+    c = cands[0]
+    if not c.visible:
+        findings.append(Finding("not_visible", anchor=label_anchor, entity_ids=[c.id],
+                                note="the match line label is outside the usable area"))
+    else:
+        findings.append(Finding("wrong_value", anchor=label_anchor, entity_ids=[c.id],
+                                expected=m["label"], actual=c.entity.content,
+                                note="the match line label reads wrong"))
+    return credit, findings
+
+
+def check_sheet_setup(a: Analysis) -> Result:  # D1-00
+    ctx = a.ctx
+    parts = ctx.spec["sheet_setup"]["many_sheets" if ctx.many_sheets else "one_sheet"]
+    credits, findings = [], []
+    for sv in ctx.sheets:
+        want = sv.truth
+        if sv.sheet is None:
+            findings.append(Finding("sheet_missing", expected=want["name"], note=_no_sheet(sv)))
+            credits.append(0.0)
+            continue
+        credit = 0.0
+        if sv.sheet.size == want["size"]:
+            credit += parts["sheet"]
+        else:
+            findings.append(Finding("sheet_missing", expected=want["size"], actual=sv.sheet.size,
+                                    note=f"sheet {sv.name} is not the size asked for"))
+        if ctx.states("scale"):
+            allowed = [float(want["feet_per_inch"])]
+        else:
+            allowed = [float(f) for f in ctx.lenient["standard_feet_per_inch"]]
+        scales = [float(v.vp.feet_per_inch) for v in sv.views]
+        if any(abs(s - f) < 1e-9 for s in scales for f in allowed):
+            credit += parts["scale"]
+        else:
+            findings.append(Finding("viewport_scale", expected=allowed, actual=scales,
+                                    note=(f"no viewport on {sv.name} is at the scale asked for"
+                                          if scales else f"sheet {sv.name} has no viewport")))
+        if sv.fitted is not None:
+            credit += parts["fitted"]
+        else:
+            findings.append(Finding(
+                "not_fitted", entity_ids=[sv.showing.vp.id] if sv.showing else [],
+                note=(f"the viewport showing the alignment on {sv.name} runs outside the usable "
+                      f"area" if sv.showing else
+                      f"no viewport on {sv.name} shows its whole part of the alignment")))
+        matches = want.get("matches") or []
+        if matches and "match_line" in parts:
+            got = []
+            for m in matches:
+                c, fs = _match_line(a, sv, m)
+                got.append(c)
+                findings.extend(fs)
+            credit += parts["match_line"] * _mean(got)
+        credits.append(credit)
+    return _mean(credits), findings
+
+
+def check_linework(a: Analysis) -> Result:  # D1-01
+    if a.linework is None:
+        return 0.0, [Finding("missing", note="the alignment is not in the design")]
+    layer = a.ctx.layers["alignment"]
+    els = a.linework.elements
+    findings = []
+    for em in els:
+        anchor = a.anchor(em.ref, "element")
+        if not em.hits:
+            findings.append(Finding("missing", anchor=anchor,
+                                    note="no linework matches this alignment element"))
+        elif not any(h.entity.layer == layer for h in em.hits):
+            findings.append(Finding("wrong_layer", anchor=anchor,
+                                    entity_ids=sorted({h.entity.id for h in em.hits}),
+                                    expected=layer,
+                                    actual=sorted({h.entity.layer for h in em.hits})))
+    matched = sum(1 for em in els if em.hits)
+    if a.linework.bad_entities:
+        complete = matched == len(els)
+        for e in a.linework.bad_entities:
+            findings.append(Finding(
+                "extra_linework" if complete else "geometry_mismatch", entity_ids=[e.id],
+                note="linework on the alignment layer that is not part of the design" if complete
+                else "linework on the alignment layer that does not follow the design geometry"))
+    return (matched / len(els) if els else 1.0), findings
+
+
+def check_ticks(a: Analysis) -> Result:  # D1-02
+    findings, hits = [], 0
+    for tm in a.ticks:
+        anchor = a.anchor(tm.truth["station_text"], "tick")
+        if tm.hits:
+            hits += 1
+        elif tm.near is not None:
+            findings.append(Finding("misplaced", anchor=anchor, entity_ids=[tm.near.entity.id],
+                                    expected=[tm.piece.a, tm.piece.b],
+                                    actual=[tm.near.a, tm.near.b],
+                                    note="a tick near this station is off the station or the "
+                                         "wrong length"))
+        else:
+            findings.append(Finding("missing", anchor=anchor, note="no tick at this station"))
+    return (hits / len(a.ticks) if a.ticks else 1.0), findings
+
+
+def _check_labels(a: Analysis, check_id: str) -> Result:  # D1-03, D1-04, D1-05
+    matches = [m for m in a.labels.matches if m.check == check_id]
+    findings, ok = [], 0
+    for m in matches:
+        c = m.chosen
+        if c is None:
+            findings.append(Finding("missing", anchor=m.anchor,
+                                    note="no anchored label for this anchor"))
+        elif not c.visible:
+            findings.append(Finding("not_visible", anchor=m.anchor, entity_ids=[c.id],
+                                    note=NO_SHEET if not a.ctx.any_sheet else
+                                    "the label is not inside a viewport and the usable area of "
+                                    "a deliverable sheet"))
+        elif not m.content_ok(c):
+            findings.append(Finding("wrong_value", anchor=m.anchor, entity_ids=[c.id],
+                                    expected=m.truth["content"], actual=c.entity.content,
+                                    note="the label reads wrong"))
+        else:
+            ok += 1
+        for d in m.duplicates:
+            if d.visible and not m.content_ok(d):
+                findings.append(Finding("wrong_value", anchor=m.anchor, entity_ids=[d.id],
+                                        expected=m.truth["content"], actual=d.entity.content,
+                                        note="a second label for this anchor reads wrong"))
+            else:
+                findings.append(Finding("duplicate", anchor=m.anchor, entity_ids=[d.id],
+                                        note="a second label for this anchor"))
+    return (ok / len(matches) if matches else 1.0), findings
+
+
+def check_curve_table(a: Analysis) -> Result:  # D1-06
+    credits, findings = [], []
+    for name, t in a.tables.items():
+        anchor = dict(t.truth["anchor"])
+        sv = a.ctx.sheet_view(name)
+        if sv is None:
+            findings.append(Finding("missing", anchor=anchor, note=f"sheet {name} does not exist"))
+            credits.append(0.0)
+            continue
+        findings.extend(Finding("unanchored", entity_ids=[e.id],
+                                note="a table not placed by place_curve_table earns no credit")
+                        for e in t.unanchored)
+        if t.chosen is None:
+            findings.append(Finding("missing", anchor=anchor,
+                                    note=f"no anchored curve table on sheet {name}"))
+            credits.append(0.0)
+            continue
+        findings.extend(t.chosen.findings)
+        for other in t.others:
+            findings.append(Finding("duplicate", anchor=anchor, entity_ids=[other.table.id],
+                                    note=f"a second curve table on sheet {name}"))
+            findings.extend(f for f in other.findings if f.is_value)
+        credits.append(t.chosen.score)
+    return _mean(credits), findings
+
+
+def check_anchored_position(a: Analysis) -> Result:  # D1-07
+    findings, placed, matched = [], 0, 0
+    for m in a.labels.matches:
+        c = m.chosen
+        if c is None:
+            continue
+        matched += 1
+        if c.placed:
+            placed += 1
+        else:
+            findings.append(Finding("misplaced", anchor=m.anchor, entity_ids=[c.id],
+                                    expected={"position": c.expected_position,
+                                              "rotation_deg": c.expected_rotation},
+                                    actual={"position": list(c.entity.position),
+                                            "rotation_deg": c.entity.rotation_deg},
+                                    note="the label is not where its anchor puts it"))
+    for inc in a.labels.inconsistent:
+        findings.append(Finding("anchor_inconsistent",
+                                anchor={"alignment": inc.key[0], "ref": inc.key[1],
+                                        "kind": inc.key[2]},
+                                entity_ids=[inc.entity.id], note=inc.note))
+    for text, note in a.labels.unanchored:
+        findings.append(Finding("unanchored", entity_ids=[text.id], note=note))
+    denom = matched + len(a.labels.inconsistent)
+    return (placed / denom if denom else 0.0), findings
+
+
+def check_legibility(a: Analysis) -> Result:  # D1-08
+    ctx = a.ctx
+    if not ctx.any_sheet:
+        return 0.0, [Finding("sheet_missing", note=NO_SHEET)]
+    # legibility judges the whole sheet, but only once some of the asked-for work
+    # is on it: a label, the table, the north arrow or the sheet itself
+    block = ctx.spec["sheet"]["north_arrow"]["block"]
+    present = (any(m.chosen is not None and m.chosen.visible for m in a.labels.matches)
+               or (ctx.asks("table") and bool(a.chosen_tables()))
+               or (ctx.asks("sheet") and ctx.any_sheet)
+               or (ctx.asks("north") and any(
+                   isinstance(e, BlockRef) and e.block_name == block
+                   for sv in ctx.sheets if sv.sheet is not None
+                   for e in sv.sheet.entities.values())))
+    if not present:
+        return 0.0, [Finding("missing", note="none of the work asked for is on a sheet to judge")]
+    findings, pairs, off = [], [], []
+    for sv in ctx.sheets:
+        if sv.sheet is None:
+            continue
+        items = sheet_items(ctx, sv)
+        pairs += overlapping_pairs(items)
+        off += outside(items, sv.usable)
+        findings += [Finding("overlap", entity_ids=list(p), note=f"on sheet {sv.name}")
+                     for p in overlapping_pairs(items)]
+        findings += [Finding("off_sheet", entity_ids=[i],
+                             note=f"outside the usable area of sheet {sv.name}")
+                     for i in outside(items, sv.usable)]
+    return max(0.0, 1.0 - 0.25 * (len(pairs) + len(off))), findings
+
+
+def check_standards(a: Analysis) -> Result:  # D1-09
+    ctx = a.ctx
+    layers, props = ctx.layers, ctx.spec["layer_props"]
+    text = ctx.spec["text"]
+    pct = float(text["height_tolerance_pct"]) / 100.0
+    findings: List[Finding] = []
+    total = conforming = 0
+
+    exact_layers, exact_heights = ctx.states("layers"), ctx.states("text_heights")
+    ranges = {"labels": ctx.lenient["label_height_in"], "tables": ctx.lenient["table_height_in"]}
+
+    def height_ok(h: float, role: str, target: float) -> bool:
+        if exact_heights:
+            return abs(h - target) <= target * pct + 1e-9
+        lo, hi = ranges[role]
+        return lo - 1e-9 <= h <= hi + 1e-9
+
+    def overrides_ok(e: Entity, layer: str) -> bool:
+        p = props.get(layer, {})
+        return ((e.color is None or e.color == p.get("color", e.color))
+                and (e.linetype is None or e.linetype == p.get("linetype", e.linetype)))
+
+    def item(e: Entity, role: str, anchor: Optional[dict], height=None, target=None) -> None:
+        # with the layers stated, the spec's layer and its properties; without, any
+        # layer but 0 (nothing is drafted on layer 0)
+        nonlocal total, conforming
+        total += 1
+        want = layers[role]
+        bad = []
+        if exact_layers and e.layer != want:
+            bad.append(Finding("wrong_layer", anchor=anchor, entity_ids=[e.id], expected=want,
+                               actual=e.layer))
+        elif exact_layers and not overrides_ok(e, want):
+            bad.append(Finding("wrong_layer_props", anchor=anchor, entity_ids=[e.id],
+                               note="the entity overrides its layer's color or linetype"))
+        elif not exact_layers and e.layer == "0":
+            bad.append(Finding("wrong_layer", anchor=anchor, entity_ids=[e.id], actual=e.layer,
+                               note="drafted on layer 0"))
+        if height is not None and not height_ok(height, role, target):
+            bad.append(Finding("wrong_height", anchor=anchor, entity_ids=[e.id],
+                               expected=target if exact_heights else list(ranges[role]),
+                               actual=round(height, 6), note="text height on paper, inches"))
+        findings.extend(bad)
+        conforming += not bad
+
+    for m in a.labels.matches:
+        if m.chosen is not None:
+            item(m.chosen.entity, "labels", m.anchor, m.chosen.paper_height(ctx),
+                 float(text["label_height_in"]))
+    if ctx.asks("ticks"):
+        for tm in a.ticks:
+            if tm.hits:
+                hit = next((h for h in tm.hits if h.entity.layer == layers["ticks"]), tm.hits[0])
+                item(hit.entity, "ticks", a.anchor(tm.truth["station_text"], "tick"))
+    if a.linework is not None and ctx.asks("linework"):
+        for em in a.linework.elements:
+            if em.hits:
+                hit = next((h for h in em.hits if h.entity.layer == layers["alignment"]),
+                           em.hits[0])
+                item(hit.entity, "alignment", a.anchor(em.ref, "element"))
+    if ctx.asks("table"):
+        for ev in a.chosen_tables():
+            t = ev.table
+            item(t, "tables", dict(ctx.truth.curve_table["anchor"]), float(t.text_height),
+                 float(text["table_height_in"]))
+    work = total
+    for name, want in (props.items() if exact_layers else ()):
+        total += 1
+        layer = ctx.doc.layers.get(name)
+        if layer is None:
+            findings.append(Finding("wrong_layer_props", expected=dict(want),
+                                    note=f"layer {name} does not exist"))
+            continue
+        have = {"color": layer.color, "linetype": layer.linetype,
+                "lineweight_mm": layer.lineweight_mm}
+        wrong = {k: have[k] for k, v in want.items()
+                 if (abs(float(have[k]) - float(v)) > 1e-6 if k == "lineweight_mm"
+                     else have[k] != v)}
+        if wrong:
+            findings.append(Finding("wrong_layer_props", expected=dict(want), actual=wrong,
+                                    note=f"layer {name} properties"))
+        else:
+            conforming += 1
+    if work == 0:
+        return 0.0, [Finding("missing", note="no required work to judge")] + findings
+    return conforming / total, findings
+
+
+def check_title_block(a: Analysis) -> Result:  # D1-10
+    ctx = a.ctx
+    required = ctx.spec["sheet"]["required_title_fields"]
+    credits, findings = [], []
+    for sv in ctx.sheets:
+        if sv.sheet is None:
+            findings.append(Finding("sheet_missing", note=_no_sheet(sv)))
+            credits.append(0.0)
+            continue
+        # a field the prompt gave a value for must carry it; any other need only be
+        # filled in -- except the scale, which must always match the viewport used
+        expected = dict(sv.truth["title_block_fields"])
+        fpi = sv.fpi
+        expected["scale"] = ctx.spec["sheet"]["scale_text_format"].format(fpi=fpi)
+        fields = sv.sheet.title_block_fields
+        ok = 0
+        for name in required:
+            value = fields.get(name)
+            if value is None or not str(value).strip():
+                findings.append(Finding("missing_field",
+                                        note=f"title block field {name} on sheet {sv.name}"))
+                continue
+            if name == "scale" and name not in ctx.title_stated:
+                right = scale_fpi(value) is not None and abs(scale_fpi(value) - fpi) < 1e-9
+            elif name in ctx.title_stated:
+                right = normalize(value) == normalize(expected.get(name, value))
+            else:
+                right = True
+            if right:
+                ok += 1
+            else:
+                findings.append(Finding("wrong_field", expected=expected.get(name), actual=value,
+                                        note=f"title block field {name} on sheet {sv.name}"))
+        credits.append(ok / len(required) if required else 1.0)
+    return _mean(credits), findings
+
+
+def check_north_arrow(a: Analysis) -> Result:  # D1-11
+    ctx = a.ctx
+    block = ctx.spec["sheet"]["north_arrow"]["block"]
+    credits, findings = [], []
+    for sv in ctx.sheets:
+        if sv.sheet is None:
+            findings.append(Finding("sheet_missing", note=_no_sheet(sv)))
+            credits.append(0.0)
+            continue
+        refs = [e for e in sv.sheet.entities.values()
+                if isinstance(e, BlockRef) and e.block_name == block]
+        inside = [e for e in refs
+                  if (bb := e.bbox(ctx.doc)) is not None and rect_inside(tuple(bb), sv.usable)]
+        if inside:
+            credits.append(1.0)
+        elif refs:
+            credits.append(0.0)
+            findings.append(Finding("off_sheet", entity_ids=[e.id for e in refs],
+                                    note=f"the north arrow on {sv.name} is outside the usable "
+                                         f"area"))
+        else:
+            credits.append(0.0)
+            findings.append(Finding("missing", note=f"no north arrow on sheet {sv.name}"))
+    return _mean(credits), findings
+
+
+CHECKS: Dict[str, Callable[[Analysis], Result]] = {
+    "D1-00": check_sheet_setup,
+    "D1-01": check_linework,
+    "D1-02": check_ticks,
+    "D1-03": lambda a: _check_labels(a, "D1-03"),
+    "D1-04": lambda a: _check_labels(a, "D1-04"),
+    "D1-05": lambda a: _check_labels(a, "D1-05"),
+    "D1-06": check_curve_table,
+    "D1-07": check_anchored_position,
+    "D1-08": check_legibility,
+    "D1-09": check_standards,
+    "D1-10": check_title_block,
+    "D1-11": check_north_arrow,
+}
+
+__all__ = ["CHECKS", "Analysis", "analyze", "evaluate_table", "TableEval", "TableResult"]

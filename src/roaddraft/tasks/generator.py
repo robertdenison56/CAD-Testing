@@ -4,23 +4,29 @@
 AASHTO minimum for the design speed, deflections 15-60 degrees, tangents with
 room for the curves), an optional station equation, a profile whose grades
 and K values satisfy the DRAFT standards tables, project metadata, and a
-single-sheet deliverable that fits an ANSI D plan window at 1"=50' or
-1"=100'.  Only ``random.Random(seed)`` is consulted (no global RNG, no
-clock), so the same seed always yields byte-identical briefs, truths and
-task ids.  The fit loop shrinks the design deterministically (no new draws)
-until it fits the sheet.
+deliverable of one or two ANSI D plan sheets at 1"=50' or 1"=100'.  Only
+``random.Random(seed)`` is consulted (no global RNG, no clock), so the same
+seed always yields byte-identical briefs, truths and task ids.  The fit loop
+shrinks the design deterministically (no new draws) until every sheet's
+share of it fits the plan window.
+
+A task also has a *type* (``tasks.types``): the phases of the drawing it
+starts with and the ones it asks for.  The starting document is the design
+plus the given phases drafted by the reference solution, so a drafter joins
+work in progress that already shows the office's standards.
 """
 from __future__ import annotations
 
 import datetime as _dt
 import math
 import random
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from roaddraft.core import geometry as geo
 from roaddraft.design.angles import direction_of, unit_vector
-from roaddraft.design.horizontal import PI, Alignment, compile_pis
-from roaddraft.design.labels import curve_table_rows
+from roaddraft.design.horizontal import PI, Alignment, TangentElement, compile_pis
+from roaddraft.design.anchors import parse_anchor, resolve_anchor
+from roaddraft.design.labels import DEFAULT_VALIGN, compile_label, curve_table_rows, sheet_pose
 from roaddraft.design.model import DesignModel
 from roaddraft.design.stations import build_equations
 from roaddraft.design.vertical import PVI, Profile
@@ -29,8 +35,11 @@ from roaddraft.document.entities import Table
 from roaddraft.document.sheets import SHEET_SIZES, Sheet
 from roaddraft.tasks.brief import GENERATOR_VERSION, Task, TaskBrief, compute_task_id
 from roaddraft.tasks.ground_truth import compute_ground_truth
+from roaddraft.tasks.prompts import render_prompts
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, SPEC_VERSION, spec_hash, spec_subset
 from roaddraft.tasks.standards import max_grade, min_k, min_radius
+from roaddraft.tasks.types import DEFAULT_TYPE, TaskType
+from roaddraft.tasks.types import task_type as _task_type
 
 SPEEDS = [35, 40, 45, 50, 55]
 CURVE_COUNTS = [1, 2, 2, 3]
@@ -39,17 +48,38 @@ PROJECTS = ["RESURFACING", "REALIGNMENT", "WIDENING", "SAFETY IMPROVEMENTS"]
 AGENCIES = ["STATE DOT DISTRICT 4", "COUNTY ENGINEER", "STATE DOT DISTRICT 7"]
 COUNTIES = ["HARLAN COUNTY", "MERCER COUNTY", "LINCOLN COUNTY", "CLAY COUNTY", "PIKE COUNTY"]
 EQUATION_JUMPS = [100, 200, 300, 500]
-MIN_EXTRA_FT = 80.0
+# the fit loop never shrinks a tangent below this: at 1"=100' it leaves the EC of one
+# curve and the BC of the next 1.2 in apart on paper, clear of each other
+MIN_EXTRA_FT = 120.0
+# ... nor a curve below this length: at 1"=100' the BC and EC labels of a shorter
+# curve (each about 1 in of lettering) run into each other on the inside of the bend
+MIN_CURVE_FT = 150.0
 FIT_ATTEMPTS = 10
 PAD_FT = 100.0
 CORNER_INSET_IN = 0.25
 BEARING_OFFSET_FACTOR = 2.5  # bearing labels sit 2.5 label offsets off the tangent
+MC_OFFSET_FACTOR = 2.0  # C-n callouts sit outside the BC/EC labels on a short curve
+# two-sheet layouts: longer tangents, a match line on a tangent clear of the curve
+# points, 2 in each side of the centerline on paper, labelled past its end
+TWO_SHEET_STRETCH = 2.2
+MATCH_CLEAR_FT = 60.0
+MATCH_END_CLEAR_FT = 300.0
+MATCH_HALF_IN = 2.0
+MATCH_LABEL_OFFSET_IN = 3.5
+SAMPLE_STEP_FT = 10.0
 ALIGNMENT_NAME = "ALIGN-1"
 PROFILE_NAME = "PROF-1"
+SHEET_NAMES = ["C-101", "C-102", "C-103", "C-104"]
 
 
 def _round2(v: float) -> float:
     return round(float(v), 2)
+
+
+def _delta_floor(radius: float) -> float:
+    """The smallest deflection (degrees, to the half degree) that keeps a curve
+    of ``radius`` at least ``MIN_CURVE_FT`` long; never below 15 degrees."""
+    return max(15.0, math.ceil(math.degrees(MIN_CURVE_FT / radius) * 2.0) / 2.0)
 
 
 def _build_pis(x0: float, y0: float, d0: float, radii: List[float], deltas: List[float],
@@ -74,46 +104,142 @@ def _build_pis(x0: float, y0: float, d0: float, radii: List[float], deltas: List
     return [PI(pts[0], 0.0)] + [PI(pts[k + 1], radii[k]) for k in range(n)] + [PI(pts[-1], 0.0)]
 
 
-def _fits(align: Alignment) -> Optional[int]:
+def segment_points(align: Alignment, lo: float, hi: float) -> List[List[float]]:
+    """Centerline points between distances ``lo`` and ``hi`` from BEGIN, every
+    ``SAMPLE_STEP_FT`` plus both ends and every element end in between."""
+    dists = [lo, hi] + [d for el in align.elements for d in (el.start_dist, el.end_dist)
+                        if lo < d < hi]
+    d = lo
+    while d < hi:
+        dists.append(d)
+        d += SAMPLE_STEP_FT
+    return [align.point_at(x) for x in sorted(set(dists))]
+
+
+def _fits_window(bb, fpi: float) -> bool:
     fit_w, fit_h = DRAFTING_SPEC_V1["sheet"]["fit_window_in"]
-    bb = geo.bbox_expand(align.bbox(), PAD_FT)
-    w, h = bb[2] - bb[0], bb[3] - bb[1]
+    bb = geo.bbox_expand(bb, PAD_FT)
+    return (bb[2] - bb[0]) <= fit_w * fpi and (bb[3] - bb[1]) <= fit_h * fpi
+
+
+def _match_dists(align: Alignment, n_sheets: int) -> Optional[List[float]]:
+    """Distances from BEGIN at which the sheets break (``n_sheets - 1`` of
+    them): even 100-ft stations on a tangent, clear of its curve points and
+    of the alignment's ends, nearest the even split.  None when one cannot be
+    found."""
+    L = align.length
+    out: List[float] = []
+    for k in range(1, n_sheets):
+        want = L * k / n_sheets
+        best = None
+        for m in range(1, int(L // 100.0) + 1):
+            d = 100.0 * m
+            if d < MATCH_END_CLEAR_FT or d > L - MATCH_END_CLEAR_FT:
+                continue
+            i, _ = align.element_at(d)
+            el = align.elements[i]
+            if not isinstance(el, TangentElement):
+                continue
+            if d - el.start_dist < MATCH_CLEAR_FT or el.end_dist - d < MATCH_CLEAR_FT:
+                continue
+            if best is None or abs(d - want) < abs(best - want):
+                best = d
+        if best is None or (out and best <= out[-1]):
+            return None
+        out.append(best)
+    return out
+
+
+def _fits(align: Alignment, n_sheets: int) -> Optional[Tuple[int, List[float]]]:
+    """``(feet_per_inch, match_dists)`` at the smallest allowed scale that
+    shows every sheet's share of the alignment in the plan window."""
+    matches = _match_dists(align, n_sheets) if n_sheets > 1 else []
+    if matches is None:
+        return None
+    bounds = [0.0] + matches + [align.length]
+    boxes = [geo.bbox_of_points(segment_points(align, bounds[i], bounds[i + 1]))
+             for i in range(n_sheets)]
     for fpi in DRAFTING_SPEC_V1["sheet"]["allowed_feet_per_inch"]:
-        if w <= fit_w * fpi and h <= fit_h * fpi:
-            return int(fpi)
+        if all(_fits_window(bb, fpi) for bb in boxes):
+            return int(fpi), matches
     return None
 
 
-def _table_size(align: Alignment, columns: List[str], text_height: float) -> Tuple[float, float]:
-    _headers, rows, widths = curve_table_rows(align, columns)
+def _table_size(align: Alignment, curves: Sequence[int], columns: List[str],
+                text_height: float) -> Tuple[float, float]:
+    _headers, rows, widths = curve_table_rows(align, columns, curves=curves)
     w = sum(widths)
     h = text_height * (Table.TITLE_FACTOR + Table.ROW_FACTOR * (len(rows) + 1))
     return w, h
 
 
-def _curve_table_position(align: Alignment, sheet: Sheet, viewport: dict, columns: List[str],
-                          text_height: float) -> List[float]:
+def _curve_table_position(align: Alignment, curves: Sequence[int], sheet: Sheet, viewport: dict,
+                          columns: List[str], text_height: float,
+                          avoid: Sequence[tuple] = ()) -> List[float]:
     """First candidate corner (bottom-right, top-right, bottom-left, top-left)
-    whose table rect clears the alignment (mapped to paper, padded 1 in) and
-    the north arrow; fallback bottom-right."""
-    w, h = _table_size(align, columns, text_height)
+    whose table rect clears the drawn alignment (mapped to paper, padded 1 in),
+    the north arrow and the ``avoid`` rects; fallback bottom-right."""
+    w, h = _table_size(align, curves, columns, text_height)
     ua = sheet.usable_area()
     x0, y0, x1, y1 = (ua[0] + CORNER_INSET_IN, ua[1] + CORNER_INSET_IN,
                       ua[2] - CORNER_INSET_IN, ua[3] - CORNER_INSET_IN)
     candidates = [[x1 - w, y0 + h], [x1 - w, y1], [x0, y0 + h], [x0, y1]]
     t = geo.ViewportTransform(viewport["center_paper"], viewport["model_center"],
                               viewport["feet_per_inch"], viewport.get("rotation_deg", 0.0))
-    mb = align.bbox()
-    corners = [[mb[0], mb[1]], [mb[2], mb[1]], [mb[2], mb[3]], [mb[0], mb[3]]]
-    obstacles = [geo.bbox_expand(geo.bbox_of_points([t.to_paper(c) for c in corners]), 1.0)]
-    na = DRAFTING_SPEC_V1["sheet"]["north_arrow"]
-    px, py, sc = na["position"][0], na["position"][1], na["scale"]
-    obstacles.append((px - 1.2 * sc, py - 1.2 * sc, px + 1.2 * sc, py + 1.8 * sc))
+    visible = t.visible_model_bbox(viewport["width_in"], viewport["height_in"])
+    shown = [p for p in segment_points(align, 0.0, align.length)
+             if geo.bbox_contains(visible, (p[0], p[1], p[0], p[1]))]
+    obstacles = []
+    if shown:
+        obstacles.append(geo.bbox_expand(geo.bbox_of_points([t.to_paper(p) for p in shown]), 1.0))
+    obstacles.append(_north_arrow_rect())
+    obstacles.extend(geo.bbox_expand(r, 0.25) for r in avoid)
     for cand in candidates:
         rect = (cand[0], cand[1] - h, cand[0] + w, cand[1])
         if not any(geo.bbox_intersects(rect, ob) for ob in obstacles):
             return [_round2(cand[0]), _round2(cand[1])]
     return [_round2(candidates[0][0]), _round2(candidates[0][1])]
+
+
+#: match-label poses to try, in order: square to the line past its end, then closer,
+#: then along the line just past its end
+MATCH_LABEL_POSES = (("perpendicular", MATCH_LABEL_OFFSET_IN), ("perpendicular", 3.0),
+                     ("along", 2.4))
+
+
+def _north_arrow_rect() -> Tuple[float, float, float, float]:
+    na = DRAFTING_SPEC_V1["sheet"]["north_arrow"]
+    px, py, sc = na["position"][0], na["position"][1], na["scale"]
+    return (px - 1.2 * sc, py - 1.2 * sc, px + 1.2 * sc, py + 1.8 * sc)
+
+
+def _match_label_bbox(align: Alignment, station_text: str, label: str, viewport: dict,
+                      side: str, rotation: str, offset_in: float):
+    """Paper bbox of the match-line label the reference would place."""
+    spec = compile_label(align, resolve_anchor(align, parse_anchor(station_text)), "custom",
+                         side=side, rotation=rotation, content=label)
+    t = geo.ViewportTransform(viewport["center_paper"], viewport["model_center"],
+                              viewport["feet_per_inch"], viewport.get("rotation_deg", 0.0))
+    position, rot = sheet_pose(spec, t, viewport.get("rotation_deg", 0.0), offset_in)
+    height = DRAFTING_SPEC_V1["text"]["label_height_in"]
+    return geo.text_bbox(position, label, height, rot, "center", DEFAULT_VALIGN[side])
+
+
+def _match_layout(align: Alignment, station_text: str, label: str, viewport: dict,
+                  sheet: Sheet) -> Tuple[str, str, float, tuple]:
+    """``(side, rotation, label_offset_in, paper bbox)`` for a match-line label
+    that stays inside the usable area and clear of the north arrow."""
+    ua = sheet.usable_area()
+    inner = (ua[0] + 0.1, ua[1] + 0.1, ua[2] - 0.1, ua[3] - 0.1)
+    na = _north_arrow_rect()
+    first = None
+    for rotation, offset in MATCH_LABEL_POSES:
+        for side in ("right", "left"):
+            bb = _match_label_bbox(align, station_text, label, viewport, side, rotation, offset)
+            first = first or (side, rotation, offset, bb)
+            if geo.bbox_contains(inner, bb) and not geo.bbox_intersects(bb, na):
+                return side, rotation, offset, bb
+    return first
 
 
 def _profile(rng: random.Random, align: Alignment, v_mph: int) -> Profile:
@@ -159,9 +285,28 @@ def _profile(rng: random.Random, align: Alignment, v_mph: int) -> Profile:
     return profile
 
 
+def _baseline(design: dict, project: dict, task_id: str, v_mph: int, county: str,
+              agency: str) -> Document:
+    doc = Document.new(project["name"])
+    doc.design = DesignModel.from_dict({"alignments": design["alignments"],
+                                        "profiles": design["profiles"]})
+    doc.meta.update(task_id=task_id, spec_version=SPEC_VERSION, design_speed_mph=v_mph,
+                    description=f"{project['name']} — {county}, {agency}")
+    return doc
+
+
 def generate_task(seed: int, curves: Optional[int] = None, equations: bool = False,
-                  design_speed_mph: Optional[int] = None, level: str = "D1") -> Task:
-    """Generate a deterministic D1 plan-sheet task from ``seed``."""
+                  design_speed_mph: Optional[int] = None, level: str = "D1",
+                  task_type: str = DEFAULT_TYPE, sheets: int = 1) -> Task:
+    """Generate a deterministic D1 task from ``seed``.
+
+    ``task_type`` names what the drafter starts with and is asked for
+    (``tasks.TASK_TYPES``); ``sheets`` (1 or 2) is how many plan sheets the
+    alignment is laid out on, with a match line between them."""
+    ttype: TaskType = _task_type(task_type) if isinstance(task_type, str) else task_type
+    n_sheets = int(sheets)
+    if n_sheets < 1 or n_sheets > len(SHEET_NAMES):
+        raise ValueError(f"sheets must be 1..{len(SHEET_NAMES)}")
     rng = random.Random(int(seed))
     v_mph = int(design_speed_mph) if design_speed_mph else rng.choice(SPEEDS)
     n = rng.choice(CURVE_COUNTS) if curves is None else int(curves)
@@ -174,32 +319,36 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     radii, deltas, turns = [], [], []
     for _ in range(n):
         radii.append(math.ceil(r_min * rng.uniform(1.15, 2.5) / 50.0) * 50.0)
-        deltas.append(rng.randrange(30, 121) / 2.0)
+        deltas.append(max(rng.randrange(30, 121) / 2.0, _delta_floor(radii[-1])))
         turns.append(rng.choice(["L", "R"]))
     extras = [rng.uniform(250.0, 600.0)]
     extras += [rng.uniform(200.0, 600.0) for _ in range(n - 1)]
     extras.append(rng.uniform(250.0, 600.0))
+    if n_sheets > 1:
+        extras = [e * TWO_SHEET_STRETCH * (n_sheets - 1) for e in extras]
     r_floor = math.ceil(r_min * 1.15 / 50.0) * 50.0
 
     # ---- fit loop: deterministic shrinking, no new draws
-    fpi = None
+    fit = None
     warnings: List[str] = []
     for attempt in range(FIT_ATTEMPTS + 1):
         pis = _build_pis(x0, y0, d0, radii, deltas, turns, extras)
         elements = compile_pis(pis)
         align = Alignment(name=ALIGNMENT_NAME, elements=elements, pis=pis, source="pis")
-        fpi = _fits(align)
-        if fpi is not None:
+        fit = _fits(align, n_sheets)
+        if fit is not None:
             break
         if attempt == FIT_ATTEMPTS:
-            raise AssertionError(f"generator bug: seed {seed} never fit the sheet window")
+            raise AssertionError(f"generator bug: seed {seed} never fit {n_sheets} sheet(s)")
         extras = [max(MIN_EXTRA_FT, e * 0.7) for e in extras]
-        deltas = [max(15.0, math.floor(d * 0.85 * 2.0) / 2.0) for d in deltas]
         radii = [max(r_floor, math.ceil(r * 0.85 / 50.0) * 50.0) for r in radii]
+        deltas = [max(_delta_floor(r), math.floor(d * 0.85 * 2.0) / 2.0)
+                  for d, r in zip(deltas, radii)]
         if attempt >= 4:  # lay the BEGIN-END chord along the sheet
             chord = direction_of(pis[0].point, pis[-1].point)
             d0 = (d0 - chord) % 360.0
-    assert fpi is not None
+    assert fit is not None
+    fpi, match_dists = fit
 
     begin_station = 100.0 * rng.randrange(10, 200)
     align.begin_station = begin_station
@@ -237,25 +386,64 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     sheet_spec = spec["sheet"]
     size = sheet_spec["size"]
     width, height = SHEET_SIZES[size]
-    sheet_name = "C-101"
-    sheet = Sheet(id="SH-001", name=sheet_name, size=size, width_in=width, height_in=height)
-    mb = align.bbox()
-    viewport = {"center_paper": list(sheet_spec["viewport"]["center_paper"]),
-                "width_in": sheet_spec["viewport"]["width_in"],
-                "height_in": sheet_spec["viewport"]["height_in"],
-                "model_center": [_round2((mb[0] + mb[2]) / 2.0), _round2((mb[1] + mb[3]) / 2.0)],
-                "feet_per_inch": float(fpi), "rotation_deg": 0.0}
     columns = list(spec["curve_table"]["columns"])
     table_h = spec["text"]["table_height_in"]
     scale_text = sheet_spec["scale_text_format"].format(fpi=fpi)
+    st = align.stations()
+    bounds = [0.0] + list(match_dists) + [align.length]
+    sheet_dicts: List[dict] = []
+    for i in range(n_sheets):
+        name = SHEET_NAMES[i]
+        sheet = Sheet(id=f"SH-{i + 1:03d}", name=name, size=size, width_in=width,
+                      height_in=height)
+        lo, hi = bounds[i], bounds[i + 1]
+        bb = geo.bbox_of_points(segment_points(align, lo, hi))
+        viewport = {"center_paper": list(sheet_spec["viewport"]["center_paper"]),
+                    "width_in": sheet_spec["viewport"]["width_in"],
+                    "height_in": sheet_spec["viewport"]["height_in"],
+                    "model_center": [_round2((bb[0] + bb[2]) / 2.0),
+                                     _round2((bb[1] + bb[3]) / 2.0)],
+                    "feet_per_inch": float(fpi), "rotation_deg": 0.0}
+        if n_sheets > 1:
+            # a viewport no bigger than this sheet's share plus the pad, so the
+            # next sheet's work does not show through it (the nearest thing to a
+            # viewport clipped at the match line)
+            padded = geo.bbox_expand(bb, PAD_FT)
+            viewport["width_in"] = _round2((padded[2] - padded[0]) / fpi)
+            viewport["height_in"] = _round2((padded[3] - padded[1]) / fpi)
+        on_sheet = [k + 1 for k, c in enumerate(align.curves())
+                    if c.start_dist < hi - 1e-6 and c.end_dist > lo + 1e-6]
+        matches, label_rects = [], []
+        for j, d in enumerate(match_dists):
+            if d not in (lo, hi):
+                continue
+            raw = begin_station + d
+            other = SHEET_NAMES[i + 1] if d == hi else SHEET_NAMES[i - 1]
+            text = st.format(raw)
+            label = f"MATCH LINE STA {text} SEE SHEET {other}"
+            side, rotation, offset, rect = _match_layout(align, text, label, viewport, sheet)
+            label_rects.append(rect)
+            matches.append({
+                "station": float(raw), "station_text": text,
+                "half_width_ft": _round2(MATCH_HALF_IN * fpi), "other_sheet": other,
+                "label": label, "label_offset_in": offset, "side": side, "rotation": rotation})
+        sheet_dicts.append({
+            "name": name, "size": size, "viewport": viewport,
+            "station_range": [float(begin_station + lo), float(begin_station + hi)],
+            "curves": on_sheet,
+            "curve_table_position": _curve_table_position(align, on_sheet, sheet, viewport,
+                                                          columns, table_h, avoid=label_rects),
+            "title_block_fields": {
+                "project": project["name"], "agency": agency, "sheet_title": "ROADWAY PLAN",
+                "sheet_number": name, "total_sheets": str(n_sheets), "designed_by": "RD",
+                "drawn_by": "AGENT", "checked_by": "RD", "date": date, "scale": scale_text},
+            "matches": matches})
     deliverable = {
-        "sheet_name": sheet_name, "sheet_size": size, "feet_per_inch": float(fpi),
-        "viewport": viewport,
+        "task_type": ttype.name, "sheets": sheet_dicts, "feet_per_inch": float(fpi),
         "stationing_interval_ft": spec["stationing"]["interval_ft"],
         "station_format": spec["stationing"]["format"],
         "required_label_kinds": ["station", "pc", "pt", "bearing", "mc", "curve_table"],
         "curve_table_columns": columns,
-        "curve_table_position": _curve_table_position(align, sheet, viewport, columns, table_h),
         "text_heights": {"model_label_ft": _round2(spec["text"]["label_height_in"] * fpi),
                          "sheet_table_in": table_h},
         "tick_half_len_ft": _round2(spec["stationing"]["tick_half_len_in"] * fpi),
@@ -263,11 +451,9 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         # bearings sit outside the station labels (same side) so the two never collide
         "bearing_label_offset_ft": _round2(BEARING_OFFSET_FACTOR
                                            * spec["stationing"]["label_offset_in"] * fpi),
+        "mc_label_offset_ft": _round2(MC_OFFSET_FACTOR * spec["stationing"]["label_offset_in"]
+                                      * fpi),
         "north_arrow": True,
-        "title_block_fields": {
-            "project": project["name"], "agency": agency, "sheet_title": "ROADWAY PLAN",
-            "sheet_number": sheet_name, "total_sheets": "1", "designed_by": "RD",
-            "drawn_by": "AGENT", "checked_by": "RD", "date": date, "scale": scale_text},
     }
     if align.equations:
         deliverable["required_label_kinds"].append("equation")
@@ -277,31 +463,31 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     payload = {"generator_version": GENERATOR_VERSION, "spec_hash": spec_hash(),
                "project": project, "design": design, "deliverable": deliverable}
     task_id = compute_task_id(int(seed), level, payload)
-    instructions = (
-        f"Draft plan sheet {sheet_name} ({size}, {scale_text}) showing alignment "
-        f"{ALIGNMENT_NAME} in full: draw the alignment on {spec['layers']['alignment']}, "
-        f"station ticks and labels every {spec['stationing']['interval_ft']} ft, BC/EC labels, "
-        f"a bearing on every tangent, a C-n callout at every mid-curve, "
-        f"{'the station equation label, ' if align.equations else ''}a curve data table on the "
-        f"sheet, a north arrow, and a filled title block. Use anchored labels (place_label), "
-        f"never raw text.")
-    if warnings:
-        instructions += " Note: " + "; ".join(warnings) + "."
     brief = TaskBrief(task_id=task_id, seed=int(seed), level=level,
                       generator_version=GENERATOR_VERSION, spec_version=SPEC_VERSION,
                       spec_hash=spec_hash(), project=project, design=design,
-                      deliverable=deliverable, drafting_spec=spec_subset(),
-                      instructions=instructions)
+                      deliverable=deliverable, drafting_spec=spec_subset(), instructions="",
+                      task_type=ttype.name, sheets=n_sheets)
+    brief.prompts = render_prompts(brief)
+    brief.instructions = brief.prompts["explicit"]
+    if warnings:
+        brief.instructions += "\nNote: " + "; ".join(warnings) + "."
 
-    # ---- baseline document with the design pre-seeded
-    doc = Document.new(project["name"])
-    doc.design = DesignModel.from_dict({"alignments": design["alignments"],
-                                        "profiles": design["profiles"]})
-    doc.meta.update(task_id=task_id, spec_version=SPEC_VERSION, design_speed_mph=v_mph,
-                    description=f"{project['name']} — {county}, {agency}")
-    baseline = doc.to_dict()
+    # ---- truth, then the starting document: the design plus the given phases
     truth = compute_ground_truth(brief)
-    return Task(brief=brief, truth=truth, baseline=baseline)
+    doc = _baseline(design, project, task_id, v_mph, county, agency)
+    task = Task(brief=brief, truth=truth, baseline=doc.to_dict())
+    if ttype.given:
+        from roaddraft.tasks.reference import phase_commands, session_for_task
+        session = session_for_task(task)
+        for name, params in phase_commands(task, [p for p in ttype.given]):
+            result = session.execute(name, params)
+            if not result["ok"]:
+                raise AssertionError(f"generator bug: starting document for {ttype.name} seed "
+                                     f"{seed}: {name} failed: {result['error']['message']}")
+        task.baseline = session.doc.to_dict()
+    return task
 
 
-__all__ = ["generate_task", "ALIGNMENT_NAME", "PROFILE_NAME", "SPEEDS", "CURVE_COUNTS"]
+__all__ = ["generate_task", "segment_points", "ALIGNMENT_NAME", "PROFILE_NAME", "SPEEDS",
+           "CURVE_COUNTS", "SHEET_NAMES"]

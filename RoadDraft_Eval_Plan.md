@@ -112,12 +112,16 @@ results/                                                   raw episode logs (git
 
 ## 3. The verifier (`roaddraft.verify`)
 
+> **Built 2026-10-10 (E1).** `src/roaddraft/verify/` plus `python -m roaddraft.verify DOC TRUTH [--journal J] [--level full|terse]`. Acceptance met: oracle 200 seeds × all dials × both prompt levels = 100 with no findings, null 50/50 = 0 with `sheet_missing`, determinism (twice and on the replayed journal), 34 mutations, 11 hack probes, p95 ≈ 8 ms on 3 curves with an equation. Decisions taken on the way, and where the build departs from this section, are in §3.8.
+
 ### 3.1 Public API and report shape
 
 ```python
 def verify(doc: Document, truth: GroundTruth, spec: dict = DRAFTING_SPEC_V1,
-           journal: Optional[List[dict]] = None) -> VerifyReport
+           journal: Optional[List[dict]] = None, prompt_level: str = "full") -> VerifyReport
 ```
+
+The built report also carries `prompt_level` and a top-level `findings` list (only `design_tampered` lives there); `timing_ms` is kept off `to_dict()` so reports are byte-stable (`to_dict(include_timing=True)` adds it). `VerifyReport.agent_view()` is the `run_check` payload.
 
 `VerifyReport.to_dict()`:
 
@@ -162,7 +166,7 @@ Ticks and linework are matched geometrically (endpoints within `position_model_f
 
 | Check | Credit | Hard-fail trigger | Main finding codes |
 |---|---|---|---|
-| **D1-00 sheet setup** (proposed addition, §3.7) | 0.25 sheet exists with the deliverable name and size + 0.25 a viewport at an allowed `feet_per_inch` + 0.5 the alignment bbox lies inside a viewport's visible window and the viewport inside the usable area | — | `sheet_missing`, `viewport_scale`, `not_fitted` |
+| **D1-00 sheet setup** (added 2026-10-09, weight 5; D1-02 → 9, D1-11 → 1) | 0.25 sheet exists with the deliverable name and size + 0.25 a viewport at an allowed `feet_per_inch` + 0.5 the alignment bbox lies inside a viewport's visible window and the viewport inside the usable area | — | `sheet_missing`, `viewport_scale`, `not_fitted` |
 | D1-01 linework | matched design elements / total elements | any entity on the alignment layer whose geometry matches no element within tolerance | `missing`, `geometry_mismatch`, `extra_linework`, `wrong_layer` |
 | D1-02 ticks | matched ticks / expected ticks (per region, through equations) | — | `missing`, `misplaced` |
 | D1-03 station labels (+ equation labels) | correct anchored visible / expected | a matched label with wrong content | `missing`, `wrong_value`, `not_visible`, `unanchored` |
@@ -238,15 +242,69 @@ Reward-hack probes: (a) all labels via `place_text` with correct strings → ≤
 
 Each of these changes `spec_hash` and therefore every task id. Batch them, decide once, then freeze `draft-v1` → `v1`.
 
-1. Add **D1-00 sheet setup** (weight 5, taken from D1-02 → 10 and D1-11 → 2, or as the PE prefers). Without it, a sheet with no viewport scores 0 on nine checks with no finding that says why.
+1. Add **D1-00 sheet setup** (weight 5, taken from D1-02 → 10 and D1-11 → 2, or as the PE prefers). Without it, a sheet with no viewport scores 0 on nine checks with no finding that says why. *Decided 2026-10-09 (Robert): added at weight 5. Those two cuts free only 3 points, so the weights are D1-02 12 → 9 and D1-11 3 → 1 (sum 100).*
 2. ~~Add `placed_by` to the anchor record (§2.7) and the bus stamp (§3.5 item 3).~~ **Done 2026-09-10** — no decision left, but note it is a key on every anchor record and so is visible to agents through `get_entity`.
-3. Write the **hard-fail rule** into the spec text: "missing costs credit; a wrong value shown on the sheet is a hard fail; the effective score of a hard-failed sheet is 0".
-4. **Assign `mc` and `equation` labels to checks.** `labels.mc.required` is true and `required_label_kinds` includes `mc`, but no D1 check covers the C-n callouts, and equation labels are likewise uncovered. Proposal: D1-04 covers PC/PT/PCC/PRC and C-n; D1-03 covers station and equation labels.
+3. Write the **hard-fail rule** into the spec text: "missing costs credit; a wrong value shown on the sheet is a hard fail; the effective score of a hard-failed sheet is 0". *Decided 2026-10-09: kept as written; `DRAFTING_SPEC_V1["scoring"]` states it, and the text and geometry credit rules (items 5, 6).*
+4. **Assign `mc` and `equation` labels to checks.** `labels.mc.required` is true and `required_label_kinds` includes `mc`, but no D1 check covers the C-n callouts, and equation labels are likewise uncovered. Proposal: D1-04 covers PC/PT/PCC/PRC and C-n; D1-03 covers station and equation labels. *Decided 2026-10-09: as proposed; the check names say so.*
 5. Confirm **credit rules for unanchored work**: geometry-matched linework and ticks earn credit; text and tables only through anchors.
 6. Confirm **legibility is judged in paper space** at the deliverable scale, including model-space labels seen through the viewport.
 7. Review tolerances (0.005 ft, 1 second, 0.05 in) and the `_upright` west-heading gotcha already flagged in Phase 1.
 8. Task ids and any published number are tied to the frozen spec. **No leaderboard is published on `draft-v1`.**
 9. **Reconcile `draft-v1` with the Caltrans PPM**, now indexed under `benchmarks/knowledge/caltrans-ppm/` (README there lists each departure with page citations): BC/EC versus PC/PT wording, full annotation at 500-ft stations with single digits between versus every 100-ft station in `12+34.56` form, 0.14 in ticks with labels below the line versus 0.40 in ticks with labels on the left, PPM `TX` text sizes versus 0.10 in labels, and tangent distances beside bearings. Decide per item whether the neutral spec follows the PPM or keeps the genericized value, and record the citation next to the value in `spec_v1.py`. *Decided 2026-10-05 (Robert): BC/EC wording follows the PPM; `spec_v1.py` and the engine letter BC/EC, citation recorded. The other items are still open.*
+
+### 3.8 As built (E1, 2026-10-10)
+
+**Task types (decided 2026-10-10, Robert: "simpler prompts; start from an empty sheet or model file and ask for one thing; a few whole sheets from scratch; a few across multiple sheets").** A plan sheet is drafted in phases (layers, linework, stationing, bearings, callouts, sheet, table, north arrow, title block), and a task hands the drafter a document with some phases done and asks for others (`tasks/types.py`, `DRAFTING_SPEC_V1["task_types"]`):
+
+| Type | Starts with | Asks for | Checks graded (points in play) |
+|---|---|---|---|
+| `draw-alignment` | design + layers | the centerline | D1-01, 09 (16) |
+| `stationing` | everything but stationing | ticks, station labels, BC/EC (+ equation) | D1-02, 03, 04, 07, 08, 09 (55) |
+| `curve-callouts` | everything but C-n | C-n callouts | D1-04, 07, 08, 09 (34) |
+| `bearings` | everything but bearings | bearings | D1-05, 07, 08, 09 (30) |
+| `curve-table` | everything but the table | the table(s) | D1-06, 08, 09 (26) |
+| `title-block` | everything but title + north | title block(s), north arrow(s) | D1-08, 10, 11 (12) |
+| `sheet-setup` | the annotated model, no sheet | sheet(s), viewport(s), match line | D1-00, 08 (11) |
+| `annotate-sheet` | linework + an empty set-up sheet | every annotation | D1-02…11 (85) |
+| `plan-sheet` | the design only | everything | all (100) |
+
+The starting document is the design plus the given phases drafted by the reference solution, so a drafter joins work that already shows the office's standards. `truth.scope` names the groups asked for; the verifier grades only the checks those groups drive and **renormalises the rubric to 100 over the in-scope weights** (`report.scope_weight`), so a one-piece task and a whole sheet score on the same scale. Out-of-scope checks are reported with `in_scope: false` and hidden from the agent's `run_check` view. Wrecking given work is not graded (it is not what was asked); a wrong value in the asked-for work still hard-fails.
+
+**Two sheets.** Any type runs on `sheets=2`: a longer alignment (tangents stretched 2.2×) broken at an even station on a tangent, ≥ 60 ft from any curve point and ≥ 300 ft from the ends, nearest the middle. Each sheet (C-101, C-102) gets a viewport sized to its own segment plus the 100-ft pad (the nearest thing to a viewport clipped at the match line; a full-size viewport let the other sheet's labels show through, under the north arrow and off the edge), its own curve table listing the curves it shows (a sheet with no curve has no table), north arrow and title block (sheet n of 2). One match line is drawn across the centerline at the break (`draw_station_offset`, 2 in each side on paper, on the station layer) and each sheet carries a `MATCH LINE STA … SEE SHEET …` label (`place_label` kind `custom` on the sheet, posed by its actual text box so it stays inside the border and clear of the north arrow). D1-00 scores the match line inside sheet setup: per sheet 0.2 sheet + 0.2 scale + 0.4 fitted + 0.2 (half the line seen on this sheet, half this sheet's label), averaged over sheets (`DRAFTING_SPEC_V1["sheet_setup"]`). At the vague level any line ≥ 1 in crossing square at the station counts and the label is read by meaning (MATCH, the station in any format, the other sheet's name). Per-sheet checks (D1-06, 10, 11) average over sheets; D1-08 adds up overlaps across them; a label is visible if any deliverable sheet shows it.
+
+**The prompt dial (decided 2026-10-10, Robert: "some prompts explicit, others very vague").** Every task is posed in natural language at two levels over one truth (`tasks/prompts.py`, `brief.prompts`, `DRAFTING_SPEC_V1["prompt_levels"]`), one pair per task type:
+
+- `explicit`: the request with the standards it touches spelled out (scale, layers and their properties, text heights, tick length, label wording, table columns, title-block values, the match line). Graded exactly.
+- `vague`: the request in a sentence ("Station ALIGN-1.", "Put the curve data on C-101.", "C-101 is blank. Annotate it.", "Draft plan sheets C-101 and C-102 for ALIGN-1, breaking at station 169+00.00."). Knowing what belongs on a layout sheet is the drafter's job. Facts a drafter could not know (the sheet names, the break station) are given at both levels.
+
+What must be on the sheet is graded identically at both levels. A convention the prompt did not state is graded by `DRAFTING_SPEC_V1["lenient"]` instead of the exact value:
+
+| Unstated | Lenient rule |
+|---|---|
+| scale | any standard engineering scale |
+| layers | any layer but 0; layer properties are not graded |
+| text heights | 0.08–0.20 in on paper for labels, 0.08–0.25 in for the table |
+| tick length | a line crossing the centerline square to it at the station, 0.05–1.0 in on paper |
+| label format | read by meaning: `18+00` = `18+00.00`, PC = BC, `N45-30-15E` = `N 45°30'15" E` |
+| table columns | headers read by meaning (RADIUS = R); only curve, delta, radius and length are required; cells compared by value |
+| title-block values | filled in, except the fields the prompt gave (project, sheet number) and the scale, which must match the viewport |
+
+`RULES` (anchor your labels, leave the design alone, keep what is drawn) go with every level: they belong to the benchmark, not to drafting. **New metric: prompt gap** = effective(explicit) − effective(vague), paired by task (§5). Wrong values hard-fail at both levels. The full catalog of prompts is exported by `scripts/export_prompts.py` to `benchmarks/prompts/roaddraft_prompts.xlsx`.
+
+**Validation as built:** every task type × 1 and 2 sheets × both levels: reference = 100 with no findings, starting document = 0 (40 seeds, 1,440 verifications; `tests/test_verify_scope.py` keeps 6 seeds of it); the whole-sheet suite of §3.6 (200-seed oracle, 50-seed null, determinism, 34 mutations, 11 hack probes, p95 < 50 ms) still passes; two-sheet mutations (match line deleted, label wrong or missing, second sheet deleted) move D1-00 and the per-sheet checks by the expected amounts.
+
+**Departures from §3.2–3.6:**
+
+- *Design integrity* compares only the **given** design (the truth's alignments and the profiles bound to them) with the truth's fingerprint. An alignment the agent adds is not tampering, which is what probe (h) needs. `doc.design.fingerprint()` covers every alignment, so the literal §3.2 rule would have hard-failed (h).
+- *Hand-rewritten anchors* (record station disagrees with its ref, ref doesn't resolve, kind doesn't fit, sheet label names a missing viewport) are `anchor_inconsistent` and are **never matched**. So the PC-1 → PC-2 rewrite leaves PC-1 `missing` and costs D1-07; it does not produce a `duplicate`.
+- *Quality checks are ratios over present work*: D1-07 = consistent / (matched + inconsistent), D1-08 = the legibility formula, D1-09 = conforming items / (matched items + the 4 spec layers). With no required work present each scores 0, so an empty sheet earns nothing; otherwise deleting a label moves only its own check.
+- *D1-01* credits an element matched on any layer; `wrong_layer` there is informational and D1-09 takes the points. Off-design linework on the alignment layer is `geometry_mismatch` while an element is still unmatched and `extra_linework` once all are; both are value findings and hard-fail.
+- *Visibility* requires the label to sit inside a viewport and inside the usable area. A visible duplicate with the wrong content is `wrong_value` (wrong work on the sheet).
+- *Legibility* uses oriented text rectangles (the engine's width estimate) with a separating-axis test that must exceed 0.005 in. Axis-aligned boxes of rotated labels collide falsely.
+- *Mutation catalog:* "viewport at 1"=40'" became 1"=120'. Nearly every task is at 1"=100', and 120 still fits; the catalog expects D1-09 `wrong_height` as well, because the text then prints off-size.
+- *Generator d1-v2:* the reference sheet had real EC/BC and BC/C-n/EC overlaps on short tangents and short curves at 1"=100' (170 of 1,800 variants). The tangent floor is now 120 ft and C-n callouts sit at 2× the label offset; all 1,800 now verify clean. Task ids changed (spec and generator), fixture refreshed.
+- *Generator d1-v3 (task types, two sheets):* also a 150-ft curve floor (deltas bumped where the radius is small), because with per-glyph text widths the BC and EC labels of a 105-ft curve ran into each other on the inside of the bend (seed 123). Raw-text probe (a) now scores 42, not 36: legibility is judged once the sheet exists, and legible raw text is legible.
+- *Prompt levels* are named `explicit` / `vague` (Robert's words), not `full` / `terse`.
 
 ## 4. The harness (`roaddraft.eval`)
 
@@ -274,7 +332,7 @@ Budgets (`budget.py`, all recorded): steps 150, `run_check` 3, consecutive fault
 
 ### 4.2 Observation and tool definitions
 
-- **Text-first.** The system prompt carries the role, the drafting rules (anchor everything, compute nothing by hand that a query provides, finish with `submit`), the budgets, and the dialect vocabulary. The first user message is the brief. Tool definitions come straight from the manifest: `params_schema` → `input_schema` (every schema is already a closed object with a `required` list, so `strict: true` is free), `description` + `example` → the tool description. Tool order is deterministic (sorted by name) so the cached prefix is stable.
+- **Text-first.** The system prompt carries the role, the drafting rules (anchor everything, compute nothing by hand that a query provides, finish with `submit`), the budgets, and the dialect vocabulary. The first user message is the brief. *As of 2026-10-10 that is `tasks.prompts.task_text(brief, level)`: the rules, then the natural-language prompt at the run's prompt level (§3.8). Prompt level (`explicit` / `vague`) is a run dimension like dialect and mode, and the episode passes it to `verify(prompt_level=...)`; task type and sheet count are task-set dimensions (`generate_task(seed, task_type=..., sheets=...)`), and `reset` opens the task's starting document, which already carries the given phases.* Tool definitions come straight from the manifest: `params_schema` → `input_schema` (every schema is already a closed object with a `required` list, so `strict: true` is free), `description` + `example` → the tool description. Tool order is deterministic (sorted by name) so the cached prefix is stable.
 - **Tool results** are the bus result JSON verbatim, with two shapings: `get_document_state(detail="full")` is capped (entities truncated with a count and a hint to use filtered queries), and file results never inline base64 unless the mode is vision, where the PNG goes back as an image block after each `render_sheet`.
 - **Parallel calls.** If the model issues several tool calls in one turn, the harness executes them in order on the bus and returns all results in one user message (dropping some silently trains models not to parallelize).
 - **Faults** come back as `is_error` tool results carrying the bus's teaching error (message, hint, schema, example), untouched. That error text is part of the environment and is logged as such.
@@ -370,6 +428,8 @@ python -m roaddraft.eval run --taskset d1-test --models claude-opus-5,claude-son
 | `run_check` use | uses per episode and Δ effective score before/after the last check | mean |
 | Cost per sheet | recorded usage × price table | USD |
 | Transfer gap | effective(neutral) − effective(skin), paired by task | points ± CI |
+| Prompt gap | effective(explicit prompt) − effective(vague prompt), paired by task (§3.8) | points ± CI |
+| Per task type | every metric above, split by task type and by 1 / 2 sheets (§3.8) | table |
 
 ## 6. Adapters (thin, after E4)
 

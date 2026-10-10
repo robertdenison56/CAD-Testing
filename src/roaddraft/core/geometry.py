@@ -226,17 +226,28 @@ def line_intersection(a, b, c, d):
 
 # ------------------------------------------------------------------- text
 
-TEXT_WIDTH_RATIO = 0.7  # estimated glyph width as a fraction of text height
-TEXT_LINE_SPACING = 1.6  # line spacing as a fraction of text height
+# A text's height is its cap height, as in CAD. Its box runs from the last
+# line's baseline up to the first line's cap line, and is as wide as its longest
+# line's letters in the font the renderer draws (core.textmetrics); the renderer
+# puts each line's baseline where the box says.
+TEXT_LINE_SPACING = 1.6  # baseline to baseline, as a fraction of text height
+
+
+def text_size(content, height, width_factor=1.0):
+    """(width, height) of a text's box before rotation. A text with no letters
+    is as wide as a space."""
+    from roaddraft.core import textmetrics
+    lines = content.split("\n")
+    w = max(textmetrics.line_width(line or " ", height) for line in lines) * width_factor
+    h = height + (len(lines) - 1) * height * TEXT_LINE_SPACING
+    return w, h
 
 
 def text_bbox(position, content, height, rotation_deg=0.0, halign="left",
               valign="bottom", width_factor=1.0):
-    """Estimated axis-aligned bounding box for a text entity."""
-    lines = content.split("\n") or [""]
-    n = max(len(line) for line in lines)
-    w = max(n, 1) * height * TEXT_WIDTH_RATIO * width_factor
-    h = height + (len(lines) - 1) * height * TEXT_LINE_SPACING
+    """Axis-aligned bounding box of a text entity's box (``text_size``),
+    turned about its insertion point."""
+    w, h = text_size(content, height, width_factor)
 
     if halign == "center":
         x0 = -w / 2.0

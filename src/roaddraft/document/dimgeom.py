@@ -176,7 +176,7 @@ def fits(dim, doc) -> bool:
 
 
 def text_width(dim, doc, text: str) -> float:
-    """Estimated width of the dimension text in space units."""
+    """Width of the dimension text in space units: its text box's."""
     if not text:
         return 0.0
     width_factor = 1.0
@@ -184,8 +184,7 @@ def text_width(dim, doc, text: str) -> float:
         style = doc.text_styles.get(dim.style)
         if style is not None:
             width_factor = style.width_factor
-    longest = max(len(line) for line in text.split("\n"))
-    return longest * dim.text_height * geo.TEXT_WIDTH_RATIO * width_factor
+    return geo.text_size(text, dim.text_height, width_factor)[0]
 
 
 # ------------------------------------------------------------ primitives

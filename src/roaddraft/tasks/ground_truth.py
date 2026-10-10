@@ -3,8 +3,10 @@
 ``compute_ground_truth`` rebuilds the alignment from the brief and calls the
 same ``stationing_plan`` / ``compile_label`` / ``curve_table_rows`` the
 commands use, with the deliverable's sizes, so a reference solution matches
-the truth exactly.  ``match_truth`` compares a document's anchored labels
-with the truth by ``(alignment, ref, kind)``, content and position.
+the truth exactly.  The truth covers the whole finished drawing; ``scope``
+says which of its groups the task asks for (``tasks.types``), and the
+verifier grades only those.  ``match_truth`` is E0's whole-drawing check:
+every anchored label by ``(alignment, ref, kind)``, content and position.
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from roaddraft.document.document import Document
 from roaddraft.document.entities import Text
 from roaddraft.tasks.brief import GroundTruth, TaskBrief
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
+from roaddraft.tasks.types import GROUPS, task_type
 
 
 def _label_row(spec: LabelSpec, layer: str, height: float) -> dict:
@@ -58,31 +61,57 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
         ap = resolve_anchor(align, parse_anchor(f"T-{n}"))
         labels.append(_label_row(compile_label(align, ap, "bearing", label_offset=bearing_offset),
                                  layers["labels"], height))
+    mc_offset = float(D.get("mc_label_offset_ft", label_offset))
     for n in range(1, len(align.curves()) + 1):
         ap = resolve_anchor(align, parse_anchor(f"MC-{n}"))
-        labels.append(_label_row(compile_label(align, ap, "mc", label_offset=label_offset),
+        labels.append(_label_row(compile_label(align, ap, "mc", label_offset=mc_offset),
                                  layers["labels"], height))
 
     elements = [{"ref": align.element_ref(i), "kind": el.kind, "layer": layers["alignment"]}
                 for i, el in enumerate(align.elements)]
-    headers, rows, widths = curve_table_rows(align, D["curve_table_columns"])
-    curve_table = {"space": D["sheet_name"], "columns": list(D["curve_table_columns"]),
-                   "headers": headers, "rows": rows, "widths": widths,
-                   "position": list(D["curve_table_position"]),
-                   "text_height": float(D["text_heights"]["sheet_table_in"]),
-                   "title": S["curve_table"]["title"], "layer": layers["tables"],
-                   "anchor": {"alignment": name, "ref": "CURVES", "kind": "curve_table"}}
-    sheet = {"name": D["sheet_name"], "size": D["sheet_size"],
-             "feet_per_inch": float(D["feet_per_inch"]), "viewport": dict(D["viewport"]),
-             "north_arrow_block": S["sheet"]["north_arrow"]["block"],
-             "title_block_fields": dict(D["title_block_fields"])}
+    table_anchor = {"alignment": name, "ref": "CURVES", "kind": "curve_table"}
+    curve_tables: List[dict] = []
+    sheets: List[dict] = []
+    match_stations = set()
+    for sh in D["sheets"]:
+        if sh["curves"]:  # a sheet that shows no curve carries no curve table
+            headers, rows, widths = curve_table_rows(align, D["curve_table_columns"],
+                                                     curves=sh["curves"])
+            curve_tables.append({
+                "sheet": sh["name"], "curves": list(sh["curves"]),
+                "columns": list(D["curve_table_columns"]), "headers": headers, "rows": rows,
+                "widths": widths, "position": list(sh["curve_table_position"]),
+                "text_height": float(D["text_heights"]["sheet_table_in"]),
+                "title": S["curve_table"]["title"], "layer": layers["tables"],
+                "anchor": dict(table_anchor)})
+        matches = []
+        for m in sh.get("matches", []):
+            half = float(m["half_width_ft"])
+            matches.append({
+                "station": float(m["station"]), "station_text": m["station_text"],
+                "start": align.station_to_xy(m["station"], -half)[0],
+                "end": align.station_to_xy(m["station"], half)[0],
+                "half_width_ft": half, "layer": layers["ticks"], "label": m["label"],
+                "other_sheet": m["other_sheet"], "side": m["side"],
+                "label_offset_in": float(m["label_offset_in"]), "rotation": m["rotation"]})
+            match_stations.add(float(m["station"]))
+        sheets.append({"name": sh["name"], "size": sh["size"],
+                       "feet_per_inch": float(D["feet_per_inch"]),
+                       "viewport": dict(sh["viewport"]),
+                       "station_range": list(sh["station_range"]), "curves": list(sh["curves"]),
+                       "north_arrow_block": S["sheet"]["north_arrow"]["block"],
+                       "title_block_fields": dict(sh["title_block_fields"]),
+                       "matches": matches})
+    asks = task_type(D.get("task_type", "plan-sheet")).asks
+    scope = [g for g in GROUPS if g in asks]
     counts = {"labels": len(labels), "ticks": len(ticks), "curves": len(align.curves()),
-              "tangents": len(align.tangents()), "equations": len(align.equations)}
+              "tangents": len(align.tangents()), "equations": len(align.equations),
+              "sheets": len(sheets), "match_lines": len(match_stations)}
     fingerprint = DesignModel.from_dict({"alignments": brief.design["alignments"],
                                          "profiles": brief.design["profiles"]}).fingerprint()
     return GroundTruth(task_id=brief.task_id, design_fingerprint=fingerprint, labels=labels,
-                       ticks=ticks, elements=elements, curve_table=curve_table, sheet=sheet,
-                       counts=counts)
+                       ticks=ticks, elements=elements, curve_tables=curve_tables, sheets=sheets,
+                       scope=scope, counts=counts)
 
 
 def _descriptor(label: dict) -> str:
@@ -91,7 +120,7 @@ def _descriptor(label: dict) -> str:
 
 def match_truth(doc: Document, truth: GroundTruth,
                 position_tolerance: Optional[float] = None) -> dict:
-    """Compare a document's anchored labels with the truth.
+    """Compare a document's anchored labels with the whole truth.
 
     A truth label matches an entity when ``(anchor.alignment, anchor.ref,
     anchor.kind)`` are equal, the content is equal, and the position is within

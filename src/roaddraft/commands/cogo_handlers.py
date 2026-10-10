@@ -279,8 +279,8 @@ POINT_COLUMNS = {"number": "POINT", "northing": "NORTHING", "easting": "EASTING"
 def _column_widths(headers, rows, height: float) -> List[float]:
     widths = []
     for j, header in enumerate(headers):
-        longest = max([len(header)] + [len(str(r[j])) for r in rows])
-        widths.append(round(longest * height * geo.TEXT_WIDTH_RATIO + 2.0 * height, 4))
+        longest = max(geo.text_size(s, height)[0] for s in [header] + [str(r[j]) for r in rows])
+        widths.append(round(longest + 2.0 * height, 4))
     return widths
 
 
