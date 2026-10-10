@@ -377,6 +377,53 @@ def test_caltrans_border_letters_last_revision_and_plot_date_up_the_right_margin
     assert any(isinstance(e, Line) and e.start[0] == e.end[0] == W - 0.351 for e in drawn)
 
 
+def test_wfl_border_blocks_title_box_and_plot_stamp():
+    """The FHWA Federal Lands (WFL) 11 x 17 border: PROJECT / SHEET NUMBER
+    block at the top right (a STATE column when a state is given), the sheet
+    title box at the bottom right only when there is a title, and the plot
+    stamp lettered up the left margin."""
+    from roaddraft.document.entities import Polyline, Text
+    from roaddraft.render.titleblock import title_block_entities
+
+    s = make_session()
+    r = s.execute("create_sheet", {"name": "D.5", "size": "ANSI_B",
+                                   "title_block_template": "wfl"})
+    assert r["ok"] and "wfl" in r["message"]
+    sheet = s.doc.sheet_by_ref("D.5")
+    assert sheet.usable_area() == (0.7, 0.3, 16.3, 10.7)
+    drawn = title_block_entities(sheet)
+    boxes = [e for e in drawn if isinstance(e, Polyline) and e.closed]
+    assert len(boxes) == 2                      # the frame and the title block
+    assert "STATE" not in {e.content for e in drawn if isinstance(e, Text)}
+
+    s.execute("fill_title_block", {"sheet": "D.5", "fields": {
+        "project": "AK NPS SAMP 14(1)", "sheet_number": "D.5", "state": "AK",
+        "nps_pmis": "NPS PMIS No. 123/123456", "nps_drawing": "NPS Drwg. No. 123456",
+        "sheet_title": "PLAN AND PROFILE\nSheet 1 of 8", "scale": "NO SCALE",
+        "date_plotted": "30 April 2025  1:41 PM",
+        "dgn_file": "c:\\pw-work\\SamplePlan_pln_pp1.dgn",
+        "description": "[PLAN AND PROFILE - 110+05 TO 115+00]"}})
+    drawn = title_block_entities(sheet)
+    texts = {e.content: e for e in drawn if isinstance(e, Text)}
+    for value in ("STATE", "PROJECT", "SHEET", "NUMBER", "AK NPS SAMP 14(1)", "D.5",
+                  "AK", "NPS PMIS No. 123/123456", "NPS Drwg. No. 123456",
+                  "PLAN AND PROFILE", "Sheet 1 of 8", "NO SCALE"):
+        assert value in texts, value
+    assert texts["D.5"].position[0] > 15.9 and texts["D.5"].position[1] > 10.3
+    assert texts["AK"].position[0] < texts["AK NPS SAMP 14(1)"].position[0]
+    assert texts["NPS PMIS No. 123/123456"].position[1] > 10.7       # above the frame
+    assert 12.3 < texts["PLAN AND PROFILE"].position[0] < 16.3
+    assert texts["Sheet 1 of 8"].position[1] < texts["PLAN AND PROFILE"].position[1] < 1.3
+    boxes = [e for e in drawn if isinstance(e, Polyline) and e.closed]
+    assert len(boxes) == 3                      # plus the title box
+    stamp = [texts[k] for k in ("30 April 2025  1:41 PM",
+                                "c:\\pw-work\\SamplePlan_pln_pp1.dgn",
+                                "[PLAN AND PROFILE - 110+05 TO 115+00]")]
+    for t in stamp:
+        assert t.rotation_deg == 90.0 and t.position[0] < 0.7
+    assert stamp[0].position[1] < stamp[1].position[1] < stamp[2].position[1]
+
+
 def test_title_block_template_must_be_known():
     s = make_session()
     r = s.execute("create_sheet", {"name": "X", "title_block_template": "acme"})

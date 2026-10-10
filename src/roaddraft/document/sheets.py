@@ -26,10 +26,12 @@ SHEET_SIZES = {
 }
 
 # Border / title block drawings available to a sheet (render/titleblock.py).
-TITLE_BLOCK_TEMPLATES = ("standard", "caltrans", "none")
+TITLE_BLOCK_TEMPLATES = ("standard", "caltrans", "wfl", "none")
 
 BORDER_MARGIN_IN = 0.5
 CALTRANS_BIND_IN = 1.904    # left binding strip on the Caltrans plan border
+WFL_MARGIN_X_IN = 0.7       # the FLH (WFL) border: 0.7 in side margins (plot stamp)
+WFL_MARGIN_Y_IN = 0.3       # and 0.3 in top and bottom
 TITLE_STRIP_H_IN = 1.25
 
 # Field keys the standard title-block template displays.
@@ -100,6 +102,13 @@ class Sheet:
             # the binding strip is on the left; the title block floats over
             # the top right corner of the plan area, as it does on real plans
             return (CALTRANS_BIND_IN, m, self.width_in - m, self.height_in - m)
+        if (self.title_block_template or "").lower() == "wfl":
+            # the FHWA Federal Lands (WFL) 11 x 17 border: wider side margins
+            # (the plot stamp runs up the left one); the PROJECT / SHEET NUMBER
+            # block floats over the top right corner and the title box over
+            # the bottom right
+            return (WFL_MARGIN_X_IN, WFL_MARGIN_Y_IN, self.width_in - WFL_MARGIN_X_IN,
+                    self.height_in - WFL_MARGIN_Y_IN)
         if (self.title_block_template or "").lower() == "none":
             return (m, m, self.width_in - m, self.height_in - m)
         return (m, m + TITLE_STRIP_H_IN, self.width_in - m, self.height_in - m)

@@ -9,6 +9,12 @@ drawn representation.  ``sheet.title_block_template`` picks the drawing:
                plot strip, the last revision and plot date up the right
                margin, and the Dist/COUNTY/ROUTE/POST MILES title block
                with the engineer's seal panel (dimensioned for 22 x 34)
+    wfl        the FHWA Federal Lands (WFL) 11 x 17 plan-sheet border: a
+               plain frame, the PROJECT / SHEET NUMBER block over the top
+               right corner (with a STATE column when a state is given), the
+               NPS PMIS and drawing numbers above it, the sheet title box over
+               the bottom right corner, and the plot stamp (date, file,
+               description) lettered up the left margin
     none       border and title block are drawn by the document itself
 """
 from __future__ import annotations
@@ -35,6 +41,8 @@ def title_block_entities(sheet: Sheet) -> List[Entity]:
         return []
     if template == "caltrans":
         return caltrans_entities(sheet)
+    if template == "wfl":
+        return wfl_entities(sheet)
     return standard_entities(sheet)
 
 
@@ -308,6 +316,121 @@ def caltrans_entities(sheet: Sheet) -> List[Entity]:
     text(x0 + 0.262, CT_MARGIN + 0.761, get("scale"), 0.175)
     text(W - CT_MARGIN - 0.603, CT_MARGIN + 0.220, get("sheet_id"), 0.290,
          halign="right")
+    return out
+
+
+# ----------------------------------------------------------- FLH / WFL border
+# Dimensions measured off the WFL sample plan sheets (11 x 17 in).  The frame
+# is held from the sheet edges, the title block from the top right corner, the
+# sheet title box from the bottom right, and the plot stamp from the frame's
+# left edge.
+FLH_MARGIN_X = 0.7         # the frame is 0.7 in from the sides (plot stamp at left)
+FLH_MARGIN_Y = 0.3         # and 0.3 in from the top and bottom
+FLH_TB_W = 2.0             # the PROJECT / SHEET NUMBER block
+FLH_TB_H = 0.4
+FLH_TB_SHEET_W = 0.4       # its SHEET NUMBER column
+FLH_TB_STATE_W = 0.4       # its STATE column, drawn when a state is given
+FLH_TITLE_W = 4.0          # the sheet title box
+FLH_TITLE_H = 1.0
+FLH_STAMP_X = 0.024        # the plot stamp's baseline, left of the frame
+FLH_STAMP_DATE_Y = 0.024   # the date, the file name, and the description
+FLH_STAMP_FILE_Y = 1.524   # start up the margin from the frame's foot
+FLH_STAMP_CHAR_W = 0.0405  # advance per character of the stamp's lettering
+FLH_LABEL_H = 0.042
+FLH_VALUE_H = 0.045
+FLH_TITLE_TEXT_H = 0.10
+FLH_TITLE_SPACING = 0.245
+FLH_STAMP_H = 0.034
+
+
+def wfl_entities(sheet: Sheet) -> List[Entity]:
+    W, H = sheet.width_in, sheet.height_in
+    f = sheet.title_block_fields
+    out: List[Entity] = []
+    n = [0]
+
+    def get(key, default=""):
+        return str(f.get(key, default))
+
+    def line(x0, y0, x1, y1, mm=0.25):
+        n[0] += 1
+        out.append(_lw(Line(id=f"TB:l{n[0]}", start=[x0, y0], end=[x1, y1]), mm))
+
+    def box(x0, y0, x1, y1, mm=0.25):
+        n[0] += 1
+        out.append(_lw(Polyline(id=f"TB:b{n[0]}",
+                                vertices=[[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                                closed=True), mm))
+
+    def text(x, y, s, height=FLH_VALUE_H, halign="left", valign="bottom",
+             rotation=0.0, color=None):
+        if not s:
+            return
+        n[0] += 1
+        out.append(Text(id=f"TB:t{n[0]}", position=[x, y], content=str(s),
+                        height=height, halign=halign, valign=valign,
+                        rotation_deg=rotation,
+                        **({"color": color} if color else {})))
+
+    # ---------------------------------------------------------- the frame
+    x0, y0 = FLH_MARGIN_X, FLH_MARGIN_Y
+    x1, y1 = W - FLH_MARGIN_X, H - FLH_MARGIN_Y
+    box(x0, y0, x1, y1, 0.50)
+
+    # ------------------------------------ PROJECT / SHEET NUMBER block
+    tx0, ty0 = x1 - FLH_TB_W, y1 - FLH_TB_H
+    box(tx0, ty0, x1, y1, 0.25)
+    mid = ty0 + FLH_TB_H / 2
+    line(tx0, mid, x1, mid, 0.18)
+    sx = x1 - FLH_TB_SHEET_W
+    line(sx, ty0, sx, y1, 0.18)
+    cap_y, val_y = (mid + y1) / 2, (ty0 + mid) / 2
+    px0 = tx0
+    if "state" in f:
+        px0 = tx0 + FLH_TB_STATE_W
+        line(px0, ty0, px0, y1, 0.18)
+        text((tx0 + px0) / 2, cap_y, "STATE", FLH_LABEL_H, halign="center",
+             valign="middle", color=LABEL_COLOR)
+        text((tx0 + px0) / 2, val_y, get("state"), FLH_VALUE_H, halign="center",
+             valign="middle")
+    text((px0 + sx) / 2, cap_y, "PROJECT", FLH_LABEL_H, halign="center",
+         valign="middle", color=LABEL_COLOR)
+    text((px0 + sx) / 2, val_y, get("project"), FLH_VALUE_H, halign="center",
+         valign="middle")
+    scx = (sx + x1) / 2
+    text(scx, cap_y + 0.65 * FLH_LABEL_H, "SHEET", FLH_LABEL_H, halign="center",
+         valign="middle", color=LABEL_COLOR)
+    text(scx, cap_y - 0.75 * FLH_LABEL_H, "NUMBER", FLH_LABEL_H, halign="center",
+         valign="middle", color=LABEL_COLOR)
+    text(scx, val_y, get("sheet_number"), FLH_VALUE_H, halign="center",
+         valign="middle")
+    # the NPS project (PMIS) and drawing numbers, above the frame
+    text(tx0 - 0.25, y1 + 0.03, get("nps_pmis"), FLH_LABEL_H)
+    text(x1, y1 + 0.03, get("nps_drawing"), FLH_LABEL_H, halign="right")
+
+    # --------------------------------------------------- sheet title box
+    title = get("sheet_title").strip()
+    if title:
+        bx0 = x1 - FLH_TITLE_W
+        box(bx0, y0, x1, y0 + FLH_TITLE_H, 0.35)
+        rows = [r for r in title.split("\n") if r.strip()]
+        cy = y0 + FLH_TITLE_H / 2 - 0.5 * FLH_TITLE_TEXT_H
+        top = cy + (len(rows) - 1) * FLH_TITLE_SPACING / 2
+        for i, row in enumerate(rows):
+            text((bx0 + x1) / 2, top - i * FLH_TITLE_SPACING, row, FLH_TITLE_TEXT_H,
+                 halign="center")
+        text(bx0 - 0.3, y0 + 0.13, get("scale"), 0.06, halign="right")
+
+    # ------------------------------------- plot stamp, up the left margin
+    stamp_x = x0 - FLH_STAMP_X
+    text(stamp_x, y0 + FLH_STAMP_DATE_Y, get("date_plotted"), FLH_STAMP_H,
+         rotation=90.0, color=LABEL_COLOR)
+    dgn = get("dgn_file")
+    text(stamp_x, y0 + FLH_STAMP_FILE_Y, dgn, FLH_STAMP_H, rotation=90.0,
+         color=LABEL_COLOR)
+    desc_y = y0 + FLH_STAMP_FILE_Y + (FLH_STAMP_CHAR_W * len(dgn) + 0.01 if dgn else 0.0)
+    text(stamp_x, desc_y, get("description"), FLH_STAMP_H, rotation=90.0,
+         color=LABEL_COLOR)
     return out
 
 

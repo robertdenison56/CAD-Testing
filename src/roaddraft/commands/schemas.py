@@ -382,7 +382,10 @@ SCHEMAS = {
              "description": "border and title block drawing: 'standard' "
                             "(default), 'caltrans' (Caltrans plan sheet: left "
                             "binding strip, plot strip, Dist/COUNTY/ROUTE "
-                            "block), or 'none' to draw your own"},
+                            "block), 'wfl' (FHWA Federal Lands 11 x 17 plan "
+                            "sheet: PROJECT / SHEET NUMBER block top right, "
+                            "sheet title box bottom right, plot stamp up the "
+                            "left margin), or 'none' to draw your own"},
          "title_block_fields": {"type": "object", "additionalProperties": SCALAR}},
         ["name"]),
     "delete_sheet": obj({"sheet": NSTR}, ["sheet"]),
