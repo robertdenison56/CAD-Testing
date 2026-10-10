@@ -414,7 +414,8 @@ def test_openai_loop_sends_function_tools_and_keeps_reasoning_out_of_the_next_tu
     out = backend.run(ep)
     assert out.stop == "answered" and out.final == "Drew the line." and out.turns == 2
     assert out.usage == {"input_tokens": 1000, "output_tokens": 80, "reasoning_tokens": 60}
-    assert out.cost_usd is None and out.extra["reloads"] == 0
+    assert out.cost_usd is None and out.extra["reloads"] == 0 and "extra_body" not in out.extra
+    assert set(bodies[0]) == {"model", "messages", "tools"}
     assert bodies[0]["tools"][1]["function"]["parameters"] == FakeServer.tools[1]["inputSchema"]
     assert bodies[0]["messages"][0] == {"role": "system", "content": FakeServer.instructions}
     tool_msg = bodies[1]["messages"][-1]
@@ -422,6 +423,33 @@ def test_openai_loop_sends_function_tools_and_keeps_reasoning_out_of_the_next_tu
     assert "reasoning_content" not in bodies[1]["messages"][2] and ep.log[2]["reasoning"] == "let me think"
     assert ep.server.calls == [("draw_line", {"start": [0, 0], "end": [1, 1]})]
     assert parse_args("not json") == {"_unparsed": "not json"} and parse_args("") == {}
+
+
+def test_openai_sends_the_extra_body_every_turn_and_records_it(tmp_path, capsys):
+    bodies = []
+    replies = iter([
+        openai_reply(tool_calls=[{"id": "c1", "type": "function", "function": {
+            "name": "get_document_state", "arguments": "{}"}}]),
+        openai_reply("Done."),
+    ])
+
+    def post(body):
+        bodies.append(json.loads(json.dumps(body)))
+        return next(replies)
+
+    sampling = {"top_p": 0.95, "top_k": 20, "presence_penalty": 1.5, "model": "not-this-one"}
+    ep = episode(tmp_path, model="Qwen/Qwen3.5-9B")
+    ep.options.extra = {"base_url": "https://api.runpod.ai/v2/abc/openai/v1", "extra_body": sampling}
+    out = OpenAIBackend(ep.options, post=post).run(ep)
+    assert out.stop == "answered" and len(bodies) == 2
+    for body in bodies:     # the sampling rides along; it cannot replace the model, messages or tools
+        assert body["top_k"] == 20 and body["presence_penalty"] == 1.5 and body["model"] == "Qwen/Qwen3.5-9B"
+        assert body["tools"] and body["messages"][0]["role"] == "system"
+    assert out.extra["extra_body"] == sampling and out.extra["base_url"].startswith("https://api.runpod.ai/")
+    assert cli.json_object('{"top_k": 20}') == {"top_k": 20}
+    for bad in ("[1, 2]", "top_k=20"):
+        with pytest.raises(cli.argparse.ArgumentTypeError):
+            cli.json_object(bad)
 
 
 def test_openai_post_resamples_a_malformed_tool_call_and_reloads_on_overflow(monkeypatch):

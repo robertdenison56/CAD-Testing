@@ -45,6 +45,15 @@ run_models.py) are here too:
   ``type_lists_rewritten`` in run.json says so. Templates that take the
   original see it unchanged.
 - The result cap, which every backend shares, is ``core.RESULT_CAP``.
+
+``--extra-body JSON`` goes into every request beside the model, messages and
+tools, which it cannot replace, and into run.json as ``extra_body``: the
+sampling a model card asks for (Qwen3.5's thinking mode wants ``top_p`` 0.95,
+``top_k`` 20, ``presence_penalty`` 1.5), or ``chat_template_kwargs``. vLLM
+otherwise falls back to the repo's generation_config.json, and Qwen3.5-9B
+ships none. A Runpod serverless vLLM endpoint is this backend too: the base
+URL is ``https://api.runpod.ai/v2/ENDPOINT_ID/openai/v1``, the key
+``RUNPOD_API_KEY`` (benchmarks/runpod/README.md).
 """
 from __future__ import annotations
 
@@ -300,6 +309,7 @@ class OpenAIBackend(Backend):
         self.headers = {"Authorization": f"Bearer {key}"} if key else {}
         context = options.extra.get("lms_context")
         self.guard = LmStudioGuard(self.base_url, options.model, int(context)) if context else None
+        self.extra_body = dict(options.extra.get("extra_body") or {})
         self.post = post or self._post
         self.rewrite_type_lists = False     # set for good the first time the tools are refused
 
@@ -312,7 +322,8 @@ class OpenAIBackend(Backend):
         while True:
             tools = function_tools(server_tools, self.rewrite_type_lists)
             try:
-                return self.post({"model": self.options.model, "messages": messages, "tools": tools})
+                return self.post(dict(self.extra_body, model=self.options.model,
+                                      messages=messages, tools=tools))
             except ToolsRefused as ex:
                 if self.rewrite_type_lists:
                     raise
@@ -385,6 +396,8 @@ class OpenAIBackend(Backend):
                       "base_url": self.base_url, "cut_turns": cut_turns,
                       "usage_estimated_turns": estimated_turns,
                       "type_lists_rewritten": self.rewrite_type_lists})
+        if self.extra_body:
+            extra["extra_body"] = self.extra_body
         if unparsed:
             extra["unparsed_tool_markup"] = True
         return Outcome(stop=stop, final=final, turns=turns, usage=usage, extra=extra)

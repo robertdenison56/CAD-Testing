@@ -5,7 +5,7 @@
                                     [--repeat K] [--vision] [--effort LEVEL] [--force]
         anthropic:    ANTHROPIC_API_KEY in the environment
         claude-code:  [--claude-bin PATH] [--max-budget-usd D] [--claude-arg ARG ...]
-        openai:       [--base-url URL] [--api-key-env NAME] [--lms-context N]
+        openai:       [--base-url URL] [--api-key-env NAME] [--lms-context N] [--extra-body JSON]
     python -m roaddraft.runners score DIR/runs/LABEL [PROBE ...]
     python -m roaddraft.runners leaderboard [--runs benchmarks/probe_runs] [--out benchmarks/leaderboard] [--check]
     python -m roaddraft.runners backends
@@ -19,6 +19,7 @@ Track P board and its model cards; ``--check`` exits 1 while they are stale.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -41,6 +42,17 @@ def select(tag: Optional[str], ids: Sequence[str]) -> List:
     return chosen
 
 
+def json_object(text: str) -> dict:
+    """``--extra-body``: a JSON object, or argparse says why not."""
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as ex:
+        raise argparse.ArgumentTypeError(f"not JSON: {ex}") from None
+    if not isinstance(value, dict):
+        raise argparse.ArgumentTypeError("must be a JSON object")
+    return value
+
+
 def build_backend(args) -> object:
     extra = {}
     if args.backend == "claude-code":
@@ -48,7 +60,7 @@ def build_backend(args) -> object:
                  "claude_args": args.claude_arg or []}
     elif args.backend == "openai":
         extra = {"base_url": args.base_url, "api_key_env": args.api_key_env,
-                 "lms_context": args.lms_context}
+                 "lms_context": args.lms_context, "extra_body": args.extra_body}
     options = Options(model=args.model, max_turns=args.max_turns,
                       budget=args.budget * 60 if args.budget else None,
                       vision=args.vision, effort=args.effort, extra=extra)
@@ -116,6 +128,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run.add_argument("--base-url", help="openai: the endpoint (default http://localhost:1234/v1)")
     run.add_argument("--api-key-env", help="openai: environment variable holding the key (OPENAI_API_KEY)")
     run.add_argument("--lms-context", type=int, help="openai: LM Studio guard, reload the model at this context")
+    run.add_argument("--extra-body", type=json_object,
+                     help="openai: a JSON object sent in every request, e.g. the sampling the model card asks for")
     run.set_defaults(func=cmd_run)
     score = subs.add_parser("score", help="score a label's run folders")
     score.add_argument("folder", help="runs/LABEL")

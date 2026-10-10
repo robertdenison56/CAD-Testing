@@ -1,0 +1,72 @@
+# Runpod serverless: open-weight models for the probe runs
+
+The local GPU (RTX 4060, 8 GB) needed ~35 h for Qwen3.5-9B at k = 3, so that run was stopped and deleted on
+Oct 9 2026 (654e434). This folder records the serverless endpoint that replaces it. The runner needs nothing
+Runpod-specific: Runpod's vLLM worker speaks the OpenAI chat-completions API, so `--backend openai` drives it
+with a different base URL and key.
+
+**Status, 2026-10-09: set up, nothing run yet.** No probe has gone through the endpoint. One smoke job was
+submitted by mistake and cancelled while still queued (`5e840173-…-u2`, CANCELLED, never ran).
+
+## The endpoint
+
+| | |
+|---|---|
+| name / id | `roaddraft-qwen3.5-9b` / `zee0sos76mivwk` (template `txoq97fpbu`), created 2026-10-09 20:12 UTC |
+| worker | Hub `runpod-workers/worker-vllm` release v2.29.0 (`hubReleaseId cmuxgi0a3000407jv5igk1ezr`), image `registry.runpod.net/runpod-workers-worker-vllm-main-dockerfile:b7212acc6`, CUDA 13.0 only |
+| model | `Qwen/Qwen3.5-9B`, bf16 safetensors, served under that name |
+| env set | `MAX_MODEL_LEN=65536`, `ENABLE_AUTO_TOOL_CHOICE=true`, `TOOL_CALL_PARSER=qwen3_coder`, `REASONING_PARSER=qwen3`, `ENABLE_PREFIX_CACHING=true`; the rest are release defaults (`GPU_MEMORY_UTILIZATION=0.95`, `MAX_CONCURRENCY=30`) |
+| GPU | pools `AMPERE_48` (A40, RTX A6000: $1.22/hr serverless) and `ADA_48_PRO` (L40S, L40, RTX 6000 Ada, PRO 6000 MIG 48 GB: $1.75/hr), 1 GPU, 60 GB container disk |
+| scaling | workers 0..1, idle timeout 120 s, FlashBoot on, queue-delay scaler 4 s |
+| job timeout | 1,800 s, the runner's `TURN_LIMIT`: one turn is one job |
+
+The parser flags are the model card's own `vllm serve` line (`--reasoning-parser qwen3 --enable-auto-tool-choice
+--tool-call-parser qwen3_coder`). `qwen3_coder` is not in the Hub form's option list; the worker passes it through.
+
+**Sizing.** 9.65B parameters (HF metadata); the four shards are 19.3 GB at bf16. Only 8 of the 32 layers are
+full attention (`full_attention_interval` 4), each with 4 KV heads of dim 256, so the KV cache is 2 × 8 × 4 × 256
+× 2 bytes = 32 KiB a token: 2.0 GiB for one 65,536-token conversation. The 24 linear-attention layers keep a
+fixed state of about 50 MB per conversation. A 24 GB card leaves ~3 GB after the weights at 0.95 utilisation, too
+tight for 65k plus activations; a 48 GB card leaves room for about ten 65k conversations, so the three repeats can
+share one worker (vLLM batches them).
+
+**Speed, an estimate, not measured.** Decode is bandwidth-bound: the A40 moves 696 GB/s, so one stream tops out
+near 696 / 19.3 ≈ 36 tokens/s, and three concurrent streams cost about the same per step. The local run was
+11-15 tokens/s at Q4_K_M.
+
+**Not comparable with the local Qwen rows.** Those ran LM Studio's Q4_K_M GGUF at its own sampling; this is bf16
+weights on vLLM. Label the rows so the two cannot be confused.
+
+## Sampling
+
+vLLM takes sampling defaults from a repo's `generation_config.json`, and Qwen3.5-9B ships none, so without help
+every request would sample at temperature 1 over the whole vocabulary. The runner's `--extra-body` sends the model
+card's thinking-mode settings with every request and writes them into each `run.json` as `extra_body`:
+
+    {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}
+
+## Running (when decided)
+
+    export RUNPOD_API_KEY="$(jq -r '.mcpServers.runpod.headers.Authorization | sub("^Bearer ";"")' ~/.claude.json)"
+    python -m roaddraft.runners run --backend openai --model Qwen/Qwen3.5-9B \
+        --base-url https://api.runpod.ai/v2/zee0sos76mivwk/openai/v1 --api-key-env RUNPOD_API_KEY \
+        --extra-body '{"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}' \
+        --out benchmarks/probe_runs/2026-10-08-k3 --label qwen3.5-9b-bf16-r1 --budget 30 [PROBE ...]
+
+The r2 and r3 repeats go in parallel as separate processes, as the Haiku k = 3 run did. Leave out `--lms-context`:
+the LM Studio guard reloads models through `lms` and means nothing here. Launch detached (`nohup … & disown`);
+a probe run outlives a tool call.
+
+Still unverified, to check on the first probe (edge-c102, as with LM Studio):
+- the first request's cold start: image pull, the 19.3 GB download, vLLM start-up. The runner waits up to
+  1,800 s for a response and retries a 5xx three times, but no number is measured yet;
+- that the OpenAI route streams tool-call deltas and the `include_usage` chunk the runner reads;
+- that vLLM keeps prefix caching on for this hybrid model (the worker log says at start-up). Without it every
+  turn re-reads the ~22k-token tool schema plus the conversation;
+- the per-probe budget: a wall-clock budget means something different on this hardware than on the 4060.
+
+## Cost and teardown
+
+Nothing bills while no worker runs (min workers 0). A worker bills per second from start until it stops,
+including the 120 s idle window after the last request. Teardown when done: delete endpoint `zee0sos76mivwk`,
+then template `txoq97fpbu` (Runpod MCP `delete-endpoint` / `delete-template`, or the console).
