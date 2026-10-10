@@ -39,7 +39,10 @@ Beyond the 2D primitives, the bus carries roadway-semantic actions:
   line/polyline/arc entities (the centerline), a begin station, and an
   interval; it computes length along tangents and curves, draws ticks,
   formats stations ('12+34.56'), keeps labels upright, and letters BC/EC/PCC
-  the Caltrans way.
+  the Caltrans way. `chain=true` follows the elements joined end to end from
+  any one of them; `start_point` says where the begin station is known (an
+  end, or any point along the path), and the stations run on from the end
+  nearer it (`reverse` turns them round).
 - `attach_reference` / `detach_reference` / `modify_reference` /
   `reload_references` — external basefiles (AutoCAD xref / MicroStation
   reference attachment): the host stores path + offset/rotation/scale plus
@@ -940,7 +943,7 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   takes it back; labels and stationing anchored to the alignment are named
   in a warning, to re-run. The **Toolspace ▸ Alignments** node lists every
   alignment with its station range and curve count (draw / delete glyphs);
-  the Station tool's dialog offers *design mode* by alignment;
+  the Station tool, with nothing picked, stations an alignment on Enter;
   **Annotate ▸ Label** opens the anchored-label form (alignment, anchor, kind,
   side, rotation, content); **Curve Table** and **Output ▸ LandXML** are one
   click.
@@ -1010,8 +1013,12 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   the journaled `modify_entity` command, which validates geometry, enums,
   positive dimensions, row/column consistency, and field names with teaching
   errors — a bad edit can never corrupt the document.
-- **The Station tool** is the roadway feature: click the centerline elements
-  in order (line–arc–line…), press Enter, set begin station/interval, and the
+- **The Station tool** is the roadway feature: click one centerline element
+  and the elements chained to it end to end highlight with it (where the
+  linework branches the chain stops and says so; Shift-click carries it on).
+  Then click the point on the chain whose station you know — an end, or
+  anywhere along it — and type that station; the stations run on from the
+  end nearer the point, or the other way if you ask. The
   `annotate_stationing` command walks the path and generates perpendicular
   ticks, upright '12+34.56' labels rotated along the alignment, and BC/EC/PCC
   labels at the curve points.

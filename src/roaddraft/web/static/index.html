@@ -199,6 +199,12 @@
                  vector-effect: non-scaling-stroke; }
   #ovl .hlbox { stroke: #ffd27a; stroke-width: 1.6; fill: #e5b56733;
                 vector-effect: non-scaling-stroke; }
+  /* a dragged selection box: a window (left to right) takes what lies wholly
+     inside, a crossing (right to left) what it touches too */
+  #ovl .selwin { stroke: #6aa8ff; stroke-width: 1; fill: #3d7bea2e;
+                 vector-effect: non-scaling-stroke; }
+  #ovl .selcross { stroke: #5fd38a; stroke-width: 1; fill: #2fae5f2a;
+                   stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
   #ovl .mark { fill: var(--accent); stroke: #10121a; stroke-width: 1;
                vector-effect: non-scaling-stroke; }
   /* grips: AutoCAD's blue squares on a selected entity, red once picked up */
@@ -414,6 +420,9 @@ const S = { space: "model", rev: -1, zoom: 0, history: [], hIdx: 0, names: [],
             state: null, view: null, modelBounds: null, tool: "select",
             pts: [], cursor: null, stationPicks: [], dimPick: null,
             dimBusy: false, selected: null, grip: null, gripHover: null,
+            // several entities selected at once (a dragged box, Shift-clicks),
+            // and a box being dragged
+            selSet: [], drag: null,
             ribbonTab: "Home", dpi: 130, frames: true, dark: true,
             ortho: false, alignRadius: 800,
             // object snap: on, these modes; the snap under the cursor
@@ -1343,11 +1352,23 @@ async function refresh() {
     if (!S.selected || !$("props").contains(document.activeElement))
       renderProps();
   }
+  if (S.selSet.length) {  // the same for a selection of many
+    const set = S.selSet;
+    const infos = await Promise.all(set.map(it => postJSON("/api/query",
+      { query: "get_entity", params: { id: it.id } })));
+    if (S.selSet === set) {  // unless the selection changed meanwhile
+      const kept = set.flatMap((it, i) => infos[i].ok
+        ? [{ ...it, bbox: infos[i].bbox, entity: infos[i].entity }] : []);
+      if (kept.length < 2) setSelection(kept);
+      else { S.selSet = kept; drawOverlay(); renderProps(); }
+    }
+  }
   renderToolspace(); renderLTabs(); renderStatus(); renderRibbon();
 }
 function setSpace(ref) {
   S.space = ref; S.pts = []; S.stationPicks = []; S.dimPick = null;
   S.selected = null; S.grip = null; S.gripHover = null;
+  S.selSet = []; S.drag = null;
   renderProps();
   if (S.state) { renderLTabs(); renderToolspace(); renderStatus(); }
   updateCanvas();
@@ -1357,15 +1378,20 @@ function setSpace(ref) {
 const TOOLS = {
   select:  { hint: "click an entity — it highlights, its grips (the blue " +
                    "squares) appear and its properties open in the side " +
-                   "panel; drag a grip to edit, Delete removes, Esc clears" },
+                   "panel; drag a grip to edit · drag a box to select many " +
+                   "(left to right: what lies inside; right to left: what " +
+                   "it touches too), Shift-click to add or remove one · " +
+                   "Delete erases the selection, Esc clears" },
   pan:     { hint: "drag to pan; wheel zooms" },
   line:    { hint: "click start, then end (Shift or ORTHO = orthogonal)" },
   pline:   { hint: "click vertices; Enter or right-click to finish" },
   circle:  { hint: "click center, then a radius point" },
   arc:     { hint: "click start, a point on the arc, then end" },
   text:    { hint: "click the insertion point" },
-  station: { hint: "click centerline elements in order (or none, for an " +
-                   "alignment); Enter to configure" },
+  station: { hint: "click a centerline line or arc — the elements chained to " +
+                   "it come too (Shift-click adds one past a branch) — then " +
+                   "click the point on it whose station you know; Enter with " +
+                   "nothing picked stations an alignment" },
   alignment:{ hint: "click PIs in order (BEGIN … END) — curves of the " +
                      "last radius used show as you go; Enter to create " +
                      "(radius 0 lays out tangents only, curves added later)" },
@@ -1439,15 +1465,16 @@ const SEL_TOOLS = new Set(["copy", "rotate", "mirror", "scale", "array", "join",
 const EVERY_TYPE = ["line", "polyline", "arc", "circle", "text", "blockref", "table",
                     "dimension", "point", "hatch"];
 function setTool(key) {
-  // a selection made beforehand is what copy, rotate, mirror... work on
-  const pre = S.selected && !S.selected.alignment && !S.selected.reference
-    ? S.selected : null;
+  // a selection made beforehand is what copy, rotate, mirror... work on,
+  // what join joins and what erase erases
+  const pre = selectionItems().filter(it => !it.reference);
   S.tool = key; S.pts = []; S.stationPicks = []; S.dimPick = null;
   S.dimBusy = false; S.selected = null; S.grip = null; S.gripHover = null;
+  S.selSet = []; S.drag = null;
   S.picks = []; S.meas = []; S.snap = null; S.selDone = false; S.breakPick = null;
-  if (pre && SEL_TOOLS.has(key) && key !== "join" && key !== "linetable") {
-    S.picks = [{ id: pre.id, entity: pre.entity, pt: null }];
-    S.selDone = true;
+  if (pre.length && SEL_TOOLS.has(key) && key !== "linetable") {
+    S.picks = pre.map(it => ({ id: it.id, entity: it.entity, pt: null }));
+    S.selDone = key !== "join";   // join waits for Enter (or more picks)
   }
   renderRibbon(); drawOverlay(); renderProps();
   $("st-tool").textContent = `${key.toUpperCase()}: ${TOOLS[key].hint}`;
@@ -1458,6 +1485,9 @@ function setTool(key) {
   if (key === "lengthen") logHint(lengthenSays());
   if (key === "hatch") logHint(hatchSays());
   if (S.selDone) logHint(selNext());
+  if (key === "join" && S.picks.length)
+    logHint(`${S.picks.length} picked — click more, Enter joins them`);
+  if (key === "erase" && pre.length) eraseItems(pre);
 }
 const offsetSays = () => S.offsetDist === null
   ? "offset through the point clicked — type a distance to offset by one"
@@ -1471,7 +1501,7 @@ function cancelTool() {
   }
   S.pts = []; S.stationPicks = []; S.dimPick = null; S.selected = null;
   S.gripHover = null; S.picks = []; S.meas = []; S.selDone = false;
-  S.breakPick = null;
+  S.breakPick = null; S.selSet = []; S.drag = null;
   drawOverlay(); renderProps();
 }
 // Constrain a point to horizontal or vertical from an anchor — what ORTHO
@@ -1600,14 +1630,7 @@ async function toolClick(pt, ev) {
         scale: parseFloat(values.scale) || 1,
         rotation_deg: parseFloat(values.rotation) || 0 });
   } else if (tool === "station") {
-    const hits = await hitAt(pt, 10);
-    const hit = hits.find(h => ["line", "polyline", "arc"].includes(h.type));
-    if (!hit) { logHint("no line/polyline/arc within tolerance"); return; }
-    if (!S.stationPicks.some(sp => sp.id === hit.id)) {
-      S.stationPicks.push({ id: hit.id, pt });
-      logHint(`path element ${S.stationPicks.length}: ${hit.id} ` +
-              `(${hit.type}) — Enter when done`);
-    }
+    await stationClick(pt, raw, ev);
   } else if (tool === "edittext") {
     const hits = await hitAt(pt, 8);
     const hit = hits.find(h => h.type === "text" || h.type === "table");
@@ -1642,6 +1665,7 @@ async function toolClick(pt, ev) {
     }
   } else if (tool === "select") {
     const hits = await hitAt(pt, 8, true);
+    if (addKey(ev)) { await toggleSelected(hits); return; }
     if (hits.length) {
       if (S.selected && S.selected.id === hits[0].id) return;  // already shown
       const info = await postJSON("/api/query",
@@ -1657,7 +1681,7 @@ async function toolClick(pt, ev) {
         S.selected = { id: hits[0].id, bbox: info.bbox, entity: info.entity,
                        reference: info.reference || null,
                        properties: info.properties || null };
-        renderProps();
+        S.selSet = []; renderProps();
         if (info.reference)
           logHTML(`<span class="hint">located ${esc(hits[0].id)} (` +
             `${esc(info.entity.type)}) in reference ${esc(info.reference)}, ` +
@@ -1670,7 +1694,7 @@ async function toolClick(pt, ev) {
             `Properties panel; Enter/double-click opens the full editor, ` +
             `Delete erases</span>`);
       }
-    } else { S.selected = null; renderProps(); }
+    } else { S.selected = null; S.selSet = []; renderProps(); }
   } else if (tool === "refclip") {
     S.pts.push(pt);
   } else if (tool === "traverse") {
@@ -2461,48 +2485,86 @@ async function finishTool() {
           params: { alignment: v.name, layer: v.layer } }));
       if (r.ok) { await refresh(); setTool("select"); selectAlignment(v.name); }
     }
-  } else if (S.tool === "station" &&
-             (S.stationPicks.length || alignNames().length)) {
+  } else if (S.tool === "station" && S.stationPicks.length) {
+    logHint("now click the point on the chain whose station you know — " +
+            "an end, or anywhere along it");
+  } else if (S.tool === "station" && alignNames().length) {
     const aligns = alignNames();
-    const fields = [];
-    if (aligns.length)
-      fields.push({ key: "alignment", label: "Alignment (design mode)",
-        value: S.stationPicks.length ? "(picked entities)" : aligns[0],
-        options: ["(picked entities)", ...aligns] });
-    const sz = (S.state && S.state.annotation && S.state.annotation.model_sizes)
-      || { text_height: 8, tick_half_len: 10, label_offset: 16 };
-    fields.push(
-      { key: "begin", label: "Begin station (picked entities only)",
-        value: "10+00" },
-      { key: "interval", label: "Interval (ft)", value: "100" },
-      { key: "tick", label: "Tick half-length (ft)", value: String(sz.tick_half_len) },
-      { key: "height", label: "Text height (ft)", value: String(sz.text_height) },
-      { key: "offset", label: "Label offset (ft)", value: String(sz.label_offset) });
-    const values = await openForm("Annotate stationing", fields);
-    if (values) {
-      const parseSta = s => s.includes("+")
-        ? parseFloat(s.split("+")[0]) * 100 + parseFloat(s.split("+")[1] || 0)
-        : parseFloat(s);
-      const common = {
-        interval: parseFloat(values.interval) || 100,
-        tick_half_len: parseFloat(values.tick) || 10,
-        text_height: parseFloat(values.height) || 8,
-        label_offset: parseFloat(values.offset) || 16 };
-      const useAlign = values.alignment &&
-                       values.alignment !== "(picked entities)";
-      if (useAlign)
-        await exec("annotate_stationing", { alignment: values.alignment,
-                                            ...common });
-      else if (S.stationPicks.length)
-        await exec("annotate_stationing", {
-          path_ids: S.stationPicks.map(sp => sp.id),
-          begin_station: parseSta(values.begin) || 0, ...common });
-      else logHint("pick centerline entities first, or choose an alignment");
-      S.stationPicks = [];
-    }
+    const v = await openForm("Annotate stationing", [
+      { key: "alignment", label: "Alignment", value: aligns[0], options: aligns },
+      ...stationSizeFields()]);
+    if (v) await exec("annotate_stationing", { alignment: v.alignment,
+                                               ...stationSizes(v) });
+  } else if (S.tool === "station") {
+    logHint("click a centerline line or arc first (there is no alignment " +
+            "to station)");
   }
   drawOverlay();
 }
+
+// Station tool. A click on a line, arc or polyline picks up the whole chain
+// it belongs to (S.stationPicks, in order); Shift-click adds a piece where
+// the chain stopped at a branch, and a click on other linework starts over.
+// The next click on the chain is where the station is known: it asks for the
+// station there, and the stations run on from the end of the chain nearer
+// that point (or the other way, if asked).
+async function stationClick(pt, raw, ev) {
+  const hits = await hitAt(raw, 10);
+  const onChain = hits.some(h => S.stationPicks.some(sp => sp.id === h.id));
+  const path = hits.find(h => ["line", "polyline", "arc"].includes(h.type));
+  if (!S.stationPicks.length || ev.shiftKey || (path && !onChain)) {
+    if (!path) { logHint("no line, polyline or arc there"); return; }
+    const seeds = S.stationPicks.length && ev.shiftKey
+      ? [...S.stationSeeds, path.id] : [path.id];
+    const r = await postJSON("/api/chain", { ids: seeds });
+    if (!r.ok) { logResult(r); return; }
+    S.stationSeeds = seeds;
+    S.stationPicks = r.entities.map(e => ({ id: e.id, entity: e.entity }));
+    let html = `<span class="hint">chain of ${r.ids.length}: ` +
+      `${esc(r.ids.join(" > "))} — click the point on it whose station you ` +
+      `know (an end, or anywhere along it); Shift-click adds a piece</span>`;
+    r.warnings.forEach(w => { html += `<br><span class="warn">⚠ ${esc(w)}</span>`; });
+    logHTML(html);
+    drawOverlay();
+    return;
+  }
+  if (!onChain) {
+    logHint("click on the highlighted chain for the station point " +
+            "(snaps help), or on other linework to pick a new chain");
+    return;
+  }
+  const v = await openForm("Station labels along the chain", [
+    { key: "station", label: `Station at ${fmtPt(pt)}`,
+      value: S.stationAt || "10+00" },
+    { key: "dir", label: "Stations increase", value: "away from the nearer end",
+      options: ["away from the nearer end", "toward the nearer end"] },
+    ...stationSizeFields()]);
+  if (!v) return;  // the chain stays picked: click another point
+  S.stationAt = v.station.trim() || "0+00";
+  const params = { path_ids: S.stationPicks.map(sp => sp.id), start_point: pt,
+                   begin_station: S.stationAt, ...stationSizes(v) };
+  if (v.dir !== "away from the nearer end") params.reverse = true;
+  const r = await postJSON("/api/execute",
+    { command: "annotate_stationing", params: { space: S.space, ...params } });
+  logResult(r);
+  if (r.ok) { S.stationPicks = []; drawOverlay(); }
+}
+// The sizing fields every stationing form shares, and their params.
+function stationSizeFields() {
+  const sz = (S.state && S.state.annotation && S.state.annotation.model_sizes)
+    || { text_height: 8, tick_half_len: 10, label_offset: 16 };
+  return [
+    { key: "interval", label: "Interval (ft)", value: "100" },
+    { key: "tick", label: "Tick half-length (ft)", value: String(sz.tick_half_len) },
+    { key: "height", label: "Text height (ft)", value: String(sz.text_height) },
+    { key: "offset", label: "Label offset (ft; negative puts the stations " +
+      "on the right)", value: String(sz.label_offset) }];
+}
+const stationSizes = v => ({
+  interval: parseFloat(v.interval) || 100,
+  tick_half_len: parseFloat(v.tick) || 10,
+  text_height: parseFloat(v.height) || 8,
+  label_offset: parseFloat(v.offset) || 16 });
 
 // Reference clip tool: the picked polygon becomes a clip boundary (only the
 // basefile inside it shows) or an added clip mask (the basefile inside it is
@@ -2850,9 +2912,33 @@ function renderAlignmentProps(panel) {
   }
 }
 
+// The Properties panel for many entities: how many of each kind, and where.
+function renderSetProps(panel) {
+  panel.classList.add("open");
+  $("props-id").textContent = `${S.selSet.length} selected`;
+  const body = $("props-body"); body.innerHTML = "";
+  const sec = title => {
+    const d = document.createElement("div");
+    d.className = "psec"; d.textContent = title;
+    body.appendChild(d);
+  };
+  const tally = key => {
+    const n = {};
+    S.selSet.forEach(it => { const k = key(it.entity); n[k] = (n[k] || 0) + 1; });
+    Object.entries(n).forEach(([k, v]) => body.appendChild(propRO(k, String(v))));
+  };
+  sec("TYPES"); tally(e => e.type);
+  sec("LAYERS"); tally(e => e.layer);
+  const d = document.createElement("div");
+  d.className = "phint";
+  d.textContent = "Delete erases them all; Copy, Rotate, Mirror, Scale, Array " +
+    "and Join start on them; Shift-click adds or removes one; Esc clears";
+  body.appendChild(d);
+}
 function renderProps() {
   const panel = $("props");
   if (S.selected && S.selected.alignment) { renderAlignmentProps(panel); return; }
+  if (S.selSet.length) { renderSetProps(panel); return; }
   const e = S.selected && S.selected.entity;
   if (!e) { panel.classList.remove("open"); return; }
   panel.classList.add("open");
@@ -3033,7 +3119,7 @@ function renderProps() {
     hint("double-click the table to edit headers and cells");
   }
 }
-$("props-close").onclick = () => { S.selected = null;
+$("props-close").onclick = () => { S.selected = null; S.selSet = [];
   drawOverlay(); renderProps(); };
 
 // ------------------------------------------------------------------ grips
@@ -3290,7 +3376,7 @@ function alignmentSVG(pis, cls) {
 function selectAlignment(name) {
   if (S.space !== "model") setSpace("model");
   S.selected = { alignment: name, id: null, entity: null };
-  S.grip = null; S.gripHover = null;
+  S.selSet = []; S.grip = null; S.gripHover = null;
   renderProps(); drawOverlay();
   logHTML(`<span class="hint">selected alignment ${esc(name)} — drag a ` +
     `triangle to move a PI, a circle to change its curve's radius, a ` +
@@ -3417,15 +3503,30 @@ function highlightSVG(dx, dy, cls) {
     const a = alignmentOf(S.selected.alignment);
     return a && a.pis.length ? alignmentSVG(a.pis, cls) : "";
   }
-  const traced = outlineSVG(S.selected.entity, dx, dy, cls);
+  return itemSVG(S.selected, dx, dy, cls);
+}
+// One selected entity: its outline, or its box when it has none of its own.
+function itemSVG(item, dx, dy, cls) {
+  const traced = outlineSVG(item.entity, dx, dy, cls);
   if (traced !== null) return traced;
   const shift = p => [p[0] + dx, p[1] + dy];
-  const bb = S.selected.bbox;
+  const bb = item.bbox;
   if (!bb) return "";
   const a = spacePx(shift([bb[0], bb[1]])), b = spacePx(shift([bb[2], bb[3]]));
   return `<rect x="${Math.min(a[0], b[0])}" y="${Math.min(a[1], b[1])}" ` +
          `width="${Math.abs(b[0] - a[0])}" ` +
          `height="${Math.abs(b[1] - a[1])}" class="${cls || "hlbox"}"/>`;
+}
+// The box being dragged, once it is one: a window solid, a crossing dashed.
+function dragBoxSVG() {
+  const d = S.drag;
+  if (!d || !d.on) return "";
+  const a = spacePx(d.at), b = spacePx(d.to);
+  return `<rect x="${Math.min(a[0], b[0]).toFixed(2)}" ` +
+         `y="${Math.min(a[1], b[1]).toFixed(2)}" ` +
+         `width="${Math.abs(b[0] - a[0]).toFixed(2)}" ` +
+         `height="${Math.abs(b[1] - a[1]).toFixed(2)}" ` +
+         `class="${b[0] < a[0] ? "selcross" : "selwin"}"/>`;
 }
 // The linework a linear or aligned dimension would draw, in overlay pixels:
 // the measured pair, the dimension line out at lp, and the extension lines
@@ -3595,16 +3696,126 @@ function drawOverlay() {
       });
     });
   }
-  S.stationPicks.forEach(sp => {
-    const p = spacePx(sp.pt);
-    out += `<rect x="${p[0] - 4}" y="${p[1] - 4}" width="8" height="8" ` +
-           `class="mark"/>`;
-  });
+  S.stationPicks.forEach(sp => { out += outlineSVG(sp.entity, 0, 0) || ""; });
   if (S.selected) out += highlightSVG(0, 0);
+  out += S.selSet.map(it => itemSVG(it, 0, 0)).join("") + dragBoxSVG();
   if (S.grip) out += gripGhostSVG(S.grip);
   out += gripsSVG();
   out += picksSVG() + measSVG() + snapSVG();
   svg.innerHTML = out;
+}
+
+// ------------------------------------------------ selecting many at once
+// A plain click picks one entity: S.selected, with its grips and Properties.
+// A box dragged in the Select tool, or Shift/Ctrl/Cmd-clicks, pick many:
+// S.selSet. Dragged left to right the box is a window and takes only what
+// lies wholly inside it; right to left it is a crossing and takes whatever
+// it touches too (AutoCAD's and MicroStation's convention). Delete erases
+// the selection, and Copy, Rotate, Mirror, Scale, Array and Join start on it.
+const DRAG_PX = 5;
+const addKey = ev => !!(ev && (ev.shiftKey || ev.ctrlKey || ev.metaKey));
+// A box selects in the Select tool, and while a selection tool is still
+// picking (before Enter).
+const dragSelects = () => S.tool === "select" ||
+  (SEL_TOOLS.has(S.tool) && !S.selDone && S.tool !== "linetable");
+function selectionItems() {
+  if (S.selSet.length) return S.selSet.slice();
+  return S.selected && !S.selected.alignment ? [S.selected] : [];
+}
+function setSelection(items) {
+  S.grip = null; S.gripHover = null;
+  const one = items.length === 1 && items[0].entity.anchor;
+  if (one && one.kind === "element" && alignmentOf(one.alignment)) {
+    selectAlignment(one.alignment);   // as a click on it would
+    return;
+  }
+  if (items.length === 1) { S.selected = items[0]; S.selSet = []; }
+  else { S.selected = null; S.selSet = items; }
+  renderProps(); drawOverlay();
+}
+async function entityItem(id) {
+  const info = await postJSON("/api/query", { query: "get_entity", params: { id } });
+  return info.ok ? { id, bbox: info.bbox, entity: info.entity,
+                     reference: info.reference || null,
+                     properties: info.properties || null } : null;
+}
+function logSelection(how) {
+  const items = selectionItems();
+  if (!items.length) { logHint(`${how}nothing selected`); return; }
+  const kinds = {};
+  items.forEach(it => { kinds[it.entity.type] = (kinds[it.entity.type] || 0) + 1; });
+  logHint(`${how}${items.length} selected (` +
+    Object.entries(kinds).map(([t, n]) => `${n} ${t}`).join(", ") +
+    `) — Delete erases ${items.length > 1 ? "them" : "it"}; Copy, Rotate, ` +
+    `Mirror, Scale, Array and Join start on the selection; Esc clears`);
+}
+// Shift (or Ctrl/Cmd) + click: add the entity under the cursor to the
+// selection, or take it out if it is already in.
+async function toggleSelected(hits) {
+  const hit = hits.find(h => !h.reference);
+  if (!hit) {
+    logHint(hits.length ? "reference elements are read-only and cannot join " +
+                          "a selection" : "nothing there to add");
+    return;
+  }
+  const items = selectionItems().filter(it => !it.reference);
+  const k = items.findIndex(it => it.id === hit.id);
+  if (k >= 0) items.splice(k, 1);
+  else {
+    const it = await entityItem(hit.id);
+    if (!it || S.tool !== "select") return;
+    items.push(it);
+  }
+  setSelection(items);
+  if (!S.selected || !S.selected.alignment) logSelection("");
+}
+// The entities a dragged box takes in; a crossing when dragged leftwards.
+async function boxSelect(a, b, crossing, add) {
+  const tool = S.tool;
+  const r = await postJSON("/api/select",
+                           { space: S.space, corners: [a, b], crossing });
+  if (!r.ok) { logResult(r); return; }
+  // a tool picked while the box was out still gets it if it is picking
+  if (S.tool !== tool && !(SEL_TOOLS.has(S.tool) && !S.selDone)) return;
+  const found = r.entities.map(row => ({ id: row.id, bbox: row.bbox,
+    entity: row.entity, reference: null, properties: null }));
+  const how = crossing ? "crossing: " : "window: ";
+  if (SEL_TOOLS.has(S.tool)) {          // still picking for copy, rotate...
+    found.forEach(it => { if (!S.picks.some(pk => pk.id === it.id))
+      S.picks.push({ id: it.id, entity: it.entity, pt: null }); });
+    logHint(`${how}${found.length} found, ${S.picks.length} picked — click ` +
+            `or drag for more, Enter when done`);
+    drawOverlay();
+    return;
+  }
+  const items = add ? selectionItems().filter(it => !it.reference) : [];
+  found.forEach(it => { if (!items.some(x => x.id === it.id)) items.push(it); });
+  setSelection(items);
+  if (!S.selected || !S.selected.alignment) logSelection(how);
+}
+// Delete, or Erase with a selection already made: delete_entities on all of
+// it. Reference elements are read-only, and an alignment is deleted from its
+// Toolspace row, so neither goes this way.
+async function deleteSelection() {
+  if (S.selected && S.selected.alignment) {
+    logHint(`to delete alignment ${S.selected.alignment}, use ✕ on its ` +
+            `row in Toolspace ▸ Alignments; ✕ in the PI table deletes a PI`);
+    return;
+  }
+  await eraseItems(selectionItems());
+}
+async function eraseItems(items) {
+  const ids = items.filter(it => !it.reference).map(it => it.id);
+  if (!ids.length) {
+    if (items.length)
+      logHint(`${items[0].id} is a reference element — detach the ` +
+              `reference or edit the basefile instead`);
+    return;
+  }
+  S.selected = null; S.selSet = []; S.grip = null; S.gripHover = null;
+  drawOverlay(); renderProps();
+  logResult(await postJSON("/api/execute", { command: "delete_entities",
+                                             params: { ids } }));
 }
 
 // ----------------------------------------------------- stage interactions
@@ -3625,6 +3836,11 @@ stage.addEventListener("pointerdown", ev => {
       stage.setPointerCapture(ev.pointerId);
       ev.preventDefault();
       drawOverlay();
+    } else if (pt && dragSelects()) {
+      // perhaps the start of a box: it is one once it moves DRAG_PX
+      S.drag = { x: ev.clientX, y: ev.clientY, at: pt, to: pt, on: false,
+                 add: addKey(ev) };
+      stage.setPointerCapture(ev.pointerId);
     }
   }
 });
@@ -3632,6 +3848,12 @@ stage.addEventListener("pointermove", ev => {
   const pt = evtSpace(ev);
   if (pt) {
     S.hoverPt = pt;
+    if (S.drag) {
+      if (!S.drag.on && Math.hypot(ev.clientX - S.drag.x,
+                                   ev.clientY - S.drag.y) > DRAG_PX)
+        S.drag.on = true;
+      S.drag.to = pt;
+    }
     requestSnap(pt);
     const sp = snapped(pt);
     if (S.grip) S.grip.at = sp || orthoFrom(S.grip.grip.pt, pt, ev);
@@ -3667,6 +3889,15 @@ stage.addEventListener("pointerup", ev => {
     }
     pan = null;
     return;
+  }
+  if (S.drag) {
+    const d = S.drag; S.drag = null;
+    if (d.on) {                    // a box, not a click
+      boxSelect(d.at, evtSpace(ev) || d.to, ev.clientX < d.x,
+                d.add || addKey(ev));
+      drawOverlay();
+      return;
+    }
   }
   if (S.grip && !S.grip.hot) {
     // the two ways into a grip edit: drag it to its new place, or click it to
@@ -3704,6 +3935,10 @@ stage.addEventListener("dblclick", async ev => {
   const hits = await hitAt(pt, 8);
   if (hits.length) openEditorFor(hits[0].id);
 });
+// a drag over the drawing is a selection box or a pan, never the browser
+// carrying the rendered image off
+stage.addEventListener("dragstart", ev => ev.preventDefault());
+stage.addEventListener("pointercancel", () => { S.drag = null; drawOverlay(); });
 stage.addEventListener("contextmenu", ev => { ev.preventDefault();
                                               finishTool(); });
 stage.addEventListener("pointerleave", () => { S.cursor = null;
@@ -3976,6 +4211,10 @@ $("cmd").addEventListener("keydown", ev => {
       if (matches.length === 1) input.value = matches[0] + " ";
       else if (matches.length > 1) logHint(matches.join("  "));
     }
+  } else if ((ev.key === "Delete" || ev.key === "Backspace") && !input.value &&
+             (S.selected || S.selSet.length)) {
+    ev.preventDefault();   // nothing typed yet: Delete erases the selection
+    deleteSelection();
   } else if (ev.key === "Escape") { input.value = ""; input.blur(); }
 });
 $("run").onclick = () => {
@@ -4048,20 +4287,12 @@ document.addEventListener("keydown", ev => {
     setTool(TOOL_KEYS[key]);
   else if (ev.key === "Enter") finishTool();
   else if (ev.key === "Escape") cancelTool();
-  else if ((ev.key === "Delete" || ev.key === "Backspace") && S.selected) {
-    if (S.selected.alignment) {
-      logHint(`to delete alignment ${S.selected.alignment}, use ✕ on its ` +
-              `row in Toolspace ▸ Alignments; ✕ in the PI table deletes a PI`);
-      return;
-    }
-    if (S.selected.reference) {
-      logHint(`${S.selected.id} is a reference element — detach the ` +
-              `reference or edit the basefile instead`);
-      return;
-    }
-    postJSON("/api/execute", { command: "delete_entities",
-      params: { ids: [S.selected.id] } }).then(logResult);
-    S.selected = null; drawOverlay(); renderProps();
+  else if (ev.key === "Delete" || ev.key === "Backspace") {
+    ev.preventDefault();
+    if (S.selected || S.selSet.length) deleteSelection();
+    else if (S.tool === "select")
+      logHint("nothing selected — click an entity or drag a box around " +
+              "some, then Delete");
   }
 });
 

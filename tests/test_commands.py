@@ -346,6 +346,37 @@ def test_title_block_templates():
     assert s.doc.sheet_by_ref("N").usable_area() == (0.5, 0.5, 33.5, 21.5)
 
 
+def test_caltrans_border_letters_last_revision_and_plot_date_up_the_right_margin():
+    """The panel in the right margin strip, as on the published sheets: the
+    LAST REVISION box at the foot, the plot date and time lettered above it."""
+    from roaddraft.document.entities import Line, Text
+    from roaddraft.render.titleblock import CT_MARGIN, CT_PLOT_H, title_block_entities
+
+    s = make_session()
+    s.execute("create_sheet", {"name": "L-4", "size": "ANSI_D",
+                               "title_block_template": "caltrans"})
+    s.execute("fill_title_block", {"sheet": "L-4", "fields": {
+        "last_revision": "00-00-00", "date_plotted": "DATE PLOTTED =>  29-DEC-2011",
+        "time_plotted": "TIME PLOTTED =>  09:13"}})
+    sheet = s.doc.sheet_by_ref("L-4")
+    W = sheet.width_in
+    drawn = title_block_entities(sheet)
+    texts = {e.content: e for e in drawn if isinstance(e, Text)}
+    top = CT_MARGIN + CT_PLOT_H
+    for content in ("LAST REVISION", "00-00-00", "DATE PLOTTED =>  29-DEC-2011",
+                    "TIME PLOTTED =>  09:13"):
+        t = texts[content]
+        assert W - CT_MARGIN < t.position[0] < W and t.rotation_deg == 90.0, content
+    assert texts["LAST REVISION"].position[1] < top and texts["00-00-00"].position[1] < top
+    assert texts["DATE PLOTTED =>  29-DEC-2011"].position[1] > top
+    assert texts["TIME PLOTTED =>  09:13"].position[1] > top
+    # the box: its foot and head across the margin, and the split between caption and value
+    across = [e for e in drawn if isinstance(e, Line) and e.start[0] == W - CT_MARGIN
+              and e.start[1] == e.end[1] and e.end[0] > W - CT_MARGIN]
+    assert sorted(round(e.start[1], 3) for e in across) == [CT_MARGIN, round(top, 3)]
+    assert any(isinstance(e, Line) and e.start[0] == e.end[0] == W - 0.351 for e in drawn)
+
+
 def test_title_block_template_must_be_known():
     s = make_session()
     r = s.execute("create_sheet", {"name": "X", "title_block_template": "acme"})

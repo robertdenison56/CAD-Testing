@@ -55,27 +55,31 @@ def _viewport_warnings(doc: Document, scale: float) -> List[str]:
     return out
 
 
-def _replace_label(doc: Document, e: Text, rec: dict, scale: float) -> bool:
+def _replace_label(doc: Document, e: Text, rec: dict, scale: float) -> Optional[float]:
     """Re-place a design-anchored label at its paper offset through the
-    design model.  Returns False when that is not possible."""
+    design model.  Returns the paper offset it now sits at, or None when that
+    is not possible."""
     a = e.anchor
     if not a or "offset_in" not in rec or a.get("kind") not in LABEL_KINDS:
-        return False
+        return None
     align = doc.design.alignments.get(a.get("alignment"))
     if align is None or a.get("side") not in ("left", "right"):
-        return False
+        return None
+    side, offset_in = a["side"], float(rec["offset_in"])
+    if offset_in < 0:  # lettered on the other side, as older files stored it
+        side, offset_in = ("right" if side == "left" else "left"), -offset_in
     try:
         ap = resolve_record(align, a)
-        spec = compile_label(align, ap, a["kind"], side=a["side"],
-                             label_offset=float(rec["offset_in"]) * scale,
+        spec = compile_label(align, ap, a["kind"], side=side,
+                             label_offset=offset_in * scale,
                              rotation=a.get("rotation") or "along", content=e.content,
                              halign=e.halign, valign=e.valign)
     except (DesignError, KeyError, ValueError, TypeError):
-        return False
+        return None
     e.position = spec.position
     e.rotation_deg = spec.rotation_deg
-    e.anchor = dict(a, label_offset=spec.label_offset)
-    return True
+    e.anchor = dict(a, side=spec.side, label_offset=spec.label_offset)
+    return offset_in
 
 
 def rescale_entities(doc: Document, scale: float) -> List[str]:
@@ -88,9 +92,11 @@ def rescale_entities(doc: Document, scale: float) -> List[str]:
         old = float(rec["scale"])
         if isinstance(e, Text):
             height_in = float(rec.get("height_in", e.height / old))
-            _replace_label(doc, e, rec, scale)
+            offset_in = _replace_label(doc, e, rec, scale)
             e.height = height_in * scale
             e.annotative = dict(rec, scale=scale, height_in=height_in)
+            if offset_in is not None:
+                e.annotative["offset_in"] = offset_in
         elif isinstance(e, Dimension):
             height_in = float(rec.get("height_in", e.text_height / old))
             # every size a dimension has is derived from its text height, so one

@@ -134,6 +134,11 @@ def offset_point(p: Sequence[float], angle_deg: float, dist: float) -> List[floa
     return [p[0] + dist * math.cos(a), p[1] + dist * math.sin(a)]
 
 
+def beside(p: Sequence[float], direction_deg: float, side: str, dist: float) -> List[float]:
+    """The point ``dist`` off ``p`` on ``side`` of a line running ``direction_deg``."""
+    return offset_point(p, direction_deg + (90.0 if side == "left" else -90.0), dist)
+
+
 # --------------------------------------------------------------- content
 
 
@@ -288,9 +293,16 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0, tick_half: fl
                     include_equations: bool = True,
                     station_range: Optional[Tuple[float, float]] = None) -> StationingPlan:
     """Ticks + labels for every interval station (per region), BC/EC/PCC/PRC
-    labels, and equation labels.  ``station_range`` is in RAW stations."""
+    labels, and equation labels.  ``station_range`` is in RAW stations.
+
+    Station numbers go left of the line and the curve points and equations
+    right of it; a negative ``label_offset`` swaps the sides (stations on the
+    right, as Caltrans letters them).  Either way each label records the side
+    it is on with a positive offset, and reads away from the line."""
     if interval <= 0:
         raise DesignError("interval must be > 0")
+    station_side, point_side = ("right", "left") if label_offset < 0 else ("left", "right")
+    label_offset = abs(float(label_offset))
     st = alignment.stations()
     begin = float(alignment.begin_station)
     length = alignment.length
@@ -325,10 +337,11 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0, tick_half: fl
                 items.append(LabelSpec(
                     kind="station", alignment=alignment.name, ref=text, station=raw, offset=0.0,
                     region=region.index, anchor_point=list(pt), direction_deg=direction,
-                    side="left", label_offset=float(label_offset), rotation="along",
+                    side=station_side, label_offset=label_offset, rotation="along",
                     content=text, content_auto=True,
-                    position=offset_point(pt, direction + 90.0, label_offset),
-                    rotation_deg=upright(direction), halign="center", valign="bottom"))
+                    position=beside(pt, direction, station_side, label_offset),
+                    rotation_deg=upright(direction), halign="center",
+                    valign=DEFAULT_VALIGN[station_side]))
                 n_ticks += 1
             sd += interval
 
@@ -349,11 +362,12 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0, tick_half: fl
             disp, region = st.to_display(raw)
             items.append(LabelSpec(
                 kind=jk, alignment=alignment.name, ref=ref, station=raw, offset=0.0,
-                region=region, anchor_point=list(pt), direction_deg=direction, side="right",
-                label_offset=float(label_offset), rotation="along",
+                region=region, anchor_point=list(pt), direction_deg=direction,
+                side=point_side, label_offset=label_offset, rotation="along",
                 content=f"{CURVE_POINT_WORDS[jk]} {st.format(raw)}", content_auto=True,
-                position=offset_point(pt, direction - 90.0, label_offset),
-                rotation_deg=upright(direction), halign="center", valign="top"))
+                position=beside(pt, direction, point_side, label_offset),
+                rotation_deg=upright(direction), halign="center",
+                valign=DEFAULT_VALIGN[point_side]))
             n_junctions += 1
 
     n_equations = 0
@@ -363,14 +377,15 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0, tick_half: fl
             if not in_range(raw):
                 continue
             pt, direction = at(raw)
-            off = 1.5 * float(label_offset)
+            off = 1.5 * label_offset
             disp, region = st.to_display(raw)
             items.append(LabelSpec(
                 kind="equation", alignment=alignment.name, ref=f"EQ-{n}", station=raw, offset=0.0,
-                region=region, anchor_point=list(pt), direction_deg=direction, side="right",
+                region=region, anchor_point=list(pt), direction_deg=direction, side=point_side,
                 label_offset=off, rotation="along", content=equation_label(eq),
-                content_auto=True, position=offset_point(pt, direction - 90.0, off),
-                rotation_deg=upright(direction), halign="center", valign="top"))
+                content_auto=True, position=beside(pt, direction, point_side, off),
+                rotation_deg=upright(direction), halign="center",
+                valign=DEFAULT_VALIGN[point_side]))
             n_equations += 1
 
     return StationingPlan(items=items, n_ticks=n_ticks, n_junctions=n_junctions,
@@ -445,7 +460,7 @@ __all__ = [
     "LABEL_KINDS", "ROTATION_MODES", "SIDES", "DEFAULT_SIDE", "DEFAULT_VALIGN",
     "MODEL_LABEL_OFFSET", "MODEL_TEXT_HEIGHT", "MODEL_TICK_HALF", "SHEET_LABEL_OFFSET",
     "SHEET_TEXT_HEIGHT", "CURVE_POINT_WORDS", "LabelSpec", "TickSpec", "StationingPlan",
-    "upright", "reading_up", "offset_point",
+    "upright", "reading_up", "offset_point", "beside",
     "label_content", "compile_label", "sheet_pose", "stationing_plan", "CURVE_COLUMNS",
     "DEFAULT_CURVE_COLUMNS", "curve_table_rows",
 ]

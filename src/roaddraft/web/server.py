@@ -13,7 +13,13 @@ framework. The browser gets:
   POST /api/line             {line, space}     -> human command-line grammar
   POST /api/file             {action, path?, project?, discard?} -> File
                              New / Open / Save / Save As (a dialog when no path)
-  GET  /api/events           SSE stream; fires whenever the document changes
+  POST /api/select           {space, corners, crossing?} -> the entities a
+                             dragged window (or crossing) box selects; GUI
+                             only, so not on the agents' tool surface
+  POST /api/chain            {ids, tolerance?} -> the chain of lines, arcs and
+                             polylines those elements belong to, in order (the
+                             Station tool's pick; GUI only)
+  GET  /api/events          SSE stream; fires whenever the document changes
   GET  /render/<ref>.png     live render of 'model' or a sheet id/name
 
 Every mutation bumps a revision; the canvas re-renders on the SSE signal, so
@@ -109,6 +115,29 @@ class WebApp:
         return self._run_tracked(
             lambda: self._note_save(self.session.query(query, params)))
 
+    def select_window(self, body):
+        """The entities a box dragged in the Select tool takes in."""
+        from roaddraft.document.window_select import window_ids
+        space = body.get("space") or "model"
+        try:
+            (ax, ay), (bx, by) = [[float(v) for v in c] for c in body["corners"]]
+        except (KeyError, TypeError, ValueError):
+            return {"ok": False, "error": {
+                "type": "invalid_params",
+                "message": "corners must be two [x, y] points"}}
+        with self.lock:
+            doc = self.session.doc
+            resolved = doc.resolve_space(space)
+            if resolved is None:
+                return {"ok": False, "error": {
+                    "type": "query_failed", "message": f"space {space!r} not found"}}
+            entities = resolved[1]
+            ids = window_ids(doc, entities, [ax, ay], [bx, by],
+                             crossing=bool(body.get("crossing")))
+            rows = [{"id": i, "entity": entities[i].to_dict(),
+                     "bbox": list(entities[i].bbox(doc))} for i in ids]
+        return {"ok": True, "count": len(rows), "entities": rows}
+
     def line(self, line, space):
         def run():
             resp = route_line(self.session, line, space or "model")
@@ -116,6 +145,26 @@ class WebApp:
                 self._note_save(resp.get("result"))
             return resp
         return self._run_tracked(run)
+
+    def chain(self, body):
+        """The chain of linework the picked elements belong to, in order --
+        what the Station tool stations -- with each element for the highlight."""
+        from roaddraft.commands.handlers import CommandFault, chain_elements
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not ids or \
+                not all(isinstance(i, str) for i in ids):
+            return {"ok": False, "error": {
+                "type": "invalid_params", "message": "ids must be a list of entity ids"}}
+        with self.lock:
+            doc = self.session.doc
+            try:
+                order, warnings = chain_elements(
+                    doc, ids, float(body.get("tolerance") or 1.0))
+            except CommandFault as fault:
+                return {"ok": False, "error": {
+                    "type": "query_failed", "message": str(fault), "hint": fault.hint}}
+            rows = [{"id": i, "entity": doc.find_entity(i)[1].to_dict()} for i in order]
+        return {"ok": True, "ids": order, "entities": rows, "warnings": warnings}
 
     def _note_save(self, result):
         """A save_document that went through, such as 'save PATH' typed on the
@@ -521,8 +570,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/line":
             self._json(self.app.line(body.get("line", ""),
                                      body.get("space") or "model"))
+        elif path == "/api/select":
+            self._json(self.app.select_window(body))
         elif path == "/api/file":
             self._json(self.app.file_action(body))
+        elif path == "/api/chain":
+            self._json(self.app.chain(body))
         else:
             self._json({"error": "not found"}, code=404)
 

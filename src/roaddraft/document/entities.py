@@ -80,8 +80,13 @@ ANNOTATIVE_SIZES = ("height_in", "half_len_in", "offset_in")
 
 def as_annotative(value) -> Optional[Dict]:
     """Validate an ``annotative`` record: {"scale": ft/in (> 0), optional
-    "height_in" / "half_len_in" (> 0), "offset_in" (>= 0)} — the paper
-    sizes set_annotation_scale re-sizes the entity from."""
+    "height_in" / "half_len_in" (> 0), "offset_in" (any number)} — the paper
+    sizes set_annotation_scale re-sizes the entity from.
+
+    ``offset_in`` is signed like an anchor's label_offset: a negative one is a
+    label on the other side of the line from its anchor's side.  Stationing
+    lettered on the right was saved that way before annotate_stationing
+    recorded it as side right, and those files still open."""
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -96,7 +101,10 @@ def as_annotative(value) -> Optional[Dict]:
         if key not in ANNOTATIVE_SIZES:
             raise ValueError(f"annotative: unknown key {key!r}; keys: scale, "
                              + ", ".join(ANNOTATIVE_SIZES))
-        if not _is_number(v) or v < 0 or (v == 0 and key != "offset_in"):
+        if key == "offset_in":
+            if not _is_number(v) or not math.isfinite(v):
+                raise ValueError(f"annotative: offset_in must be a number (inches), got {v!r}")
+        elif not _is_number(v) or v <= 0:
             raise ValueError(f"annotative: {key} must be a positive number (inches), got {v!r}")
         out[key] = float(v)
     return out

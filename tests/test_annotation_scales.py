@@ -71,9 +71,13 @@ def test_as_annotative_validation_and_round_trip():
     assert as_annotative({"scale": 50, "height_in": 0.1}) == {"scale": 50.0, "height_in": 0.1}
     for bad in ("x", {"height_in": 0.1}, {"scale": 0}, {"scale": 50, "bogus": 1},
                 {"scale": 50, "height_in": -1}, {"scale": 50, "height_in": "0.1"},
-                {"scale": True}):
+                {"scale": True}, {"scale": 50, "half_len_in": 0},
+                {"scale": 50, "offset_in": "0.2"}, {"scale": 50, "offset_in": float("nan")}):
         with pytest.raises(ValueError):
             as_annotative(bad)
+    # a label offset is signed: negative is the other side of the line
+    assert as_annotative({"scale": 50, "offset_in": -0.2}) == {"scale": 50.0, "offset_in": -0.2}
+    assert as_annotative({"scale": 50, "offset_in": 0}) == {"scale": 50.0, "offset_in": 0.0}
     t = Text(id="TX-1", position=[0, 0], content="a", height=5,
              annotative={"scale": 50, "height_in": 0.1, "offset_in": 0.32})
     d = json.loads(json.dumps(t.to_dict()))
@@ -140,6 +144,84 @@ def test_entity_mode_stationing_honours_the_scale():
     assert label.height == 10.0 and near(label.position, [0.0, 32.0])
     assert near(tick.start, [0.0, -20.0]) and near(tick.end, [0.0, 20.0])
     assert label.annotative["offset_in"] == pytest.approx(0.32)
+
+
+def test_negative_label_offset_letters_stations_right_and_the_file_reopens(tmp_path):
+    # Caltrans letters stations right of the line. A negative label_offset swaps
+    # the sides; each label records the side it is on, a positive offset, and
+    # reads away from the line. The saved file opens again (it did not).
+    s = session_A()
+    s.execute("set_annotation_scale", {"scale": 50})
+    r = s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1",
+                                          "label_offset": -16})
+    assert r["ok"], r
+    texts = [s.doc.model_entities[i] for i in r["created"]
+             if isinstance(s.doc.model_entities[i], Text)]
+    sta = next(t for t in texts if t.anchor["ref"] == "10+00.00")
+    bc = next(t for t in texts if t.anchor["ref"] == "PC-1")
+    assert near(sta.position, [1000.0, 984.0]) and sta.valign == "top"
+    assert sta.anchor["side"] == "right" and sta.anchor["label_offset"] == 16.0
+    assert sta.annotative == {"scale": 50.0, "height_in": 0.1, "offset_in": 0.32}
+    assert near(bc.position, [1600.0, 1016.0]) and bc.valign == "bottom"
+    assert bc.anchor["side"] == "left" and bc.annotative["offset_in"] == pytest.approx(0.32)
+
+    path = s.query("save_document", {"path": str(tmp_path / "right.rdraft")})["path"]
+    again = Session.load(path, out_dir=str(tmp_path))
+    assert ({k: e.to_dict() for k, e in again.doc.model_entities.items()}
+            == {k: e.to_dict() for k, e in s.doc.model_entities.items()})
+    assert again.execute("modify_entity", {"id": sta.id, "changes": {"content": "0"}})["ok"]
+    assert again.execute("set_annotation_scale", {"scale": 100})["ok"]
+    sta = again.doc.model_entities[sta.id]
+    assert near(sta.position, [1000.0, 968.0]) and sta.anchor["side"] == "right"
+    assert sta.annotative["offset_in"] == pytest.approx(0.32)
+
+
+def test_entity_mode_negative_label_offset_swaps_the_sides():
+    s = Session()
+    s.execute("set_annotation_scale", {"scale": 50})
+    ids = s.execute("draw_line", {"space": "model", "start": [0, 0], "end": [500, 0]})["created"]
+    ids += s.execute("draw_arc", {"space": "model", "center": [500, 500], "radius": 500,
+                                  "start_angle_deg": -90, "end_angle_deg": 0})["created"]
+    r = s.execute("annotate_stationing", {"space": "model", "path_ids": ids,
+                                          "begin_station": 0, "label_offset": -10})
+    texts = [s.doc.model_entities[i] for i in r["created"]
+             if isinstance(s.doc.model_entities[i], Text)]
+    sta = next(t for t in texts if t.content == "0+00.00")
+    bc = next(t for t in texts if t.content.startswith("BC"))
+    assert near(sta.position, [0.0, -10.0]) and sta.valign == "top"
+    assert near(bc.position, [500.0, 10.0]) and bc.valign == "bottom"
+    assert sta.annotative["offset_in"] == pytest.approx(0.2)
+    assert Document.from_dict(s.doc.to_dict()).to_dict() == s.doc.to_dict()
+
+
+def test_files_with_a_signed_offset_in_open_modify_undo_and_rescale(tmp_path):
+    # Before annotate_stationing recorded side right, a right-hand station label
+    # was saved as side left with a negative offset. Those files open, edit, undo,
+    # and survive a failed command; a rescale re-places the label on the right
+    # and records it the new way.
+    s = session_A()
+    s.execute("set_annotation_scale", {"scale": 50})
+    r = s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1"})
+    sta = s.doc.model_entities[r["created"][1]]
+    sta.position, sta.valign = [1000.0, 984.0], "bottom"
+    sta.anchor = dict(sta.anchor, side="left", label_offset=-16.0)
+    sta.annotative = {"scale": 50.0, "height_in": 0.1, "offset_in": -0.32}
+    path = s.query("save_document", {"path": str(tmp_path / "old.rdraft")})["path"]
+
+    again = Session.load(path, out_dir=str(tmp_path))
+    assert again.doc.model_entities[sta.id].annotative["offset_in"] == -0.32
+    assert again.execute("modify_entity", {"id": sta.id, "changes": {"content": "0"}})["ok"]
+    r = again.execute("modify_entity", {"id": "TX-999", "changes": {"content": "x"}})
+    assert not r["ok"] and again.doc.model_entities[sta.id].content == "0"
+
+    assert again.execute("set_annotation_scale", {"scale": 100})["ok"]
+    moved = again.doc.model_entities[sta.id]
+    assert near(moved.position, [1000.0, 968.0]) and moved.valign == "bottom"
+    assert moved.anchor["side"] == "right" and moved.anchor["label_offset"] == 32.0
+    assert moved.annotative == {"scale": 100.0, "height_in": 0.1, "offset_in": 0.32}
+    assert again.execute("undo", {})["ok"]
+    back = again.doc.model_entities[sta.id]
+    assert near(back.position, [1000.0, 984.0]) and back.annotative["offset_in"] == -0.32
 
 
 # ---------------------------------------------------------------- rescale

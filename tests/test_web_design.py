@@ -58,7 +58,7 @@ def test_gui_wires_design_tools():
     assert 'act: "drawalign"' in html and 'act: "label"' in html
     assert 'act: "curvetable"' in html and 'act: "landxml"' in html
     assert 'tool: "alignment"' in html and 'g: "alignment"' in html
-    assert '"(picked entities)"' in html and "export_landxml" in html
+    assert '"/api/chain"' in html and "start_point: pt" in html and "export_landxml" in html
     assert 'command: "create_alignment"' in html and 'command: "place_label"' not in html
     assert 'exec("place_label"' in html and 'ICONS' in html and "alignment: `" in html
 

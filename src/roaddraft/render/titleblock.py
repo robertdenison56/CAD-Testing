@@ -6,7 +6,8 @@ drawn representation.  ``sheet.title_block_template`` picks the drawing:
 
     standard   the generic bottom-strip block (default)
     caltrans   the Caltrans plan-sheet border: left binding strip, bottom
-               plot strip, and the Dist/COUNTY/ROUTE/POST MILES title block
+               plot strip, the last revision and plot date up the right
+               margin, and the Dist/COUNTY/ROUTE/POST MILES title block
                with the engineer's seal panel (dimensioned for 22 x 34)
     none       border and title block are drawn by the document itself
 """
@@ -121,7 +122,7 @@ CT_TB_W = 5.799            # title block width
 CT_TB_H = 2.999            # title block height
 CT_GRID_H = 0.780          # the Dist/COUNTY/ROUTE grid at the top of it
 CT_HEAD_H = 0.341          # its header row
-CT_PLOT_H = 1.195          # the plotted-on panel, lower right
+CT_PLOT_H = 1.195          # the LAST REVISION box at the foot of the right margin
 
 # Dist/COUNTY/ROUTE/POST MILES/SHEET No./TOTAL SHEETS: (field, header, width)
 CT_GRID = [("dist", "Dist", 0.501), ("county", "COUNTY", 0.999),
@@ -232,15 +233,21 @@ def caltrans_entities(sheet: Sheet) -> List[Entity]:
     text(22.352, 0.159, get("unit"), CT_VALUE_H)
     text(25.393, 0.144, get("project_number_phase"), CT_VALUE_H)
 
-    # ------------------------------------------- plotted-on panel, far right
-    if W - CT_MARGIN + CT_PLOT_H < W:
+    # ------------------------------- right margin: last revision, plotted on
+    # up the margin from the foot of the border: the LAST REVISION box, then
+    # the plot date and time lettered above it
+    if CT_MARGIN + CT_PLOT_H < H - CT_MARGIN:
+        top = CT_MARGIN + CT_PLOT_H
         line(W - CT_MARGIN, CT_MARGIN, W - CT_TRIM, CT_MARGIN, 0.13)
-        line(W - CT_MARGIN, CT_MARGIN + CT_PLOT_H, W - CT_TRIM,
-             CT_MARGIN + CT_PLOT_H, 0.13)
-        line(W - 0.351, CT_MARGIN, W - 0.351, CT_MARGIN + CT_PLOT_H, 0.13)
-        text(W - 0.380, CT_MARGIN + 0.09, get("date_plotted"), 0.088,
+        line(W - CT_MARGIN, top, W - CT_TRIM, top, 0.13)
+        line(W - 0.351, CT_MARGIN, W - 0.351, top, 0.13)
+        text(W - 0.384, CT_MARGIN + 0.113, "LAST REVISION", 0.080,
              rotation=90.0, color=LABEL_COLOR)
-        text(W - 0.179, CT_MARGIN + 0.09, get("time_plotted"), 0.088,
+        text(W - 0.119, CT_MARGIN + 0.047, get("last_revision"), CT_VALUE_H,
+             rotation=90.0)
+        text(W - 0.307, top + 0.085, get("date_plotted"), 0.098,
+             rotation=90.0, color=LABEL_COLOR)
+        text(W - 0.105, top + 0.085, get("time_plotted"), 0.098,
              rotation=90.0, color=LABEL_COLOR)
 
     # --------------------------------------------------------- title block

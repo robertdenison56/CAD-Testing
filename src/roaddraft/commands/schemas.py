@@ -417,13 +417,27 @@ SCHEMAS = {
         {"space": SPACE,
          "path_ids": {**IDS, "description": "line/polyline/arc entity ids forming "
                                             "the centerline, in order along it "
-                                            "(entity-chain mode)"},
+                                            "(entity-chain mode); with chain=true, "
+                                            "any one or more of them"},
+         "chain": {"type": "boolean",
+                   "description": "entity-chain mode: follow the elements joined end "
+                                  "to end from path_ids, so one id stations the whole "
+                                  "centerline; stops where the linework branches, "
+                                  "unless path_ids names the way on"},
          "alignment": {**NSTR, "description": "design-model alignment name: true "
                                               "stations, equations, and anchored "
                                               "output (alternative to path_ids)"},
-         "begin_station": {**NUM, "description": "station value (feet) at the "
-                                                 "start of the first element "
-                                                 "(entity-chain mode only)"},
+         "begin_station": {**STATION, "description": "entity-chain mode: the station "
+                                                     "(feet, or '15+90.29') at the "
+                                                     "start of the first element, or "
+                                                     "at start_point when given"},
+         "start_point": {**POINT, "description": "entity-chain mode: a point on the "
+                                                 "path where begin_station is known; "
+                                                 "stations run on from the end of the "
+                                                 "path nearer it"},
+         "reverse": {"type": "boolean",
+                     "description": "entity-chain mode: run the stations the other "
+                                    "way along the path"},
          "station_range": {"type": "array", "items": STATION, "minItems": 2,
                            "maxItems": 2,
                            "description": "alignment mode: only annotate between "
@@ -437,9 +451,11 @@ SCHEMAS = {
                                                  "annotation scale x 0.20 in)"},
          "text_height": {**POS, "description": "label height (default 8 ft, or the "
                                                "annotation scale x 0.10 in)"},
-         "label_offset": {**NUM, "description": "label offset left of the path "
+         "label_offset": {**NUM, "description": "label distance from the path: "
+                                                "stations left of it, BC/EC right "
                                                 "(default 16 ft, or the annotation "
-                                                "scale x 0.32 in)"},
+                                                "scale x 0.32 in); negative swaps the "
+                                                "sides, stations on the right"},
          "layer": {**NSTR, "description": "layer for ticks; default current"},
          "label_layer": {**NSTR, "description": "layer for labels; default same "
                                                 "as ticks"},

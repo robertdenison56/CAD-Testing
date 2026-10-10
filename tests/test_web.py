@@ -410,3 +410,42 @@ def test_gui_wires_alignment_grips():
     assert "angle_points: true, redraw: true" in html
     assert "renderAlignmentProps(panel)" in html       # the PI table
     assert "angle_points: true } });" in html          # created by PI, curves later
+
+
+def test_select_endpoint_takes_a_window_or_a_crossing(server):
+    """The Select tool's dragged box: a window takes what lies inside, a
+    crossing what it touches too; each row carries what the overlay draws."""
+    for start, end in (([2, 2], [10, 10]), ([-5, 30], [30, -5])):
+        post(server, "/api/execute", {"command": "draw_line", "params": {
+            "space": "model", "start": start, "end": end}})
+    _, r = post(server, "/api/select", {"space": "model",
+                                        "corners": [[0, 0], [20, 20]]})
+    assert r["ok"] and [e["id"] for e in r["entities"]] == ["LN-001"]
+    assert r["entities"][0]["entity"]["type"] == "line"
+    assert r["entities"][0]["bbox"] == [2, 2, 10, 10]
+    _, r = post(server, "/api/select", {"space": "model", "crossing": True,
+                                        "corners": [[20, 20], [0, 0]]})
+    assert [e["id"] for e in r["entities"]] == ["LN-001", "LN-002"]
+    _, r = post(server, "/api/select", {"space": "model", "corners": [[0, 0]]})
+    assert not r["ok"] and r["error"]["type"] == "invalid_params"
+    _, r = post(server, "/api/select", {"space": "C-999",
+                                        "corners": [[0, 0], [1, 1]]})
+    assert not r["ok"]
+    _, state = get(server, "/api/state")
+    assert json.loads(state)["rev"] == 2          # selecting changes nothing
+
+
+def test_gui_wires_box_select_and_delete():
+    """A drag in the Select tool is a window (left to right) or a crossing
+    (right to left); Shift-click adds or removes; Delete erases the lot."""
+    html = (STATIC_DIR / "index.html").read_text()
+    assert "function boxSelect(" in html and 'postJSON("/api/select"' in html
+    assert "ev.clientX < d.x" in html                   # leftwards: crossing
+    assert "#ovl .selwin" in html and "#ovl .selcross" in html
+    assert "await toggleSelected(hits)" in html         # Shift/Ctrl/Cmd-click
+    assert 'stage.addEventListener("dragstart"' in html  # no native image drag
+    assert "function deleteSelection(" in html
+    assert 'command: "delete_entities"' in html and "params: { ids } }" in html
+    assert "renderSetProps(panel)" in html
+    # a selection made first is what copy, rotate... join and erase work on
+    assert "S.picks = pre.map(" in html and 'key === "erase" && pre.length' in html

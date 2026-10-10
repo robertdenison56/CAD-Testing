@@ -9,7 +9,7 @@ from typing import Dict, List, Tuple
 
 from roaddraft.core import colors as colorlib
 from roaddraft.core import geometry as geo
-from roaddraft.core.units import format_station
+from roaddraft.core.units import format_station, parse_station
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import LINETYPES, BlockDef, Document, Layer, TextStyle
 from roaddraft.document.entities import (
@@ -798,11 +798,12 @@ def delete_viewport(doc: Document, p: dict):
 class _Piece:
     """One traversable piece of a path: a segment or an arc, oriented."""
 
-    def __init__(self, kind, length, point_at, dir_at):
+    def __init__(self, kind, length, point_at, dir_at, along):
         self.kind = kind
         self.length = length
         self.point_at = point_at  # distance along piece -> [x, y]
         self.dir_at = dir_at      # distance along piece -> tangent degrees
+        self.along = along        # [x, y] -> distance along piece to its nearest point
 
 
 def _line_piece(a, b):
@@ -811,7 +812,12 @@ def _line_piece(a, b):
     def point_at(s, a=a, b=b, length=length):
         t = 0.0 if length == 0 else s / length
         return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
-    return _Piece("line", length, point_at, lambda s, ang=ang: ang)
+    def along(p):
+        if length == 0:
+            return 0.0
+        t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / length ** 2
+        return min(max(t, 0.0), 1.0) * length
+    return _Piece("line", length, point_at, lambda s, ang=ang: ang, along)
 
 
 def _arc_piece(center, radius, start_deg, sweep_deg, ccw):
@@ -823,7 +829,15 @@ def _arc_piece(center, radius, start_deg, sweep_deg, ccw):
         return geo.arc_point(center, radius, ang_at(s))
     def dir_at(s):
         return ang_at(s) + sign * 90.0
-    return _Piece("arc", length, point_at, dir_at)
+    def along(p):
+        turned = (sign * (math.degrees(math.atan2(p[1] - center[1], p[0] - center[0]))
+                          - start_deg)) % 360.0
+        if turned <= abs(sweep_deg):
+            return radius * math.radians(turned)
+        # off the ends of the arc: whichever end is nearer
+        near_start = geo.distance(p, point_at(0.0)) <= geo.distance(p, point_at(length))
+        return 0.0 if near_start else length
+    return _Piece("arc", length, point_at, dir_at, along)
 
 
 def _element_pieces(entity, reverse: bool) -> List[_Piece]:
@@ -867,9 +881,87 @@ def _element_endpoints(entity):
         f"line, polyline, or arc entities")
 
 
-def _chain_path(doc: Document, ids: List[str], tol: float):
-    """Orient the path elements head-to-tail. Returns (pieces, element_kinds,
+def chain_elements(doc: Document, ids: List[str], tol: float = 1.0):
+    """The elements ``ids`` belong to, in order along the chain they make.
+
+    Starting from the first id, the chain runs on at each end through the
+    line, polyline or arc whose end touches it (within ``tol``) in the same
+    space, until nothing does or the linework branches. At a branch an element
+    named in ``ids`` is taken first, then the only one on the first element's
+    layer; otherwise the chain stops there, and a warning says where. Returns
+    ``(ordered ids, warnings)``; an id the chain never reaches is a fault."""
+    found = doc.find_entity(ids[0]) if ids else None
+    if found is None:
+        raise CommandFault(f"path entity {ids[0] if ids else None!r} not found")
+    space_key, first = found
+    _element_endpoints(first)  # a fault for anything but a line/polyline/arc
+    seeds = list(dict.fromkeys(ids))
+    for eid in seeds[1:]:
+        other = doc.find_entity(eid)
+        if other is None:
+            raise CommandFault(f"path entity {eid!r} not found")
+        if other[0] != space_key:
+            raise CommandFault(f"{eid} is in {other[0]}, not {space_key} with {ids[0]}",
+                               hint="a chain is linework in one space")
+    container = doc.resolve_space(space_key)[1]
+    pool = []
+    for e in container.values():
+        if not isinstance(e, (Line, Arc, Polyline)):
+            continue
+        if isinstance(e, Polyline) and (e.closed or len(e.vertices) < 2):
+            continue
+        p0, p1 = _element_endpoints(e)
+        if geo.distance(p0, p1) <= tol:
+            continue  # a closed run, or no length: nothing to chain on to
+        pool.append((e, p0, p1))
+
+    warnings: List[str] = []
+    p0, p1 = _element_endpoints(first)
+    chain = [first.id]
+    ends = [p0, p1]  # [head, tail] of the chain as it grows
+    used = {first.id}
+    closed = (isinstance(first, Polyline) and first.closed) or geo.distance(p0, p1) <= tol
+    if not closed:
+        for at in (1, 0):  # tail first, then back from the head
+            while True:
+                here = ends[at]
+                touching = [(e, q0, q1) for e, q0, q1 in pool if e.id not in used
+                            and min(geo.distance(q0, here), geo.distance(q1, here)) <= tol]
+                if not touching:
+                    break
+                pick = [t for t in touching if t[0].id in seeds]
+                if not pick:
+                    pick = touching if len(touching) == 1 else \
+                        [t for t in touching if t[0].layer == first.layer]
+                if len(pick) != 1:
+                    warnings.append(
+                        f"the chain stops at [{here[0]:.2f}, {here[1]:.2f}], where "
+                        f"{len(touching)} elements meet it ("
+                        + ", ".join(t[0].id for t in touching) + ")")
+                    break
+                e, q0, q1 = pick[0]
+                used.add(e.id)
+                far = q1 if geo.distance(q0, here) <= geo.distance(q1, here) else q0
+                if at == 1:
+                    chain.append(e.id)
+                else:
+                    chain.insert(0, e.id)
+                ends[at] = far
+    missed = [eid for eid in seeds if eid not in used]
+    if missed:
+        raise CommandFault(f"{', '.join(missed)} not on the chain through {ids[0]} "
+                           f"({' > '.join(chain)})",
+                           hint="the chain follows elements whose ends touch within "
+                                "connect_tolerance and stops where the linework branches")
+    return chain, warnings
+
+
+def _chain_path(doc: Document, ids: List[str], tol: float, reverse: bool = False):
+    """Orient the path elements head-to-tail; ``reverse`` runs them from the
+    last element's far end instead. Returns (pieces, element_kinds,
     element_end_distances)."""
+    if reverse:
+        ids = list(reversed(ids))
     entities = []
     for eid in ids:
         found = doc.find_entity(eid)
@@ -882,7 +974,7 @@ def _chain_path(doc: Document, ids: List[str], tol: float):
         p0, p1 = _element_endpoints(entity)
         if i == 0:
             if len(entities) == 1:
-                reversed_flags.append(False)
+                reversed_flags.append(reverse)
             else:
                 n0, n1 = _element_endpoints(entities[1])
                 d_fwd = min(geo.distance(p1, n0), geo.distance(p1, n1))
@@ -941,18 +1033,49 @@ def _offset_pt(p, angle_deg, dist):
     return [p[0] + dist * math.cos(a), p[1] + dist * math.sin(a)]
 
 
+def _path_along(pieces: List[_Piece], p):
+    """``(distance along, point, gap)``: the point of the path nearest ``p``,
+    how far along the path it is, and how far ``p`` is from it."""
+    best, start = None, 0.0
+    for piece in pieces:
+        s = piece.along(p)
+        q = piece.point_at(s)
+        gap = geo.distance(p, q)
+        if best is None or gap < best[2] - 1e-12:
+            best = (start + s, q, gap)
+        start += piece.length
+    return best
+
+
+#: annotate_stationing params that only entity-chain mode takes
+CHAIN_ONLY = ("chain", "start_point", "reverse")
+
+
 def annotate_stationing(doc: Document, p: dict):
     if "alignment" in p and "path_ids" in p:
         raise CommandFault("give either path_ids (entity-chain mode) or alignment (design "
                            "mode), not both")
     if "alignment" in p:
+        given = [k for k in CHAIN_ONLY if k in p]
+        if given:
+            raise CommandFault(f"{', '.join(given)} belong to entity-chain mode (path_ids); "
+                               f"an alignment carries its own stationing",
+                               hint="modify_alignment changes its begin_station")
         from roaddraft.commands import design_handlers
         return design_handlers.annotate_stationing_alignment(doc, p)
     if "path_ids" not in p:
         raise CommandFault("path_ids is required in entity-chain mode",
                            hint="or pass alignment=NAME for design-model stationing")
     if "begin_station" not in p:
-        raise CommandFault("begin_station is required with path_ids")
+        raise CommandFault("begin_station is required with path_ids",
+                           hint="the station at the start of the path, or at start_point")
+    known = p["begin_station"]
+    if isinstance(known, str):
+        try:
+            known = parse_station(known)
+        except ValueError:
+            raise CommandFault(f"begin_station {p['begin_station']!r} is not a station",
+                               hint="feet (1590.29) or station text ('15+90.29')")
     space_key, container = _space(doc, p["space"])
     tick_layer = _layer(doc, p)
     label_layer = p.get("label_layer", tick_layer)
@@ -961,20 +1084,46 @@ def annotate_stationing(doc: Document, p: dict):
                            hint=f"existing layers: {sorted(doc.layers)}")
     style = doc.settings["current_text_style"]
 
-    begin = p["begin_station"]
     interval = p.get("interval", 100.0)
     sizes = anno.size_defaults(doc)  # annotation scale x paper defaults, or fixed feet
     tick_half = p.get("tick_half_len", sizes["tick_half_len"])
     text_h = p.get("text_height", sizes["text_height"])
     label_off = p.get("label_offset", sizes["label_offset"])
+    # stations left of the path and BC/EC right; a negative offset swaps the
+    # sides, and each label still reads away from the line
+    side = -1.0 if label_off < 0 else 1.0
+    label_off = abs(label_off)
     tol = p.get("connect_tolerance", 1.0)
     tick_rec = anno.tick_record(doc, tick_half)
     text_rec = anno.text_record(doc, text_h, label_off)
 
-    pieces, kinds, ends = _chain_path(doc, p["path_ids"], tol)
+    warnings: List[str] = []
+    ids = list(p["path_ids"])
+    if p.get("chain"):
+        ids, warnings = chain_elements(doc, ids, tol)
+    reverse = bool(p.get("reverse", False))
+    pieces, kinds, ends = _chain_path(doc, ids, tol)
     total = ends[-1] if ends else 0.0
     if total <= 0:
         raise CommandFault("path has zero length")
+    begin = float(known)
+    where = ""
+    if "start_point" in p:
+        # the station is known at start_point, and stations run on from the end
+        # of the path nearer it (reverse turns them round)
+        along, foot, gap = _path_along(pieces, p["start_point"])
+        reverse = (along > total - along + 1e-9) != reverse
+        if reverse:
+            along = total - along
+        begin = round(begin - along, 6)
+        where = f"; {format_station(known)} at [{foot[0]:.2f}, {foot[1]:.2f}]"
+        if gap > tol:
+            warnings.append(f"start_point is {gap:.2f} from the path; "
+                            f"{format_station(known)} is taken at the nearest point on "
+                            f"it, [{foot[0]:.2f}, {foot[1]:.2f}]")
+    if reverse:
+        pieces, kinds, ends = _chain_path(doc, ids, tol, reverse=True)
+        ids = list(reversed(ids))
 
     created = []
 
@@ -984,7 +1133,7 @@ def annotate_stationing(doc: Document, p: dict):
         created.append(eid)
 
     n_ticks = 0
-    station = math.ceil((begin - 1e-9) / interval) * interval
+    station = math.ceil((begin - 1e-6) / interval) * interval
     while station <= begin + total + 1e-6:
         d = min(max(station - begin, 0.0), total)
         pt, ang = _path_eval(pieces, d)
@@ -994,10 +1143,10 @@ def annotate_stationing(doc: Document, p: dict):
             "end": _offset_pt(pt, ang + 90.0, tick_half), "annotative": tick_rec})
         add("text", Text, {
             "layer": label_layer, "style": style,
-            "position": _offset_pt(pt, ang + 90.0, label_off),
+            "position": _offset_pt(pt, ang + 90.0 * side, label_off),
             "content": format_station(station), "height": text_h,
             "rotation_deg": _upright(ang), "halign": "center",
-            "valign": "bottom", "annotative": text_rec})
+            "valign": "bottom" if side > 0 else "top", "annotative": text_rec})
         n_ticks += 1
         station += interval
 
@@ -1013,17 +1162,20 @@ def annotate_stationing(doc: Document, p: dict):
             pt, ang = _path_eval(pieces, d)
             add("text", Text, {
                 "layer": label_layer, "style": style,
-                "position": _offset_pt(pt, ang - 90.0, label_off),
+                "position": _offset_pt(pt, ang - 90.0 * side, label_off),
                 "content": f"{tag} {format_station(begin + d)}",
                 "height": text_h, "rotation_deg": _upright(ang),
-                "halign": "center", "valign": "top", "annotative": text_rec})
+                "halign": "center", "valign": "top" if side > 0 else "bottom",
+                "annotative": text_rec})
             n_junctions += 1
 
     message = (f"stationing annotated in {_space_label(doc, space_key)}: "
                f"{n_ticks} ticks @ {interval:g} ft, {n_junctions} BC/EC labels, "
                f"stations {format_station(begin)} to "
-               f"{format_station(begin + total)}")
-    return message, _diff(created=created), []
+               f"{format_station(begin + total)}{where}")
+    if p.get("chain") or p.get("reverse") or where:
+        message += f", along {' > '.join(ids)}"
+    return message, _diff(created=created), warnings
 
 
 # ------------------------------------------------------------- references
