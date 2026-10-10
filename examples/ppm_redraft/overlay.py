@@ -16,7 +16,7 @@ Image.MAX_IMAGE_PIXELS = None
 SHEET_W, SHEET_H = 34.0, 22.0
 
 
-def overlay(orig_png, redraft_png, out_png, scale=None, offset=None):
+def overlay(orig_png, redraft_png, out_png, scale=None, offset=None, page_h=SHEET_H):
     if scale is None or offset is None:
         sys.path.insert(0, str(Path(__file__).parent))
         import l4_geometry as G
@@ -25,9 +25,10 @@ def overlay(orig_png, redraft_png, out_png, scale=None, offset=None):
     W, H = red.size
     dpi = W / SHEET_W
     page = Image.open(orig_png).convert("L")
+    # the published page is rendered at 2 x dpi per page inch, i.e. dpi per extract unit
     # redraft pixel (u, v) -> published pixel: e = full * scale + offset, e * dpi
     ox, oy = offset
-    matrix = (scale, 0, ox * dpi, 0, scale, (SHEET_H - oy - SHEET_H * scale) * dpi)
+    matrix = (scale, 0, ox * dpi, 0, scale, (page_h - oy - SHEET_H * scale) * dpi)
     pub = page.transform((W, H), Image.AFFINE, matrix, resample=Image.BILINEAR, fillcolor=255)
     r, o = ImageOps.invert(red), ImageOps.invert(pub)
     rgb = Image.merge("RGB", (ImageOps.invert(o), ImageOps.invert(ImageChops.lighter(r, o)),

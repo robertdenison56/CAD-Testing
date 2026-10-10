@@ -55,7 +55,8 @@ def landings(run, thin, under_extra=2.6, side_extra=0.9):
     return out
 
 
-def component(start, leg, thin, others, tol=0.006, touch=0.008, branch=4.0, bend=0.4):
+def component(start, leg, thin, others, tol=0.006, touch=0.008, branch=4.0, bend=0.4,
+              thin_grid=None, other_grid=None):
     """Leader paths reachable from the landing path `start`, and where they stop.
 
     Paths join end to end.  Short bends may leave the landing leg part way along it,
@@ -66,7 +67,8 @@ def component(start, leg, thin, others, tol=0.006, touch=0.008, branch=4.0, bend
     thin_ids = {p["id"] for p in thin}
 
     def touches(pt, skip):
-        for o in others:
+        pool = other_grid.near((pt[0], pt[1], pt[0], pt[1]), touch) if other_grid else others
+        for o in pool:
             if o["id"] in skip or o["id"] in thin_ids:
                 continue
             xs = [q[0] for q in o["pts"]]; ys = [q[1] for q in o["pts"]]
@@ -84,7 +86,8 @@ def component(start, leg, thin, others, tol=0.006, touch=0.008, branch=4.0, bend
 
     seen = {start["id"]: start}
     frontier = []
-    for p in thin:
+    lb = (min(leg[0][0], leg[1][0]), min(leg[0][1], leg[1][1]), max(leg[0][0], leg[1][0]), max(leg[0][1], leg[1][1]))
+    for p in (thin_grid.near(lb, tol) if thin_grid else thin):
         if p["id"] in seen or closed(p) or plen(p["pts"]) > bend:
             continue
         for k in (0, -1):
@@ -96,7 +99,8 @@ def component(start, leg, thin, others, tol=0.006, touch=0.008, branch=4.0, bend
     while frontier:
         pt = frontier.pop()
         ends, verts = [], []
-        for p in thin:
+        pool = thin_grid.near((pt[0], pt[1], pt[0], pt[1]), tol) if thin_grid else thin
+        for p in pool:
             if p["id"] in seen or closed(p):
                 continue
             if math.dist(p["pts"][0], pt) < tol or math.dist(p["pts"][-1], pt) < tol:
@@ -119,31 +123,32 @@ def component(start, leg, thin, others, tol=0.006, touch=0.008, branch=4.0, bend
 def ends_of(paths, leg, text_mid, squiggle=0.13):
     """(text end, tips, decoration path ids).  Short leaf strokes at a leader's end (a
     squiggle or arrowhead) are decorations: the tip is where they meet the leader."""
-    def key(q):
-        return (round(q[0] / 0.006), round(q[1] / 0.006))
     def degree(ps):
-        deg = {}
+        """[[point, count]] of path ends, ends within 0.006 in counted together"""
+        deg = []
         for p in ps:
             for q in (p["pts"][0], p["pts"][-1]):
-                k = next((kk for kk in deg if math.dist(deg[kk][0], q) < 0.006), None)
-                if k is None:
-                    deg[key(q)] = [tuple(q), 1]
+                hit = next((d for d in deg if math.dist(d[0], q) < 0.006), None)
+                if hit is None:
+                    deg.append([tuple(q), 1])
                 else:
-                    deg[k][1] += 1
+                    hit[1] += 1
         return deg
+
+    def count_at(deg, q):
+        return next((d[1] for d in deg if math.dist(d[0], q) < 0.006), 0)
     ps = list(paths)
     deco = []
     for _ in range(3):
         deg = degree(ps)
-        leaves = {k for k, (q, n) in deg.items() if n == 1}
         cut = []
         for p in ps:
             if len(ps) - len(cut) <= 1:
                 break
             if plen(p["pts"]) < squiggle:
-                a = next(k for k in deg if math.dist(deg[k][0], p["pts"][0]) < 0.006)
-                b = next(k for k in deg if math.dist(deg[k][0], p["pts"][-1]) < 0.006)
-                if (a in leaves) != (b in leaves):
+                a = count_at(deg, p["pts"][0]) == 1
+                b = count_at(deg, p["pts"][-1]) == 1
+                if a != b:
                     cut.append(p)
         if not cut:
             break
@@ -153,7 +158,7 @@ def ends_of(paths, leg, text_mid, squiggle=0.13):
     def on_other(q):
         return any(poly_dist(q, p["pts"]) < 0.006 for p in ps
                    if math.dist(q, p["pts"][0]) > 0.006 and math.dist(q, p["pts"][-1]) > 0.006)
-    leaves = [q for q, n in deg.values() if n == 1 and not on_other(q)]
+    leaves = [q for q, n in deg if n == 1 and not on_other(q)]
     # the text end: an outer end of the landing leg that nothing else joins
     lp = [q for q in leg if any(math.dist(q, l) < 0.006 for l in leaves)]
     if lp:

@@ -1,0 +1,24 @@
+# PPM-216-Electrical-Systems-Example-E3-Signal-and-Lighting-with-Shared-Components -- redraft
+
+Caltrans PPM example sheet **E-20** (), redrafted as a RoadDraft file set named per the Caltrans CADD Users Manual. Source: `Sheets/Caltrans-PPM/2-2.23-Electrical-Systems/PPM-216-Electrical-Systems-Example-E3-Signal-and-Lighting-with-Shared-Components.pdf`.
+
+| File | What it holds |
+|---|---|
+| `1300010110bb01.rdraft` | **BB01** Master Topographic ("bb"): existing features -- the sheet's dotted linework (existing roads, railroad, fence, contours) and contour elevations. |
+| `1300010110aa01.rdraft` | **AA01** Master Design, roadway ("aa"): the proposed roadway linework. References BB01. |
+| `1300010110ua020.rdraft` | Sheet **E-20**: references the base files through a 1" = 20' viewport (twist -20.330°); border, title block, notes, callouts, match lines, tables and symbols in sheet view. |
+| `1300010110ua020.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
+| `1300010110ua020-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
+
+Callouts: 0 placed in sheet view with `place_callout` (0 at a stated station and offset of a rebuilt alignment, 0 at the element the published leader touches, 0 at a point).
+
+## Notes
+
+- No drainage is drawn on this sheet, so there is no AA02.
+- The PDF's text layer is OCR and does not line up with the drawn lettering, so the lettering is kept as the drawn strokes (S-TEXT-* layers) and leaders as linework; the text layer is only read for the title block.
+- No bearing is lettered along a rebuilt alignment, so the view twist is read off the north arrow.
+- The border and title block are kept as drawn instead of RoadDraft's Caltrans title block template (a title sheet or other non-standard border, or set so in the sheet's config).
+- Coordinates: the example prints none; the model sits on a local datum (sheet centre at E 10,000 N 10,000), turned by the view twist read off the north arrow.
+- Text heights are the Caltrans values; RoadDraft's renderer draws a height as the font size, so the PNG/PDF lettering looks smaller than the Caltrans font.
+
+Rebuild: `.venv/bin/python examples/ppm_redraft/run_ppm.py PPM-216` (pipeline: examples/ppm_redraft/README.md).
