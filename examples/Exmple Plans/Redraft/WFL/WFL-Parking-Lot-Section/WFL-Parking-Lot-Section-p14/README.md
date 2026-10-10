@@ -4,7 +4,7 @@ WFL sample plan sheet **F.14** (SNOW POLE HOLDER DETAIL), redrafted as a RoadDra
 
 | File | What it holds |
 |---|---|
-| `WA-NP-FOVA-101_pln_details.rdraft` | Sheet **F.14** ("_pln_details"): a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
+| `WA-NP-FOVA-101_pln_details.rdraft` | Sheet **F.14**: a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
 | `WA-NP-FOVA-101_pln_details.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `WA-NP-FOVA-101_pln_details-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
 
@@ -12,7 +12,7 @@ Callouts: 6 placed in sheet view with `place_callout` (0 at a stated station of 
 
 ## Notes
 
-- File names: project prefix `WA-NP-FOVA-101` from the plot stamp (WA-NP-FOVA-101_pln_details.dgn); the sheet's type suffix `_pln_details` is the manual's.
+- File names: `WA-NP-FOVA-101_pln_details.rdraft` from the plot stamp (WA-NP-FOVA-101_pln_details.dgn).
 - Text heights are the lettered cap heights (MicroStation sizes text by its capitals, and the drawn outlines agree).
 
 Rebuild: `.venv/bin/python examples/wfl_redraft/run_wfl.py WFL-Parking-Lot-Section-p14` (pipeline: examples/wfl_redraft/README.md).

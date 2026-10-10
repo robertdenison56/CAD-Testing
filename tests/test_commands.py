@@ -411,6 +411,11 @@ def test_wfl_border_blocks_title_box_and_plot_stamp():
         assert value in texts, value
     assert texts["D.5"].position[0] > 15.9 and texts["D.5"].position[1] > 10.3
     assert texts["AK"].position[0] < texts["AK NPS SAMP 14(1)"].position[0]
+    # the CFL border letters the project number over the project name
+    s.execute("fill_title_block", {"sheet": "D.5", "fields": {"project_name": "SAMPLE PROJECT"}})
+    two = {e.content: e for e in title_block_entities(sheet) if isinstance(e, Text)}
+    assert two["SAMPLE PROJECT"].position[1] < two["AK NPS SAMP 14(1)"].position[1] < 10.5
+    drawn = title_block_entities(sheet)
     assert texts["NPS PMIS No. 123/123456"].position[1] > 10.7       # above the frame
     assert 12.3 < texts["PLAN AND PROFILE"].position[0] < 16.3
     assert texts["Sheet 1 of 8"].position[1] < texts["PLAN AND PROFILE"].position[1] < 1.3

@@ -4,7 +4,7 @@ WFL sample plan sheet **F.2** (GRANITE CANYON TRAILHEAD TABULATION OF QUANTITIES
 
 | File | What it holds |
 |---|---|
-| `WA-NP-FOVA-101_pln_site.rdraft` | Sheet **F.2** ("_pln_site"): a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
+| `WA-NP-FOVA-101_pln_site.rdraft` | Sheet **F.2**: a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
 | `WA-NP-FOVA-101_pln_site.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `WA-NP-FOVA-101_pln_site-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
 
@@ -12,7 +12,8 @@ Callouts: 0 placed in sheet view with `place_callout` (0 at a stated station of 
 
 ## Notes
 
-- File names: project prefix `WA-NP-FOVA-101` from the plot stamp (WA-NP-FOVA-101_pln_Site.dgn); the sheet's type suffix `_pln_site` is the manual's.
+- File names: `WA-NP-FOVA-101_pln_site.rdraft` from the plot stamp (WA-NP-FOVA-101_pln_Site.dgn).
+- The published sheet carries 49.7 sq in of raster images (an aerial photograph or logos); the redraft holds the vector linework and lettering only.
 - The lettering is not outlined (a sheet made from a spreadsheet), so its sizes are PDF font sizes and the cap height is taken as 0.72 of the size.
 
 Rebuild: `.venv/bin/python examples/wfl_redraft/run_wfl.py WFL-Parking-Lot-Section-p02` (pipeline: examples/wfl_redraft/README.md).

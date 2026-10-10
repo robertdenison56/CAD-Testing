@@ -4,7 +4,7 @@ WFL sample plan sheet **E.1** (TABULATION OF QUANTITIES), redrafted as a RoadDra
 
 | File | What it holds |
 |---|---|
-| `WA-NP-FOVA-101_pln_qtab.rdraft` | Sheet **E.1** ("_pln_qtab"): a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
+| `WA-NP-FOVA-101_pln_qtab.rdraft` | Sheet **E.1**: a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
 | `WA-NP-FOVA-101_pln_qtab.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `WA-NP-FOVA-101_pln_qtab-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
 
@@ -12,7 +12,8 @@ Callouts: 0 placed in sheet view with `place_callout` (0 at a stated station of 
 
 ## Notes
 
-- File names: project prefix `WA-NP-FOVA-101` the project's stamped prefix (WA NP FOVA 10(1)); the sheet's type suffix `_pln_qtab` is the manual's.
+- File names: `WA-NP-FOVA-101_pln_qtab.rdraft` the project's stamped prefix (WA NP FOVA 10(1)).
+- The published sheet carries 39 sq in of raster images (an aerial photograph or logos); the redraft holds the vector linework and lettering only.
 - Text heights are the lettered cap heights (MicroStation sizes text by its capitals, and the drawn outlines agree).
 
 Rebuild: `.venv/bin/python examples/wfl_redraft/run_wfl.py WFL-Approach-Section-p01` (pipeline: examples/wfl_redraft/README.md).

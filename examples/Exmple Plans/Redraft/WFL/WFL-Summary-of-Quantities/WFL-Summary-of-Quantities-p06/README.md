@@ -4,7 +4,7 @@ WFL sample plan sheet **B.3** (soq), redrafted as a RoadDraft file set named per
 
 | File | What it holds |
 |---|---|
-| `yell12-2_pln_soq.rdraft` | Sheet **B.3** ("_pln_soq"): a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
+| `yell12-2_pln_soq.rdraft` | Sheet **B.3**: a sheet drawing with no plan view (no model, so no design files); every line, table and note is in sheet view. |
 | `yell12-2_pln_soq.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `yell12-2_pln_soq-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
 
@@ -12,7 +12,7 @@ Callouts: 0 placed in sheet view with `place_callout` (0 at a stated station of 
 
 ## Notes
 
-- File names: project prefix `yell12-2` the project's stamped prefix (WY NPS YELL 12(2)); the sheet's type suffix `_pln_soq` is not in the manual's table (no suffix is listed for this kind of sheet).
+- File names: `yell12-2_pln_soq.rdraft` the project's stamped prefix (WY NPS YELL 12(2)); its type is not in the convention's table (none is listed for this kind of sheet).
 - No sheet title box is drawn on this sheet (plan-profile sheets carry the title in the plot stamp).
 - The lettering is not outlined (a sheet made from a spreadsheet), so its sizes are PDF font sizes and the cap height is taken as 0.72 of the size.
 

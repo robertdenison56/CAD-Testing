@@ -9,9 +9,10 @@ drawn representation.  ``sheet.title_block_template`` picks the drawing:
                plot strip, the last revision and plot date up the right
                margin, and the Dist/COUNTY/ROUTE/POST MILES title block
                with the engineer's seal panel (dimensioned for 22 x 34)
-    wfl        the FHWA Federal Lands (WFL) 11 x 17 plan-sheet border: a
-               plain frame, the PROJECT / SHEET NUMBER block over the top
-               right corner (with a STATE column when a state is given), the
+    wfl        the FHWA Federal Lands (WFL and CFL) 11 x 17 plan-sheet border:
+               a plain frame, the PROJECT / SHEET NUMBER block over the top
+               right corner (with a STATE column when a state is given, and
+               the project number over its name when a name is given), the
                NPS PMIS and drawing numbers above it, the sheet title box over
                the bottom right corner, and the plot stamp (date, file,
                description) lettered up the left margin
@@ -395,8 +396,15 @@ def wfl_entities(sheet: Sheet) -> List[Entity]:
              valign="middle")
     text((px0 + sx) / 2, cap_y, "PROJECT", FLH_LABEL_H, halign="center",
          valign="middle", color=LABEL_COLOR)
-    text((px0 + sx) / 2, val_y, get("project"), FLH_VALUE_H, halign="center",
-         valign="middle")
+    if get("project_name"):
+        # the CFL border letters the project number over the project name
+        text((px0 + sx) / 2, val_y + 0.45 * FLH_VALUE_H, get("project"), 0.04,
+             halign="center", valign="middle")
+        text((px0 + sx) / 2, val_y - 0.55 * FLH_VALUE_H, get("project_name"), 0.04,
+             halign="center", valign="middle")
+    else:
+        text((px0 + sx) / 2, val_y, get("project"), FLH_VALUE_H, halign="center",
+             valign="middle")
     scx = (sx + x1) / 2
     text(scx, cap_y + 0.65 * FLH_LABEL_H, "SHEET", FLH_LABEL_H, halign="center",
          valign="middle", color=LABEL_COLOR)

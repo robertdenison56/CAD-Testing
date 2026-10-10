@@ -108,6 +108,11 @@ for it, and why a page was not redrafted.
 
 Per-sheet settings are in `configs/` (see `configs/README.md`).
 
+**Other FLH divisions.** The digitiser and builder are shared: `wflsheet.Standard` holds
+what a division's sheets do differently (how sheets are classed, how the title block reads,
+how station ticks are lettered), `wflbuild.Naming` how it names files, and `flhrun.Pipeline`
+runs a set of sheets under one of each. `examples/cfl_redraft` is CFL's.
+
 ## Known limits
 
 - **Station ticks:** WFL draws them to one side of the line; `annotate_stationing` centres

@@ -35,7 +35,7 @@ def main(argv=None):
         print(json.dumps({k: res.get(k) for k in ("id", "status", "kind", "family", "fpi", "twist", "twist_how",
                                                    "template", "title_box", "sheet_file", "bases", "alignments",
                                                    "callouts", "paths", "texts", "fields", "error")}, default=str))
-        hits = list(REDRAFT.glob(f"*/{pid}/*-overlay.png"))
+        hits = list(REDRAFT.glob(f"*/{pid}/*-overlay.png")) + list(REDRAFT.glob(f"{pid}/*-overlay.png"))
         if not hits:
             print(f"{pid}: no overlay")
             continue

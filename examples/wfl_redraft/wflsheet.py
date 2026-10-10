@@ -55,6 +55,41 @@ SCALE_TEXT = re.compile(r"^(NO SCALE|SCALE\b.*|1\"\s*=\s*\d+')$", re.I)
 
 PLAN_FAMILIES = {"plan-profile", "approach", "parking", "erosion", "drainage", "wall",
                  "detour", "traffic", "signing", "site", "demolition", "layout"}
+STATION_FULL = re.compile(r"^(\d{1,4})\+00$")
+
+
+def station_number(text):
+    """The station, in hundreds of feet, a WFL tick label letters ("111"), else None."""
+    t = text.strip()
+    return int(t) if NUMBER.match(t) and len(t) >= 2 else None
+
+
+def station_number_full(text):
+    """A CFL tick label letters the whole station ("15+00"); a bare number counts too."""
+    t = text.strip()
+    m = STATION_FULL.match(t)
+    if m:
+        return int(m.group(1))
+    return station_number(t)
+
+
+class Standard:
+    """What one FLH division's sheets do differently: how its sheets are classed, how
+    its title block reads, how its station ticks are lettered."""
+    def __init__(self, name="wfl", family_of=None, title_fields=None, station_label=station_number,
+                 plan_families=PLAN_FAMILIES, label_dist=2.2):
+        self.name = name
+        self._family_of = family_of
+        self._title_fields = title_fields
+        self.station_label = station_label
+        self.plan_families = plan_families
+        self.label_dist = label_dist          # how far off the line a station number may sit, in
+
+    def family_of(self, rel, fields):
+        return (self._family_of or family_of)(rel, fields)
+
+    def title_fields(self, runs, has_title_box, chars=(), TB=None):
+        return (self._title_fields or title_fields)(runs, has_title_box, chars, TB if TB else globals()["TB"])
 
 
 def snap_h(h):
@@ -216,7 +251,9 @@ def title_fields(runs, has_title_box, chars=(), TB=TB):
         px0 = TB[0] + 0.4
         f["state"] = cell_text(chars, TB[0], px0, TB[1], TB[1] + 0.2)
     f["project"] = cell_text(chars, px0, sx, TB[1], TB[1] + 0.2)
-    f["sheet_number"] = cell_text(chars, sx, TB[2] + 0.05, TB[1], TB[1] + 0.2).replace(" ", "")
+    # "D. 5" closes up; "Plan 1" keeps its space
+    f["sheet_number"] = re.sub(r"(?<=[A-Z.])\s+(?=[\d.])", "",
+                               cell_text(chars, sx, TB[2] + 0.05, TB[1], TB[1] + 0.2))
     for key in ("project", "sheet_number"):
         if not f[key]:
             del f[key]
@@ -242,7 +279,7 @@ def title_fields(runs, has_title_box, chars=(), TB=TB):
         f["date_plotted"] = join_pieces(groups[0])
     if len(groups) > 1:
         rest = join_pieces([r for g in groups[1:] for r in g])
-        m = re.match(r"^(.*?\.dgn)\s*(\[.*?\])?\s*(.*)$", rest, re.S)
+        m = re.match(r"^(.*?\.dgn)\s*(\[.*\])?\s*(.*)$", rest, re.S)       # [Plan 1 [Sheet]] nests
         if m:
             f["dgn_file"] = m.group(1)
             if m.group(2):
@@ -279,11 +316,12 @@ def scale_bar(runs):
         cx, cy = run_center(r)
         nums = []
         for q in runs:
-            if q is r or abs(q["rot"]) > 1 or not NUMBER.match(q["text"].strip()):
+            t = q["text"].strip().rstrip("'’")          # CFL letters the bar "0  50'  100'"
+            if q is r or abs(q["rot"]) > 1 or not NUMBER.match(t):
                 continue
             qx, qy = run_center(q)
             if abs(qx - cx) < 2.5 and 0.0 < abs(qy - cy) < 0.6:
-                nums.append((qx, int(q["text"])))
+                nums.append((qx, int(t)))
         nums.sort()
         zero = next((x for x, v in nums if v == 0), None)
         right = [(x, v) for x, v in nums if zero is not None and x > zero + 0.3 and v > 0]
@@ -343,17 +381,17 @@ def wfl_ticks(chain, segs, spacing):
     return out
 
 
-def label_ticks(ticks, runs, chain, spacing):
+def label_ticks(ticks, runs, chain, spacing, station_label=station_number, max_dist=2.2):
     """Station (ft) at each tick from the numbers lettered square to the line at
-    its station, however far out they sit."""
+    its station, however far out they sit (up to max_dist in)."""
     labelled = []
     for along, m, _ in ticks:
         near = None
         for r in runs:
-            if not NUMBER.match(r["text"].strip()) or len(r["text"].strip()) < 2:
+            if station_label(r["text"]) is None:
                 continue
             d, al, _ = chain.locate(r["center"])
-            if abs(al - along) < 0.08 and 0.05 < d < 2.2 and (near is None or d < near[0]):
+            if abs(al - along) < 0.08 and 0.05 < d < max_dist and (near is None or d < near[0]):
                 near = (d, r)
         labelled.append(near[1] if near else None)
     a0 = ticks[0][0]
@@ -363,12 +401,12 @@ def label_ticks(ticks, runs, chain, spacing):
         for i, r in enumerate(labelled):
             if r is None:
                 continue
-            h0 = int(r["text"]) - direction * ks[i]
+            h0 = station_label(r["text"]) - direction * ks[i]
             score = 0
             for k, rr in zip(ks, labelled):
                 if rr is None:
                     continue
-                score += 1 if int(rr["text"]) == h0 + direction * k else -2
+                score += 1 if station_label(rr["text"]) == h0 + direction * k else -2
             if best is None or score > best[0]:
                 best = (score, direction, h0)
     if best is None or best[0] < 2:
@@ -377,7 +415,8 @@ def label_ticks(ticks, runs, chain, spacing):
     return direction, [(h0 + direction * k) * 100.0 for k in ks], labelled
 
 
-def fit(heavy_paths, short_segs, runs, fpi, min_len=2.0, names=None):
+def fit(heavy_paths, short_segs, runs, fpi, min_len=2.0, names=None, station_label=station_number,
+        label_dist=2.2):
     """Alignments found on the sheet at this scale (alignfit.fit with WFL ticks and
     labels): dicts in sheet inches with elements, begin station, name, ticks, and
     how the station numbers sit (offset from the line, angle to it, height).
@@ -398,7 +437,7 @@ def fit(heavy_paths, short_segs, runs, fpi, min_len=2.0, names=None):
         ticks = wfl_ticks(ch, short_segs, spacing)
         if len(ticks) < 2:
             continue
-        lab = label_ticks(ticks, runs, ch, spacing)
+        lab = label_ticks(ticks, runs, ch, spacing, station_label, label_dist)
         if lab is None:
             continue
         direction, stations, labels = lab
@@ -423,8 +462,12 @@ def fit(heavy_paths, short_segs, runs, fpi, min_len=2.0, names=None):
             rank = (0 if m.group(2) else 1, d)
             if name is None or rank < name[0]:
                 name = (rank, m.group(1).strip())
-        # how the sheet letters the station numbers
+        # how the sheet letters the station numbers: where, at what angle and
+        # height, and how often (WFL every 100 ft, CFL every 500)
         offs, rels, hs = [], [], []
+        lab_sta = sorted(st for st, r in zip(stations, labels) if r is not None)
+        diffs = [b - a for a, b in zip(lab_sta, lab_sta[1:]) if b > a]
+        label_interval = statistics.median(diffs) if diffs else 100.0
         for (along, m, _), r in zip(ticks, labels):
             if r is None:
                 continue
@@ -440,6 +483,7 @@ def fit(heavy_paths, short_segs, runs, fpi, min_len=2.0, names=None):
                     "name": name[1] if name else None, "name_dist": name[0][1] if name else None,
                     "ticks": ticks, "stations": stations,
                     "labels": [r["id"] if r else None for r in labels],
+                    "label_interval": label_interval,
                     "label_offset_in": statistics.median(offs) if offs else 0.3,
                     "label_rot_rel": statistics.median(rels) if rels else -90.0,
                     "label_h": statistics.median(hs) if hs else 0.10,
@@ -447,11 +491,11 @@ def fit(heavy_paths, short_segs, runs, fpi, min_len=2.0, names=None):
     return out
 
 
-def fit_any_scale(heavy, segs, runs, scales, names=None):
+def fit_any_scale(heavy, segs, runs, scales, names=None, station_label=station_number, label_dist=2.2):
     """The scale that letters the most station ticks, and its alignments."""
     best = None
     for s in scales:
-        als = fit(heavy, segs, runs, s, names=names)
+        als = fit(heavy, segs, runs, s, names=names, station_label=station_label, label_dist=label_dist)
         score = sum(sum(1 for l in a["labels"] if l) for a in als)
         if als and score >= 2 and (best is None or score > best[0]):
             best = (score, s, als)
@@ -479,7 +523,8 @@ def is_existing(p):
 
 
 # ------------------------------------------------------------- main
-def digitise(sheet_id, rel, extract, cfg):
+def digitise(sheet_id, rel, extract, cfg, std=None):
+    std = std or Standard()
     cfg = dict(cfg or {})
     W, H = extract["page_in"]
     portrait = H > W
@@ -572,11 +617,17 @@ def digitise(sheet_id, rel, extract, cfg):
                 if poly_dist(a, [u, v]) < tol and poly_dist(b, [u, v]) < tol:
                     return True
         return False
-    std = (not portrait) and has_line((TB[0], TB[1]), (TB[2], TB[1])) and \
+    tb_drawn = (not portrait) and has_line((TB[0], TB[1]), (TB[2], TB[1])) and \
         has_line((TB[0], TB[1]), (TB[0], TB[3]))
-    template = bool(cfg.get("template", std))
+    template = bool(cfg.get("template", tb_drawn))
+    # the sheet title box: its left side is drawn, and it letters a title (0.1 in or
+    # taller); a profile grid or superelevation diagram reaching into that corner
+    # has neither
     title_box = template and (has_line((TITLE_BOX[0], TITLE_BOX[1]), (TITLE_BOX[0], TITLE_BOX[3]), 0.08) or
-                              has_line((TITLE_BOX[0] + 0.055, TITLE_BOX[1]), (TITLE_BOX[0] + 0.055, TITLE_BOX[3]), 0.08))
+                              has_line((TITLE_BOX[0] + 0.055, TITLE_BOX[1]), (TITLE_BOX[0] + 0.055, TITLE_BOX[3]), 0.08)) \
+        and any(r["size"] >= 0.1 and abs(r["rot"]) < 1 and
+                TITLE_BOX[0] < run_center(r)[0] < TITLE_BOX[2] and TITLE_BOX[1] < run_center(r)[1] < TITLE_BOX[3]
+                for r in runs)
     frame = FRAME if not portrait else (0.0, 0.0, W, H)
 
     def outside(x, y):
@@ -596,15 +647,15 @@ def digitise(sheet_id, rel, extract, cfg):
     for c in chars:
         c["x"], c["y"] = sh.P((c["x"], c["y"]))
         c["size"], c["adv"] = c["size"] / sh.s, c["adv"] / sh.s
-    fields = title_fields(runs, title_box, chars) if template else {}
+    fields = std.title_fields(runs, title_box, chars) if template else {}
     if not template:
         # the border is kept as drawn, but the block's values are still read
         tb = (W - 2.25, H - 0.9, W - 0.25, H - 0.5) if portrait else TB
-        fields = {k: v for k, v in title_fields(runs, False, chars, tb).items()
-                  if k in ("project", "sheet_number", "state", "nps_pmis", "nps_drawing",
-                           "date_plotted", "dgn_file", "description")}
+        fields = {k: v for k, v in std.title_fields(runs, False, chars, tb).items()
+                  if k in ("project", "project_name", "sheet_number", "state", "nps_pmis",
+                           "nps_drawing", "date_plotted", "dgn_file", "description")}
     fields.update(cfg.get("fields", {}))
-    fam = cfg.get("family") or family_of(rel, fields)
+    fam = cfg.get("family") or std.family_of(rel, fields)
 
     def through_plan(pts):
         mids = [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(pts, pts[1:])]
@@ -777,9 +828,11 @@ def digitise(sheet_id, rel, extract, cfg):
                  not in_regions([r["center"]]) and NAME.match(r["text"].strip())]
     if kind != "sheet" and not cfg.get("no_alignments") and heavy:
         if fpi:
-            aligns = fit(heavy, segs, free_runs, fpi, names=name_runs)
+            aligns = fit(heavy, segs, free_runs, fpi, names=name_runs, station_label=std.station_label,
+                         label_dist=std.label_dist)
         else:
-            fpi, aligns = fit_any_scale(heavy, segs, free_runs, SCALES, names=name_runs)
+            fpi, aligns = fit_any_scale(heavy, segs, free_runs, SCALES, names=name_runs,
+                                        station_label=std.station_label, label_dist=std.label_dist)
         if aligns:
             aligns, dupes = alignfit.tidy(aligns, fpi)
             dup_ids = {pid for al in dupes for pid in al["paths"]}
@@ -787,7 +840,7 @@ def digitise(sheet_id, rel, extract, cfg):
                 if p["id"] in dup_ids and p["dest"] is None:
                     p["dest"] = "drop:centerline"
     if kind is None:
-        kind = "plan" if (fpi and (aligns or bar) and fam in PLAN_FAMILIES) else "sheet"
+        kind = "plan" if (fpi and (aligns or bar) and fam in std.plan_families) else "sheet"
     if kind == "plan" and not fpi:
         fpi = 50.0
 
@@ -877,7 +930,7 @@ def digitise(sheet_id, rel, extract, cfg):
         r["center"] = run_center(r)
     runs += light
 
-    return {"id": sheet_id, "rel": rel, "family": fam, "kind": kind, "fpi": fpi,
+    return {"id": sheet_id, "rel": rel, "standard": std.name, "family": fam, "kind": kind, "fpi": fpi,
             "twist": twist, "twist_how": twist_how, "calibration": [s, ox, oy], "calibration_how": how,
             "portrait": portrait, "sheet_size": [sheet_w, sheet_h], "page_in": [W, H],
             "template": template, "title_box": bool(title_box), "fields": fields,

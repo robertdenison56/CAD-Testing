@@ -49,6 +49,46 @@ PREFIXES = {"AK NPS SAMP 14(1)": "SamplePlan", "WA NP FOVA 10(1)": "WA-NP-FOVA-1
             "WA FLAP JEFF 1(23)": "waa-jeff1-23", "MT NPS GLAC 10(22)": "glac10-22"}
 
 
+class Naming:
+    """How one FLH division names its files: the sheet file from the sheet, and the
+    design files the plan's model is split into."""
+    name = "wfl"
+    manual = "the FLH OpenRoads Designer User Manual, chapter 3C (WFLHD ORD file naming)"
+    roles = {"SUR": "Survey ORD file (FLH ORD manual 3C.4.a, the \"_sur\" file)",
+             "ALI": "Alignments ORD file (FLH ORD manual 3C.4.b, the \"_ali\" file)",
+             "HYD": "Drainage design file (FLH ORD manual 3C.5, functional code \"hyd\")",
+             "COR": "Corridor ORD file (FLH ORD manual 3C.4.b, the \"_cor\" file)"}
+
+    def names_for(self, dig):
+        return names_for(dig)
+
+    @staticmethod
+    def road_name(dig):
+        """The road a plan sheet is of, where a note letters it ("Main Road", "Davis
+        Dam Rd"): the alignment descriptor for a CFL file, failing a lettered name."""
+        for r in dig["runs"]:
+            m = re.match(r"^([A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+){0,3})\s+(Road|Rd\.?|Loop|Drive|Dr\.?|Highway|Hwy\.?)$",
+                         r["text"].strip())
+            if m:
+                return m.group(1)
+        return None
+
+    def design_file(self, prefix, key, align_names):
+        return {"SUR": f"{prefix}_sur.rdraft", "ALI": f"{prefix}_ali.rdraft",
+                "HYD": f"{prefix}_hyd_cor.rdraft", "COR": f"{prefix}_cor.rdraft"}[key]
+
+    def sheet_file(self, prefix, suffix):
+        return f"{prefix}_{suffix}.rdraft"
+
+    def in_manual(self, suffix):
+        return suffix not in NOT_IN_MANUAL
+
+    @staticmethod
+    def station_text(station):
+        """How a 100 ft tick is lettered: WFL letters the hundreds ("111")."""
+        return station_label(station)
+
+
 def names_for(dig):
     """(project prefix, sheet file suffix, sheet number, how the prefix was found)"""
     f = dig["fields"]
@@ -127,8 +167,10 @@ def station_label(station):
 
 
 # ------------------------------------------------------------------ design files
-def build_bases(dig, out, names, title):
+def build_bases(dig, out, names, title, naming=None):
+    naming = naming or Naming()
     prefix = names[0]
+    anames = [a["name"] for a in dig["aligns"]]
     xf = Xf(dig["fpi"], dig["twist"], ((dig["plan_rect"][0] + dig["plan_rect"][2]) / 2,
                                        (dig["plan_rect"][1] + dig["plan_rect"][3]) / 2))
     runs = dig["runs"]
@@ -143,8 +185,8 @@ def build_bases(dig, out, names, title):
     if sp or st:
         d = Doc(title, out)
         d.run("set_meta", {"updates": {"description":
-              "Survey ORD file (FLH ORD manual 3C.4.a, the \"_sur\" file): existing features "
-              f"under sheet {names[2]}, digitised off the WFL sample sheet -- its dashed linework "
+              f"{naming.roles['SUR']}: existing features "
+              f"under sheet {names[2]}, digitised off the sample sheet -- its dashed linework "
               "and contour elevations." + desc_tail}})
         d.run("set_annotation_scale", {"scale": dig["fpi"]})
         groups = fill_groups(sp)
@@ -159,7 +201,7 @@ def build_bases(dig, out, names, title):
             draw_filled(d, "model", g, d.layer("E_TOPO_SYMB", 0.18, None, "Existing symbols"), xf)
         for r in st:
             text_in(d, "model", r, d.layer("E_TOPO_TEXT", 0.18, None, "Contour elevations, names"), xf)
-        path = out / f"{prefix}_sur.rdraft"
+        path = out / naming.design_file(prefix, "SUR", anames)
         d.save(path)
         made["SUR"] = path
     # ------------------------------------------------------------- _ali
@@ -167,7 +209,7 @@ def build_bases(dig, out, names, title):
     if dig["aligns"]:
         d = Doc(title, out)
         d.run("set_meta", {"updates": {"description":
-              "Alignments ORD file (FLH ORD manual 3C.4.b, the \"_ali\" file): the alignments "
+              f"{naming.roles['ALI']}: the alignments "
               f"rebuilt from sheet {names[2]}'s centerlines, station ticks and station numbers, "
               "with stationing. FLH names the ORD feature ALI_<type>_<id> (ALI_MAIN_01); the "
               "alignment here keeps the name the plan letters." + desc_tail}})
@@ -218,7 +260,8 @@ def build_bases(dig, out, names, title):
             hi = min(max(al["stations"]) + 1, end_sta)
             offset = -al["label_offset_in"] * dig["fpi"]          # RoadDraft: right is positive
             h = snap_h(al["label_h"]) * dig["fpi"]
-            d.run("annotate_stationing", {"space": "model", "alignment": name, "interval": 100.0,
+            d.run("annotate_stationing", {"space": "model", "alignment": name,
+                                          "interval": al.get("label_interval", 100.0),
                                           "station_range": [lo, hi], "include_pc_pt": False,
                                           "tick_half_len": al["tick_len_in"] * dig["fpi"] / 2,
                                           "text_height": h, "label_offset": offset,
@@ -238,12 +281,12 @@ def build_bases(dig, out, names, title):
                 q = d.ask("station_to_xy", {"alignment": name, "station": a["station"], "offset": offset})
                 rot = (90.0 - q["azimuth_deg"] + al["label_rot_rel"] + 180.0) % 360.0 - 180.0
                 d.run("modify_entity", {"id": e["id"], "changes": {
-                    "content": station_label(a["station"]), "position": q["point"],
+                    "content": naming.station_text(a["station"]), "position": q["point"],
                     "rotation_deg": rot, "valign": "middle", "halign": "center", "annotative": None}})
         for r in runs:
             if r["kind"] == "align-text":
                 text_in(d, "model", r, "P_ALIGN_TEXT", xf)
-        path = out / f"{prefix}_ali.rdraft"
+        path = out / naming.design_file(prefix, "ALI", anames)
         d.save(path)
         made["ALI"] = path
     # ------------------------------------------------------------- _hyd_cor
@@ -251,14 +294,14 @@ def build_bases(dig, out, names, title):
     if hp:
         d = Doc(title, out)
         d.run("set_meta", {"updates": {"description":
-              "Drainage design file (FLH ORD manual 3C.5, functional code \"hyd\"): the proposed "
+              f"{naming.roles['HYD']}: the proposed "
               f"drainage system of sheet {names[2]} -- pipes, culverts, inlets." + desc_tail}})
         d.run("set_annotation_scale", {"scale": dig["fpi"]})
         for p in hp:
             lay = d.layer("P_DRAIN" if p["lw"] >= 1.2 else "P_DRAIN_SYMB", 0.50 if p["lw"] >= 1.2 else 0.35,
                           None, "Drainage system")
             draw(d, "model", p["pts"], lay, is_closed(p["pts"]), linetype(p["dash"]), p["fill"], xf)
-        path = out / f"{prefix}_hyd_cor.rdraft"
+        path = out / naming.design_file(prefix, "HYD", anames)
         d.save(path)
         made["HYD"] = path
     # ------------------------------------------------------------- _cor
@@ -266,9 +309,9 @@ def build_bases(dig, out, names, title):
     if cp:
         d = Doc(title, out)
         d.run("set_meta", {"updates": {"description":
-              "Corridor ORD file (FLH ORD manual 3C.4.b, the \"_cor\" file): the proposed "
+              f"{naming.roles['COR']}: the proposed "
               f"linework of sheet {names[2]} -- edges of pavement, construction and slope stake "
-              "limits, symbols. References the _ali and _sur files." + desc_tail}})
+              "limits, symbols. References the alignment and survey files." + desc_tail}})
         d.run("set_annotation_scale", {"scale": dig["fpi"]})
         groups = fill_groups(cp)
         for p in cp:
@@ -283,7 +326,7 @@ def build_bases(dig, out, names, title):
         for r in runs:
             if r["kind"] == "design-label":
                 text_in(d, "model", r, d.layer("P_ROAD_TEXT", 0.25, None, "R/W, catch points"), xf)
-        path = out / f"{prefix}_cor.rdraft"
+        path = out / naming.design_file(prefix, "COR", anames)
         d.save(path)
         for key in ("ALI", "SUR"):
             if key in made:
@@ -295,17 +338,18 @@ def build_bases(dig, out, names, title):
 
 
 # ------------------------------------------------------------------ sheet
-def build_sheet(dig, out, names, title, bases):
+def build_sheet(dig, out, names, title, bases, naming=None):
+    naming = naming or Naming()
     prefix, suffix, sid, _ = names
     sheet = re.sub(r"[^A-Za-z0-9 ._-]", "", sid).strip() or suffix.upper()
     plan = dig["kind"] == "plan"
     xf = Xf(dig["fpi"], dig["twist"], ((dig["plan_rect"][0] + dig["plan_rect"][2]) / 2,
                                        (dig["plan_rect"][1] + dig["plan_rect"][3]) / 2)) if plan else None
     d = Doc(title, out)
-    path = out / f"{prefix}_{suffix}.rdraft"
+    path = out / naming.sheet_file(prefix, suffix)
     d.run("set_meta", {"updates": {"description":
           f"Plan sheet {sheet} ({dig['fields'].get('sheet_title', '').replace(chr(10), ' ') or dig['family']}), "
-          f"WFL sample plan sheet {dig['id']} (FLH ORD manual 3C.4.c, a \"_pln\" file)." + (
+          f"{naming.name.upper()} sample plan sheet {dig['id']}, named per {naming.manual}." + (
               " Owns no design geometry: the design files are referenced; this file holds the sheet."
               if plan else " A sheet drawing with no model: everything is on the sheet.")}})
     d.save(path)
@@ -421,15 +465,16 @@ def build_sheet(dig, out, names, title, bases):
     return path, sheet, report
 
 
-def build(dig, out):
+def build(dig, out, naming=None):
+    naming = naming or Naming()
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    names = names_for(dig)
-    title = (f"WFL sample plan {dig['id']}: sheet {names[2]} "
+    names = naming.names_for(dig)
+    title = (f"{naming.name.upper()} sample plan {dig['id']}: sheet {names[2]} "
              f"{dig['fields'].get('sheet_title', '').replace(chr(10), ' ')}").strip()
-    bases = build_bases(dig, out, names, title) if dig["kind"] == "plan" else {}
-    path, sheet, report = build_sheet(dig, out, names, title, bases)
+    bases = build_bases(dig, out, names, title, naming) if dig["kind"] == "plan" else {}
+    path, sheet, report = build_sheet(dig, out, names, title, bases, naming)
     return {"sheet_file": path.name, "sheet": sheet, "prefix": names[0], "suffix": names[1],
-            "prefix_how": names[3], "suffix_in_manual": names[1] not in NOT_IN_MANUAL,
+            "prefix_how": names[3], "suffix_in_manual": naming.in_manual(names[1]),
             "bases": {k: v.name for k, v in bases.items() if not k.startswith("_")},
             "alignments": bases.get("_aligns", []), "callouts": report}
