@@ -13,7 +13,7 @@ Callouts: 0 placed in sheet view with `place_callout` (0 at a stated station of 
 ## Notes
 
 - File names: `XSS_Sample.rdraft` is the file name stamped in the sheet's margin (XSS_Sample.dgn); design files take its project descriptor `Sample`.
-- The border and title block are kept as drawn instead of RoadDraft's FLH (wfl) border template (a portrait cross-section sheet, a non-standard border, or set so in the sheet's config).
+- The border and title block are kept as drawn instead of RoadDraft's wfl border template (a portrait or oversize sheet, a non-standard border such as a key sheet, or set so in the sheet's config).
 - Text heights are the lettered cap heights (MicroStation sizes text by its capitals, and the drawn outlines agree).
 
 Rebuild: `.venv/bin/python examples/cfl_redraft/run_cfl.py CFL-PhysData-Mainline-Cross-Sections-p01` (pipeline: examples/cfl_redraft/README.md).

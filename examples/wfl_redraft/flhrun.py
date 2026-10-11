@@ -139,8 +139,12 @@ class Pipeline:
                 notes.append("The profile grid below the plan view is sheet linework; the viewport covers the plan view only.")
             if "HYD" not in rep["bases"] and dig["family"] == "drainage":
                 notes.append("No heavy drainage linework was found, so there is no drainage design file.")
-            notes.append("Scale: the sheet prints no numeric scale; 1\" = " + f"{dig['fpi']:g}' comes from " +
-                         ("the station tick spacing." if rep["alignments"] else "the graphic scale bar or the config."))
+            notes.append(f"Scale: 1\" = {dig['fpi']:g}' comes from " + {
+                "config": "the sheet's config.", "scale bar or note": "the graphic scale bar or the lettered scale note.",
+                "station tick spacing": "the station tick spacing (the sheet prints no numeric scale).",
+                "station number spacing": "how far apart the station numbers are lettered (the sheet is not at "
+                                          "the scale its note states, or a usual one).",
+            }.get(dig.get("fpi_how"), "the sheet."))
             notes.append("Coordinates: the sample prints none for its linework; the model sits on a local datum "
                          f"(plan view centre at E 10,000 N 10,000), turned by the view twist " + {
                              "bearing": "so the lettered bearings read true.",
@@ -150,9 +154,14 @@ class Pipeline:
         if rep.get("raster_in2", 0) > 1.0:
             notes.append(f"The published sheet carries {rep['raster_in2']:g} sq in of raster images (an aerial "
                          "photograph or logos); the redraft holds the vector linework and lettering only.")
+        if rep.get("inline"):
+            notes.append("The drainage structures are drawn in this sheet file's own model space rather than a "
+                         "separate design file, as the convention keeps them (the drainage sheets are cut from the "
+                         "drainage design file).")
         if not dig["template"]:
-            notes.append("The border and title block are kept as drawn instead of RoadDraft's FLH (wfl) border template "
-                         "(a portrait cross-section sheet, a non-standard border, or set so in the sheet's config).")
+            notes.append(f"The border and title block are kept as drawn instead of RoadDraft's {dig.get('template_name', 'wfl')} "
+                         "border template (a portrait or oversize sheet, a non-standard border such as a key sheet, "
+                         "or set so in the sheet's config).")
         elif not dig.get("title_box"):
             notes.append("No sheet title box is drawn on this sheet (plan-profile sheets carry the title in the plot stamp).")
         notes.append("Text heights are the lettered cap heights (MicroStation sizes text by its capitals, and the "

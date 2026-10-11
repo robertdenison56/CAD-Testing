@@ -88,6 +88,10 @@ class Naming:
         """How a 100 ft tick is lettered: WFL letters the hundreds ("111")."""
         return station_label(station)
 
+    def inline(self, key, dig):
+        """Does the convention keep this design file's content in the sheet file?"""
+        return False
+
 
 def names_for(dig):
     """(project prefix, sheet file suffix, sheet number, how the prefix was found)"""
@@ -291,6 +295,9 @@ def build_bases(dig, out, names, title, naming=None):
         made["ALI"] = path
     # ------------------------------------------------------------- _hyd_cor
     hp = [p for p in dig["paths"] if p["dest"] == "hyd"]
+    if hp and naming.inline("HYD", dig):
+        made.setdefault("_inline", {})["HYD"] = hp
+        hp = []
     if hp:
         d = Doc(title, out)
         d.run("set_meta", {"updates": {"description":
@@ -356,11 +363,21 @@ def build_sheet(dig, out, names, title, bases, naming=None):
     for name in ("COR", "HYD", "ALI", "SUR"):
         if name in bases:
             d.run("attach_reference", {"name": name, "path": bases[name].name, "space": "model"})
+    # a design file the convention keeps in the sheet file itself (FDOT's DRPRRD holds
+    # the drainage structures and the drainage sheets) is drawn into this file's model
+    inline = bases.get("_inline", {})
+    if plan and inline:
+        d.run("set_annotation_scale", {"scale": dig["fpi"]})
+        for key, paths_ in inline.items():
+            for p in paths_:
+                lay = d.layer("P_DRAIN" if p["lw"] >= 1.2 else "P_DRAIN_SYMB", 0.50 if p["lw"] >= 1.2 else 0.35,
+                              None, "Drainage system (this file's own model)")
+                draw(d, "model", p["pts"], lay, is_closed(p["pts"]), linetype(p["dash"]), p["fill"], xf)
     fields = {k: v for k, v in dig["fields"].items() if not k.startswith("_")}
-    size = {"size": "ANSI_B"} if not dig["portrait"] else {"width_in": dig["sheet_size"][0],
-                                                          "height_in": dig["sheet_size"][1]}
+    size = {"size": "ANSI_B"} if not (dig["portrait"] or dig.get("oversize")) else {
+        "width_in": dig["sheet_size"][0], "height_in": dig["sheet_size"][1]}
     if dig["template"]:
-        d.run("create_sheet", {"name": sheet, **size, "title_block_template": "wfl"})
+        d.run("create_sheet", {"name": sheet, **size, "title_block_template": dig.get("template_name", "wfl")})
         tb = dict(fields)
         if not dig.get("title_box"):
             tb.pop("sheet_title", None)       # no title box on this sheet (plan-profile)
@@ -476,5 +493,6 @@ def build(dig, out, naming=None):
     path, sheet, report = build_sheet(dig, out, names, title, bases, naming)
     return {"sheet_file": path.name, "sheet": sheet, "prefix": names[0], "suffix": names[1],
             "prefix_how": names[3], "suffix_in_manual": naming.in_manual(names[1]),
+            "inline": sorted(bases.get("_inline", {})),
             "bases": {k: v.name for k, v in bases.items() if not k.startswith("_")},
             "alignments": bases.get("_aligns", []), "callouts": report}

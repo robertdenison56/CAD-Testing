@@ -10,12 +10,12 @@ CFL sample plan sheet **D2** (MAIN ROAD PARKING LOT GEOMETRIC LAYOUT), redrafted
 | `PLN_PKG.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `PLN_PKG-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
 
-Callouts: 82 placed in sheet view with `place_callout` (0 at a stated station of a rebuilt alignment, 54 at the element the published leader touches, 28 at a point).
+Callouts: 82 placed in sheet view with `place_callout` (0 at a stated station of a rebuilt alignment, 55 at the element the published leader touches, 27 at a point).
 
 ## Notes
 
 - File names: `PLN_PKG.rdraft` is the file name stamped in the sheet's margin (PLN_PKG.dgn); design files take its project descriptor `PKG`.
-- Scale: the sheet prints no numeric scale; 1" = 50' comes from the graphic scale bar or the config.
+- Scale: 1" = 50' comes from the graphic scale bar or the lettered scale note.
 - Coordinates: the sample prints none for its linework; the model sits on a local datum (plan view centre at E 10,000 N 10,000), turned by the view twist of 0 (no bearing lettered along a rebuilt alignment, so north is sheet-up).
 - Station ticks: the sheet draws them to one side of the line; RoadDraft's are centred on it, the same length.
 - The published sheet carries 57.8 sq in of raster images (an aerial photograph or logos); the redraft holds the vector linework and lettering only.

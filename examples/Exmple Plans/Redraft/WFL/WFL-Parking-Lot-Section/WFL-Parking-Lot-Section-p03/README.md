@@ -15,7 +15,7 @@ Callouts: 13 placed in sheet view with `place_callout` (0 at a stated station of
 ## Notes
 
 - File names: `WA-NP-FOVA-101_pln_demo.rdraft` from the plot stamp (WA-NP-FOVA-101_pln_demo.dgn).
-- Scale: the sheet prints no numeric scale; 1" = 40' comes from the station tick spacing.
+- Scale: 1" = 40' comes from the station tick spacing (the sheet prints no numeric scale).
 - Coordinates: the sample prints none for its linework; the model sits on a local datum (plan view centre at E 10,000 N 10,000), turned by the view twist of 0 (no bearing lettered along a rebuilt alignment, so north is sheet-up).
 - Station ticks: the sheet draws them to one side of the line; RoadDraft's are centred on it, the same length.
 - Text heights are the lettered cap heights (MicroStation sizes text by its capitals, and the drawn outlines agree).

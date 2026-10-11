@@ -108,10 +108,13 @@ for it, and why a page was not redrafted.
 
 Per-sheet settings are in `configs/` (see `configs/README.md`).
 
-**Other FLH divisions.** The digitiser and builder are shared: `wflsheet.Standard` holds
-what a division's sheets do differently (how sheets are classed, how the title block reads,
-how station ticks are lettered), `wflbuild.Naming` how it names files, and `flhrun.Pipeline`
-runs a set of sheets under one of each. `examples/cfl_redraft` is CFL's.
+**Other agencies.** The digitiser and builder are shared: `wflsheet.Standard` holds what an
+agency's sheets do differently (the border's frame and title zones and how to tell it is
+drawn, how sheets are classed, how the title block reads, how station ticks are lettered
+and how heavy the centerline pen is), `wflbuild.Naming` how it names files (and which
+design files its convention keeps inside the sheet file), and `flhrun.Pipeline` runs a set
+of sheets under one of each. `examples/cfl_redraft` is CFL's and `examples/fdot_redraft`
+FDOT's.
 
 ## Known limits
 

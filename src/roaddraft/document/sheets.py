@@ -26,12 +26,15 @@ SHEET_SIZES = {
 }
 
 # Border / title block drawings available to a sheet (render/titleblock.py).
-TITLE_BLOCK_TEMPLATES = ("standard", "caltrans", "wfl", "none")
+TITLE_BLOCK_TEMPLATES = ("standard", "caltrans", "wfl", "fdot", "none")
 
 BORDER_MARGIN_IN = 0.5
 CALTRANS_BIND_IN = 1.904    # left binding strip on the Caltrans plan border
 WFL_MARGIN_X_IN = 0.7       # the FLH (WFL) border: 0.7 in side margins (plot stamp)
 WFL_MARGIN_Y_IN = 0.3       # and 0.3 in top and bottom
+FDOT_MARGIN_X_IN = 0.8      # the FDOT border: 0.8 in side margins, 0.3 in top and bottom,
+FDOT_MARGIN_Y_IN = 0.3      # and a 0.8 in title strip across the foot of the frame
+FDOT_STRIP_H_IN = 0.8
 TITLE_STRIP_H_IN = 1.25
 
 # Field keys the standard title-block template displays.
@@ -109,6 +112,11 @@ class Sheet:
             # the bottom right
             return (WFL_MARGIN_X_IN, WFL_MARGIN_Y_IN, self.width_in - WFL_MARGIN_X_IN,
                     self.height_in - WFL_MARGIN_Y_IN)
+        if (self.title_block_template or "").lower() == "fdot":
+            # the FDOT 11 x 17 border: revisions, engineer of record, agency,
+            # sheet title and sheet number in one strip across the foot
+            return (FDOT_MARGIN_X_IN, FDOT_MARGIN_Y_IN + FDOT_STRIP_H_IN,
+                    self.width_in - FDOT_MARGIN_X_IN, self.height_in - FDOT_MARGIN_Y_IN)
         if (self.title_block_template or "").lower() == "none":
             return (m, m, self.width_in - m, self.height_in - m)
         return (m, m + TITLE_STRIP_H_IN, self.width_in - m, self.height_in - m)

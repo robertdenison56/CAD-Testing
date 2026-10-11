@@ -11,12 +11,12 @@ WFL sample plan sheet **H.5** (MSE WALL 109+90 to 110+75), redrafted as a RoadDr
 | `olym11-9_pln_wall.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `olym11-9_pln_wall-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
 
-Callouts: 8 placed in sheet view with `place_callout` (0 at a stated station of a rebuilt alignment, 2 at the element the published leader touches, 6 at a point).
+Callouts: 9 placed in sheet view with `place_callout` (0 at a stated station of a rebuilt alignment, 3 at the element the published leader touches, 6 at a point).
 
 ## Notes
 
 - File names: `olym11-9_pln_wall.rdraft` from the project number (NPS OLYM 11(9)).
-- Scale: the sheet prints no numeric scale; 1" = 20' comes from the station tick spacing.
+- Scale: 1" = 20' comes from the station tick spacing (the sheet prints no numeric scale).
 - Coordinates: the sample prints none for its linework; the model sits on a local datum (plan view centre at E 10,000 N 10,000), turned by the view twist of 0 (no bearing lettered along a rebuilt alignment, so north is sheet-up).
 - Station ticks: the sheet draws them to one side of the line; RoadDraft's are centred on it, the same length.
 - The published sheet carries 52.2 sq in of raster images (an aerial photograph or logos); the redraft holds the vector linework and lettering only.

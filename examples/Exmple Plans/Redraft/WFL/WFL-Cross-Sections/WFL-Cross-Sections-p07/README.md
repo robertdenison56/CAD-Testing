@@ -13,7 +13,7 @@ Callouts: 3 placed in sheet view with `place_callout` (0 at a stated station of 
 ## Notes
 
 - File names: `yell12-2_xs.rdraft` from the plot stamp (yell12-2_xs.dgn).
-- The border and title block are kept as drawn instead of RoadDraft's FLH (wfl) border template (a portrait cross-section sheet, a non-standard border, or set so in the sheet's config).
+- The border and title block are kept as drawn instead of RoadDraft's wfl border template (a portrait or oversize sheet, a non-standard border such as a key sheet, or set so in the sheet's config).
 - Text heights are the lettered cap heights (MicroStation sizes text by its capitals, and the drawn outlines agree).
 
 Rebuild: `.venv/bin/python examples/wfl_redraft/run_wfl.py WFL-Cross-Sections-p07` (pipeline: examples/wfl_redraft/README.md).

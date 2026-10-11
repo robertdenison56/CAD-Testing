@@ -16,6 +16,12 @@ drawn representation.  ``sheet.title_block_template`` picks the drawing:
                NPS PMIS and drawing numbers above it, the sheet title box over
                the bottom right corner, and the plot stamp (date, file,
                description) lettered up the left margin
+    fdot       the FDOT 11 x 17 plan-sheet border: a plain frame with the
+               title strip across its foot (the revision block, the engineer
+               of record, STATE OF FLORIDA / DEPARTMENT OF TRANSPORTATION with
+               ROAD NO., COUNTY and FINANCIAL PROJECT ID, the sheet title and
+               the SHEET NO.), the digital-signature rule up the right margin
+               and the plot stamp under the frame
     none       border and title block are drawn by the document itself
 """
 from __future__ import annotations
@@ -44,6 +50,8 @@ def title_block_entities(sheet: Sheet) -> List[Entity]:
         return caltrans_entities(sheet)
     if template == "wfl":
         return wfl_entities(sheet)
+    if template == "fdot":
+        return fdot_entities(sheet)
     return standard_entities(sheet)
 
 
@@ -439,6 +447,137 @@ def wfl_entities(sheet: Sheet) -> List[Entity]:
     desc_y = y0 + FLH_STAMP_FILE_Y + (FLH_STAMP_CHAR_W * len(dgn) + 0.01 if dgn else 0.0)
     text(stamp_x, desc_y, get("description"), FLH_STAMP_H, rotation=90.0,
          color=LABEL_COLOR)
+    return out
+
+
+# ----------------------------------------------------------------- FDOT border
+# Dimensions measured off the FDM 900-series exhibit sheets (11 x 17 in).  The
+# frame is held from the sheet edges; the strip's cells from the frame's left
+# edge, the SHEET NO. cell from its right.
+FD_MARGIN_X = 0.8
+FD_MARGIN_Y = 0.3
+FD_STRIP_TOP = 1.1          # the strip runs from the frame's foot up to here
+FD_REV_X1 = 6.56            # revisions | engineer of record | agency | title | sheet no.
+FD_EOR_X1 = 8.9
+FD_AGY_X1 = 11.9
+FD_TTL_X1 = 15.5
+FD_REV_HEAD_Y = 0.96        # REVISIONS caption row above, DATE / DESCRIPTION below
+FD_REV_SUB_Y = 0.86
+FD_REV_COLS = (1.281, 3.681, 4.16)     # DATE | DESCRIPTION | DATE | DESCRIPTION
+FD_REV_ROW_H = 0.14
+FD_AGY_LINE_Y = 0.74        # ROAD NO. / COUNTY / FINANCIAL PROJECT ID captions sit under it
+FD_AGY_CAP_Y = 0.619
+FD_AGY_COLS = (9.6, 10.7)
+FD_NO_LINE_Y = 0.7
+FD_RECORD_NOTE = ("THE OFFICIAL RECORD OF THIS SHEET IS THE ELECTRONIC FILE DIGITALLY "
+                  "SIGNED AND SEALED UNDER RULE 61G15-23.004, F.A.C.")
+FD_CAP_H = 0.06
+FD_VALUE_H = 0.07
+FD_TITLE_H = 0.125
+FD_STAMP_H = 0.05
+
+
+def fdot_entities(sheet: Sheet) -> List[Entity]:
+    W, H = sheet.width_in, sheet.height_in
+    f = sheet.title_block_fields
+    out: List[Entity] = []
+    n = [0]
+
+    def get(key, default=""):
+        return str(f.get(key, default))
+
+    def line(x0, y0, x1, y1, mm=0.25):
+        n[0] += 1
+        out.append(_lw(Line(id=f"TB:l{n[0]}", start=[x0, y0], end=[x1, y1]), mm))
+
+    def box(x0, y0, x1, y1, mm=0.25):
+        n[0] += 1
+        out.append(_lw(Polyline(id=f"TB:b{n[0]}",
+                                vertices=[[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                                closed=True), mm))
+
+    def text(x, y, s, height=FD_VALUE_H, halign="left", valign="bottom",
+             rotation=0.0, color=None):
+        if not s:
+            return
+        n[0] += 1
+        out.append(Text(id=f"TB:t{n[0]}", position=[x, y], content=str(s),
+                        height=height, halign=halign, valign=valign,
+                        rotation_deg=rotation,
+                        **({"color": color} if color else {})))
+
+    x0, y0, x1, y1 = FD_MARGIN_X, FD_MARGIN_Y, W - FD_MARGIN_X, H - FD_MARGIN_Y
+    box(x0, y0, x1, y1, 0.50)
+    top = y0 + (FD_STRIP_TOP - FD_MARGIN_Y)
+    line(x0, top, x1, top, 0.50)
+    for x in (FD_REV_X1, FD_EOR_X1, FD_AGY_X1, FD_TTL_X1):
+        line(x, y0, x, top, 0.25)
+
+    # ------------------------------------------------------- revisions
+    line(x0, FD_REV_HEAD_Y, FD_REV_X1, FD_REV_HEAD_Y, 0.25)
+    line(x0, FD_REV_SUB_Y, FD_REV_X1, FD_REV_SUB_Y, 0.25)
+    for x in FD_REV_COLS:
+        line(x, y0, x, FD_REV_HEAD_Y, 0.25)
+    text((x0 + FD_REV_X1) / 2, FD_REV_HEAD_Y + 0.045, "REVISIONS", FD_CAP_H,
+         halign="center", color=LABEL_COLOR)
+    cols = (x0,) + FD_REV_COLS + (FD_REV_X1,)
+    for i, cap in enumerate(("DATE", "DESCRIPTION", "DATE", "DESCRIPTION")):
+        text((cols[i] + cols[i + 1]) / 2, FD_REV_SUB_Y + 0.016, cap, FD_CAP_H,
+             halign="center", color=LABEL_COLOR)
+    rows = int((FD_REV_SUB_Y - y0) / FD_REV_ROW_H)
+    for k in range(1, 2 * rows + 1):
+        col = 0 if k <= rows else 2
+        row = (k - 1) % rows
+        yb = FD_REV_SUB_Y - (row + 1) * FD_REV_ROW_H + 0.03
+        text(cols[col] + 0.05, yb, get(f"rev_date_{k}"), FD_CAP_H)
+        text(cols[col + 1] + 0.05, yb, get(f"rev_desc_{k}"), FD_CAP_H)
+
+    # ---------------------------------------------- engineer of record
+    line(FD_REV_X1, FD_REV_HEAD_Y, FD_EOR_X1, FD_REV_HEAD_Y, 0.25)
+    text((FD_REV_X1 + FD_EOR_X1) / 2, FD_REV_HEAD_Y + 0.035, "ENGINEER OF RECORD",
+         FD_VALUE_H, halign="center", color=LABEL_COLOR)
+    for i, key in enumerate(("eor_name", "eor_license", "eor_firm", "eor_address", "eor_city")):
+        text(FD_REV_X1 + 0.054, 0.805 - i * 0.105, get(key), FD_VALUE_H)
+
+    # ------------------------------------------------------------ agency
+    acx = (FD_EOR_X1 + FD_AGY_X1) / 2
+    text(acx, 0.96, get("agency", "STATE OF FLORIDA"), FD_VALUE_H, halign="center")
+    text(acx, 0.837, get("division", "DEPARTMENT OF TRANSPORTATION"), FD_VALUE_H,
+         halign="center")
+    line(FD_EOR_X1, FD_AGY_LINE_Y, FD_AGY_X1, FD_AGY_LINE_Y, 0.25)
+    line(FD_EOR_X1, FD_AGY_CAP_Y, FD_AGY_X1, FD_AGY_CAP_Y, 0.25)
+    for x in FD_AGY_COLS:
+        line(x, y0, x, FD_AGY_LINE_Y, 0.25)
+    acols = (FD_EOR_X1,) + FD_AGY_COLS + (FD_AGY_X1,)
+    for i, (cap, key) in enumerate((("ROAD NO.", "road_no"), ("COUNTY", "county"),
+                                    ("FINANCIAL PROJECT ID", "fpid"))):
+        cx = (acols[i] + acols[i + 1]) / 2
+        text(cx, FD_AGY_CAP_Y + 0.036, cap, FD_CAP_H, halign="center", color=LABEL_COLOR)
+        text(cx, 0.425, get(key), FD_VALUE_H, halign="center")
+
+    # ------------------------------------------------------- sheet title
+    title = [r for r in get("sheet_title").split("\n") if r.strip()]
+    tcx = (FD_AGY_X1 + FD_TTL_X1) / 2
+    tcy = y0 + (top - y0) / 2
+    spacing = FD_TITLE_H * 1.6
+    for i, row in enumerate(title):
+        text(tcx, tcy - FD_TITLE_H / 2 + (len(title) - 1) * spacing / 2 - i * spacing, row,
+             FD_TITLE_H, halign="center")
+
+    # --------------------------------------------------------- sheet no.
+    line(FD_TTL_X1, FD_NO_LINE_Y, x1, FD_NO_LINE_Y, 0.25)
+    ncx = (FD_TTL_X1 + x1) / 2
+    text(ncx, 0.941, "SHEET", FD_VALUE_H, halign="center", color=LABEL_COLOR)
+    text(ncx, 0.80, "NO.", FD_VALUE_H, halign="center", color=LABEL_COLOR)
+    text(ncx, 0.465, get("sheet_number"), FD_VALUE_H, halign="center")
+
+    # ------------------------ the signature rule and the plot stamp
+    text(x1 + 0.107, y0, get("record_note", FD_RECORD_NOTE), FD_VALUE_H,
+         rotation=90.0, color=LABEL_COLOR)
+    text(x1 + 0.016, 0.197, get("dgn_file"), FD_STAMP_H, halign="right", color=LABEL_COLOR)
+    text(x1 - 1.684, 0.108, get("username"), FD_STAMP_H, color=LABEL_COLOR)
+    text(x1 - 1.097, 0.108, get("date_plotted"), FD_STAMP_H, color=LABEL_COLOR)
+    text(x1 - 0.451, 0.108, get("time_plotted"), FD_STAMP_H, color=LABEL_COLOR)
     return out
 
 

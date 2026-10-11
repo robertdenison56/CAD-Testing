@@ -16,7 +16,7 @@ Callouts: 5 placed in sheet view with `place_callout` (0 at a stated station of 
 ## Notes
 
 - File names: `PLN_PKG.rdraft` is the file name stamped in the sheet's margin (PLN_PKG.dgn); design files take its project descriptor `PKG`.
-- Scale: the sheet prints no numeric scale; 1" = 50' comes from the station tick spacing.
+- Scale: 1" = 50' comes from the graphic scale bar or the lettered scale note.
 - Coordinates: the sample prints none for its linework; the model sits on a local datum (plan view centre at E 10,000 N 10,000), turned by the view twist of 0 (no bearing lettered along a rebuilt alignment, so north is sheet-up).
 - Station ticks: the sheet draws them to one side of the line; RoadDraft's are centred on it, the same length.
 - Text heights are the lettered cap heights (MicroStation sizes text by its capitals, and the drawn outlines agree).

@@ -8,7 +8,7 @@ WFL sample plan sheet **A.3** (general), redrafted as a RoadDraft file set named
 | `glac10-22_pln_gen.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `glac10-22_pln_gen-overlay.png` | Check: published sheet blue, redraft red, black where they agree |
 
-Callouts: 0 placed in sheet view with `place_callout` (0 at a stated station of a rebuilt alignment, 0 at the element the published leader touches, 0 at a point).
+Callouts: 1 placed in sheet view with `place_callout` (0 at a stated station of a rebuilt alignment, 0 at the element the published leader touches, 1 at a point).
 
 ## Notes
 

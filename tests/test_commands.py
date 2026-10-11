@@ -429,6 +429,46 @@ def test_wfl_border_blocks_title_box_and_plot_stamp():
     assert stamp[0].position[1] < stamp[1].position[1] < stamp[2].position[1]
 
 
+def test_fdot_border_strip_cells_and_stamp():
+    """The FDOT 11 x 17 border: one strip across the foot with the revision
+    block, the engineer of record, the agency's ROAD NO. / COUNTY / FINANCIAL
+    PROJECT ID, the sheet title and the SHEET NO.; the signature rule up the
+    right margin and the plot stamp under the frame."""
+    from roaddraft.document.entities import Line, Text
+    from roaddraft.render.titleblock import FD_RECORD_NOTE, title_block_entities
+
+    s = make_session()
+    r = s.execute("create_sheet", {"name": "12", "size": "ANSI_B",
+                                   "title_block_template": "fdot"})
+    assert r["ok"] and "fdot" in r["message"]
+    sheet = s.doc.sheet_by_ref("12")
+    assert sheet.usable_area() == (0.8, 1.1, 16.2, 10.7)
+    s.execute("fill_title_block", {"sheet": "12", "fields": {
+        "road_no": "SR 61", "county": "WAKULLA", "fpid": "22049555201",
+        "sheet_title": "ROADWAY PLAN-PROFILE", "sheet_number": "12",
+        "eor_name": "LUKE S. WALKER, P.E.", "eor_license": "LICENSE NUMBER: 12345",
+        "rev_date_1": "1/2/26", "rev_desc_1": "RESURFACING LIMITS",
+        "dgn_file": "C:\\Worksets\\FDOT\\22049555201\\Roadway\\PLPRRD02.dgn",
+        "username": "KNASDMS", "date_plotted": "10/28/2025", "time_plotted": "10:09:52 AM"}})
+    drawn = title_block_entities(sheet)
+    texts = {e.content: e for e in drawn if isinstance(e, Text)}
+    for value in ("REVISIONS", "DATE", "DESCRIPTION", "ENGINEER OF RECORD", "STATE OF FLORIDA",
+                  "DEPARTMENT OF TRANSPORTATION", "ROAD NO.", "COUNTY", "FINANCIAL PROJECT ID",
+                  "SHEET", "NO.", "SR 61", "WAKULLA", "22049555201", "ROADWAY PLAN-PROFILE", "12",
+                  "LUKE S. WALKER, P.E.", "1/2/26", "RESURFACING LIMITS", "KNASDMS", FD_RECORD_NOTE):
+        assert value in texts, value
+    # every cell's lettering sits inside the strip, left to right as published
+    for value in ("1/2/26", "LUKE S. WALKER, P.E.", "WAKULLA", "ROADWAY PLAN-PROFILE", "12"):
+        assert 0.3 < texts[value].position[1] < 1.1, value
+    xs = [texts[v].position[0] for v in ("1/2/26", "LUKE S. WALKER, P.E.", "WAKULLA",
+                                          "ROADWAY PLAN-PROFILE", "12")]
+    assert xs == sorted(xs)
+    assert texts[FD_RECORD_NOTE].rotation_deg == 90.0 and texts[FD_RECORD_NOTE].position[0] > 16.2
+    assert texts["KNASDMS"].position[1] < 0.3            # the stamp is under the frame
+    strip = [e for e in drawn if isinstance(e, Line) and e.start[1] == e.end[1] == 1.1]
+    assert strip and strip[0].start[0] == 0.8 and strip[0].end[0] == 16.2
+
+
 def test_title_block_template_must_be_known():
     s = make_session()
     r = s.execute("create_sheet", {"name": "X", "title_block_template": "acme"})
