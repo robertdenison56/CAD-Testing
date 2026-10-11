@@ -12,7 +12,9 @@ from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.prompts import LEVELS
 from roaddraft.tasks.reference import reference_solution, session_for_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
-from roaddraft.tasks.types import CHECK_GROUPS, GROUPS, TASK_TYPES, checks_in_scope, task_type
+from roaddraft.tasks.types import (
+    CHECK_GROUPS, GROUPS, LAYOUT_GROUPS, TASK_TYPES, checks_in_scope, task_type,
+)
 from roaddraft.verify import verify
 from tests.verify_mutations import Base
 
@@ -35,10 +37,14 @@ def _drafted(seed, ttype, sheets):
 # ---------------------------------------------------------------- the catalog
 
 
-def test_every_group_is_asked_for_by_some_type_and_plan_sheet_asks_for_all():
+def test_every_group_is_asked_for_by_some_type_and_plan_sheet_asks_for_the_layout():
     assert set(GROUPS) == {g for t in TASK_TYPES.values() for g in t.asks}
-    assert task_type("plan-sheet").asks == frozenset(GROUPS)
+    assert task_type("plan-sheet").asks == frozenset(LAYOUT_GROUPS)
     assert task_type("plan-sheet").given == frozenset()
+    assert task_type("attach-reference").basefile == {"linework", "edges", "stationing",
+                                                       "bearings", "callouts"}
+    assert task_type("attach-reference").solution_phases() == ["reference"]
+    assert task_type("pavement").solution_phases() == ["edges", "widths"]
     assert task_type("annotate-sheet").given == {"layers", "linework", "sheet"}
     assert task_type("draw-alignment").start == "model" and task_type("bearings").start == "sheet"
     assert set(DRAFTING_SPEC_V1["task_types"]) == set(TASK_TYPES)
@@ -53,6 +59,10 @@ def test_checks_in_scope_follow_the_groups():
     assert checks_in_scope(["linework"], ids) == ["D1-01", "D1-09"]
     assert checks_in_scope(["title", "north"], ids) == ["D1-08", "D1-10", "D1-11"]
     assert checks_in_scope(["sheet"], ids) == ["D1-00", "D1-08"]
+    assert checks_in_scope(["edges"], ids) == ["D1-09", "D1-12"]
+    assert checks_in_scope(["widths"], ids) == ["D1-08", "D1-09", "D1-13"]
+    assert checks_in_scope(["reference"], ids) == ["D1-14"]
+    assert checks_in_scope(["layers"], ids) == ["D1-09"]
     assert set(CHECK_GROUPS) == set(ids)
 
 
@@ -266,3 +276,156 @@ def test_two_sheet_partial_types_grade_both_sheets():
     b.ex("delete_entities", {"ids": [tables[0].id]})
     r = b.verify()
     assert r.check("D1-06").credit == pytest.approx(0.5 if len(tables) == 2 else 0.0)
+
+
+# ---------------------------------------------------------------- plan prep
+
+
+def _prep(ttype, seed=2, sheets=1):
+    task, session = _drafted(seed, ttype, sheets)
+    b = Base.__new__(Base)
+    b.task, b.session, b.truth, b.D, b.A = task, session, task.truth, task.brief.deliverable, "ALIGN-1"
+    return b
+
+
+def _edge_entities(b):
+    return [e for e in b.doc.model_entities.values()
+            if e.anchor and e.anchor["kind"] == "offset"]
+
+
+def test_pavement_edges_match_by_geometry_and_a_wrong_offset_hard_fails():
+    b = _prep("pavement-edges")
+    assert b.verify().effective_score == 100.0 and b.verify().scope == ["edges"]
+    assert [c.id for c in b.verify().in_scope()] == ["D1-09", "D1-12"]
+    edges = _edge_entities(b)
+    n = len(b.truth.edges)
+    assert len(edges) == n
+    b.ex("delete_entities", {"ids": [edges[0].id]})
+    r = b.verify()
+    assert r.check("D1-12").credit == pytest.approx((n - 1) / n)
+    assert [f.code for f in r.check("D1-12").findings] == ["missing"]
+    # an edge at the wrong width on the edge layer is wrong work
+    half = b.D["pavement"]["half_width_ft"]
+    b.ex("draw_offset", {"alignment": b.A, "offsets": [half + 2.0], "layer": "V-ROAD-EOP"})
+    r = b.verify()
+    assert r.hard_failed and "geometry_mismatch" in {f.code for f in r.check("D1-12").findings}
+
+
+def test_pavement_edges_drawn_by_hand_count_and_layer_is_judged_separately():
+    b = _prep("pavement-edges")
+    edges = _edge_entities(b)
+    rows = [(e, e.to_dict()) for e in edges]
+    b.ex("delete_entities", {"ids": [e.id for e in edges]})
+    b.ex("create_layer", {"name": "EOP"})
+    for e, d in rows:  # the same geometry as raw lines and arcs on another layer
+        if d["type"] == "line":
+            b.ex("draw_line", {"space": "model", "start": d["start"], "end": d["end"], "layer": "EOP"})
+        else:
+            b.ex("draw_arc", {"space": "model", "center": d["center"], "radius": d["radius"],
+                              "start_angle_deg": d["start_angle_deg"],
+                              "end_angle_deg": d["end_angle_deg"], "layer": "EOP"})
+    explicit, vague = b.verify("explicit"), b.verify("vague")
+    assert explicit.check("D1-12").credit == 1.0 and vague.check("D1-12").credit == 1.0
+    assert vague.effective_score == 100.0
+    assert explicit.check("D1-09").credit < 1.0  # layers were stated
+
+
+def test_pavement_width_dimension_value_station_and_level():
+    b = _prep("pavement-widths")
+    r = b.verify()
+    assert r.effective_score == 100.0 and r.scope == ["widths"]
+    assert [c.id for c in r.in_scope()] == ["D1-08", "D1-09", "D1-13"]
+    dims = [e for e in b.doc.model_entities.values() if e.TYPE == "dimension"]
+    n = len(b.truth.dimensions)
+    assert len(dims) == n
+    # a wrong number hard-fails at both levels
+    b.ex("modify_entity", {"id": dims[0].id, "changes": {"text_override": "23.00'"}})
+    for level in LEVELS:
+        r = b.verify(level)
+        assert r.hard_failed and [f.code for f in r.check("D1-13").findings] == ["wrong_value"]
+    b.ex("modify_entity", {"id": dims[0].id, "changes": {"text_override": None}})
+    # moved along its tangent (as far as the tangent allows): fine when no station was stated
+    align = b.doc.design.alignments[b.A]
+    want = b.truth.dimensions[0]
+    lo, hi = want["tangent_range"]
+    station = float(want["station"])
+    raw = station - 50.0 if station - 50.0 >= lo + 10.0 else min(station + 50.0, hi - 10.0)
+    assert abs(raw - station) > 1.0
+    half = b.D["pavement"]["half_width_ft"]
+    b.ex("modify_entity", {"id": dims[0].id, "changes": {
+        "p1": align.station_to_xy(raw, -half)[0], "p2": align.station_to_xy(raw, half)[0],
+        "line_point": align.station_to_xy(raw + 10.0, 0.0)[0]}})
+    assert b.verify("vague").check("D1-13").credit == 1.0
+    r = b.verify("explicit")
+    assert r.check("D1-13").credit == pytest.approx((n - 1) / n)
+    assert [f.code for f in r.check("D1-13").findings] == ["misplaced"]
+    # gone: missing
+    b.ex("delete_entities", {"ids": [dims[0].id]})
+    r = b.verify()
+    assert [f.code for f in r.check("D1-13").findings] == ["missing"]
+    assert r.check("D1-13").credit == pytest.approx((n - 1) / n)
+
+
+def test_width_dimension_reading_the_right_number_in_another_format():
+    b = _prep("pavement-widths")
+    dims = [e for e in b.doc.model_entities.values() if e.TYPE == "dimension"]
+    width = b.truth.dimensions[0]["value"]
+    b.ex("modify_entity", {"id": dims[0].id, "changes": {"text_override": f"{width:.1f} FT"}})
+    assert b.verify("vague").check("D1-13").credit == 1.0
+    assert b.verify("explicit").hard_failed
+
+
+def test_attach_reference_structural_checks():
+    b = _prep("attach-reference")
+    r = b.verify()
+    assert r.effective_score == 100.0 and r.scope == ["reference"]
+    assert [c.id for c in r.in_scope()] == ["D1-14"] and r.scope_weight == 5
+    ref = next(iter(b.doc.references.values()))
+    assert ref.path == b.D["basefile"]
+    b.ex("modify_reference", {"name": ref.name, "changes": {"offset": [10.0, 0.0]}})
+    r = b.verify()
+    assert r.check("D1-14").credit == 0.75
+    assert [f.code for f in r.check("D1-14").findings] == ["misplaced"]
+    b.ex("modify_reference", {"name": ref.name, "changes": {"offset": [0.0, 0.0],
+                                                             "visible": False}})
+    r = b.verify()
+    assert r.check("D1-14").credit == 0.75
+    assert [f.code for f in r.check("D1-14").findings] == ["not_visible"]
+    b.ex("detach_reference", {"name": ref.name})
+    r = b.verify()
+    assert r.effective_score == 0.0 and [f.code for f in r.check("D1-14").findings] == ["missing"]
+
+
+def test_attach_reference_starting_document_has_no_model_work_but_the_base_does():
+    task = generate_task(4, task_type="attach-reference")
+    doc = Document.from_dict(task.baseline)
+    assert doc.model_entities == {} and doc.sheets and not doc.references
+    assert list(task.files) == [task.brief.deliverable["basefile"]]
+    base = Document.from_dict(task.files[task.brief.deliverable["basefile"]])
+    kinds = {e.anchor["kind"] for e in base.model_entities.values() if e.anchor}
+    assert kinds >= {"element", "offset", "tick", "station", "bearing", "mc"}
+    assert base.design.fingerprint() == task.truth.design_fingerprint
+
+
+def test_layer_setup_names_at_vague_properties_at_explicit():
+    b = _prep("layer-setup")
+    r = b.verify()
+    assert r.effective_score == 100.0 and r.scope == ["layers"]
+    assert [c.id for c in r.in_scope()] == ["D1-09"]
+    b.ex("modify_layer", {"name": "V-ROAD-EOP", "changes": {"color": "green"}})
+    assert b.verify("vague").effective_score == 100.0
+    r = b.verify("explicit")
+    assert r.check("D1-09").credit == pytest.approx(5 / 6)
+    assert [f.code for f in r.check("D1-09").findings] == ["wrong_layer_props"]
+    # the standard set is six layers; the starting document had only layer 0
+    doc = Document.from_dict(b.task.baseline)
+    assert list(doc.layers) == ["0"]
+    r0 = verify(doc, b.truth, prompt_level="vague")
+    assert r0.effective_score == 0.0 and len(r0.check("D1-09").findings) >= 6
+
+
+def test_pavement_combo_asks_for_both():
+    b = _prep("pavement")
+    r = b.verify()
+    assert r.scope == ["edges", "widths"] and r.effective_score == 100.0
+    assert [c.id for c in r.in_scope()] == ["D1-08", "D1-09", "D1-12", "D1-13"]

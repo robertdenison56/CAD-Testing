@@ -8,7 +8,7 @@ import json
 import pytest
 
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
-from roaddraft.tasks.types import GROUPS
+from roaddraft.tasks.types import LAYOUT_GROUPS
 from roaddraft.verify import FINDING_CODES, VALUE_CODES, VERIFIER_VERSION, Finding, verify
 from roaddraft.verify.checks import CHECKS
 from roaddraft.verify.rubric import score_checks
@@ -28,15 +28,16 @@ def test_report_shape():
                        "prompt_level", "scope", "design_fingerprint_ok", "rubric_score",
                        "hard_failed", "effective_score", "scope_weight", "findings", "checks",
                        "counts"]
-    assert d["scope"] == list(GROUPS) and d["scope_weight"] == 100
+    assert d["scope"] == list(LAYOUT_GROUPS) and d["scope_weight"] == 100
     assert d["verifier_version"] == VERIFIER_VERSION and d["spec_hash"] == spec_hash()
     assert d["spec_version"] == DRAFTING_SPEC_V1["version"] and d["task_id"] == b.task.task_id
     assert [c["id"] for c in d["checks"]] == [c["id"] for c in DRAFTING_SPEC_V1["checks"]]
-    assert sum(c["weight"] for c in d["checks"]) == 100
+    assert sum(c["weight"] for c in d["checks"] if c["in_scope"]) == 100
+    assert sum(c["weight"] for c in d["checks"]) == 119  # with the plan-prep checks
     for c in d["checks"]:
-        assert set(c) == {"id", "name", "weight", "credit", "points", "hard_fail",
+        assert set(c) >= {"id", "name", "weight", "credit", "points", "hard_fail",
                           "hard_fail_triggered", "in_scope", "findings"}
-        assert c["in_scope"] is True
+        assert c["in_scope"] is (c["id"] <= "D1-11")
     assert json.loads(json.dumps(d)) == d
     with_timing = verify(b.doc, b.truth).to_dict(include_timing=True)
     assert with_timing["timing_ms"] > 0

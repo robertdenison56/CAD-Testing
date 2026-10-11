@@ -32,13 +32,14 @@ from roaddraft.design.stations import build_equations
 from roaddraft.design.vertical import PVI, Profile
 from roaddraft.document.document import Document
 from roaddraft.document.entities import Table
+from roaddraft.document.fileformat import INTERCHANGE_EXT
 from roaddraft.document.sheets import SHEET_SIZES, Sheet
 from roaddraft.tasks.brief import GENERATOR_VERSION, Task, TaskBrief, compute_task_id
 from roaddraft.tasks.ground_truth import compute_ground_truth
 from roaddraft.tasks.prompts import render_prompts
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, SPEC_VERSION, spec_hash, spec_subset
 from roaddraft.tasks.standards import max_grade, min_k, min_radius
-from roaddraft.tasks.types import DEFAULT_TYPE, TaskType
+from roaddraft.tasks.types import DEFAULT_TYPE, PHASE_ORDER, TaskType
 from roaddraft.tasks.types import task_type as _task_type
 
 SPEEDS = [35, 40, 45, 50, 55]
@@ -67,6 +68,16 @@ MATCH_END_CLEAR_FT = 300.0
 MATCH_HALF_IN = 2.0
 MATCH_LABEL_OFFSET_IN = 3.5
 SAMPLE_STEP_FT = 10.0
+# pavement width dimensions: the dimension line sits 0.1 in ahead of its station on
+# paper, and a wide text gap sets the text (which cannot fit between the edges at plan
+# scale) past 0.5 in right of the centerline, outside the band the BC/EC labels use;
+# the station keeps the extension lines on the tangent and the text clear of an
+# equation label
+WIDTH_DIM_LINE_IN = 0.1
+WIDTH_TEXT_GAP_FACTOR = 1.5  # x text height; the engine's default is 0.5
+WIDTH_AHEAD_IN = 0.25
+WIDTH_BEHIND_IN = 0.15
+WIDTH_CLEAR_IN = 1.6
 ALIGNMENT_NAME = "ALIGN-1"
 PROFILE_NAME = "PROF-1"
 SHEET_NAMES = ["C-101", "C-102", "C-103", "C-104"]
@@ -331,6 +342,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     # ---- fit loop: deterministic shrinking, no new draws
     fit = None
     warnings: List[str] = []
+    rotated = False
     for attempt in range(FIT_ATTEMPTS + 1):
         pis = _build_pis(x0, y0, d0, radii, deltas, turns, extras)
         elements = compile_pis(pis)
@@ -340,6 +352,13 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
             break
         if attempt == FIT_ATTEMPTS:
             raise AssertionError(f"generator bug: seed {seed} never fit {n_sheets} sheet(s)")
+        if n_sheets > 1 and not rotated:
+            # a two-sheet layout is long: lay the BEGIN-END chord along the sheet
+            # before shrinking anything, or the match line runs out of tangent
+            rotated = True
+            chord = direction_of(pis[0].point, pis[-1].point)
+            d0 = (d0 - chord) % 360.0
+            continue
         extras = [max(MIN_EXTRA_FT, e * 0.7) for e in extras]
         radii = [max(r_floor, math.ceil(r * 0.85 / 50.0) * 50.0) for r in radii]
         deltas = [max(_delta_floor(r), math.floor(d * 0.85 * 2.0) / 2.0)
@@ -377,9 +396,14 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     agency = rng.choice(AGENCIES)
     county = rng.choice(COUNTIES)
     date = (_dt.date(2026, 1, 1) + _dt.timedelta(days=int(seed) % 365)).isoformat()
+    pave = DRAFTING_SPEC_V1["pavement"]
+    lane_width = float(rng.choice(pave["lane_widths_ft"]))
+    half_width = lane_width * pave["lanes"] / 2.0
     project = {"name": f"{route} {kind}", "agency": agency, "route": route, "county": county,
                "design_speed_mph": v_mph, "designed_by": "RD", "drawn_by": "AGENT",
-               "checked_by": "RD", "date": date}
+               "checked_by": "RD", "date": date,
+               "typical_section": {"lanes": pave["lanes"], "lane_width_ft": lane_width,
+                                   "pavement_width_ft": 2.0 * half_width}}
 
     # ---- deliverable
     spec = DRAFTING_SPEC_V1
@@ -438,8 +462,25 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                 "sheet_number": name, "total_sheets": str(n_sheets), "designed_by": "RD",
                 "drawn_by": "AGENT", "checked_by": "RD", "date": date, "scale": scale_text},
             "matches": matches})
+    eq_raws = [float(q.raw_station) for q in align.equations]
+    width_dims = []
+    for n, t in enumerate(align.tangents(), start=1):
+        raw = _width_station(begin_station + t.start_dist, begin_station + t.end_dist,
+                             eq_raws, fpi)
+        if raw is not None:  # a tangent too short to dimension cleanly is left alone
+            width_dims.append({"ref": f"T-{n}", "station": raw, "station_text": st.format(raw),
+                               "line_offset_ft": _round2(WIDTH_DIM_LINE_IN * fpi),
+                               "text_gap_ft": _round2(WIDTH_TEXT_GAP_FACTOR
+                                                      * spec["text"]["label_height_in"] * fpi)})
+    if "widths" in ttype.asks and not width_dims:
+        raise ValueError(f"seed {seed} has no tangent long enough to dimension the pavement "
+                         f"width; use another seed for a {ttype.name} task")
     deliverable = {
         "task_type": ttype.name, "sheets": sheet_dicts, "feet_per_inch": float(fpi),
+        "pavement": {"half_width_ft": half_width, "offsets_ft": [-half_width, half_width],
+                     "layer": DRAFTING_SPEC_V1["layers"]["edges"]},
+        "width_dimensions": width_dims,
+        "dims_layer": DRAFTING_SPEC_V1["layers"]["dims"],
         "stationing_interval_ft": spec["stationing"]["interval_ft"],
         "station_format": spec["stationing"]["format"],
         "required_label_kinds": ["station", "pc", "pt", "bearing", "mc", "curve_table"],
@@ -457,6 +498,8 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     }
     if align.equations:
         deliverable["required_label_kinds"].append("equation")
+    if ttype.basefile:
+        deliverable["basefile"] = f"{route.replace(' ', '')}-base{INTERCHANGE_EXT}"
     design = {"design_speed_mph": v_mph,
               "alignments": {ALIGNMENT_NAME: align.to_dict()},
               "profiles": {PROFILE_NAME: profile.to_dict()}}
@@ -473,20 +516,48 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     if warnings:
         brief.instructions += "\nNote: " + "; ".join(warnings) + "."
 
-    # ---- truth, then the starting document: the design plus the given phases
+    # ---- truth, then the starting document (the design plus the given phases) and,
+    # for a basefile type, the base drawing shipped beside it
     truth = compute_ground_truth(brief)
     doc = _baseline(design, project, task_id, v_mph, county, agency)
     task = Task(brief=brief, truth=truth, baseline=doc.to_dict())
+    if ttype.basefile:
+        base = _draft(task, ["layers"] + sorted(ttype.basefile, key=PHASE_ORDER.index), seed)
+        base.meta["description"] = f"{project['name']} — base drawing"
+        task.files[deliverable["basefile"]] = base.to_dict()
     if ttype.given:
-        from roaddraft.tasks.reference import phase_commands, session_for_task
-        session = session_for_task(task)
-        for name, params in phase_commands(task, [p for p in ttype.given]):
-            result = session.execute(name, params)
-            if not result["ok"]:
-                raise AssertionError(f"generator bug: starting document for {ttype.name} seed "
-                                     f"{seed}: {name} failed: {result['error']['message']}")
-        task.baseline = session.doc.to_dict()
+        task.baseline = _draft(task, sorted(ttype.given, key=PHASE_ORDER.index), seed).to_dict()
     return task
+
+
+def _draft(task: Task, phases: List[str], seed: int) -> Document:
+    """The task's bare starting document with ``phases`` drafted on it."""
+    from roaddraft.tasks.reference import phase_commands, session_for_task
+    session = session_for_task(task)
+    for name, params in phase_commands(task, phases):
+        result = session.execute(name, params)
+        if not result["ok"]:
+            raise AssertionError(f"generator bug: drafting {phases} for {task.brief.task_type} "
+                                 f"seed {seed}: {name} failed: {result['error']['message']}")
+    return session.doc
+
+
+def _width_station(lo: float, hi: float, avoid: List[float], fpi: float) -> Optional[float]:
+    """Where a tangent's pavement width is dimensioned: the half station
+    (xx+50) nearest its midpoint, ``WIDTH_AHEAD_IN`` short of the tangent's end
+    and ``WIDTH_BEHIND_IN`` past its start (so the extension lines stay on
+    the tangent) and ``WIDTH_CLEAR_IN`` from an equation label in ``avoid``
+    (whose band the dimension's text shares).  Half stations sit between the
+    station labels.  The midpoint itself when no half station will do; None
+    when nothing will."""
+    mid = (lo + hi) / 2.0
+    half_sta = math.floor(mid / 100.0) * 100.0 + 50.0
+    ahead, behind, clear = WIDTH_AHEAD_IN * fpi, WIDTH_BEHIND_IN * fpi, WIDTH_CLEAR_IN * fpi
+    for raw in (half_sta, half_sta - 100.0, half_sta + 100.0, half_sta - 200.0,
+                half_sta + 200.0, mid):
+        if lo + behind <= raw <= hi - ahead and all(abs(raw - a) >= clear for a in avoid):
+            return float(raw)
+    return None
 
 
 __all__ = ["generate_task", "segment_points", "ALIGNMENT_NAME", "PROFILE_NAME", "SPEEDS",

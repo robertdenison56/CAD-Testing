@@ -103,6 +103,10 @@ class GroundTruth:
     elements: List[dict] = field(default_factory=list)
     curve_tables: List[dict] = field(default_factory=list)
     sheets: List[dict] = field(default_factory=list)
+    edges: List[dict] = field(default_factory=list)       # offset pieces of the pavement edges
+    dimensions: List[dict] = field(default_factory=list)  # width dimensions, one per tangent
+    references: List[dict] = field(default_factory=list)  # base drawings to attach
+    layers: List[str] = field(default_factory=list)       # the standard layer set
     scope: List[str] = field(default_factory=list)
     counts: Dict[str, int] = field(default_factory=dict)
 
@@ -131,7 +135,9 @@ class GroundTruth:
 class Task:
     brief: TaskBrief
     truth: GroundTruth
-    baseline: dict  # Document JSON with the design pre-seeded
+    baseline: dict  # Document JSON: the starting document (design pre-seeded, given phases drawn)
+    #: other files the task ships, by file name: a base drawing to attach, as Document JSON
+    files: Dict[str, dict] = field(default_factory=dict)
 
     @property
     def task_id(self) -> str:

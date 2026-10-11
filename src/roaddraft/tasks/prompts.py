@@ -59,6 +59,10 @@ class _Words:
         self.has_eq = "equation" in self.D["required_label_kinds"]
         self.matches = [m for sh in self.sheets for m in sh.get("matches", [])]
         self.match = self.matches[0] if self.matches else None
+        self.section = self.P.get("typical_section") or {}
+        self.pave = self.D.get("pavement") or {}
+        self.width_dims = self.D.get("width_dimensions") or []
+        self.basefile = self.D.get("basefile")
 
     # -- nouns
     @property
@@ -170,15 +174,40 @@ class _Words:
     def breaking(self) -> str:
         return f", breaking at station {self.match['station_text']}" if self.match else ""
 
+    # -- plan prep
+    def section_words(self) -> str:
+        lanes, lw = self.section.get("lanes", 2), self.section.get("lane_width_ft", 12)
+        words = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+        return f"{self.A} is {words.get(lanes, lanes)} {lw:g}-ft lanes"
+
+    def edges(self) -> str:
+        half = self.pave.get("half_width_ft", 12)
+        return (f"its edges of pavement: a constant offset of the centerline {half:g} ft each "
+                f"side, following it through the curves, on {self.layer('edges')}")
+
+    def widths(self) -> str:
+        width = self.section.get("pavement_width_ft", 24)
+        where = ", ".join(f"{wd['station_text']} on {wd['ref']}" for wd in self.width_dims)
+        return (f"the pavement width across each tangent: an aligned dimension between the two "
+                f"edges of pavement at station {where}, text {self.label_h}, reading "
+                f"{width:.2f}', on {self.layer('dims')}")
+
+    def layer_list(self, with_props: bool) -> str:
+        if with_props:
+            return ", ".join(self.layer(role) for role in self.layers).replace("layer ", "")
+        return ", ".join(self.layers.values())
+
     # -- what is already there
     def done(self) -> str:
         given = [p for p in PHASE_ORDER if p in self.type.given and p != "layers"]
         if not given:
             return ""
-        words = {"linework": "the centerline linework", "stationing": "the stationing",
-                 "bearings": "the bearings", "callouts": "the curve callouts",
+        words = {"linework": "the centerline linework", "edges": "the pavement edges",
+                 "stationing": "the stationing", "bearings": "the bearings",
+                 "callouts": "the curve callouts", "widths": "the width dimensions",
                  "sheet": f"{self.sheet_list} with {'their viewports' if self.many else 'its viewport'}"
                           + (" and the match line" if self.match else ""),
+                 "reference": "the base drawing reference",
                  "table": "the curve data table" + ("s" if self.many else ""),
                  "north": "the north arrow" + ("s" if self.many else ""),
                  "title": "the title block" + ("s" if self.many else "")}
@@ -275,6 +304,47 @@ def _plan_sheet(w: _Words, explicit: bool) -> str:
             f"in the design{w.breaking()}. Set up {layout}. Show:\n{_bullets(items)}")
 
 
+# -- plan prep
+
+
+def _layer_setup(w: _Words, explicit: bool) -> str:
+    if explicit:
+        return (f"Create the office's standard layers in this drawing: "
+                f"{w.layer_list(with_props=True)}. Nothing is drawn yet; draw nothing.")
+    return f"Set up the standard layers: {w.layer_list(with_props=False)}."
+
+
+def _pavement_edges(w: _Words, explicit: bool) -> str:
+    if explicit:
+        return f"{w.section_words()}. Draw {w.edges()}.{w.done()}"
+    return f"{w.section_words()}. Draw the pavement edges."
+
+
+def _pavement_widths(w: _Words, explicit: bool) -> str:
+    if explicit:
+        return f"{w.section_words()}. Dimension {w.widths()}.{w.done()}"
+    return f"Dimension the pavement width on each tangent of {w.A}."
+
+
+def _pavement(w: _Words, explicit: bool) -> str:
+    if explicit:
+        return (f"{w.section_words()}. Draw {w.edges()}, then dimension {w.widths()}."
+                f"{w.done()}")
+    return f"{w.section_words()}. Draw the pavement edges and dimension the width on each tangent."
+
+
+def _attach_reference(w: _Words, explicit: bool) -> str:
+    ref = w.S.get("reference", {})
+    if explicit:
+        return (f"This is the sheet file for {w.sheet_list}: the sheet{'s' if w.many else ''} and "
+                f"{'their viewports' if w.many else 'its viewport'} on {w.A} are set up, but the "
+                f"drawing itself lives in the base file {w.basefile} beside it. Attach that file "
+                f"as a reference named {ref.get('name', 'BASE')} into {ref.get('space', 'model')} "
+                f"space at its own coordinates (no offset, rotation or scale), visible and "
+                f"unclipped, so it shows through the viewport{'s' if w.many else ''}.")
+    return f"Attach the base drawing {w.basefile} to this sheet file."
+
+
 PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "draw-alignment": _draw_alignment,
     "stationing": _stationing,
@@ -285,6 +355,11 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "sheet-setup": _sheet_setup,
     "annotate-sheet": _annotate_sheet,
     "plan-sheet": _plan_sheet,
+    "layer-setup": _layer_setup,
+    "pavement-edges": _pavement_edges,
+    "pavement-widths": _pavement_widths,
+    "pavement": _pavement,
+    "attach-reference": _attach_reference,
 }
 
 

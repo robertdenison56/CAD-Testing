@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 from roaddraft.core import geometry as geo
-from roaddraft.document.entities import BlockRef, Table, Text
+from roaddraft.document.entities import BlockRef, Dimension, Table, Text
 from roaddraft.verify.context import Context, Rect, SheetView
 
 OVERLAP_EPS_IN = 0.005
@@ -41,6 +41,18 @@ def text_quad(position: Sequence[float], content: str, height: float, rotation_d
     return [geo.translate_point(geo.rotate_point(c, rotation_deg), position) for c in corners]
 
 
+def _texts(doc, entities):
+    """``(owner id, Text)`` for every text in ``entities``: text entities
+    themselves and the text a dimension draws."""
+    for e in entities:
+        if isinstance(e, Text):
+            yield e.id, e
+        elif isinstance(e, Dimension):
+            for prim in e.primitives(doc):
+                if isinstance(prim, Text) and prim.content:
+                    yield e.id, prim
+
+
 def _box_quad(bb: Rect) -> Quad:
     return [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]
 
@@ -60,24 +72,22 @@ def sheet_items(ctx: Context, sv: Optional[SheetView] = None) -> List[Item]:
     for view in sv.views:
         fpi = float(view.vp.feet_per_inch)
         twist = float(view.vp.rotation_deg)
-        for e in doc.model_entities.values():
-            if not isinstance(e, Text):
-                continue
+        for owner, e in _texts(doc, doc.model_entities.values()):
             q = view.transform.to_paper(e.position)
             if not (view.rect[0] <= q[0] <= view.rect[2] and view.rect[1] <= q[1] <= view.rect[3]):
                 continue
             style = doc.text_styles.get(e.style)
-            items.append(_item(e.id, text_quad(q, e.content, e.height / fpi, e.rotation_deg + twist,
-                                               e.halign, e.valign,
-                                               style.width_factor if style else 1.0)))
+            items.append(_item(owner, text_quad(q, e.content, e.height / fpi, e.rotation_deg + twist,
+                                                e.halign, e.valign,
+                                                style.width_factor if style else 1.0)))
     if sv.sheet is not None:
+        for owner, e in _texts(doc, sv.sheet.entities.values()):
+            style = doc.text_styles.get(e.style)
+            items.append(_item(owner, text_quad(e.position, e.content, e.height, e.rotation_deg,
+                                                e.halign, e.valign,
+                                                style.width_factor if style else 1.0)))
         for e in sv.sheet.entities.values():
-            if isinstance(e, Text):
-                style = doc.text_styles.get(e.style)
-                items.append(_item(e.id, text_quad(e.position, e.content, e.height, e.rotation_deg,
-                                                   e.halign, e.valign,
-                                                   style.width_factor if style else 1.0)))
-            elif isinstance(e, (Table, BlockRef)):
+            if isinstance(e, (Table, BlockRef)):
                 bb = e.bbox(doc)
                 if bb is not None:
                     items.append(_item(e.id, _box_quad(bb)))

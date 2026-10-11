@@ -30,17 +30,26 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
+from pathlib import Path
+
 from roaddraft.commands.bus import ANCHOR_PRODUCERS
-from roaddraft.document.entities import BlockRef, Entity, Line, Polyline, Table
+from roaddraft.core import geometry as geo
+from roaddraft.design.errors import DesignError
+from roaddraft.document import dimgeom
+from roaddraft.document.entities import BlockRef, Dimension, Entity, Line, Polyline, Table
+from roaddraft.tasks.types import GROUP_LAYER_ROLE
 from roaddraft.verify.context import Context, SheetView, rect_inside
 from roaddraft.verify.geometry import (
-    LineworkResult, TickMatch, crosses_at, match_linework, match_ticks, pieces_of, same_piece,
+    LineworkResult, TickMatch, crosses_at, match_edges, match_linework, match_ticks, pieces_of,
+    same_piece,
 )
 from roaddraft.verify.legibility import outside, overlapping_pairs, sheet_items
 from roaddraft.verify.match import LabelIndex, index_labels
 from roaddraft.verify.normalize import normalize
 from roaddraft.verify.report import Finding
 from roaddraft.verify.semantic import column_key, same_cell, same_match_label, scale_fpi
+
+_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 _CURVE_NO = re.compile(r"^C(?:URVE)?\s*(?:NO\.?)?\s*[-#]?\s*(\d+)$", re.I)
 
@@ -199,12 +208,90 @@ def analyze_tables(ctx: Context) -> Dict[str, TableResult]:
 
 
 @dataclass
+class DimMatch:
+    """One truth width dimension and the document's best answer to it."""
+
+    truth: dict
+    chosen: Optional[Dimension] = None  # a dimension across the pavement on this tangent
+    at_station: bool = False            # ... at the stated station
+    text_ok: bool = False               # ... reading the width
+
+    @property
+    def credited(self) -> bool:
+        return self.chosen is not None and self.at_station and self.text_ok
+
+    @property
+    def anchor(self) -> dict:
+        return {"ref": self.truth["ref"], "kind": "width", "station": self.truth["station_text"]}
+
+
+def _dimension_points(dim: Dimension):
+    if dim.kind not in ("linear", "aligned") or dim.p2 is None:
+        return None
+    return dim.p1, dim.p2
+
+
+def analyze_dimensions(ctx: Context) -> List[DimMatch]:
+    """Match the truth's width dimensions: a model-space linear/aligned
+    dimension whose two points sit on the two pavement edges at one station
+    on the tangent.  Explicit: at the stated station, text exact.  Vague:
+    anywhere on the tangent, text by value."""
+    out: List[DimMatch] = []
+    if not ctx.truth.dimensions or ctx.alignment is None:
+        return out
+    align = ctx.alignment
+    tol = float(ctx.tol["position_model_ft"])
+    sta_tol = float(ctx.tol["station_ft"])
+    exact = ctx.states("label_format")
+    dims = [e for e in ctx.doc.model_entities.values() if isinstance(e, Dimension)]
+    for want in ctx.truth.dimensions:
+        m = DimMatch(truth=want)
+        half = float(want["value"]) / 2.0
+        lo, hi = want["tangent_range"]
+        best = None
+        for dim in dims:
+            pts = _dimension_points(dim)
+            if pts is None:
+                continue
+            try:
+                a, b = (align.xy_to_station(q) for q in pts)
+            except DesignError:
+                continue
+            offsets = sorted((a["offset"], b["offset"]))
+            if abs(offsets[0] + half) > tol or abs(offsets[1] - half) > tol:
+                continue
+            if abs(a["station"] - b["station"]) > sta_tol:
+                continue
+            station = (a["station"] + b["station"]) / 2.0
+            if not (lo - sta_tol <= station <= hi + sta_tol):
+                continue
+            at_station = abs(station - float(want["station"])) <= sta_tol
+            text = dimgeom.text_of(dim)
+            if exact:
+                text_ok = normalize(text) == normalize(want["text"])
+            else:
+                nums = _NUMBER.findall(text)
+                text_ok = bool(nums) and abs(float(nums[0]) - float(want["value"])) <= 0.005 + 1e-9
+            score = (text_ok, at_station or not exact, at_station, dim.id)
+            if best is None or score > best[0]:
+                best = (score, dim, at_station, text_ok)
+        if best is not None:
+            _, m.chosen, m.at_station, m.text_ok = best
+            if not exact:
+                m.at_station = True  # anywhere on the tangent will do
+        out.append(m)
+    return out
+
+
+@dataclass
 class Analysis:
     ctx: Context
     labels: LabelIndex
     linework: Optional[LineworkResult]
     ticks: List[TickMatch]
     tables: Dict[str, TableResult]
+    edges: Optional[LineworkResult] = None
+    dimensions: List[DimMatch] = field(default_factory=list)
 
     def anchor(self, ref: str, kind: str) -> dict:
         return {"alignment": self.ctx.alignment_name, "ref": ref, "kind": kind}
@@ -222,8 +309,12 @@ def analyze(ctx: Context) -> Analysis:
     ticks = match_ticks(ctx.truth.ticks, model, tol, exact=ctx.states("tick_length"),
                         rot_tol_deg=float(ctx.tol["rotation_deg"]),
                         length_range=(lo * ctx.fpi_used, hi * ctx.fpi_used))
+    edges = None
+    if ctx.truth.edges and ctx.alignment is not None and ctx.asks("edges"):
+        edges = match_edges(ctx.alignment, ctx.truth.edges, model, ctx.layers["edges"], tol)
     return Analysis(ctx=ctx, labels=index_labels(ctx), linework=linework, ticks=ticks,
-                    tables=analyze_tables(ctx))
+                    tables=analyze_tables(ctx), edges=edges,
+                    dimensions=analyze_dimensions(ctx) if ctx.asks("widths") else [])
 
 
 def _mean(values: List[float]) -> float:
@@ -472,6 +563,7 @@ def check_legibility(a: Analysis) -> Result:  # D1-08
     block = ctx.spec["sheet"]["north_arrow"]["block"]
     present = (any(m.chosen is not None and m.chosen.visible for m in a.labels.matches)
                or (ctx.asks("table") and bool(a.chosen_tables()))
+               or (ctx.asks("widths") and any(dm.chosen is not None for dm in a.dimensions))
                or (ctx.asks("sheet") and ctx.any_sheet)
                or (ctx.asks("north") and any(
                    isinstance(e, BlockRef) and e.block_name == block
@@ -503,7 +595,8 @@ def check_standards(a: Analysis) -> Result:  # D1-09
     total = conforming = 0
 
     exact_layers, exact_heights = ctx.states("layers"), ctx.states("text_heights")
-    ranges = {"labels": ctx.lenient["label_height_in"], "tables": ctx.lenient["table_height_in"]}
+    ranges = {"labels": ctx.lenient["label_height_in"], "tables": ctx.lenient["table_height_in"],
+              "dims": ctx.lenient["label_height_in"]}
 
     def height_ok(h: float, role: str, target: float) -> bool:
         if exact_heights:
@@ -559,25 +652,47 @@ def check_standards(a: Analysis) -> Result:  # D1-09
             t = ev.table
             item(t, "tables", dict(ctx.truth.curve_table["anchor"]), float(t.text_height),
                  float(text["table_height_in"]))
+    if a.edges is not None:
+        for em in a.edges.elements:
+            if em.hits:
+                hit = next((h for h in em.hits if h.entity.layer == layers["edges"]), em.hits[0])
+                item(hit.entity, "edges", a.anchor(em.ref, "edge"))
+    for dm in a.dimensions:
+        if dm.chosen is not None:
+            item(dm.chosen, "dims", dm.anchor, float(dm.chosen.text_height) / ctx.fpi_used,
+                 float(text["label_height_in"]))
     work = total
-    for name, want in (props.items() if exact_layers else ()):
+    # the layer set: every standard layer when the task is to set them up, else (at
+    # the explicit level) the layers the asked-for work is drawn on
+    if ctx.asks("layers"):
+        names = list(layers.values())
+    elif exact_layers:
+        names = []
+        for g in GROUP_LAYER_ROLE:
+            if g in ctx.scope and layers[GROUP_LAYER_ROLE[g]] not in names:
+                names.append(layers[GROUP_LAYER_ROLE[g]])
+    else:
+        names = []
+    for name in names:
         total += 1
+        want = props.get(name, {})
         layer = ctx.doc.layers.get(name)
         if layer is None:
-            findings.append(Finding("wrong_layer_props", expected=dict(want),
+            findings.append(Finding("missing", expected=dict(want) if exact_layers else None,
                                     note=f"layer {name} does not exist"))
             continue
-        have = {"color": layer.color, "linetype": layer.linetype,
-                "lineweight_mm": layer.lineweight_mm}
-        wrong = {k: have[k] for k, v in want.items()
-                 if (abs(float(have[k]) - float(v)) > 1e-6 if k == "lineweight_mm"
-                     else have[k] != v)}
-        if wrong:
-            findings.append(Finding("wrong_layer_props", expected=dict(want), actual=wrong,
-                                    note=f"layer {name} properties"))
-        else:
-            conforming += 1
-    if work == 0:
+        if exact_layers:
+            have = {"color": layer.color, "linetype": layer.linetype,
+                    "lineweight_mm": layer.lineweight_mm}
+            wrong = {k: have[k] for k, v in want.items()
+                     if (abs(float(have[k]) - float(v)) > 1e-6 if k == "lineweight_mm"
+                         else have[k] != v)}
+            if wrong:
+                findings.append(Finding("wrong_layer_props", expected=dict(want), actual=wrong,
+                                        note=f"layer {name} properties"))
+                continue
+        conforming += 1
+    if total == 0 or (work == 0 and not ctx.asks("layers")):
         return 0.0, [Finding("missing", note="no required work to judge")] + findings
     return conforming / total, findings
 
@@ -645,6 +760,91 @@ def check_north_arrow(a: Analysis) -> Result:  # D1-11
     return _mean(credits), findings
 
 
+def check_pavement_edges(a: Analysis) -> Result:  # D1-12
+    if a.edges is None:
+        return 0.0, [Finding("missing", note="no pavement edges in the truth")]
+    layer = a.ctx.layers["edges"]
+    findings = []
+    for em in a.edges.elements:
+        anchor = a.anchor(em.ref, "edge")
+        if not em.hits:
+            findings.append(Finding("missing", anchor=anchor,
+                                    note="no linework matches this piece of the pavement edge"))
+        elif not any(h.entity.layer == layer for h in em.hits):
+            findings.append(Finding("wrong_layer", anchor=anchor,
+                                    entity_ids=sorted({h.entity.id for h in em.hits}),
+                                    expected=layer,
+                                    actual=sorted({h.entity.layer for h in em.hits})))
+    matched = sum(1 for em in a.edges.elements if em.hits)
+    complete = matched == len(a.edges.elements)
+    for e in a.edges.bad_entities:
+        findings.append(Finding(
+            "extra_linework" if complete else "geometry_mismatch", entity_ids=[e.id],
+            note="linework on the pavement edge layer that is not part of the edges" if complete
+            else "linework on the pavement edge layer that is not at the pavement width"))
+    return (matched / len(a.edges.elements) if a.edges.elements else 1.0), findings
+
+
+def check_pavement_widths(a: Analysis) -> Result:  # D1-13
+    findings, ok = [], 0
+    for dm in a.dimensions:
+        if dm.chosen is None:
+            findings.append(Finding("missing", anchor=dm.anchor,
+                                    note="no dimension across the pavement on this tangent"))
+        elif not dm.text_ok:
+            findings.append(Finding("wrong_value", anchor=dm.anchor, entity_ids=[dm.chosen.id],
+                                    expected=dm.truth["text"], actual=dimgeom.text_of(dm.chosen),
+                                    note="the width dimension reads wrong"))
+        elif not dm.at_station:
+            findings.append(Finding("misplaced", anchor=dm.anchor, entity_ids=[dm.chosen.id],
+                                    expected=dm.truth["station_text"],
+                                    note="the width is dimensioned at another station of this "
+                                         "tangent"))
+        else:
+            ok += 1
+    return (ok / len(a.dimensions) if a.dimensions else 1.0), findings
+
+
+def check_reference(a: Analysis) -> Result:  # D1-14
+    ctx = a.ctx
+    credits, findings = [], []
+    tol = float(ctx.tol["position_model_ft"])
+    for want in ctx.truth.references:
+        refs = [r for r in ctx.doc.references.values() if Path(r.path).name == want["file"]]
+        if not refs:
+            findings.append(Finding("missing", expected=want["file"],
+                                    note="the base drawing is not attached as a reference"))
+            credits.append(0.0)
+            continue
+        r = sorted(refs, key=lambda r: r.id)[0]
+        credit = 0.5
+        space_ok = (r.space == want.get("space", "model")) and r.model == "model"
+        identity = (geo.distance(r.offset, [0.0, 0.0]) <= tol
+                    and abs(r.rotation_deg) <= float(ctx.tol["rotation_deg"])
+                    and abs(r.scale - 1.0) <= 1e-6)
+        if space_ok and identity:
+            credit += 0.25
+        else:
+            findings.append(Finding("misplaced", entity_ids=[r.id],
+                                    expected={"space": want.get("space", "model"), "offset": [0, 0],
+                                              "rotation_deg": 0, "scale": 1},
+                                    actual={"space": r.space, "offset": list(r.offset),
+                                            "rotation_deg": r.rotation_deg, "scale": r.scale,
+                                            "model": r.model},
+                                    note="the reference is not attached at its own coordinates "
+                                         "in model space"))
+        if r.visible and r.clip is None and not r.masks:
+            credit += 0.25
+        else:
+            findings.append(Finding("not_visible", entity_ids=[r.id],
+                                    note="the reference is hidden or clipped"))
+        if ctx.states("match_line") and want.get("name") and r.name != want["name"]:
+            findings.append(Finding("wrong_field", entity_ids=[r.id], expected=want["name"],
+                                    actual=r.name, note="the reference name"))
+        credits.append(credit)
+    return _mean(credits), findings
+
+
 CHECKS: Dict[str, Callable[[Analysis], Result]] = {
     "D1-00": check_sheet_setup,
     "D1-01": check_linework,
@@ -658,6 +858,9 @@ CHECKS: Dict[str, Callable[[Analysis], Result]] = {
     "D1-09": check_standards,
     "D1-10": check_title_block,
     "D1-11": check_north_arrow,
+    "D1-12": check_pavement_edges,
+    "D1-13": check_pavement_widths,
+    "D1-14": check_reference,
 }
 
 __all__ = ["CHECKS", "Analysis", "analyze", "evaluate_table", "TableEval", "TableResult"]

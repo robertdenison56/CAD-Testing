@@ -28,11 +28,20 @@ DRAFTING_SPEC_V1 = {
             "fit_window_in": [26.0, 15.0], "north_arrow": {"required": True, "block": "NORTH_ARROW", "position": [31.6, 19.2], "scale": 0.9},
             "required_title_fields": ["project", "agency", "sheet_title", "sheet_number", "total_sheets", "designed_by", "drawn_by", "checked_by", "date", "scale"],
             "scale_text_format": "1\" = {fpi:.0f}'"},
-  "layers": {"alignment": "V-ALIGN-CNTR", "ticks": "V-ROAD-STA", "labels": "V-ANNO-TEXT", "tables": "V-ANNO-TABL"},
+  "layers": {"alignment": "V-ALIGN-CNTR", "ticks": "V-ROAD-STA", "labels": "V-ANNO-TEXT", "tables": "V-ANNO-TABL",
+             "edges": "V-ROAD-EOP", "dims": "V-ANNO-DIMS"},
   "layer_props": {"V-ALIGN-CNTR": {"color": "red", "linetype": "center", "lineweight_mm": 0.35},
                   "V-ROAD-STA": {"color": "gray", "lineweight_mm": 0.18},
                   "V-ANNO-TEXT": {"color": "black", "lineweight_mm": 0.25},
-                  "V-ANNO-TABL": {"color": "black", "lineweight_mm": 0.25}},
+                  "V-ANNO-TABL": {"color": "black", "lineweight_mm": 0.25},
+                  "V-ROAD-EOP": {"color": "blue", "lineweight_mm": 0.35},
+                  "V-ANNO-DIMS": {"color": "black", "lineweight_mm": 0.25}},
+  # the typical section (plan prep, decided 2026-10-10): two lanes, the edge of pavement a
+  # lane width each side of the centerline, the width dimensioned across each tangent
+  "pavement": {"lanes": 2, "lane_widths_ft": [11, 12], "edge_layer": "V-ROAD-EOP",
+               "width_dimension": {"kind": "aligned", "per": "tangent", "at": "the even station nearest the tangent's midpoint",
+                                   "layer": "V-ANNO-DIMS", "text_height_in": 0.10, "format": "24.00'"}},
+  "reference": {"name": "BASE", "space": "model", "placement": "identity (no offset, rotation or scale), visible, unclipped"},
   "text": {"label_height_in": 0.10, "table_height_in": 0.12, "height_tolerance_pct": 10},
   "stationing": {"interval_ft": 100, "format": "12+34.56", "decimals": 2, "tick_half_len_in": 0.20, "label_offset_in": 0.32, "label_side": "left", "rotation": "along"},
   # BC/EC, as Caltrans letters curve points (ppm-text p. 2-85, pdf 114); decided 2026-10-05
@@ -47,7 +56,7 @@ DRAFTING_SPEC_V1 = {
   # earn credit only as anchored work placed by an anchoring command; linework and ticks
   # earn it by geometric match. Missing work costs credit; a wrong value shown on the sheet
   # under a hard-fail check zeroes the sheet.
-  "scoring": {"rubric": "sum of weight x credit over checks, credit 0..1",
+  "scoring": {"rubric": "sum of weight x credit over the checks a task's scope puts in play, scaled to 100",
               "hard_fail": "missing work costs credit; a wrong value shown on the sheet under a hard_fail check is a hard fail",
               "effective_score": "0 if hard failed, otherwise the rubric score",
               "text_credit": "labels and the curve table earn credit only when placed by place_label, annotate_stationing (alignment mode) or place_curve_table; raw text earns nothing",
@@ -70,7 +79,8 @@ DRAFTING_SPEC_V1 = {
   # and asks for others (the task type); only the checks the asked-for work drives are graded,
   # renormalised to 100. A two-sheet layout breaks at a match line, drawn once across the
   # centerline and labelled on each sheet; the match line scores inside D1-00.
-  "task_types": ["draw-alignment", "stationing", "curve-callouts", "bearings", "curve-table", "title-block", "sheet-setup", "annotate-sheet", "plan-sheet"],
+  "task_types": ["draw-alignment", "stationing", "curve-callouts", "bearings", "curve-table", "title-block", "sheet-setup", "annotate-sheet", "plan-sheet",
+                 "layer-setup", "pavement-edges", "pavement-widths", "pavement", "attach-reference"],
   "sheet_setup": {"one_sheet": {"sheet": 0.25, "scale": 0.25, "fitted": 0.5},
                   "many_sheets": {"sheet": 0.2, "scale": 0.2, "fitted": 0.4, "match_line": 0.2}},
   "checks": [
@@ -85,7 +95,12 @@ DRAFTING_SPEC_V1 = {
      {"id": "D1-08", "name": "legibility: no Text/Table overlaps on the sheet, nothing outside the usable area", "weight": 6, "hard_fail": False},
      {"id": "D1-09", "name": "layers and text heights per spec", "weight": 6, "hard_fail": False},
      {"id": "D1-10", "name": "title block fields present; scale string matches the viewport", "weight": 5, "hard_fail": False},
-     {"id": "D1-11", "name": "north arrow present on the sheet", "weight": 1, "hard_fail": False}],
+     {"id": "D1-11", "name": "north arrow present on the sheet", "weight": 1, "hard_fail": False},
+     # plan-prep checks (2026-10-10); outside the layout sheet's 100 points, in play only for
+     # the task types that ask for them
+     {"id": "D1-12", "name": "pavement edges: the offset linework at the typical section's width matches the design", "weight": 8, "hard_fail": True},
+     {"id": "D1-13", "name": "pavement width dimensioned across each tangent, between the edges, reading the width", "weight": 6, "hard_fail": True},
+     {"id": "D1-14", "name": "the base drawing attached as a reference in model space, at identity, visible", "weight": 5, "hard_fail": False}],
 }
 
 SPEC_VERSION = DRAFTING_SPEC_V1["version"]          # "draft-v1"; the brief's ``spec_version``

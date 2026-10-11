@@ -18,7 +18,9 @@ from roaddraft.design.horizontal import Alignment
 from roaddraft.design.labels import (
     LABEL_KINDS, LabelSpec, TickSpec, compile_label, curve_table_rows, stationing_plan,
 )
+from roaddraft.core.units import format_length
 from roaddraft.design.model import DesignModel
+from roaddraft.design.offsets import offset_pieces
 from roaddraft.document.document import Document
 from roaddraft.document.entities import Text
 from roaddraft.tasks.brief import GroundTruth, TaskBrief
@@ -102,16 +104,50 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                        "north_arrow_block": S["sheet"]["north_arrow"]["block"],
                        "title_block_fields": dict(sh["title_block_fields"]),
                        "matches": matches})
+    # -- plan prep: pavement edges, width dimensions, the base drawing, the layer set
+    pave = D.get("pavement") or {}
+    edges: List[dict] = []
+    for value in pave.get("offsets_ft", []):
+        for piece in offset_pieces(align, float(value), None):
+            row = {"ref": piece.ref, "kind": piece.kind, "station": float(piece.station),
+                   "offset": float(piece.offset), "layer": pave["layer"]}
+            if piece.kind == "tangent":
+                row.update(start=list(piece.start), end=list(piece.end))
+            else:
+                row.update(center=list(piece.center), radius=float(piece.radius),
+                           start_angle_deg=float(piece.start_angle_deg),
+                           end_angle_deg=float(piece.end_angle_deg))
+            edges.append(row)
+    dimensions: List[dict] = []
+    half = float(pave.get("half_width_ft") or 0.0)
+    tangents = align.tangents()
+    for wd in D.get("width_dimensions", []):
+        raw = float(wd["station"])
+        t = tangents[int(wd["ref"].split("-")[1]) - 1]
+        dimensions.append({
+            "ref": wd["ref"], "station": raw, "station_text": wd["station_text"],
+            "p1": align.station_to_xy(raw, -half)[0], "p2": align.station_to_xy(raw, half)[0],
+            "value": 2.0 * half, "text": format_length(2.0 * half, "feet", 2),
+            "tangent_range": [float(align.begin_station + t.start_dist),
+                              float(align.begin_station + t.end_dist)],
+            "layer": D.get("dims_layer", layers.get("dims"))})
+    references: List[dict] = []
+    if D.get("basefile"):
+        ref_spec = S.get("reference", {})
+        references.append({"file": D["basefile"], "name": ref_spec.get("name", "BASE"),
+                           "space": ref_spec.get("space", "model")})
     asks = task_type(D.get("task_type", "plan-sheet")).asks
     scope = [g for g in GROUPS if g in asks]
     counts = {"labels": len(labels), "ticks": len(ticks), "curves": len(align.curves()),
               "tangents": len(align.tangents()), "equations": len(align.equations),
-              "sheets": len(sheets), "match_lines": len(match_stations)}
+              "sheets": len(sheets), "match_lines": len(match_stations), "edges": len(edges),
+              "dimensions": len(dimensions), "references": len(references)}
     fingerprint = DesignModel.from_dict({"alignments": brief.design["alignments"],
                                          "profiles": brief.design["profiles"]}).fingerprint()
     return GroundTruth(task_id=brief.task_id, design_fingerprint=fingerprint, labels=labels,
                        ticks=ticks, elements=elements, curve_tables=curve_tables, sheets=sheets,
-                       scope=scope, counts=counts)
+                       edges=edges, dimensions=dimensions, references=references,
+                       layers=list(layers.values()), scope=scope, counts=counts)
 
 
 def _descriptor(label: dict) -> str:

@@ -119,13 +119,15 @@ class ElementMatch:
 @dataclass
 class LineworkResult:
     elements: List[ElementMatch]
-    bad_entities: List[Entity]  # on the alignment layer, off the design
+    bad_entities: List[Entity]  # on the work's layer, off the design
 
 
-def match_linework(align: Alignment, entities: Sequence[Entity], alignment_layer: str,
-                   tol: float) -> LineworkResult:
-    elements = [ElementMatch(ref=align.element_ref(i), kind=el.kind, piece=element_piece(el))
-                for i, el in enumerate(align.elements)]
+def match_pieces(targets: Sequence[ElementMatch], entities: Sequence[Entity], layer: str,
+                 tol: float, on_chain) -> LineworkResult:
+    """Match document linework against target pieces.  A document piece that
+    matches no target, lies on ``layer`` and is not ``on_chain`` (part of the
+    chain the targets trace, just not a whole piece of it) makes its entity
+    bad linework."""
     bad: List[Entity] = []
     for entity in entities:
         pieces = pieces_of(entity)
@@ -134,15 +136,54 @@ def match_linework(align: Alignment, entities: Sequence[Entity], alignment_layer
         fits = True
         for piece in pieces:
             hit = False
-            for em in elements:
+            for em in targets:
                 if same_piece(piece, em.piece, tol):
                     em.hits.append(piece)
                     hit = True
-            if not hit and entity.layer == alignment_layer and not on_centerline(align, piece, tol):
+            if not hit and entity.layer == layer and not on_chain(piece):
                 fits = False
         if not fits:
             bad.append(entity)
-    return LineworkResult(elements=elements, bad_entities=bad)
+    return LineworkResult(elements=list(targets), bad_entities=bad)
+
+
+def match_linework(align: Alignment, entities: Sequence[Entity], alignment_layer: str,
+                   tol: float) -> LineworkResult:
+    targets = [ElementMatch(ref=align.element_ref(i), kind=el.kind, piece=element_piece(el))
+               for i, el in enumerate(align.elements)]
+    return match_pieces(targets, entities, alignment_layer, tol,
+                        lambda piece: on_centerline(align, piece, tol))
+
+
+def on_offset(align: Alignment, piece: Piece, offsets: Sequence[float], tol: float) -> bool:
+    """True when every sample of the piece lies within ``tol`` of one of the
+    alignment's offset chains at ``offsets``."""
+    if piece.kind == "circle":
+        return False
+    for value in offsets:
+        try:
+            if all(abs(align.xy_to_station(p)["offset"] - value) <= tol for p in piece.samples):
+                return True
+        except DesignError:
+            continue
+    return False
+
+
+def edge_piece(row: dict) -> Piece:
+    """A truth pavement-edge piece (``offset_pieces`` as the truth stores it)."""
+    if row["kind"] == "tangent":
+        return _line_piece(row["start"], row["end"], None)
+    s, e = geo.arc_sweep(row["start_angle_deg"], row["end_angle_deg"])
+    return _arc_piece(row["center"], row["radius"], s, e - s, None)
+
+
+def match_edges(align: Alignment, edges: Sequence[dict], entities: Sequence[Entity],
+                edge_layer: str, tol: float) -> LineworkResult:
+    targets = [ElementMatch(ref=f"{row['ref']}@{row['offset']:+g}", kind=row["kind"],
+                            piece=edge_piece(row)) for row in edges]
+    offsets = sorted({float(row["offset"]) for row in edges})
+    return match_pieces(targets, entities, edge_layer, tol,
+                        lambda piece: on_offset(align, piece, offsets, tol))
 
 
 @dataclass
@@ -218,5 +259,6 @@ def match_ticks(truth_ticks: Sequence[dict], entities: Sequence[Entity], tol: fl
     return out
 
 
-__all__ = ["Piece", "pieces_of", "element_piece", "same_piece", "on_centerline", "crosses_at",
-           "ElementMatch", "LineworkResult", "match_linework", "TickMatch", "match_ticks"]
+__all__ = ["Piece", "pieces_of", "element_piece", "same_piece", "on_centerline", "on_offset",
+           "crosses_at", "ElementMatch", "LineworkResult", "match_pieces", "match_linework",
+           "edge_piece", "match_edges", "TickMatch", "match_ticks"]

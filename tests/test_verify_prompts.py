@@ -103,7 +103,7 @@ def _score(b: Base):
 
 
 def _clean(report, *except_checks):
-    return all(c.credit == 1.0 and not c.findings for c in report.checks
+    return all(c.credit == 1.0 and not c.findings for c in report.in_scope()
                if c.id not in except_checks)
 
 

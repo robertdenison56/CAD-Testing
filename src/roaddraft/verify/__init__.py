@@ -71,7 +71,12 @@ def verify(doc: Document, truth: Union[GroundTruth, dict], spec: Optional[dict] 
                                if analysis.linework and ctx.asks("linework") else 0),
                   "matched_elements": (sum(1 for e in analysis.linework.elements if e.hits)
                                        if analysis.linework and ctx.asks("linework") else 0),
-                  "sheets": len(truth.sheets)}
+                  "sheets": len(truth.sheets),
+                  "edges": len(analysis.edges.elements) if analysis.edges else 0,
+                  "matched_edges": (sum(1 for e in analysis.edges.elements if e.hits)
+                                    if analysis.edges else 0),
+                  "dimensions": len(analysis.dimensions),
+                  "matched_dimensions": sum(1 for d in analysis.dimensions if d.credited)}
     else:
         checks = score_checks(spec, None, scope)
         findings.append(Finding("design_tampered",

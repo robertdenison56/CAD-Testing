@@ -24,16 +24,17 @@ CURVE_TABLE_COLUMN_CATALOG = ["curve", "pi_sta", "pc_sta", "pt_sta", "delta", "d
 
 # --- DRAFTING_SPEC_V1 content -------------------------------------------------------------------
 
-def test_check_weights_sum_to_100():
-    weights = [c["weight"] for c in DRAFTING_SPEC_V1["checks"]]
-    assert sum(weights) == 100
-    assert all(isinstance(w, int) and w > 0 for w in weights)
+def test_layout_check_weights_sum_to_100_plan_prep_checks_ride_outside():
+    weights = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
+    assert sum(w for cid, w in weights.items() if cid <= "D1-11") == 100
+    assert all(isinstance(w, int) and w > 0 for w in weights.values())
+    assert {cid for cid in weights if cid > "D1-11"} == {"D1-12", "D1-13", "D1-14"}
 
 
-def test_check_ids_unique_D1_00_to_D1_11():
+def test_check_ids_unique_D1_00_to_D1_14():
     ids = [c["id"] for c in DRAFTING_SPEC_V1["checks"]]
-    assert len(ids) == len(set(ids)) == 12
-    assert ids == ["D1-%02d" % i for i in range(0, 12)]
+    assert len(ids) == len(set(ids)) == 15
+    assert ids == ["D1-%02d" % i for i in range(0, 15)]
     for check in DRAFTING_SPEC_V1["checks"]:
         assert set(check) == {"id", "name", "weight", "hard_fail"}
         assert isinstance(check["hard_fail"], bool)
@@ -55,7 +56,7 @@ def test_spec_id_and_version_draft_v1():
 def test_every_layer_has_layer_props():
     layers = DRAFTING_SPEC_V1["layers"]
     props = DRAFTING_SPEC_V1["layer_props"]
-    assert set(layers) == {"alignment", "ticks", "labels", "tables"}
+    assert set(layers) == {"alignment", "ticks", "labels", "tables", "edges", "dims"}
     for role, name in layers.items():
         assert name in props, "layer %s (%s) has no layer_props entry" % (name, role)
         assert "color" in props[name] and "lineweight_mm" in props[name]
@@ -63,6 +64,7 @@ def test_every_layer_has_layer_props():
     assert layers["ticks"] == "V-ROAD-STA"
     assert layers["labels"] == "V-ANNO-TEXT"
     assert layers["tables"] == "V-ANNO-TABL"
+    assert layers["edges"] == "V-ROAD-EOP" and layers["dims"] == "V-ANNO-DIMS"
 
 
 def test_curve_table_columns_in_catalog():
@@ -122,7 +124,7 @@ def test_sheet_setup_check_and_reweighting_decided_2026_10_09():
     weights = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
     assert weights["D1-00"] == 5 and weights["D1-02"] == 9 and weights["D1-11"] == 1
     hard = {c["id"] for c in DRAFTING_SPEC_V1["checks"] if c["hard_fail"]}
-    assert hard == {"D1-01", "D1-03", "D1-04", "D1-05", "D1-06"}
+    assert hard == {"D1-01", "D1-03", "D1-04", "D1-05", "D1-06", "D1-12", "D1-13"}
     scoring = DRAFTING_SPEC_V1["scoring"]
     assert "hard fail" in scoring["hard_fail"] and scoring["effective_score"].startswith("0 if hard")
 

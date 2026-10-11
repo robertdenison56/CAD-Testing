@@ -39,9 +39,11 @@ THIN = Side(style="thin", color="BFBFBF")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 TOP_WRAP = Alignment(wrap_text=True, vertical="top")
 
-PHASE_WORDS = {"layers": "layers", "linework": "centerline", "stationing": "stationing",
-               "bearings": "bearings", "callouts": "curve callouts", "sheet": "sheet + viewport",
-               "table": "curve table", "north": "north arrow", "title": "title block"}
+PHASE_WORDS = {"layers": "layers", "linework": "centerline", "edges": "pavement edges",
+               "stationing": "stationing", "bearings": "bearings", "callouts": "curve callouts",
+               "widths": "width dimensions", "sheet": "sheet + viewport",
+               "reference": "base drawing reference", "table": "curve table",
+               "north": "north arrow", "title": "title block"}
 
 
 def _seeds(text: str):
@@ -80,10 +82,14 @@ def _table(ws, headers, widths, rows, wrap_cols=()):
 
 def _given(ttype) -> str:
     phases = [PHASE_WORDS[p] for p in PHASE_ORDER if p in ttype.given and p != "layers"]
-    if not phases:
+    if not phases and not ttype.basefile:
         return "the design only (nothing drawn, no sheet)"
     start = "design, layers, " if "layers" in ttype.given else ""
-    return start + ", ".join(phases)
+    text = start + ", ".join(phases)
+    if ttype.basefile:
+        base = ", ".join(PHASE_WORDS[p] for p in PHASE_ORDER if p in ttype.basefile)
+        text += f"; a base drawing file beside it holding the {base}"
+    return text
 
 
 def d1_rows(seeds):

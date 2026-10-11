@@ -29,6 +29,9 @@ def test_mutation_moves_exactly_the_expected_checks(mutation):
         return
     assert report.design_fingerprint_ok and not report.findings
     for check in report.checks:
+        if not check.in_scope:  # plan prep checks: not this task's business
+            assert check.credit == 0.0 and not check.findings and check.skipped
+            continue
         want = mutation.credits.get(check.id, 1.0)
         want = want(base) if callable(want) else want
         assert check.credit == pytest.approx(want, abs=1e-6), (check.id, check.to_dict())
