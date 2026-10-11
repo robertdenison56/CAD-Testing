@@ -15,6 +15,8 @@ from roaddraft.tasks.prompts import LEVELS, RULES, render_prompts, task_text
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
 from roaddraft.verify.semantic import column_key, same_cell, same_label, scale_fpi
 from tests.verify_mutations import BASE, SHEET, Base
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
+_L = _SPEC["layers"]
 
 # ------------------------------------------------------------------ prompts
 
@@ -27,7 +29,7 @@ def test_explicit_prompt_states_the_standards_and_vague_only_the_request():
     task = generate_task(42, curves=2, equations=True)
     explicit, vague = task.brief.prompts["explicit"], task.brief.prompts["vague"]
     tb = task.brief.deliverable["sheets"][0]["title_block_fields"]
-    for word in ("V-ALIGN-CNTR", "V-ROAD-STA", "V-ANNO-TEXT", "V-ANNO-TABL", "0.10 in",
+    for word in (_L["alignment"], _L["ticks"], _L["labels"], _L["tables"], "0.10 in",
                  "0.40 in", "12+34.56", "BC 16+00.00", "CH BRG", "STA 20+00.00 BK",
                  tb["scale"], tb["date"], "NORTH_ARROW", task.brief.project["name"]):
         assert word in explicit, word
@@ -169,8 +171,8 @@ def test_ticks_of_another_length_count_when_no_length_was_stated():
     b.ex("annotate_stationing", {"space": "model", "alignment": b.A, "interval": 100,
                                  "tick_half_len": 1.5 * b.D["tick_half_len_ft"],
                                  "text_height": b.D["text_heights"]["model_label_ft"],
-                                 "label_offset": b.D["label_offset_ft"], "layer": "V-ROAD-STA",
-                                 "label_layer": "V-ANNO-TEXT"})
+                                 "label_offset": b.D["label_offset_ft"], "layer": _L["ticks"],
+                                 "label_layer": _L["labels"]})
     r = _score(b)
     assert r["vague"].effective_score == 100.0
     assert r["explicit"].check("D1-02").credit == 0.0

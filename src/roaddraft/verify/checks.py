@@ -324,9 +324,17 @@ def _mean(values: List[float]) -> float:
 # ------------------------------------------------------------------- checks
 
 
-def _match_line(a: Analysis, sv: SheetView, m: dict) -> Tuple[float, List[Finding]]:
+@dataclass
+class MatchFound:
+    lines: List[Entity] = field(default_factory=list)   # match lines at the break
+    labels: List[Entity] = field(default_factory=list)  # this sheet's labels at it
+
+
+def _match_line(a: Analysis, sv: SheetView, m: dict,
+                found: Optional[MatchFound] = None) -> Tuple[float, List[Finding]]:
     """Half the match credit for the line across the centerline at the break
-    (seen on this sheet), half for this sheet's label at it."""
+    (seen on this sheet), half for this sheet's label at it.  ``found``
+    collects the entities for D1-09."""
     ctx = a.ctx
     tol = float(ctx.tol["position_model_ft"])
     anchor = a.anchor(m["station_text"], "match_line")
@@ -342,6 +350,8 @@ def _match_line(a: Analysis, sv: SheetView, m: dict) -> Tuple[float, List[Findin
         min_len = float(ctx.lenient["match_line_min_in"]) * sv.fpi
         hits = [p for p in lines if p.length >= min_len
                 and crosses_at(p, truth_piece, tol, float(ctx.tol["rotation_deg"]))]
+    if found is not None:
+        found.lines = sorted({h.entity.id: h.entity for h in hits}.values(), key=lambda e: e.id)
     if hits and sv.model_view(station_pt) is not None:
         credit += 0.5
     elif hits:
@@ -367,6 +377,8 @@ def _match_line(a: Analysis, sv: SheetView, m: dict) -> Tuple[float, List[Findin
         return same_match_label(c.entity.content, m["station_text"], m["other_sheet"])
 
     good = [c for c in cands if c.visible and ok(c)]
+    if found is not None:
+        found.labels = [c.entity for c in (good or cands[:1])]
     if good:
         return credit + 0.5, findings
     c = cands[0]
@@ -661,16 +673,39 @@ def check_standards(a: Analysis) -> Result:  # D1-09
         if dm.chosen is not None:
             item(dm.chosen, "dims", dm.anchor, float(dm.chosen.text_height) / ctx.fpi_used,
                  float(text["label_height_in"]))
+    block = ctx.spec["sheet"]["north_arrow"]["block"]
+    if ctx.asks("north") and "symbols" in layers:
+        for sv in ctx.sheets:
+            if sv.sheet is None:
+                continue
+            arrows = [e for e in sv.sheet.entities.values()
+                      if isinstance(e, BlockRef) and e.block_name == block]
+            for e in arrows[:1]:
+                item(e, "symbols", {"ref": sv.name, "kind": "north_arrow"})
+    if ctx.asks("sheet") and "match" in layers:
+        for sv in ctx.sheets:
+            if sv.sheet is None:
+                continue
+            for m in sv.truth.get("matches") or []:
+                found = MatchFound()
+                _match_line(a, sv, m, found)
+                for e in found.lines[:1] + found.labels[:1]:
+                    item(e, "match", a.anchor(m["station_text"], "match_line"))
     work = total
     # the layer set: every standard layer when the task is to set them up, else (at
     # the explicit level) the layers the asked-for work is drawn on
     if ctx.asks("layers"):
-        names = list(layers.values())
+        names = list(ctx.spec.get("layer_set") or dict.fromkeys(layers.values()))
     elif exact_layers:
         names = []
+        has_matches = any(sv.truth.get("matches") for sv in ctx.sheets)
         for g in GROUP_LAYER_ROLE:
-            if g in ctx.scope and layers[GROUP_LAYER_ROLE[g]] not in names:
-                names.append(layers[GROUP_LAYER_ROLE[g]])
+            role = GROUP_LAYER_ROLE[g]
+            if g not in ctx.scope or role not in layers or layers[role] in names:
+                continue
+            if g == "sheet" and not has_matches:
+                continue  # a one-sheet layout draws nothing on the match level
+            names.append(layers[role])
     else:
         names = []
     for name in names:
@@ -682,11 +717,12 @@ def check_standards(a: Analysis) -> Result:  # D1-09
                                     note=f"layer {name} does not exist"))
             continue
         if exact_layers:
+            # color, linetype and weight are the standard; the description is a note
             have = {"color": layer.color, "linetype": layer.linetype,
                     "lineweight_mm": layer.lineweight_mm}
-            wrong = {k: have[k] for k, v in want.items()
-                     if (abs(float(have[k]) - float(v)) > 1e-6 if k == "lineweight_mm"
-                         else have[k] != v)}
+            wrong = {k: have[k] for k, v in want.items() if k in have
+                     and (abs(float(have[k]) - float(v)) > 1e-6 if k == "lineweight_mm"
+                          else have[k] != v)}
             if wrong:
                 findings.append(Finding("wrong_layer_props", expected=dict(want), actual=wrong,
                                         note=f"layer {name} properties"))

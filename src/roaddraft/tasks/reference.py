@@ -60,7 +60,7 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
         if phase not in want:
             continue
         if phase == "layers":
-            for name in layers.values():
+            for name in S.get("layer_set") or list(dict.fromkeys(layers.values())):
                 steps.append(("create_layer", {"name": name, **props[name]}))
         elif phase == "linework":
             steps.append(("draw_alignment", {"alignment": A, "layer": layers["alignment"]}))
@@ -120,14 +120,15 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
                         drawn.add(m["station"])
                         half = m["half_width_ft"]
                         steps.append(("draw_station_offset", {
-                            "alignment": A, "layer": layers["ticks"],
+                            "alignment": A, "layer": layers.get("match", layers["ticks"]),
                             "points": [f"{m['station_text']}@{half:g}L",
                                        f"{m['station_text']}@{half:g}R"]}))
                     steps.append(("place_label", {
                         "space": sh["name"], "alignment": A, "anchor": m["station_text"],
                         "kind": "custom", "content": m["label"], "rotation": m["rotation"],
                         "side": m["side"], "label_offset": m["label_offset_in"],
-                        "height": S["text"]["label_height_in"], "layer": layers["labels"]}))
+                        "height": S["text"]["label_height_in"],
+                        "layer": layers.get("match", layers["labels"])}))
         elif phase == "table":
             for sh in sheets:
                 if not sh["curves"]:
@@ -144,7 +145,8 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
             na = S["sheet"]["north_arrow"]
             for sh in sheets:
                 steps.append(("insert_block", {"space": sh["name"], "block_name": na["block"],
-                                               "position": na["position"], "scale": na["scale"]}))
+                                               "position": na["position"], "scale": na["scale"],
+                                               "layer": layers.get("symbols", "0")}))
         elif phase == "title":
             for sh in sheets:
                 steps.append(("fill_title_block", {"sheet": sh["name"],

@@ -26,7 +26,7 @@ from roaddraft.commands.bus import ANCHOR_PRODUCERS
 from roaddraft.document.document import Document
 from roaddraft.tasks.brief import GroundTruth
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
-from roaddraft.tasks.types import GROUPS
+from roaddraft.tasks.types import CHECK_GROUPS, GROUPS
 from roaddraft.verify.audit import audit_journal
 from roaddraft.verify.checks import CHECKS, analyze
 from roaddraft.verify.context import Context, given_design
@@ -54,11 +54,12 @@ def verify(doc: Document, truth: Union[GroundTruth, dict], spec: Optional[dict] 
         truth = GroundTruth.from_dict(truth)
     ctx = Context.build(doc, truth, spec, prompt_level)
     scope = [g for g in GROUPS if g in ctx.scope]
+    groups = check_groups(truth)
     fingerprint_ok = given_design(doc, truth).fingerprint() == truth.design_fingerprint
     findings: List[Finding] = []
     if fingerprint_ok:
         analysis = analyze(ctx)
-        checks = score_checks(spec, analysis, scope)
+        checks = score_checks(spec, analysis, scope, groups)
         labels = analysis.labels
         counts = {"required_labels": len(labels.matches),
                   "matched": sum(1 for m in labels.matches if m.credited),
@@ -78,7 +79,7 @@ def verify(doc: Document, truth: Union[GroundTruth, dict], spec: Optional[dict] 
                   "dimensions": len(analysis.dimensions),
                   "matched_dimensions": sum(1 for d in analysis.dimensions if d.credited)}
     else:
-        checks = score_checks(spec, None, scope)
+        checks = score_checks(spec, None, scope, groups)
         findings.append(Finding("design_tampered",
                                 note="the given design was changed; a drafter draws it as given"))
         counts = {"required_labels": len(truth.labels), "sheets": len(truth.sheets)}
@@ -91,6 +92,16 @@ def verify(doc: Document, truth: Union[GroundTruth, dict], spec: Optional[dict] 
         report.audit = audit_journal(journal, doc)
     report.timing_ms = round((time.perf_counter() - t0) * 1000.0, 3)
     return report
+
+
+def check_groups(truth: GroundTruth) -> dict:
+    """The groups each check draws from for this truth: ``CHECK_GROUPS``, plus
+    the sheet group on D1-09 when a two-sheet layout gives the match line and
+    its labels a level to be judged on."""
+    groups = dict(CHECK_GROUPS)
+    if any(sh.get("matches") for sh in truth.sheets):
+        groups["D1-09"] = groups["D1-09"] + ("sheet",)
+    return groups
 
 
 def _anchored_entities(doc: Document, ctx: Context) -> int:

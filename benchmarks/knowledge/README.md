@@ -27,6 +27,13 @@ benchmarks/knowledge/
     ppm-examples.txt            text of every example sheet, one separator line per page
     ppm-examples.pages.json     per page: sheet title, section group, RELEASED / SUPERSEDES dates
     ppm-examples.outline.json   the PDF bookmark tree (303 entries)
+  caltrans-cadd/                collection: Caltrans CADD Users Manual, the sections the PPM defers to
+    README.md                   the named levels behind the spec's layers, text sizes, line weights
+    raw/                        the section PDFs (gitignored; sha256 pinned in the manifest)
+    cadd-appx-a10.*             Appendix A10 Named Level Libraries (every named level, by library)
+    cadd-ch2-sect4.*            2.4 Drawing Data Levels (the naming convention)
+    cadd-ch2-sect6.*            2.6 Text (fonts, text sizes at 1"=50')
+    cadd-ch2-sect7.*            2.7 Lines (weights by feature, line codes)
 scripts/build_knowledge.py      rebuilds everything above from raw/ and refreshes manifest.json
 tests/test_knowledge.py         committed artifacts agree with the manifest and with each other
 ```

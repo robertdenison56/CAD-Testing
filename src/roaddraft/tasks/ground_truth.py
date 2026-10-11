@@ -93,7 +93,8 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                 "station": float(m["station"]), "station_text": m["station_text"],
                 "start": align.station_to_xy(m["station"], -half)[0],
                 "end": align.station_to_xy(m["station"], half)[0],
-                "half_width_ft": half, "layer": layers["ticks"], "label": m["label"],
+                "half_width_ft": half, "layer": layers.get("match", layers["ticks"]),
+                "label": m["label"],
                 "other_sheet": m["other_sheet"], "side": m["side"],
                 "label_offset_in": float(m["label_offset_in"]), "rotation": m["rotation"]})
             match_stations.add(float(m["station"]))
@@ -102,6 +103,7 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                        "viewport": dict(sh["viewport"]),
                        "station_range": list(sh["station_range"]), "curves": list(sh["curves"]),
                        "north_arrow_block": S["sheet"]["north_arrow"]["block"],
+                       "north_arrow_layer": layers.get("symbols", "0"),
                        "title_block_fields": dict(sh["title_block_fields"]),
                        "matches": matches})
     # -- plan prep: pavement edges, width dimensions, the base drawing, the layer set
@@ -147,7 +149,8 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
     return GroundTruth(task_id=brief.task_id, design_fingerprint=fingerprint, labels=labels,
                        ticks=ticks, elements=elements, curve_tables=curve_tables, sheets=sheets,
                        edges=edges, dimensions=dimensions, references=references,
-                       layers=list(layers.values()), scope=scope, counts=counts)
+                       layers=list(S.get("layer_set") or dict.fromkeys(layers.values())),
+                       scope=scope, counts=counts)
 
 
 def _descriptor(label: dict) -> str:

@@ -53,18 +53,28 @@ def test_spec_id_and_version_draft_v1():
     assert spec_v1.SPEC_VERSION == "draft-v1"
 
 
-def test_every_layer_has_layer_props():
+def test_layers_are_caltrans_named_levels_with_props_and_sources():
     layers = DRAFTING_SPEC_V1["layers"]
     props = DRAFTING_SPEC_V1["layer_props"]
-    assert set(layers) == {"alignment", "ticks", "labels", "tables", "edges", "dims"}
-    for role, name in layers.items():
-        assert name in props, "layer %s (%s) has no layer_props entry" % (name, role)
-        assert "color" in props[name] and "lineweight_mm" in props[name]
-    assert layers["alignment"] == "V-ALIGN-CNTR"
-    assert layers["ticks"] == "V-ROAD-STA"
-    assert layers["labels"] == "V-ANNO-TEXT"
-    assert layers["tables"] == "V-ANNO-TABL"
-    assert layers["edges"] == "V-ROAD-EOP" and layers["dims"] == "V-ANNO-DIMS"
+    levels = DRAFTING_SPEC_V1["caltrans_levels"]
+    assert set(layers) == {"alignment", "ticks", "labels", "tables", "edges", "dims", "symbols",
+                           "match"}
+    assert layers["alignment"] == "align_MAIN" and layers["ticks"] == "align_MAIN-anno"
+    assert layers["labels"] == "align_MAIN-anno" and layers["tables"] == "align_CURVE-DATA"
+    assert layers["edges"] == "rd_EP" and layers["dims"] == "rd_LAYOUT-NOTE-anno"
+    assert layers["symbols"] == "pp_PRESENTATION" and layers["match"] == "border_INSIDE-BORDER-anno"
+    layer_set = DRAFTING_SPEC_V1["layer_set"]
+    assert len(layer_set) == len(set(layer_set)) == 16
+    assert set(layers.values()) <= set(layer_set) == set(props) == set(levels)
+    wt = DRAFTING_SPEC_V1["lineweight_mm_by_wt"]
+    for name in layer_set:
+        assert "color" in props[name] and "lineweight_mm" in props[name], name
+        assert "Caltrans level %d" % levels[name]["number"] in props[name]["description"], name
+        assert props[name]["lineweight_mm"] == wt[str(levels[name]["weight"])], name
+        assert "cadd-appx-a10" in levels[name]["source"], name
+    # the CADD Users Manual's main-route alignment is the heaviest plan line, the border heavier
+    assert levels["align_MAIN"]["weight"] == 3 and levels["border_SHEET"]["weight"] == 4
+    assert levels["rd_EP"]["weight"] == 2  # the PPM layout checklist's "usually WT=2"
 
 
 def test_curve_table_columns_in_catalog():
@@ -160,10 +170,10 @@ def test_spec_hash_independent_of_key_order_but_changes_with_content():
 
 # --- spec_subset -------------------------------------------------------------------------------
 
-def test_spec_subset_default_11_sections_omits_id_version_status():
+def test_spec_subset_default_12_sections_omits_id_version_status():
     subset = spec_subset()
     assert list(subset) == list(SPEC_SUBSET_KEYS)
-    assert len(subset) == 11
+    assert len(subset) == 12
     assert set(subset).isdisjoint({"spec_id", "version", "status"})
     for key in subset:
         assert subset[key] == DRAFTING_SPEC_V1[key]
@@ -173,7 +183,7 @@ def test_spec_subset_is_deep_copy_and_orders_by_keys():
     subset = spec_subset(("layers", "units"))
     assert list(subset) == ["layers", "units"]
     subset["layers"]["alignment"] = "X"
-    assert DRAFTING_SPEC_V1["layers"]["alignment"] == "V-ALIGN-CNTR"
+    assert DRAFTING_SPEC_V1["layers"]["alignment"] == "align_MAIN"
     nested = spec_subset(("checks",))
     nested["checks"][0]["weight"] = 0
     assert DRAFTING_SPEC_V1["checks"][0]["weight"] == 5

@@ -116,7 +116,7 @@ should follow the PPM, keep its value, or push the PPM value into a Caltrans / O
 | tangent labels | bearing only | bearing **and distance** of each tangent | p. 2-89 (pdf 118); pdf 45 |
 | curve table | 9 columns: curve, PI sta, Δ, direction, R, T, L, chord, chord bearing | 5 columns: No., R, Δ, T, L (N/E optional); PI station, chord and chord bearing are not shown | ppm-examples pdf 45 |
 | curve callout | `C-1` text label at the mid-curve anchor | a circled curve number on the plan keyed to the table | ppm-examples pdf 45 |
-| layer names | NCS-style `V-ALIGN-CNTR`, `V-ROAD-STA`, `V-ANNO-TEXT`, `V-ANNO-TABL` | Caltrans named levels (`align_MAIN-anno` …) | p. 2-89 (pdf 118) |
+| layer names | **follows the PPM since 2026-10-10**: Caltrans named levels `align_MAIN`, `align_MAIN-anno`, `align_CURVE-DATA`, `rd_EP`, `pp_PRESENTATION`, `border_*` … (was NCS-style `V-ALIGN-CNTR` …); the level table and the two spec readings still open for PE review are in `../caltrans-cadd/README.md` | p. 2-89 (pdf 118); cadd-appx-a10 |
 | title block fields | generic `project`, `agency`, `designed_by`, `drawn_by`, `checked_by`, `date`, `scale` … | Caltrans project-ID block, signature and seal, sheet name + ID code, unit / project number, development names | p. 2-52 (pdf 65); pdf 62 |
 | sheet naming | `C-101` | `LAYOUT` with `L-1` | p. 2-52 (pdf 65) |
 
@@ -125,6 +125,7 @@ right, `SCALE: 1" = 50'` text under the sheet name (add the colon), uppercase te
 with direction, station equations required, precise stations to 0.01 ft, curve numbers
 consecutive and unique.
 
-Not in this collection: the CADD Users Manual (text sizes §2.6, levels §2.4, line weights §2.7,
-sheet naming §2.1) and the Standard Plans (abbreviations and symbols A3A–A3C), both cited
-throughout the PPM. Add them as further collections when a check depends on them.
+The CADD Users Manual's levels (Appendix A10, §2.4), text (§2.6) and lines (§2.7) are the
+`caltrans-cadd` collection beside this one (added 2026-10-10). Not yet collected: its sheet
+naming (§2.1) and the Standard Plans (abbreviations and symbols A3A–A3C). Add them when a check
+depends on them.

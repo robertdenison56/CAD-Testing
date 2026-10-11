@@ -15,8 +15,10 @@ from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
 from roaddraft.tasks.types import (
     CHECK_GROUPS, GROUPS, LAYOUT_GROUPS, TASK_TYPES, checks_in_scope, task_type,
 )
-from roaddraft.verify import verify
+from roaddraft.verify import check_groups, verify
 from tests.verify_mutations import Base
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
+_L = _SPEC["layers"]
 
 WEIGHTS = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
 TYPES = sorted(TASK_TYPES)
@@ -57,8 +59,13 @@ def test_checks_in_scope_follow_the_groups():
     assert checks_in_scope([], ids) == ids
     assert checks_in_scope(["bearings"], ids) == ["D1-05", "D1-07", "D1-08", "D1-09"]
     assert checks_in_scope(["linework"], ids) == ["D1-01", "D1-09"]
-    assert checks_in_scope(["title", "north"], ids) == ["D1-08", "D1-10", "D1-11"]
+    # the north arrow's level is judged (D1-09) along with its presence (D1-11)
+    assert checks_in_scope(["title", "north"], ids) == ["D1-08", "D1-09", "D1-10", "D1-11"]
     assert checks_in_scope(["sheet"], ids) == ["D1-00", "D1-08"]
+    # ... and the match level only on a two-sheet layout
+    two = check_groups(generate_task(TWO_TABLE_SEED, sheets=2).truth)
+    assert checks_in_scope(["sheet"], ids, two) == ["D1-00", "D1-08", "D1-09"]
+    assert checks_in_scope(["sheet"], ids, check_groups(generate_task(1).truth)) == ["D1-00", "D1-08"]
     assert checks_in_scope(["edges"], ids) == ["D1-09", "D1-12"]
     assert checks_in_scope(["widths"], ids) == ["D1-08", "D1-09", "D1-13"]
     assert checks_in_scope(["reference"], ids) == ["D1-14"]
@@ -83,7 +90,8 @@ def test_reference_scores_100_and_the_starting_document_0(ttype, sheets):
             assert r.effective_score == 100.0 and not r.all_findings(), (
                 seed, ttype, sheets, level, [f.to_dict() for f in r.all_findings()])
             assert r.scope == task.truth.scope
-            assert {c.id for c in r.in_scope()} == set(checks_in_scope(r.scope, list(WEIGHTS)))
+            assert {c.id for c in r.in_scope()} == set(
+                checks_in_scope(r.scope, list(WEIGHTS), check_groups(task.truth)))
             assert r.scope_weight == sum(WEIGHTS[c.id] for c in r.in_scope())
             r0 = verify(base, task.truth, prompt_level=level)
             assert r0.effective_score == 0.0 and not r0.hard_failed, (seed, ttype, sheets, level)
@@ -306,7 +314,7 @@ def test_pavement_edges_match_by_geometry_and_a_wrong_offset_hard_fails():
     assert [f.code for f in r.check("D1-12").findings] == ["missing"]
     # an edge at the wrong width on the edge layer is wrong work
     half = b.D["pavement"]["half_width_ft"]
-    b.ex("draw_offset", {"alignment": b.A, "offsets": [half + 2.0], "layer": "V-ROAD-EOP"})
+    b.ex("draw_offset", {"alignment": b.A, "offsets": [half + 2.0], "layer": _L["edges"]})
     r = b.verify()
     assert r.hard_failed and "geometry_mismatch" in {f.code for f in r.check("D1-12").findings}
 
@@ -412,16 +420,18 @@ def test_layer_setup_names_at_vague_properties_at_explicit():
     r = b.verify()
     assert r.effective_score == 100.0 and r.scope == ["layers"]
     assert [c.id for c in r.in_scope()] == ["D1-09"]
-    b.ex("modify_layer", {"name": "V-ROAD-EOP", "changes": {"color": "green"}})
+    n = len(_SPEC["layer_set"])
+    assert n == 16 and set(_L.values()) <= set(_SPEC["layer_set"])
+    b.ex("modify_layer", {"name": _L["edges"], "changes": {"color": "green"}})
     assert b.verify("vague").effective_score == 100.0
     r = b.verify("explicit")
-    assert r.check("D1-09").credit == pytest.approx(5 / 6)
+    assert r.check("D1-09").credit == pytest.approx((n - 1) / n)
     assert [f.code for f in r.check("D1-09").findings] == ["wrong_layer_props"]
-    # the standard set is six layers; the starting document had only layer 0
+    # the standard set is the Caltrans named levels; the starting document had only layer 0
     doc = Document.from_dict(b.task.baseline)
     assert list(doc.layers) == ["0"]
     r0 = verify(doc, b.truth, prompt_level="vague")
-    assert r0.effective_score == 0.0 and len(r0.check("D1-09").findings) >= 6
+    assert r0.effective_score == 0.0 and len(r0.check("D1-09").findings) >= n
 
 
 def test_pavement_combo_asks_for_both():

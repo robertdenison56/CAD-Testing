@@ -24,13 +24,14 @@ def _spec_checks(spec: dict) -> List[dict]:
     return spec["checks"]
 
 
-def score_checks(spec: dict, analysis: Optional[Analysis],
-                 scope: Optional[Iterable[str]] = None) -> List[CheckResult]:
+def score_checks(spec: dict, analysis: Optional[Analysis], scope: Optional[Iterable[str]] = None,
+                 check_groups: Optional[dict] = None) -> List[CheckResult]:
     """One ``CheckResult`` per spec check.  Checks outside ``scope`` are
     marked so and skipped; with no analysis (a tampered design) every check
-    is skipped at zero credit."""
+    is skipped at zero credit.  ``check_groups`` overrides the group each
+    check draws from (``tasks.types.CHECK_GROUPS``)."""
     checks = _spec_checks(spec)
-    in_scope = set(checks_in_scope(scope, [c["id"] for c in checks]))
+    in_scope = set(checks_in_scope(scope, [c["id"] for c in checks], check_groups))
     out = []
     for c in checks:
         result = CheckResult(id=c["id"], name=c["name"], weight=c["weight"], credit=0.0,

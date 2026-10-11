@@ -17,6 +17,8 @@ from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.reference import reference_solution, session_for_task
 from roaddraft.verify import verify
 from roaddraft.verify.match import KIND_CHECK
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
+_L = _SPEC["layers"]
 
 SHEET = "C-101"
 #: the default base: three curves, a station equation, 1" = 100'
@@ -108,8 +110,9 @@ class Base:
     @property
     def d109_total(self) -> int:
         """D1-09's items on the reference: every label, tick, element, the
-        table, and the four spec layers."""
-        return self.n_labels + self.n_ticks + self.n_elements + 1 + 4
+        table, the north arrow, and the layers the layout draws on (the
+        alignment, its annotation, the curve table, the north arrow's)."""
+        return self.n_labels + self.n_ticks + self.n_elements + 1 + 1 + 4
 
     def free_model_point(self):
         """A model point inside the viewport that no text or table covers on paper."""
@@ -163,7 +166,7 @@ def _first_station(b: Base) -> Text:
 def _station_label_params(b: Base, text: Text, **over) -> dict:
     p = {"space": "model", "alignment": b.A, "anchor": text.anchor["ref"], "kind": "station",
          "label_offset": b.D["label_offset_ft"], "height": b.D["text_heights"]["model_label_ft"],
-         "layer": "V-ANNO-TEXT"}
+         "layer": _L["labels"]}
     p.update(over)
     return p
 
@@ -212,34 +215,34 @@ def _overlap_text(b: Base):
     e = _first_station(b)
     b.ex("place_text", {"space": "model", "position": list(e.position), "content": "XX+XX.XX",
                         "height": e.height, "rotation_deg": e.rotation_deg, "halign": e.halign,
-                        "valign": e.valign, "layer": "V-ANNO-TEXT"})
+                        "valign": e.valign, "layer": _L["labels"]})
 
 
 def _label_off_sheet(b: Base):
     e = _first_station(b)
     _delete(b, [e.id])
     b.ex("place_label", {"space": SHEET, "alignment": b.A, "anchor": e.anchor["ref"],
-                         "kind": "station", "label_offset": 40.0, "layer": "V-ANNO-TEXT"})
+                         "kind": "station", "label_offset": 40.0, "layer": _L["labels"]})
 
 
 def _polyline_alignment(b: Base):
     _delete(b, [e.id for e in b.elements()])
     pis = b.doc.design.alignments[b.A].pis
     b.ex("draw_polyline", {"space": "model", "vertices": [list(p.point) for p in pis],
-                           "layer": "V-ALIGN-CNTR"})
+                           "layer": _L["alignment"]})
 
 
 def _extra_line(b: Base):
     p = b.free_model_point()
     b.ex("draw_line", {"space": "model", "start": p, "end": [p[0] + 50.0, p[1]],
-                       "layer": "V-ALIGN-CNTR"})
+                       "layer": _L["alignment"]})
 
 
 def _via_viewport(b: Base):
     e = b.label("PC-1", "pc")
     _delete(b, [e.id])
     b.ex("place_label", {"space": SHEET, "alignment": b.A, "anchor": "PC-1", "kind": "pc",
-                         "layer": "V-ANNO-TEXT"})
+                         "layer": _L["labels"]})
 
 
 def _side_offset(b: Base):
@@ -247,14 +250,14 @@ def _side_offset(b: Base):
     _delete(b, [e.id])
     b.ex("place_label", {"space": "model", "alignment": b.A, "anchor": "T-1", "kind": "bearing",
                          "side": "right", "label_offset": 4.0 * b.D["label_offset_ft"],
-                         "height": b.D["text_heights"]["model_label_ft"], "layer": "V-ANNO-TEXT"})
+                         "height": b.D["text_heights"]["model_label_ft"], "layer": _L["labels"]})
 
 
 def _free_bc_text(b: Base):
     content = b.label("PC-1", "pc").content
     b.ex("place_text", {"space": "model", "position": b.free_model_point(), "content": content,
                         "height": b.D["text_heights"]["model_label_ft"], "halign": "center",
-                        "valign": "middle", "layer": "V-ANNO-TEXT"})
+                        "valign": "middle", "layer": _L["labels"]})
 
 
 def _nudge_bearing(text: str) -> str:
@@ -399,7 +402,7 @@ MUTATIONS: List[Mutation] = [
               "D1-05": {"not_visible"}, "D1-06": {"missing"}, "D1-08": {"sheet_missing"},
               "D1-10": {"sheet_missing"}, "D1-11": {"sheet_missing"}}),
     Mutation("alignment layer drawn blue",
-             lambda b: b.ex("modify_layer", {"name": "V-ALIGN-CNTR",
+             lambda b: b.ex("modify_layer", {"name": _L["alignment"],
                                              "changes": {"color": "blue"}}),
              {"D1-09": d109(1)}, {"D1-09": {"wrong_layer_props"}}),
     Mutation("curve C-2 drawn 1 ft too wide", _modify_radius,

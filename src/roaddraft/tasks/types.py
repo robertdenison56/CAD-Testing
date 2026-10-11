@@ -19,7 +19,7 @@ sheet file, and the job is to attach the base as a reference.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 #: the drafting phases in reference order, and the truth group each produces
 PHASES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
@@ -59,7 +59,9 @@ CHECK_GROUPS: Dict[str, Tuple[str, ...]] = {
     "D1-06": ("table",),
     "D1-07": LABEL_GROUPS,
     "D1-08": LABEL_GROUPS + ("table", "north", "sheet", "widths"),
-    "D1-09": LABEL_GROUPS + ("ticks", "linework", "table", "edges", "widths", "layers"),
+    # (the "sheet" group joins D1-09 only on a two-sheet layout, whose match line and labels
+    # have a level of their own; see verify.check_groups)
+    "D1-09": LABEL_GROUPS + ("ticks", "linework", "table", "edges", "widths", "layers", "north"),
     "D1-10": ("title",),
     "D1-11": ("north",),
     "D1-12": ("edges",),
@@ -70,7 +72,7 @@ CHECK_GROUPS: Dict[str, Tuple[str, ...]] = {
 GROUP_LAYER_ROLE: Dict[str, str] = {
     "linework": "alignment", "ticks": "ticks", "stations": "labels", "curve_points": "labels",
     "callouts": "labels", "bearings": "labels", "table": "tables", "edges": "edges",
-    "widths": "dims",
+    "widths": "dims", "north": "symbols", "sheet": "match",
 }
 
 
@@ -153,11 +155,15 @@ def task_type(name: str) -> TaskType:
         raise ValueError(f"unknown task type {name!r}; types: {', '.join(TASK_TYPES)}") from None
 
 
-def checks_in_scope(scope, check_ids) -> List[str]:
+def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str, ...]]] = None
+                    ) -> List[str]:
     """The check ids whose groups intersect ``scope`` (all of them for an
-    empty scope, which is how a truth without one reads)."""
+    empty scope, which is how a truth without one reads).  ``check_groups``
+    overrides ``CHECK_GROUPS`` (the verifier adds the match level to D1-09 on
+    a two-sheet layout)."""
+    groups = CHECK_GROUPS if check_groups is None else check_groups
     scope = set(scope or GROUPS)
-    return [c for c in check_ids if any(g in scope for g in CHECK_GROUPS.get(c, ()))]
+    return [c for c in check_ids if any(g in scope for g in groups.get(c, ()))]
 
 
 __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "LAYOUT_GROUPS",

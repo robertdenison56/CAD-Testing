@@ -80,13 +80,7 @@ class _Words:
         return f"each of {self.sheet_list}" if self.many else self.sheet_list
 
     def layer(self, role: str) -> str:
-        name = self.layers[role]
-        p = self.props[name]
-        bits = [p["color"]]
-        if "linetype" in p:
-            bits.append(f"{p['linetype']} linetype")
-        bits.append(f"{p['lineweight_mm']:g} mm")
-        return f"layer {name} ({', '.join(bits)})"
+        return f"layer {self.layer_name(self.layers[role])}"
 
     @property
     def label_h(self) -> str:
@@ -142,8 +136,9 @@ class _Words:
 
     def north(self) -> str:
         block = self.S["sheet"]["north_arrow"]["block"]
+        on = f", on {self.layer('symbols')}" if "symbols" in self.layers else ""
         return (f"a north arrow (the {block} block) in the upper right of "
-                f"{self.each_sheet()}, inside the border")
+                f"{self.each_sheet()}, inside the border{on}")
 
     def title(self) -> str:
         parts = []
@@ -166,10 +161,11 @@ class _Words:
 
     def match_line(self) -> str:
         m = self.match
+        on = self.layer("match") if "match" in self.layers else self.layer("ticks")
         return (f"a match line across the centerline at station {m['station_text']}, "
-                f"{m['half_width_ft']:g} ft each side, on {self.layer('ticks')}, and on each "
-                f"sheet a label reading MATCH LINE STA {m['station_text']} SEE SHEET <the other "
-                f"sheet>, {self.label_h}, at the end of the match line, on {self.layer('labels')}")
+                f"{m['half_width_ft']:g} ft each side, and on each sheet a label reading MATCH "
+                f"LINE STA {m['station_text']} SEE SHEET <the other sheet>, {self.label_h}, at the "
+                f"end of the match line, both on {on}")
 
     def breaking(self) -> str:
         return f", breaking at station {self.match['station_text']}" if self.match else ""
@@ -192,10 +188,22 @@ class _Words:
                 f"edges of pavement at station {where}, text {self.label_h}, reading "
                 f"{width:.2f}', on {self.layer('dims')}")
 
+    @property
+    def layer_set(self) -> List[str]:
+        return list(self.S.get("layer_set") or dict.fromkeys(self.layers.values()))
+
     def layer_list(self, with_props: bool) -> str:
         if with_props:
-            return ", ".join(self.layer(role) for role in self.layers).replace("layer ", "")
-        return ", ".join(self.layers.values())
+            return "; ".join(self.layer_name(name) for name in self.layer_set)
+        return ", ".join(self.layer_set)
+
+    def layer_name(self, name: str) -> str:
+        p = self.props[name]
+        bits = [p["color"]]
+        if "linetype" in p:
+            bits.append(f"{p['linetype']} linetype")
+        bits.append(f"{p['lineweight_mm']:g} mm")
+        return f"{name} ({', '.join(bits)})"
 
     # -- what is already there
     def done(self) -> str:
@@ -309,9 +317,9 @@ def _plan_sheet(w: _Words, explicit: bool) -> str:
 
 def _layer_setup(w: _Words, explicit: bool) -> str:
     if explicit:
-        return (f"Create the office's standard layers in this drawing: "
-                f"{w.layer_list(with_props=True)}. Nothing is drawn yet; draw nothing.")
-    return f"Set up the standard layers: {w.layer_list(with_props=False)}."
+        return (f"Create the Caltrans named levels a layout sheet file carries, as layers of this "
+                f"drawing: {w.layer_list(with_props=True)}. Nothing is drawn yet; draw nothing.")
+    return f"Set up the standard Caltrans levels: {w.layer_list(with_props=False)}."
 
 
 def _pavement_edges(w: _Words, explicit: bool) -> str:

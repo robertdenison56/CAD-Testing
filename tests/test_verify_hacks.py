@@ -8,6 +8,8 @@ import pytest
 
 from roaddraft.tasks.reference import reference_commands
 from tests.verify_mutations import BASE, SHEET, Base
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
+_L = _SPEC["layers"]
 
 #: what (a) can earn: sheet setup, linework, ticks, standards, legibility of what is
 #: there, title block, north arrow (5 + 10 + 9 + 6 + 6 + 5 + 1)
@@ -124,19 +126,19 @@ def test_f_chain_mode_stationing_on_hand_drawn_linework():
     for el in align.elements:
         if el.kind == "tangent":
             res = b.ex("draw_line", {"space": "model", "start": list(el.start), "end": list(el.end),
-                                     "layer": "V-ALIGN-CNTR"})
+                                     "layer": _L["alignment"]})
         else:
             s, e = el.ccw_angles()
             res = b.ex("draw_arc", {"space": "model", "center": list(el.center),
                                     "radius": el.radius, "start_angle_deg": s,
-                                    "end_angle_deg": e, "layer": "V-ALIGN-CNTR"})
+                                    "end_angle_deg": e, "layer": _L["alignment"]})
         ids.append(res["created"][0])
     b.ex("annotate_stationing", {"space": "model", "path_ids": ids,
                                  "begin_station": align.begin_station, "interval": 100,
                                  "tick_half_len": b.D["tick_half_len_ft"],
                                  "label_offset": b.D["label_offset_ft"],
                                  "text_height": b.D["text_heights"]["model_label_ft"],
-                                 "layer": "V-ROAD-STA", "label_layer": "V-ANNO-TEXT"})
+                                 "layer": _L["ticks"], "label_layer": _L["labels"]})
     r = b.verify()
     assert r.check("D1-01").credit == 1.0 and r.check("D1-02").credit == 1.0
     assert r.check("D1-03").credit == 0.0
@@ -207,7 +209,7 @@ def test_k_right_words_on_the_wrong_anchor_hard_fail():
                          "kind": "station", "content": here.content,
                          "label_offset": b.D["label_offset_ft"],
                          "height": b.D["text_heights"]["model_label_ft"],
-                         "layer": "V-ANNO-TEXT"})
+                         "layer": _L["labels"]})
     r = b.verify()
     assert r.hard_failed and r.effective_score == 0.0
     assert [f.code for f in r.check("D1-03").findings] == ["wrong_value"]

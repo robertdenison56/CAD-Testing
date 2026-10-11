@@ -64,6 +64,8 @@ REVISED_RE = re.compile(r"^(?:Revised\s+)?(?:%s)\s+\d{4}$" % MONTHS)
 HEADER_RE = re.compile(r"^(?:Chapter|Section|Appendix|Table of Contents)\b.*$")
 # The manual's own page number: "2-8", "4-41", "i", "iv" -- on its own line or after the copyright line.
 PPM_PAGE_RE = re.compile(r"(?:^|\s)((?:[ivxlc]{1,6})|(?:\d{1,2}-\d{1,3}[A-Za-z]?)|(?:[A-Z]{1,2}-\d{1,3}))\s*$")
+# The CADD Users Manual's own page number: "Page A10 - 2", "Page 2.7-1" (section-page).
+CADD_PAGE_RE = re.compile(r"\bPage\s+([A-Z]{0,2}\d{1,2}(?:\.\d{1,2})?)\s*-\s*(\d{1,3})\s*$")
 SECTION_RE = re.compile(r"^(\d+)\s*-\s*(\d+(?:\.\d+)*)\b")          # outline titles like "2 -1.3 ..."
 RELEASED_RE = re.compile(r"\bRELEASED\s+(\d{1,2}/\d{1,2}/\d{2,4})")
 SUPERSEDES_RE = re.compile(r"SUPERSEDES\s+EXAMPLE\s+RELEASED\s+(\d{1,2}/\d{1,2}/\d{2,4})")
@@ -168,6 +170,9 @@ def _find_ppm_page(lines: List[str], header: Optional[str]) -> Optional[str]:
     figure pages it can sit earlier in the stream, so fall back to a standalone token whose
     chapter prefix matches the running header."""
     for line in reversed(lines[-4:]):
+        m = CADD_PAGE_RE.search(line)
+        if m:
+            return "%s-%s" % (m.group(1), m.group(2))
         m = PPM_PAGE_RE.search(line)
         if m:
             return m.group(1)

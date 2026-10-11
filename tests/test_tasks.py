@@ -16,6 +16,8 @@ from roaddraft.tasks.ground_truth import compute_ground_truth, match_truth
 from roaddraft.tasks.reference import check_replay, reference_solution, session_for_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
 from roaddraft.tasks.standards import max_grade, min_k, min_radius
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
+_L = _SPEC["layers"]
 
 FIXTURE = Path(__file__).parent / "fixtures" / "task_ids_d1_v1.json"
 
@@ -138,7 +140,7 @@ def test_reference_matches_truth_missing_empty_content_empty_position_empty(tmp_
         ticks = [e for e in session.doc.model_entities.values()
                  if e.anchor and e.anchor["kind"] == "tick"]
         assert len(ticks) == task.truth.counts["ticks"]
-        assert all(t.layer == "V-ROAD-STA" for t in ticks)
+        assert all(t.layer == _L["ticks"] for t in ticks)
         sheet = next(iter(session.doc.sheets.values()))
         tables = [e for e in sheet.entities.values() if e.TYPE == "table"]
         assert tables[0].rows == task.truth.curve_table["rows"]

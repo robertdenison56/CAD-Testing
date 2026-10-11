@@ -10,6 +10,8 @@ from roaddraft.verify.geometry import (
     crosses_at, element_piece, match_linework, match_ticks, pieces_of, same_piece,
 )
 from tests.verify_mutations import BASE, Base
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
+_L = _SPEC["layers"]
 
 TOL = 0.05
 
@@ -33,7 +35,7 @@ def test_an_arc_is_not_its_complement_through_the_same_ends():
 def test_reference_elements_match_their_drawn_entities():
     b = Base(**BASE)
     align = b.doc.design.alignments[b.A]
-    res = match_linework(align, list(b.doc.model_entities.values()), "V-ALIGN-CNTR", TOL)
+    res = match_linework(align, list(b.doc.model_entities.values()), _L["alignment"], TOL)
     assert all(len(em.hits) == 1 for em in res.elements) and not res.bad_entities
 
 
@@ -47,8 +49,8 @@ def test_one_bulged_polyline_through_every_element_matches_them_all():
             bulges.append(geo.bulge_of_sweep(math.degrees(el.length / el.radius) * el.sign))
         else:
             bulges.append(0.0)
-    pl = Polyline(id="PL-1", layer="V-ALIGN-CNTR", vertices=verts, bulges=bulges)
-    res = match_linework(align, [pl], "V-ALIGN-CNTR", TOL)
+    pl = Polyline(id="PL-1", layer=_L["alignment"], vertices=verts, bulges=bulges)
+    res = match_linework(align, [pl], _L["alignment"], TOL)
     assert all(em.hits for em in res.elements) and not res.bad_entities
 
 
@@ -57,11 +59,11 @@ def test_part_of_a_tangent_is_on_the_design_but_earns_nothing():
     align = b.doc.design.alignments[b.A]
     t = align.elements[0]
     mid = [(t.start[0] + t.end[0]) / 2, (t.start[1] + t.end[1]) / 2]
-    half = Line(id="LN-H", layer="V-ALIGN-CNTR", start=list(t.start), end=mid)
-    res = match_linework(align, [half], "V-ALIGN-CNTR", TOL)
+    half = Line(id="LN-H", layer=_L["alignment"], start=list(t.start), end=mid)
+    res = match_linework(align, [half], _L["alignment"], TOL)
     assert not res.bad_entities and not any(em.hits for em in res.elements)
-    off = Line(id="LN-O", layer="V-ALIGN-CNTR", start=list(t.start), end=[mid[0] + 1, mid[1]])
-    assert match_linework(align, [off], "V-ALIGN-CNTR", TOL).bad_entities[0].id == "LN-O"
+    off = Line(id="LN-O", layer=_L["alignment"], start=list(t.start), end=[mid[0] + 1, mid[1]])
+    assert match_linework(align, [off], _L["alignment"], TOL).bad_entities[0].id == "LN-O"
 
 
 def test_element_piece_midpoint_lies_on_the_curve():

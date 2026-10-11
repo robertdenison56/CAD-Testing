@@ -28,19 +28,66 @@ DRAFTING_SPEC_V1 = {
             "fit_window_in": [26.0, 15.0], "north_arrow": {"required": True, "block": "NORTH_ARROW", "position": [31.6, 19.2], "scale": 0.9},
             "required_title_fields": ["project", "agency", "sheet_title", "sheet_number", "total_sheets", "designed_by", "drawn_by", "checked_by", "date", "scale"],
             "scale_text_format": "1\" = {fpi:.0f}'"},
-  "layers": {"alignment": "V-ALIGN-CNTR", "ticks": "V-ROAD-STA", "labels": "V-ANNO-TEXT", "tables": "V-ANNO-TABL",
-             "edges": "V-ROAD-EOP", "dims": "V-ANNO-DIMS"},
-  "layer_props": {"V-ALIGN-CNTR": {"color": "red", "linetype": "center", "lineweight_mm": 0.35},
-                  "V-ROAD-STA": {"color": "gray", "lineweight_mm": 0.18},
-                  "V-ANNO-TEXT": {"color": "black", "lineweight_mm": 0.25},
-                  "V-ANNO-TABL": {"color": "black", "lineweight_mm": 0.25},
-                  "V-ROAD-EOP": {"color": "blue", "lineweight_mm": 0.35},
-                  "V-ANNO-DIMS": {"color": "black", "lineweight_mm": 0.25}},
+  # Layers are Caltrans named levels (decided 2026-10-10, Robert: "set up more layers per
+  # Caltrans PPM standards"), from the CADD Users Manual Appendix A10 "Named Level Libraries"
+  # (April 12, 2021) with the weights of its Chapter 2.7 "Lines" (Oct 23, 2017) and the PPM's
+  # layout-sheet checklist (ppm-text p. 2-89 (pdf 118)). Roles name the level each kind of
+  # work goes on; ``layer_set`` is the whole set a layout sheet file carries; ``caltrans_levels``
+  # records the source row behind each one. Two roles are this spec's own reading of the
+  # library and are flagged for PE review: width dimensions on rd_LAYOUT-NOTE-anno and match
+  # lines on border_INSIDE-BORDER-anno (the level the PPM gives the scale text).
+  "layers": {"alignment": "align_MAIN", "ticks": "align_MAIN-anno", "labels": "align_MAIN-anno",
+             "tables": "align_CURVE-DATA", "edges": "rd_EP", "dims": "rd_LAYOUT-NOTE-anno",
+             "symbols": "pp_PRESENTATION", "match": "border_INSIDE-BORDER-anno"},
+  "layer_set": ["align_MAIN", "align_MAIN-anno", "align_CURVE-DATA", "rd_EP", "rd_ETW", "rd_ES",
+                "rd_LAYOUT-NOTE-anno", "rd_RIGHT-OF-WAY", "rd_RIGHT-OF-WAY-anno", "pp_PRESENTATION",
+                "pp_LEGEND-anno", "border_SHEET", "border_PROJ-ID-BLOCK-anno", "border_INSIDE-BORDER-anno",
+                "border_SEAL", "border_SIGNATURE"],
+  # RoadDraft's rendering of a MicroStation weight (WT) as a plotted width; the WT is the source
+  # value (CADD Users Manual 2.7-1, 2.7-2), the millimetres are this spec's choice
+  "lineweight_mm_by_wt": {"0": 0.18, "1": 0.25, "2": 0.35, "3": 0.5, "4": 0.7},
+  "layer_props": {
+      "align_MAIN": {"color": "black", "lineweight_mm": 0.5, "description": "Alignment for Main line (Caltrans level 9017; WT 3)"},
+      "align_MAIN-anno": {"color": "black", "lineweight_mm": 0.25, "description": "Annotation for Main line alignment: stations, curve points, bearings, callouts (Caltrans level 9018; WT 1)"},
+      "align_CURVE-DATA": {"color": "black", "lineweight_mm": 0.25, "description": "Curve data information in tabular format (Caltrans level 9010; WT 1)"},
+      "rd_EP": {"color": "black", "lineweight_mm": 0.35, "description": "Edge of Pavement (Caltrans level 9112; WT 2 on layouts)"},
+      "rd_ETW": {"color": "black", "lineweight_mm": 0.25, "description": "Edge of Traveled Way (Caltrans level 9114; WT 1)"},
+      "rd_ES": {"color": "black", "lineweight_mm": 0.25, "description": "Edge of Shoulder (Caltrans level 9113; WT 1)"},
+      "rd_LAYOUT-NOTE-anno": {"color": "black", "lineweight_mm": 0.18, "description": "Annotation for construction shown in Master Design: layout notes, width dimensions (Caltrans level 9129; WT 0)"},
+      "rd_RIGHT-OF-WAY": {"color": "cyan", "lineweight_mm": 0.25, "description": "Right of way (Caltrans level 9143, color 6; WT 1)"},
+      "rd_RIGHT-OF-WAY-anno": {"color": "cyan", "lineweight_mm": 0.25, "description": "Annotation for right of way and TCE (Caltrans level 9144, color 6; WT 1)"},
+      "pp_PRESENTATION": {"color": "black", "lineweight_mm": 0.25, "description": "Cells, line styles or other info for design presentation: the north arrow (Caltrans level 10232; WT 1)"},
+      "pp_LEGEND-anno": {"color": "black", "lineweight_mm": 0.25, "description": "Annotation for notes, legends and abbreviations (Caltrans level 10225; WT 1)"},
+      "border_SHEET": {"color": "black", "lineweight_mm": 0.7, "description": "Border for any discipline (Caltrans level 10210; WT 4)"},
+      "border_PROJ-ID-BLOCK-anno": {"color": "magenta", "lineweight_mm": 0.25, "description": "Annotation in the project identification block (Caltrans level 10208, color 13; WT 1)"},
+      "border_INSIDE-BORDER-anno": {"color": "magenta", "lineweight_mm": 0.35, "description": "Annotation inside the border: scale, match lines (Caltrans level 10206, color 13; WT 2)"},
+      "border_SEAL": {"color": "yellow", "lineweight_mm": 0.25, "description": "Seal information of licensed person (Caltrans level 10209, color 4; WT 1)"},
+      "border_SIGNATURE": {"color": "yellow", "lineweight_mm": 0.25, "description": "Signature of licensed person (Caltrans level 10211, color 4; WT 1)"}},
+  # the source row behind each level: Appendix A10 number, library, color-table index, the
+  # weight (CADD 2.7, or the PPM where it says otherwise) and where each comes from. Display
+  # colors above are RoadDraft's nearest named color for the index, not the Caltrans table.
+  "caltrans_levels": {
+      "align_MAIN": {"number": 9017, "library": "Ct_Alignments", "color_index": 0, "weight": 3, "source": "cadd-appx-a10 p. A10-2; weight cadd-ch2-sect7 p. 2.7-1 (alignment lines for main routes)"},
+      "align_MAIN-anno": {"number": 9018, "library": "Ct_Alignments", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-2; ppm-text p. 2-89 (pdf 118) route identification LV=align_MAIN-anno; weight cadd-ch2-sect7 p. 2.7-1 (stations for all alignment lines)"},
+      "align_CURVE-DATA": {"number": 9010, "library": "Ct_Alignments", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-2"},
+      "rd_EP": {"number": 9112, "library": "Ct_Roadway", "color_index": 0, "weight": 2, "source": "cadd-appx-a10 p. A10-18; ppm-text p. 2-90 (pdf 119) EP as a thicker weight line, usually WT=2 (cadd-ch2-sect7 p. 2.7-2 lists EP at WT 1)"},
+      "rd_ETW": {"number": 9114, "library": "Ct_Roadway", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-18; cadd-ch2-sect7 p. 2.7-2"},
+      "rd_ES": {"number": 9113, "library": "Ct_Roadway", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-18; cadd-ch2-sect7 p. 2.7-2"},
+      "rd_LAYOUT-NOTE-anno": {"number": 9129, "library": "Ct_Roadway", "color_index": 0, "weight": 0, "source": "cadd-appx-a10 p. A10-18; weight cadd-ch2-sect7 p. 2.7-1 (dimension lines). PE review: this spec's choice of level for width dimensions"},
+      "rd_RIGHT-OF-WAY": {"number": 9143, "library": "Ct_Roadway", "color_index": 6, "weight": 1, "source": "cadd-appx-a10 p. A10-18; cadd-ch2-sect7 p. 2.7-1 (right of way)"},
+      "rd_RIGHT-OF-WAY-anno": {"number": 9144, "library": "Ct_Roadway", "color_index": 6, "weight": 1, "source": "cadd-appx-a10 p. A10-18"},
+      "pp_PRESENTATION": {"number": 10232, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-16; ppm-text p. 2-89 (pdf 118) north arrow AC=NARR LV=pp_PRESENTATION WT=1"},
+      "pp_LEGEND-anno": {"number": 10225, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-16; ppm-text p. 2-90 (pdf 119)"},
+      "border_SHEET": {"number": 10210, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 0, "weight": 4, "source": "cadd-appx-a10 p. A10-16; ppm-text p. 2-89 (pdf 118); weight cadd-ch2-sect7 p. 2.7-1 (sheet border)"},
+      "border_PROJ-ID-BLOCK-anno": {"number": 10208, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 13, "weight": 1, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118) TX=7.0 FT=3 WT=1"},
+      "border_INSIDE-BORDER-anno": {"number": 10206, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 13, "weight": 2, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118) scale TX=8.75 FT=3 WT=2. PE review: this spec's choice of level for match lines"},
+      "border_SEAL": {"number": 10209, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 4, "weight": 1, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118)"},
+      "border_SIGNATURE": {"number": 10211, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 4, "weight": 1, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118)"}},
   # the typical section (plan prep, decided 2026-10-10): two lanes, the edge of pavement a
   # lane width each side of the centerline, the width dimensioned across each tangent
-  "pavement": {"lanes": 2, "lane_widths_ft": [11, 12], "edge_layer": "V-ROAD-EOP",
-               "width_dimension": {"kind": "aligned", "per": "tangent", "at": "the even station nearest the tangent's midpoint",
-                                   "layer": "V-ANNO-DIMS", "text_height_in": 0.10, "format": "24.00'"}},
+  "pavement": {"lanes": 2, "lane_widths_ft": [11, 12], "edge_layer": "rd_EP",
+               "width_dimension": {"kind": "aligned", "per": "tangent", "at": "the half station nearest the tangent's midpoint",
+                                   "layer": "rd_LAYOUT-NOTE-anno", "text_height_in": 0.10, "format": "24.00'"}},
   "reference": {"name": "BASE", "space": "model", "placement": "identity (no offset, rotation or scale), visible, unclipped"},
   "text": {"label_height_in": 0.10, "table_height_in": 0.12, "height_tolerance_pct": 10},
   "stationing": {"interval_ft": 100, "format": "12+34.56", "decimals": 2, "tick_half_len_in": 0.20, "label_offset_in": 0.32, "label_side": "left", "rotation": "along"},
@@ -107,8 +154,8 @@ SPEC_VERSION = DRAFTING_SPEC_V1["version"]          # "draft-v1"; the brief's ``
 SPEC_STATUS = DRAFTING_SPEC_V1["status"]            # starts with "DRAFT"
 
 #: Keys of ``DRAFTING_SPEC_V1`` that ``spec_subset()`` copies into a task brief by default.
-SPEC_SUBSET_KEYS = ("units", "sheet", "layers", "layer_props", "text", "stationing", "labels",
-                    "curve_table", "tolerances", "scoring", "checks")
+SPEC_SUBSET_KEYS = ("units", "sheet", "layers", "layer_set", "layer_props", "text", "stationing",
+                    "labels", "curve_table", "tolerances", "scoring", "checks")
 
 
 def _canonical_json(obj: object) -> str:
