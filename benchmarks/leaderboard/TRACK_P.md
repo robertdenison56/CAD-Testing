@@ -11,16 +11,19 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 | rank | model | class | runner | pass rate [95% CI] | T1 (17) | T2 (6) | T3 (10) | hard-fail | invalid calls | cost / task | attempts | card |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Claude Sonnet 5.5 | frontier API | runners · claude-code (Claude Code headless) | 96.0% [87.9, 100.0] | 51/51 (100%) | 18/18 (100%) | 26/30 (87%) | 3% (1/33) | 2.0% | $0.10 | 99 (k = 3) | [card](cards/claude-sonnet-5-5.md) |
-| 2 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | 74.7% [60.6, 86.9] | 49/51 (96%) | 12/18 (67%) | 13/30 (43%) | 15% (5/33) | 4.2% | $0.11 | 99 (k = 3) | [card](cards/claude-haiku-4-5.md) |
-| 3 | Gemma 4 E4B | local small | runners · openai (LM Studio) | 29.3% [16.2, 44.4] | 29/51 (57%) | 0/18 (0%) | 0/30 (0%) | 61% (20/33) | 47.7% | — | 99 (k = 3) | [card](cards/google-gemma-4-e4b.md) |
+| 2 | Claude Fable 5.1 | frontier API | runners · claude-code (Claude Code headless) | 89.9% [79.8, 98.0] | 51/51 (100%) | 15/18 (83%) | 23/30 (77%) | 6% (2/33) | 1.0% | $1.37 | 99 (k = 3) | [card](cards/claude-fable-5-1.md) |
+| 3 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | 74.7% [60.6, 86.9] | 49/51 (96%) | 12/18 (67%) | 13/30 (43%) | 15% (5/33) | 4.2% | $0.11 | 99 (k = 3) | [card](cards/claude-haiku-4-5.md) |
+| 4 | Gemma 4 E4B | local small | runners · openai (LM Studio) | 29.3% [16.2, 44.4] | 29/51 (57%) | 0/18 (0%) | 0/30 (0%) | 61% (20/33) | 47.7% | — | 99 (k = 3) | [card](cards/google-gemma-4-e4b.md) |
 
-- Budgets differ between ranked rows: Claude Sonnet 5.5 120 turns, 15 min; Claude Haiku 4.5 120 turns, 15 min; Gemma 4 E4B 120 turns, 30 min.
+- Claude Sonnet 5.5 (rank 1) and Claude Fable 5.1 (rank 2): the 95% intervals overlap, so this ordering is not separated.
+- Claude Fable 5.1 (rank 2) and Claude Haiku 4.5 (rank 3): the 95% intervals overlap, so this ordering is not separated.
+- Budgets differ between ranked rows: Claude Sonnet 5.5 120 turns, 15 min; Claude Fable 5.1 120 turns, 15 min; Claude Haiku 4.5 120 turns, 15 min; Gemma 4 E4B 120 turns, 30 min.
+- Ranked rows ran on 2 different tool surfaces; see the cards.
 
 ## Not ranked yet
 
 | model | class | runner | run folder | attempts | passed | why not ranked | card |
 |---|---|---|---|---|---|---|---|
-| Claude Fable 5.1 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-12-k3` | 66 on 33 probes | 60/66 | k = 3 on 0 of 33 probes | [card](cards/claude-fable-5-1.md) |
 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-08-k3` | 63 on 21 probes | 35/63 | k = 3 on 21 of 33 probes; 36 episodes ran on an earlier task text (the probe set changed since); rerun | [card](cards/claude-haiku-4-5--2026-10-08-k3.md) |
 | GPT-6-Luna | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 21 on 8 probes | 19/21 | k = 3 on 6 of 33 probes | [card](cards/gpt-6-luna.md) |
 | GPT-6-Astra | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 14 on 5 probes | 14/14 | k = 3 on 4 of 33 probes | [card](cards/gpt-6-astra.md) |

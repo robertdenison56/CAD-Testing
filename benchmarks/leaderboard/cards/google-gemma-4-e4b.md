@@ -9,7 +9,7 @@
 | runner | runners · openai (LM Studio), `http://localhost:1234/v1` |
 | run folder | `2026-10-12-k3`, labels `gemma-r1`, `gemma-r2`, `gemma-r3` |
 | budgets | 120 turns, 30 min per probe; text only; default effort |
-| standing | rank 3 of 3 |
+| standing | rank 4 of 4 |
 | engine commit | `2697ee5093` (99); changed past it: `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/tasks/brief.py`, `src/roaddraft/tasks/generator.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/spec_v1.py` |
 | tool surface | `sha256:97c51a241564` |
 | server instructions | current |

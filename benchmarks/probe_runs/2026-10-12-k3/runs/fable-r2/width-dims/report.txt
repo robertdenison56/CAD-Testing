@@ -1,0 +1,24 @@
+The render now shows four separate, readable numbers: **8'** above the 20L edge and **8'** below the 20R edge in the x = 16.0 column, and **12'** above 12L and **12'** below 12R in the x = 16.6 column — no two touch. Task complete.
+
+## Report
+
+**1. What was placed**
+Four linear dimensions on sheet **C-101** (paper space, layer 0, `measure_scale` 50 so they read model feet), all measured vertically across SR-100 at station 17+00 (model x = 1700, seen through VP-001 at 1"=50'):
+- **DM-005** — left shoulder, 20L→12L (paper 15.5,7.10 → 15.5,6.94), reads **8'**, number above the outer edge, dimension line at x = 16.0
+- **DM-009** — left lane, 12L→CL (6.94 → 6.70), reads **12'**, number above 12L, dimension line at x = 16.6
+- **DM-010** — right lane, CL→12R (6.70 → 6.46), reads **12'**, number below 12R, dimension line at x = 16.6
+- **DM-008** — right shoulder, 12R→20R (6.46 → 6.30), reads **8'**, number below the outer edge, dimension line at x = 16.0
+
+The measured points are the referenced design's shoulder/pavement offsets (DESIGN:LN-010 @20L, LN-004 @12L, LN-001 CL, LN-007 @12R, LN-013 @20R) at 17+00, obtained from the alignment DESIGN:SR-100.
+
+**2. Tool calls that mattered**
+1. `get_document_state` → no owned geometry; `list_references` / `list_alignments include_references` → DESIGN:SR-100 in `SR-100.model.rdoc.json`; `get_sheet_state C-101` → VP-001, 1"=50'; `find_entities visible_on=C-101` → EP/ES offsets ±12/±20.
+2. `station_to_xy alignment=DESIGN:SR-100 station=17+00 sheet=C-101` with offsets −20, −12, 12, 20 → paper points (15.5, 7.10/6.94/6.46/6.30).
+3. `place_dimension space=C-101 kind=linear measure_scale=50 unit_format=feet precision=0` ×4 (first attempt, arrows, 0.10" text, staggered x = 16.0/16.7) → all overflowed downward; `get_entity` + `render_sheet` to inspect; `delete_entities DM-001..004`.
+4. Second attempt ×4 with `arrow=tick text_height=0.08`, left shoulder with p1/p2 reversed → confirmed overflow text goes to the **p2** side; three dims still piled up below; `delete_entities DM-006, DM-007`.
+5. Re-placed the lanes: `place_dimension p1=[15.5,6.7] p2=[15.5,6.94] line_point=[16.6,6.82]` (DM-009) and `p1=[15.5,6.7] p2=[15.5,6.46] line_point=[16.6,6.58]` (DM-010); `render_sheet dpi=300` verified.
+
+**3. Problems / workarounds**
+- At 1"=50' an 8' span is 0.16" and a 12' span 0.24", so every dimension came back with: *"DM-001 is too short for its text: the text needs 0.12 plus arrowheads across a 0.16 span, so both are drawn outside the extension lines"* (and *"text needs 0.17 plus arrowheads across a 0.24 span"* even with ticks and 0.08" text). The engine always throws the overflow text to the **p2** end, which isn't documented — I found that by reading bboxes after reversing p1/p2 on one dim. The fix was to choose p1→p2 direction per dimension so each number is pushed outward and to split shoulders (x = 16.0) and lanes (x = 16.6) into two columns.
+- `place_dimension` still reports *"DM-009 overlaps DM-005"* etc. for the final set; those are bounding-box crossings from the lanes' extension lines passing through the shoulder dims' boxes, not text collisions — the render confirms all four numbers are separate.
+- `render_sheet` has no window/bounds option, so checking a 0.8"-tall detail meant rendering the whole 34×22 sheet at 300 dpi.

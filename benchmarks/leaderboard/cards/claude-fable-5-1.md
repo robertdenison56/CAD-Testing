@@ -7,47 +7,50 @@
 | model | `claude-fable-5-1` |
 | class | frontier API |
 | runner | runners · claude-code (Claude Code headless) |
-| run folder | `2026-10-12-k3`, labels `fable-r1`, `fable-r3` |
+| run folder | `2026-10-12-k3`, labels `fable-r1`, `fable-r2`, `fable-r3` |
 | budgets | 120 turns, 15 min per probe; text only; default effort |
-| standing | not ranked yet: k = 3 on 0 of 33 probes |
-| engine commit | `555bf496a8` (33), `6bf396e527` (33); changed past it: `src/roaddraft/runners/__init__.py`, `src/roaddraft/runners/__main__.py`, `src/roaddraft/runners/codex_cli.py`, `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/tasks/spec_v1.py` |
+| standing | rank 2 of 4 |
+| engine commit | `3213be3b60` (33), `555bf496a8` (33), `6bf396e527` (33); changed past it: `src/roaddraft/runners/__init__.py`, `src/roaddraft/runners/__main__.py`, `src/roaddraft/runners/codex_cli.py`, `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/tasks/spec_v1.py` |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**90.9%** pass rate, 95% CI [80.3, 98.5]: 60 of 66 attempts that count, on 33 of 33 probes.
+**89.9%** pass rate, 95% CI [79.8, 98.0]: 89 of 99 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 34/34 (100%) | 10/12 (83%) | 16/20 (80%) | 60/66 |
+| passed | 51/51 (100%) | 15/18 (83%) | 23/30 (77%) | 89/99 |
 
-By attempt: fable-r1 29/33, fable-r3 31/33. Of the 33 probes attempted, 29 pass every time, 2 never pass (hard-fail rate 6%), 2 split.
+By attempt: fable-r1 29/33, fable-r2 29/33, fable-r3 31/33. Of the 33 probes attempted, 29 pass every time, 2 never pass (hard-fail rate 6%), 2 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 1.3% (12 of 956 calls) | faulted calls over calls, from the traces |
-| fault recovery | 7 of 12 faults (58%) | a fault followed within three calls by a successful call of the same tool |
+| invalid-call rate | 1.0% (15 of 1,445 calls) | faulted calls over calls, from the traces |
+| fault recovery | 10 of 15 faults (67%) | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
-| query before compute | 36 of 66 episodes that changed the drawing asked a design query first; 2.4 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| query before compute | 54 of 99 episodes that changed the drawing asked a design query first; 2.5 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
 | report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
-| steps | 14.5 calls, 15.5 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 63 s per episode, 1.1 h in all | the runner's clock, episode start to report |
-| tokens | 430k in, 4.3k out per episode | input counts cache reads and writes |
-| cost | $1.33 per episode, $87.66 in all | the CLI's own figure at list price, billed to a subscription |
-| render use | 72 renders in 53 episodes; 13 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| steps | 14.6 calls, 15.6 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 63 s per episode, 1.7 h in all | the runner's clock, episode start to report |
+| tokens | 432k in, 4.3k out per episode | input counts cache reads and writes |
+| cost | $1.37 per episode, $136.09 in all | the CLI's own figure at list price, billed to a subscription |
+| render use | 111 renders in 82 episodes; 20 followed by a change | a render is followed by a change when a successful command comes before the next render |
 | scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
 
-Stops: answered 62, budget_usd 4.
+Stops: answered 92, budget_usd 7.
 
 Ended by budget, counted as failures:
 
 - fable-r1/curve-data: budget_usd, the document passes its check
 - fable-r1/line-data: budget_usd, the document passes its check
 - fable-r1/sheet-set-callouts: budget_usd, the document passes its check
+- fable-r2/curve-data: budget_usd, the document passes its check
+- fable-r2/line-data: budget_usd, the document passes its check
+- fable-r2/sheet-set-callouts: budget_usd, the document passes its check
 - fable-r3/sheet-set-callouts: budget_usd, the document passes its check
 
 ## Every probe
@@ -56,36 +59,36 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 
 | probe | tier | attempts | calls | faults | the first failing attempt, as its check read it |
 |---|---|---|---|---|---|
-| edge-c102 | T1 | P P | 5.5 | 0 |  |
-| edge-curve-c102 | T1 | P P | 10.0 | 0 |  |
-| shoulder-c101 | T1 | P P | 9.0 | 0 |  |
-| centerline-c103 | T1 | P P | 7.0 | 0 |  |
-| both-edges-c101 | T1 | P P | 13.0 | 0 |  |
-| title-blocks | T1 | P P | 11.0 | 1 |  |
-| pc-by-station | T1 | P P | 7.5 | 0 |  |
-| edge-c102-paper | T1 | P P | 7.5 | 0 |  |
-| sta-offset-c101-paper | T1 | P P | 10.0 | 0 |  |
-| draft-tangent-ne | T1 | P P | 4.5 | 0 |  |
-| draft-pi-curve | T1 | P P | 4.5 | 0 |  |
-| draft-bearing-distance | T1 | P P | 4.5 | 0 |  |
-| draft-edges-shoulders | T1 | P P | 9.0 | 0 |  |
-| draft-turn-lane | T1 | P P | 10.0 | 0 |  |
-| draft-cul-de-sac | T1 | P P | 9.0 | 0 |  |
-| draft-building | T1 | P P | 4.5 | 0 |  |
-| draft-roadway | T1 | P P | 8.0 | 0 |  |
-| sheet-set-callouts | T2 | B B | 29.5 | 0 | fable-r1: 15 callouts on paper across 3 sheets, each on its edge, the centerline named, title blocks numbered 1 to 3 (ended by budget: budget_usd) |
-| station-callouts | T2 | P P | 25.5 | 0 |  |
-| clean-callouts | T2 | P P | 14.5 | 0 |  |
-| draft-intersection-corner | T2 | P P | 8.5 | 0 |  |
-| draft-fix-the-drawing | T2 | P P | 15.5 | 0 |  |
-| draft-roadway-sheets | T2 | P P | 13.0 | 0 |  |
-| line-data | T3 | B P | 21.0 | 0 | fable-r1: all 3 tangents lettered with bearing and length on the sheet that shows them: above the line, parallel to it, clear of the linework (ended by budget: budget_usd) |
-| curve-points | T3 | P P | 18.0 | 0 |  |
-| curve-data | T3 | B P | 37.5 | 3 | fable-r1: each sheet's CURVE DATA table lists exactly the curves it shows, numbered along SR-100 with the design's R, Δ, T and L, and every curve carries its numbered bubble with a leader to the curve (ended by budget... |
-| stationing | T3 | P P | 17.0 | 2 |  |
-| width-dims | T3 | P P | 29.0 | 0 |  |
-| row-data | T3 | P P | 14.5 | 0 |  |
-| equation-data | T3 | P P | 16.0 | 0 |  |
-| qa-alignment-data | T3 | P P | 19.5 | 0 |  |
-| l2-match-lines | T3 | P P | 21.0 | 0 |  |
-| l2-alignment-data | T3 | · · | 43.5 | 6 | fable-r1: bubble 2's leader on L-2 stops 2.74 ft off the curve (needed 1.0 ft) |
+| edge-c102 | T1 | P P P | 5.7 | 0 |  |
+| edge-curve-c102 | T1 | P P P | 10.0 | 0 |  |
+| shoulder-c101 | T1 | P P P | 8.7 | 0 |  |
+| centerline-c103 | T1 | P P P | 7.7 | 0 |  |
+| both-edges-c101 | T1 | P P P | 11.3 | 0 |  |
+| title-blocks | T1 | P P P | 10.0 | 1 |  |
+| pc-by-station | T1 | P P P | 7.3 | 0 |  |
+| edge-c102-paper | T1 | P P P | 7.3 | 0 |  |
+| sta-offset-c101-paper | T1 | P P P | 10.0 | 0 |  |
+| draft-tangent-ne | T1 | P P P | 4.3 | 0 |  |
+| draft-pi-curve | T1 | P P P | 4.3 | 0 |  |
+| draft-bearing-distance | T1 | P P P | 4.7 | 0 |  |
+| draft-edges-shoulders | T1 | P P P | 8.3 | 0 |  |
+| draft-turn-lane | T1 | P P P | 9.0 | 0 |  |
+| draft-cul-de-sac | T1 | P P P | 9.0 | 0 |  |
+| draft-building | T1 | P P P | 4.3 | 0 |  |
+| draft-roadway | T1 | P P P | 8.0 | 0 |  |
+| sheet-set-callouts | T2 | B B B | 29.7 | 0 | fable-r1: 15 callouts on paper across 3 sheets, each on its edge, the centerline named, title blocks numbered 1 to 3 (ended by budget: budget_usd) |
+| station-callouts | T2 | P P P | 25.7 | 0 |  |
+| clean-callouts | T2 | P P P | 14.7 | 0 |  |
+| draft-intersection-corner | T2 | P P P | 9.7 | 0 |  |
+| draft-fix-the-drawing | T2 | P P P | 16.3 | 0 |  |
+| draft-roadway-sheets | T2 | P P P | 12.7 | 0 |  |
+| line-data | T3 | B B P | 20.0 | 0 | fable-r1: all 3 tangents lettered with bearing and length on the sheet that shows them: above the line, parallel to it, clear of the linework (ended by budget: budget_usd) |
+| curve-points | T3 | P P P | 18.3 | 0 |  |
+| curve-data | T3 | B B P | 37.7 | 3 | fable-r1: each sheet's CURVE DATA table lists exactly the curves it shows, numbered along SR-100 with the design's R, Δ, T and L, and every curve carries its numbered bubble with a leader to the curve (ended by budget... |
+| stationing | T3 | P P P | 17.3 | 3 |  |
+| width-dims | T3 | P P P | 30.7 | 0 |  |
+| row-data | T3 | P P P | 13.7 | 0 |  |
+| equation-data | T3 | P P P | 16.3 | 0 |  |
+| qa-alignment-data | T3 | P P P | 18.0 | 0 |  |
+| l2-match-lines | T3 | P P P | 24.3 | 0 |  |
+| l2-alignment-data | T3 | · · · | 46.7 | 8 | fable-r1: bubble 2's leader on L-2 stops 2.74 ft off the curve (needed 1.0 ft) |

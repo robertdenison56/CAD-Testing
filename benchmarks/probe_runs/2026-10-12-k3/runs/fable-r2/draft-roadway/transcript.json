@@ -1,0 +1,405 @@
+{
+ "meta": {
+  "backend": "claude-code",
+  "model": "claude-fable-5-1",
+  "probe": "draft-roadway",
+  "stop": "answered",
+  "turns": 15,
+  "seconds": 31.6,
+  "tokens": {
+   "input_tokens": 130,
+   "cache_creation_input_tokens": 8244,
+   "cache_read_input_tokens": 286846,
+   "output_tokens": 2416
+  },
+  "cost_usd": 0.512,
+  "max_turns": 120,
+  "budget_s": 900.0,
+  "vision": false,
+  "effort": null,
+  "pins": {
+   "roaddraft": "0.1.0",
+   "commit": "3213be3b608b7a9b6a46dd505654fd676a81b852",
+   "dirty": [
+    "src/roaddraft/tasks/spec_v1.py"
+   ],
+   "tools_sha256": "sha256:20fe060352836f8dd03a04ea95ec9b4770eed127cce20357659ff6c66c1f8de4",
+   "instructions_sha256": "sha256:d0d4c020ebd06cc3d8f41f8dde0f52612a7157220a7ebf514dc3096dcb0e4a80"
+  },
+  "mcp_servers": {
+   "roaddraft": "connected"
+  },
+  "session_id": "70a002bb-7bc7-4c2d-9ffd-2614b1664b3f",
+  "num_turns": 9,
+  "claude_cost_usd": 0.35869149999999994,
+  "duration_ms": 30618
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, visible_on: 'C-102'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('18+00@12R', 'PC-1'; BC-1 and EC-1 name the PC and PT too) and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well.\n\nDrafting from a description works the same way: give the engine the description, not coordinates you worked out. A bearing and distance goes in as written -- create_alignment takes start + legs (each leg a bearing, azimuth or deflection and the distance to the next PI, with the radius of the curve at the PI it starts from), draw_traverse draws lines and curves course by course, and traverse computes the points without drawing. offset_entity copies linework parallel at a distance (one entity, or a chain offset as one path), fillet rounds the corner between two lines with a curve (a curb return), and measure with along gives distances along a line, chain or alignment and square off it. key_points and snap give the exact endpoints, intersections, centers and alignment design points (PI, BC, EC) to build on. Station-and-offset drafting is draw_station_offset with the stations and offsets given ('30+00@12R'). Linework drawn through something is cut back with trim (a point on the part to cut away) or run on with extend, not redrawn from computed points; break, join, lengthen, chamfer, copy, rotate, mirror, scale and array edit what is there. create_points sets COGO points, label_segments letters bearings and distances or L1/C1 tags with line and curve tables, place_along sets blocks or points at an interval, hatch fills an area (a point inside is enough), and area and get_entity read areas, lengths, bearings and curve data off the drawing."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n- You have no calculator and no code execution. Any arithmetic you need, do yourself.\n\nTHE TASK:\nDraft the design model for ELM-AVE. The alignment begins at N 3000.00, E 1000.00, station 10+00. It runs S 80°00'00\" E for 800.00 ft to PI-1, where it deflects 40°00'00\" to the left on a 500 ft radius curve; then 700.00 ft to PI-2, where it deflects 25°00'00\" to the right on a 700 ft radius curve; then 600.00 ft to its end. It has two 11 ft lanes and 5 ft shoulders. Draw the centerline on align_MAIN, the edges of pavement on rd_EP and the outside edges of shoulder on rd_ES, and label the stations every 100 ft.\n\nWhen finished, reply briefly with:\n1. What you created and drew (names, layers, key coordinates).\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages. If you had to compute coordinates yourself, show the arithmetic."
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "",
+     "signature": "CAQSkAUKEAgSGAI4AUIIdGhpbmtpbmcSDFlzpWSI+otkp9qOvxoMpTWAmVD5Vxlr2FzNIjBkirKLop6/Mn5uyyeo+ZG9FpPey/2w2ziQxtAYzFPyo2MRry1Y16QT9RAcuRLAJ8YqrQQRtU5VwmU4AIWcQNHSAPwOD+zeCQ822kvr62XJDrP9zvecvtBwMFR49gCCZIJlfLIRO2z7VArDVqq8i8trMn+qBLUr5HrCYgaA72PiwgADuQ8eVj2JOq5Vz4TGSSN8LgdPOyJlBGb1afklKMn2RC3C8DNxT44d1whmJwJrdIcECy4EwVfybgUuIz31qxjipDbYjBIOf1DEsWrmCH2/x/Hb01iuyqPsCSurDtKomM2UN4qu9Lnr99v+KTXhEhPj2hrXEP6sLPY7RPSLz3v23C7ckdiY2xfzKe6hQfmMzkFaFAYVbmurYeyr4ykn6ZcAQ4JBvM37kZmtyZ9f/E99HcDgqAM2H6EO1vHGOMEmcNTgnhRIjtlNXBiw662dIgZchJ6BcRhkmTr5D1bPCDNtP8KpsNXg3EzFPEuhWI3/SxofdBIv0G+hEOkqhqCUsTiq8lvc9KV0UAq2FblrjQFXt4RAAgQ7NVGdHlNg1boFKBE78gv9y4vhhJ5vT45wanc9JD3k7WbFruVY4eB00g3KxTHMxgc6vVfhAiUT8ycjX457RSq6X4hWDv8X9ttd8zlCjfdIGvcd1Jipoc6i8lFhKZE3LiuAAIMBO1UT3p/aCfGleM0ZRlLe2K68FFmF34ZS5mAfyM6Z4TYyg5c4ArU4RvYcLpWDEChYZAptItZX5eefi/JYQuOBsrO/0a9kzRg7Vovere2LoQvIeJ565F5OLCOzRNFcPRKDMYHR3c0ejBgB"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "I'll start by checking what's in the document."
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01EHmejvkPqJ1MmE1dTjXy7D",
+     "name": "mcp__roaddraft__get_document_state",
+     "input": {
+      "detail": "summary"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01EHmejvkPqJ1MmE1dTjXy7D",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"get_document_state\",\n  \"summary\": {\n    \"meta\": {\n      \"project_name\": \"Design model\",\n      \"description\": \"\",\n      \"model_units\": \"us_survey_ft\",\n      \"paper_units\": \"inch\"\n    },\n    \"settings\": {\n      \"current_layer\": \"0\",\n      \"current_text_style\": \"STANDARD\",\n      \"annotation_scale\": null,\n      \"annotation_scales\": [\n        {\n          \"name\": \"1\\\"=10'\",\n          \"feet_per_inch\": 10.0\n        },\n        {\n          \"name\": \"1\\\"=20'\",\n          \"feet_per_inch\": 20.0\n        },\n        {\n          \"name\": \"1\\\"=30'\",\n          \"feet_per_inch\": 30.0\n        },\n        {\n          \"name\": \"1\\\"=40'\",\n          \"feet_per_inch\": 40.0\n        },\n        {\n          \"name\": \"1\\\"=50'\",\n          \"feet_per_inch\": 50.0\n        },\n        {\n          \"name\": \"1\\\"=60'\",\n          \"feet_per_inch\": 60.0\n        },\n        {\n          \"name\": \"1\\\"=100'\",\n          \"feet_per_inch\": 100.0\n        },\n        {\n          \"name\": \"1\\\"=200'\",\n          \"feet_per_inch\": 200.0\n        },\n        {\n          \"name\": \"1\\\"=500'\",\n          \"feet_per_inch\": 500.0\n        }\n      ],\n      \"annotation_paper\": {\n        \"text_height_in\": 0.1,\n        \"tick_half_len_in\": 0.07,\n        \"label_offset_in\": 0.12,\n        \"point_offset_in\": 0.45,\n        \"bearing_offset_in\": 0.06,\n        \"bubble_offset_in\": 0.8\n      }\n    },\n    \"layers\": [\n      \"0\",\n      \"align_MAIN\",\n      \"rd_EP\",\n      \"rd_ES\",\n      \"rd_LAYOUT-NOTE-anno\"\n    ],\n    \"text_styles\": [\n      \"STANDARD\"\n    ],\n    \"blocks\": [\n      \"NORTH_ARROW\"\n    ],\n    \"sheets\": [],\n    \"model_entity_count\": 0,\n    \"model_extents\": null,\n    \"alignments\": [],\n    \"profiles\": [],\n    \"annotation_scale\": null,\n    \"journal_length\": 0\n  }\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "The layers already exist and the model is empty. I'll create the alignment from the description as given (start + legs)."
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01LWZX3Hub7seBte4PYqRXM2",
+     "name": "mcp__roaddraft__create_alignment",
+     "input": {
+      "name": "ELM-AVE",
+      "begin_station": "10+00",
+      "start": [
+       1000,
+       3000
+      ],
+      "legs": [
+       {
+        "bearing": "S 80°00'00\" E",
+        "distance": 800
+       },
+       {
+        "deflection": "40 L",
+        "radius": 500,
+        "distance": 700
+       },
+       {
+        "deflection": "25 R",
+        "radius": 700,
+        "distance": 600
+       }
+      ],
+      "description": "Elm Avenue centerline"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01LWZX3Hub7seBte4PYqRXM2",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"create_alignment\",\n  \"message\": \"alignment ELM-AVE created: 5 elements (3 tangents, 2 curves), 2080.16 ft, 10+00.00 to 30+80.16; PIs BEGIN [1000.00, 3000.00], PI-2 [1787.85, 2861.08] R=500, PI-3 [2394.06, 3211.08] R=700, END [2991.78, 3263.37]\",\n  \"created\": [\n    \"alignment:ELM-AVE\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "",
+     "signature": "CAQSjQYKEAgSGAI4AUIIdGhpbmtpbmcSDHW+75ig10fPenQsLhoMLUEUMSpNX9SYPDaNIjA+WTy/aUrmIqY0C/byN2BBU7Ogh1H2YWo6KOtCGDrYhpvjqdkdWvx0v7gKU3cGZtQqqgVSfZXC1PpJmjRa43XaJNhnr2Z4OfGrWTd5GiOT4z5WeoKDhwlf02xRmeFwgRzVhRIlCaD+sSq7egl7WdULumf+U24o3u3N7+3RJixfkJ6NbafCt91nfUxYYyMWNUq1/cLOJWgr0wTGuOOF+GtCCV3RZnxbYpXC8leoNt64FCaZfWOk4zRQVSWXxILaH4espUomfDPfbdK8QU2pZJZIU9M5sbE1FOPEBX9/GHNWZEUghBeNuyaEZ7cww5hxq//n2/8T3328z2xNBHm21327pMkv79sy0aEoLwCfAPMUVeINTaQZGZrhrR6SXOPMl7A3IO3+DZCdn2tCNwPj3iOWJ0ysCbCg7+shOhj2fAz33xtG2VwMTH19qZXds9BT5MQNj2ntcCtrJNSzh2IbaH+DnBhtLocbe31eMGmxqozKLLCCwwE62vqMjhkF8cJH4EMGc13kxJFf/m8XKQidvaYGkMan4S4KrZ4HOsmdDCPK/COJ2KP6iPrdmvG563iDPacrHUTWO3cPUyhNCzrQHisngaiIphMKwrHOaq64gO1GXQ96/ySAwC8iKD/xsYv0FHlXg5wkv5JdVSkbMD7bJGVIlAdAQu/Q8Qmpovp7aeZ7tuBtYciwO6Vta2MbuY9lM2myZ17snH01DYdIwqRepFWQc2TxjMx+9BCMn9+zWP3UJMO3MrVnIX2oXumy5QOUgqzPqcX4obQzuGrdSHPZCsNN/r/ziphYkQZoZ+7HP2PY7lTeKBZAIgDHQOFhpmdgshnJq6abtud7GWjFFoWPibnEO0ObTU/4NJN7ki1NRhlqZer99fQiPUkQ0tTgtL+mF0TRYQJYX2dRgpRiAZ7cM/LIOBt4RZjziRLEGs3sDrxJJh6AcZkuPbgT8bmcPHtGXRU7pxCL/wcyyqFbHXQ3GAE="
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "The alignment is in. Now I'll draw the centerline, both offset sets, and the station ticks — all independent of each other, so in one batch."
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01UUjps5vyJZAMfXBV9BRzk1",
+     "name": "mcp__roaddraft__draw_alignment",
+     "input": {
+      "alignment": "ELM-AVE",
+      "layer": "align_MAIN"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01UUjps5vyJZAMfXBV9BRzk1",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 2,\n  \"name\": \"draw_alignment\",\n  \"message\": \"ELM-AVE drawn on align_MAIN: 3 lines, 2 arcs\",\n  \"created\": [\n    \"LN-001\",\n    \"AR-001\",\n    \"LN-002\",\n    \"AR-002\",\n    \"LN-003\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01Hd6BGQowYWraUhPoruCmcT",
+     "name": "mcp__roaddraft__draw_offset",
+     "input": {
+      "alignment": "ELM-AVE",
+      "offsets": [
+       -11,
+       11
+      ],
+      "layer": "rd_EP"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01Hd6BGQowYWraUhPoruCmcT",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 3,\n  \"name\": \"draw_offset\",\n  \"message\": \"ELM-AVE offset 11.00' LT, 11.00' RT drawn on rd_EP: 6 lines, 4 arcs\",\n  \"created\": [\n    \"LN-004\",\n    \"AR-003\",\n    \"LN-005\",\n    \"AR-004\",\n    \"LN-006\",\n    \"LN-007\",\n    \"AR-005\",\n    \"LN-008\",\n    \"AR-006\",\n    \"LN-009\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01N3Btrtp4M3bok4Xjmr61Dp",
+     "name": "mcp__roaddraft__draw_offset",
+     "input": {
+      "alignment": "ELM-AVE",
+      "offsets": [
+       -16,
+       16
+      ],
+      "layer": "rd_ES"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01N3Btrtp4M3bok4Xjmr61Dp",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 4,\n  \"name\": \"draw_offset\",\n  \"message\": \"ELM-AVE offset 16.00' LT, 16.00' RT drawn on rd_ES: 6 lines, 4 arcs\",\n  \"created\": [\n    \"LN-010\",\n    \"AR-007\",\n    \"LN-011\",\n    \"AR-008\",\n    \"LN-012\",\n    \"LN-013\",\n    \"AR-009\",\n    \"LN-014\",\n    \"AR-010\",\n    \"LN-015\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01XgxjPVnw4Mgz5aG3Mv9hCB",
+     "name": "mcp__roaddraft__annotate_stationing",
+     "input": {
+      "space": "model",
+      "alignment": "ELM-AVE",
+      "interval": 100,
+      "layer": "rd_LAYOUT-NOTE-anno"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01XgxjPVnw4Mgz5aG3Mv9hCB",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 5,\n  \"name\": \"annotate_stationing\",\n  \"message\": \"stationing annotated in model space from ELM-AVE: 21 ticks @ 100 ft lettered the whole station at each 500 ft, the ones digit elsewhere, 4 BC/EC labels, 0 equation labels, stations 10+00.00 to 30+80.16\",\n  \"created\": [\n    \"LN-016\",\n    \"TX-001\",\n    \"LN-017\",\n    \"TX-002\",\n    \"LN-018\",\n    \"TX-003\",\n    \"LN-019\",\n    \"TX-004\",\n    \"LN-020\",\n    \"TX-005\",\n    \"LN-021\",\n    \"TX-006\",\n    \"LN-022\",\n    \"TX-007\",\n    \"LN-023\",\n    \"TX-008\",\n    \"LN-024\",\n    \"TX-009\",\n    \"LN-025\",\n    \"TX-010\",\n    \"LN-026\",\n    \"TX-011\",\n    \"LN-027\",\n    \"TX-012\",\n    \"LN-028\",\n    \"TX-013\",\n    \"LN-029\",\n    \"TX-014\",\n    \"LN-030\",\n    \"TX-015\",\n    \"LN-031\",\n    \"TX-016\",\n    \"LN-032\",\n    \"TX-017\",\n    \"LN-033\",\n    \"TX-018\",\n    \"LN-034\",\n    \"TX-019\",\n    \"LN-035\",\n    \"TX-020\",\n    \"LN-036\",\n    \"TX-021\",\n    \"TX-022\",\n    \"TX-023\",\n    \"TX-024\",\n    \"TX-025\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "Everything drew cleanly. Let me verify the curve data and look at the result."
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_015x4fABR6ZREzHbVhuo6Jae",
+     "name": "mcp__roaddraft__get_design_data",
+     "input": {
+      "kind": "curves",
+      "alignment": "ELM-AVE"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_015x4fABR6ZREzHbVhuo6Jae",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"get_design_data\",\n  \"kind\": \"curves\",\n  \"total\": 2,\n  \"start\": 0,\n  \"limit\": 50,\n  \"rows\": [\n    {\n      \"alignment\": \"ELM-AVE\",\n      \"index\": 1,\n      \"ref\": \"C-1\",\n      \"direction\": \"L\",\n      \"radius\": 500.0,\n      \"delta_deg\": 40.0,\n      \"delta_dms\": \"40°00'00\\\"\",\n      \"tangent\": 181.98511713310117,\n      \"length\": 349.0658503988659,\n      \"external\": 32.088886237956025,\n      \"mid_ordinate\": 30.153689607045784,\n      \"chord\": 342.0201433256687,\n      \"degree_of_curve_deg\": 11.459156,\n      \"degree_of_curve_dms\": \"11°27'33\\\"\",\n      \"direction_in_deg\": 350.0,\n      \"direction_out_deg\": 30.00000000000001,\n      \"azimuth_in_deg\": 100.0,\n      \"azimuth_out_deg\": 59.999999999999986,\n      \"bearing_in\": \"S 80°00'00\\\" E\",\n      \"bearing_out\": \"N 60°00'00\\\" E\",\n      \"chord_direction_deg\": 10.0,\n      \"chord_azimuth_deg\": 80.0,\n      \"chord_bearing\": \"N 80°00'00\\\" E\",\n      \"pc_station\": 1618.0148828668987,\n      \"pi_station\": 1799.9999999999998,\n      \"pt_station\": 1967.0807332657646,\n      \"mc_station\": 1792.5478080663315,\n      \"pc_station_text\": \"16+18.01\",\n      \"pi_station_text\": \"18+00.00\",\n      \"pt_station_text\": \"19+67.08\",\n      \"mc_station_text\": \"17+92.55\",\n      \"pc\": [\n        1608.6258481242535,\n        2892.6828418191217\n      ],\n      \"pi\": [\n        1787.8462024097664,\n        2861.081457866456\n      ],\n      \"pt\": [\n        1945.4499369577188,\n        2952.0740164330064\n      ],\n      \"center\": [\n        1695.4499369577186,\n        3385.086718325226\n      ]\n    },\n    {\n      \"alignment\": \"ELM-AVE\",\n      \"index\": 2,\n      \"ref\": \"C-2\",\n      \"direction\": \"R\",\n      \"radius\": 700.0,\n      \"delta_deg\": 25.0,\n      \"delta_dms\": \"25°00'00\\\"\",\n      \"tangent\": 155.18626385005794,\n      \"length\": 305.4326190990077,\n      \"external\": 16.9956600201564,\n      \"mid_ordinate\": 16.592795016046647,\n      \"chord\": 303.015459513344,\n      \"degree_of_curve_deg\": 8.18511142857143,\n      \"degree_of_curve_dms\": \"8°11'06\\\"\",\n      \"direction_in_deg\": 30.00000000000001,\n      \"direction_out_deg\": 5.000000000000012,\n      \"azimuth_in_deg\": 59.999999999999986,\n      \"azimuth_out_deg\": 84.99999999999999,\n      \"bearing_in\": \"N 60°00'00\\\" E\",\n      \"bearing_out\": \"N 85°00'00\\\" E\",\n      \"chord_direction_deg\": 17.50000000000001,\n      \"chord_azimuth_deg\": 72.49999999999999,\n      \"chord_bearing\": \"N 72°30'00\\\" E\",\n      \"pc_station\": 2329.909352282605,\n      \"pi_station\": 2485.095616132663,\n      \"pt_station\": 2635.341971381613,\n      \"mc_station\": 2482.625661832109,\n      \"pc_station_text\": \"23+29.91\",\n      \"pi_station_text\": \"24+85.10\",\n      \"pt_station_text\": \"26+35.34\",\n      \"mc_station_text\": \"24+82.63\",\n      \"pc\": [\n        2259.6687382463283,\n        3133.488325941427\n      ],\n      \"pi\": [\n        2394.063985058873,\n        3211.081457866456\n      ],\n      \"pt\": [\n        2548.659718322968,\n        3224.6068319565416\n      ],\n      \"center\": [\n        2609.6687382463283,\n        2527.27054329232\n      ]\n    }\n  ]\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01Bg1DhfmAJvQaNSfXxhWpBF",
+     "name": "mcp__roaddraft__render_model",
+     "input": {
+      "dpi": 60
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01Bg1DhfmAJvQaNSfXxhWpBF",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"render_model\",\n  \"path\": \"/Volumes/RobertsExternalSSD/repos/CAD Testing/benchmarks/probe_runs/2026-10-12-k3/runs/fable-r2/draft-roadway/renders/model.png\",\n  \"size_bytes\": 19796,\n  \"bounds\": [\n    890.5689701475853,\n    2768.9626075799733,\n    3093.2994065431353,\n    3419.876532347024\n  ]\n}"
+      },
+      {
+       "type": "image",
+       "source": {
+        "type": "base64",
+        "media_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAA0gAAAD4CAYAAADWxcYzAAAAOXRFWHRTb2Z0d2FyZQBNYXRwbG90bGliIHZlcnNpb24zLjkuNCwgaHR0cHM6Ly9tYXRwbG90bGliLm9yZy8ekN5oAAAACXBIWXMAAAk6AAAJOgHwZJJKAABMwUlEQVR4nO2dB3Rc1dm1DyEBYnrvvXdMM830QExvIWA6hGYSIAQCPy2h85GQUOzQCd0QwHSbDrYB0zvEQKgBQuhgTC//et5Px9/R9ciSbMnSSM+z1izJozszd0bj0d1373efSX744YcfkoiIiIiIiKQfdfQOiIiIiIiIdBYUSCIiIiIiIg0okERERERERBpQIImIiIiIiDSgQBIREREREWlAgSQiIiIiItKAAklERERERKQBBZKIiIiIiEgDCiQREREREZEGFEgiIiIiIiINKJBEREREREQaUCCJiIiIiIg0oEASERERERFpQIEkIiIiIiLSgAJJRERERESkAQWSiIiIiIhIAwokERERERGRBhRIIiIiIiIiDSiQREREREREGlAgiYiIiIiINKBAEhERERERaUCBJCIiIiIi0oACSUREREREpAEFkoiIiIiISAMKJBERERERkQYUSCIiIiIiIg0okERERERERBpQIImIiIiIiDSgQBIREREREWlAgSQiIiIiItKAAklERERERKQBBZKIiIiIiEgDCiQREREREZEGFEgiIiIiIiINKJBEREREREQaUCCJiIiIiIg0oEASERERERFpQIEkIiIiIiLSgAJJRERERESkAQWSiIiISJ3y6aefptdeey2NGjUqPfXUUx29OyJdAgWSiIiISJ0yevToNHLkyDTllFOml19+uaN3R6RLoEASERERqVNmmGGG1KNHjzRkyJC0+OKLd/TuiHQJftzROyAiIiIi48fkk0+epp9++vT999+nL774oqN3R6RLoEASERERqWMGDhyYfvSjH6UPP/wwDRgwIE0yySQdvUsidY0CSURERKSO6dOnT8wgTTfddIojkTZgkh9++OGHtrgjEREREZm4cBinKBJpW3SQREREROoUxBERO76+8cYbaauttkoLLbRQR++WSF1ji52IiIhIHbPooovGV0oavvvuu47eHZG6RwdJREREpI7BMaLFbqqppko//rGHdiITiv+LREREROqYt99+Oz355JMRs5t33nk7endE6h4FkoiIiEgdM9NMM6UVV1wxWuxEZMJRIImIiIjUMTPMMEOIJBrtXn311Y7eHZG6R4EkIiIiUsewSOxnn32WRo4cGU12CyywQEfvknRTvvrqq/Tee++ld999N/33v/9t9HXUqFFjKukXXnjh9Lvf/S51VhRIIiIiInV+UHrBBRdESYMxO2lLfvjhh/Tpp5+OETml4EEIffvtt422/8lPfpJmmWWWNOuss8bXRRZZJK2xxhrxPe9PBNI333yTPvroo9SZcaFYERERkTrnwQcfTHPNNVfq0aNHRO5EmgJRU3V58veffPLJWNtPO+20jURP/p5YJ4IIKYGDWUtEldd98MEH0bbIbXA5Bw0alDorCiQRERGROueGG26INruvv/469evXLw5CpXvAofzo0aObFCa8J0omnXTSNPPMM48RPKXwQQxNMskksZ7W+++/3+R95u95XJh66qnHElDV+55xxhkjDloPGLETERERqXOY7yDO9NZbb0XkToFU3yBQcFxqOTIffvjhWNsTXysFyQorrBDfI4Qmn3zy2Obzzz8fS+S88MILadiwYWOuw1n67rvvQkThEFXFzoILLtjouimnnDJ1RXSQREREROocolEcCHP2Px8QS+fiiy++aNKJ4WclOC04LrWcmOmnnz5+TlwNsdTUfeavzBAB8cvmXB5E0Y/bebFhpMfHH3+cfvrTn6YpppgidUYUSCIiIiJdgBEjRoQ4WnbZZcMBkPYFgcKBfq0IGvE0fl6CIKg1y4PLg3iBL7/8MlycccXauFB0gEhi3qzWfZZfib/l9rj24uuvv26yva56Hdux/4MHD059+vRJnREjdiIiIiJdgP/85z8Ro6JCmYNiaduaaooIShAduDmlIFliiSXGzNsgUrNbUhUKjzzySKPr2IZtEbhVkTP77LOH6M3XIagmm2yyNnm+PDb3W+WHH36I2GZzxQv5+9xKh2hj/6rPYfHFFx/rutlmmy11VnSQRERERLoAHNjnaJbUrqkuD+5zTTVCJx8OIzyacmKYt8k11aXL05R4wA1ie6rXxxVr43u2aW+Xh+daLV649tprQ1DXej5fffVVi6N5+ft6KmIYFwokERERkTqHNjEKGt58881wIVZfffXUVUGgNNWw1lRNda2DepwO5m2qNdVNCR9KE9iWAoyyBa6WaODnROomxu+9pS5P3n+EGEKG/QQE0jzzzNOk8JmyixYxjAsFkoiIiEid8/rrr6fzzjsv3JJVVlkl9e3bN9VbTXVT8zbVmmpETa0YF1+nmWaaCa6pbkr4MO/T3u4I+92S4oX8PZFKqBXNa0q8lUUMr776arhXRAXbkh+KaGFT+96zZ8901FFHpc6IAklERESkziHO9eKLL4ZrwQFwWx/wTkhNdfXAmHmVfPiZ423UVNc6uOeS521q1VTXis2Nq6a6KhomhjvC76Z///5pzTXXbLaAgZ/ncgd+h03td/V5jU8RA4+DQERUE6Nr7j3zzTffjNnfcQkfonlltLCp158ZJNy9zogCSURERKTO4aD0mmuuCbcFp2PzzTdv95rq6rwN5MNKBEqOcVUPkDlwrveaakReS10eyg7ya8K+tmSepy2LGGqBiBwyZEi65557YjaJIohFF100vfPOO2OVVPA74ndFtLAUrk0J2lzdPa73Cz+bc845dZBEREREpH3gIPeGG25IvXr1Spdffnk69NBDm70NB735QL+peZsM3+NONXVQnOdt6rmmupY70tQBPq93S6N5fH3ttdfSkksumeaee+6JVsTQXDQPUY14Q6jgHq266qo1n8MMDdHC5t4vTdWa13q/5FrzzooCSURERKQLgCvAQSp139kFqFVTncVGrqmudUDPQXG1propsdNcTXX1ILk93ZFhw4ZFlC2317XU5WH/x1VTXUv4tKaIAeHC72Z8njcxuOaeB6IoRwvz/o/L5SFaeO+996bnnnsunjvOG0UN5X2OGjWqkTCt1ppX2+u60tpbCiQRERGROgCXg6H6l156Kb3yyivp7bffHnNgnyEGNd9880VZQfUAOc/bVGuqmzrwrs6SdJaa6nHtNwf8ebtaNdXNxdvao6YaV+3MM8+M38s666wT4jPPZ7Ukmsfvrbl9Z79zI19zteYltWrNZyneL+39O+2sKJBEREREOqEIykIot7hxMDv//PNHLfMCCyyQ5phjjjHCBDHA/AgXDopxkaoH3J2xphpXq6UuD/sPZU11db95/ksvvXRaZpllJnoRQ1PPg30aOXJkCBR+hwi2vP/jEp0UV+R1l8a31rzaXsfvXppHgSQiIiIykUHAPPHEE+mFF15oJIKIqCGCFlpooRBCfM91OEUIpn/961/x9eWXX451jzhIJlrFgTetYAzbI5zau6Ya94rHaaqmujl3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OkgiIiLdGMoQKE6glvvll18OV4frWLeIEgcEESBgPvnkk6jkXnrppWs22f3hD38IR+h3v/tdrGFURulg1KhRcb/MLzFHRLyO2yKUuC0LvDKf1Jb14yIirUUHSUREpJvz7LPPpqWWWirEynXXXRdiZ++9947rcJBuv/32dMIJJ8Sir6V4yU12iJtXXnkl/fa3v42FYFmjqFoG0b9//1irCKFFNTeLwVK8gEvEv4nriYh0BuzFFBER6eYghIjP7bTTThF/O//889MzzzwTtdpUdT/88MPRWJfFEcII12mllVZKO+ywQ7TNvfrqqxGtK8XR6NGj05/+9Keo/WYRWAohmGPad999o/AB0cX6R4ojEelMGLETERHpxuQ5I+JwRN0QQ5Q29O7dO91///1p+umnb7T9k08+GU4R21GkQJPdTDPN1GibL774Iu4LhwjRRSMdjhHzSIgxYno9evSYyM9URKRlKJBERES6IVRn0xhHQ93/+3//L1yhXXbZJeaPaKqrujqULhx55JERk9t5551jnaLZZ5+90TZffvllOvfcc9M555wTJQsUPzDXxDwShQ4s+jrVVFNN5GcqItI6FEgiIiLdDFwf1jNi9mf33XdPJ510UlzH17LFLrtBp556ajr55JMjUodz1LNnz0bbfPXVV+mCCy5IAwYMSNtuu204T5Q1HHTQQWnBBReM9Y1c2FVE6gVnkERERLoJL774Ytptt93S66+/HjXbiJhVVlklzTbbbBGDK8URjtJVV12VFltssVgUlvWO7r777kbiCBcKx2iFFVaIqvD77rsvbb311lHvfeONN4awwp1SHIlIPaGDJCIi0sWhnhsHiHWK/vrXv6aRI0emtdZaKy233HJp6NChY80QPfbYYxGLo93uf/7nf0JUTTbZZI3EExXdRxxxRNpggw3iPt59992oBJ9jjjmimKHaZCciUi8okERERLoo3333Xbrwwgsj8oZ4wcn5zW9+E/NElCiwQGsJLtDhhx8e7hJ13FR+zzzzzI22QTSxzhECaNCgQdFsd9RRR4XIIqI3wwwzTORnKSLStiiQREREuiDDhg2Ltjha5PhKnTaRuWOOOSZtscUWjdYzYoaIOaHjjz8+4nKPPvpoWnbZZRvdHw7R0UcfnZ566qn05z//ORaLPeWUU6LKm3rvWWaZpQOepYhI2+MMkoiISBeC+aK99torYnIUMbCuUa9evdKPfvSjKFjYcsstG61ndMMNN6Qll1wyRBTtdcwZleII8YQQYr2jNdZYI4QXzXc4UTTVEdlTHIlIV0IHSUREpAuAk4Oz89FHH4UTRIyuT58+aZ555omGOmaDMg888ECse8R6RiNGjIgiBRrnfvrTn47ZBvF08803R7U3ogohRVQPR4o6cIobRES6IgokERGROgYhM3DgwDR48OB08MEHpznnnDNmgp555plwd1ZeeeVG23/44YdRx33llVeGK8QCrtym5Pnnnw/xxDzRTTfdFGsjscjraqutli677LL04x97+CAiXZdJfuCTVUREROqORx55JJ122mnh8Gy66aax8Ov5558fjlDfvn0jVpf59ttvYwFX5ogWWmihtOaaa0ZDXbkN4ol5Iiq/caOI2tF+R50392kBg4h0B5xBEhERqTOIz+Ho3H777SGIppxyyljPCIGDuNlxxx0bCZ8777wzKr1POOGEEFTE6qjifuutt2LGCPGEuOrdu3eIItYzeumll2LOiPtiW8WRiHQX9MhFRETqhNw29+qrr8YaRMwdbbPNNqlHjx5RuT3//PM32v5f//pXxO6YQaKaGxdoqqmmGrNo7D/+8Y807bTTRpnDeuutF8Lp6aefTjvvvHPE77i+bLsTEekOKJBEREQ6ObltDkGDq0NL3bHHHpuGDx8eUTgWfS0ZNWpUuEXMIG2yySYxU7TAAgs02mbSSSdNd9xxR9R3X3DBBWmuueZKhxxySFp44YWjgKFcGFZEpDuhQBIREenEsDArs0Lrr79+CBequFnE9YADDojoG0In8/3338c2OEVUb+McrbPOOmOJpxNPPDF+tv/++0fLHRG8999/P0TXrLPO2gHPUkSk86BAEhER6YR88MEHIWSo3mY+6PHHH0+rr756rEVE3fZ0003XaHuquxE8r732WtR8I6LKtjnE06WXXhprGu2zzz4xq0QsD8FFxffyyy/fAc9SRKTzoUASERHpRNAYd/bZZ6ennnoqnCAcot133z3mjS655JK02GKLNdr+zTffTIceemi6+uqrU79+/SI2N/300zfahtmiLIKGDh0ai8nutttuabPNNgvR5JyRiMj/oUASERHpJCBumAfac889QxRRsc06RDhJG220UaNtP//885g/In5H+xyCavHFFx9LPB122GHpnXfeSeeee27E7ojRzTzzzOm8886LcgcREWmMAklERKSDoW0OEbTiiiuGS0QZQ69evdIee+yRHn744UaFCRQ24BZRqDD55JPHtoin0gX64osvQjyxHYLo5z//eTrzzDPTyy+/HO13c889dwc9UxGRzo/rIImIiHQQn376aQgWFnBF0CCQ1l133Winu/vuu9Nvf/vbRuLoiSeeiMY6HCbmjShw2HjjjceIoyyeVlpppfSTn/wk5oyI6BGnW3XVVSO6pzgSERk3OkgiIiITGQoTWGPo3nvvjQgcM0PMCDEb1L9//1jUtYQqboQUt0HsXHPNNRGXK3nyySdDUM0777yxgOzHH38cZQwIqssvv7zRwrEiItI0CiQREZGJCA10iKC+ffuGc3TaaaelK664Iv3hD39IW2+9daOo3Ndffx3ROGJyyy67bMTtevbsOZZ4Ouqoo9Jzzz2X/vKXv6SFFloo4nrE77jtNNNM0wHPUkSkfvF0koiIyETg3//+dzg6NMpRrf3tt9/GnNF3330XwmebbbZpFJW7+eab01JLLZXOOOOMKFSgfa4UR4gnBBHrHK255prpnnvuSY8++mjMJu29996xUKziSESk9eggiYiItCO0zZ166qnpvffeS8ccc0w4PptsskmaffbZ0+DBg9Ncc83VaPt//vOfEZUbNmxY1HwffPDBsRZSCbc7/PDD06abbhpzRlx23nnnaL6j6ltERMYfBZKIiEg7gAtEw9yNN94Y80XMBh199NFRtIDzQ2lCyUcffRQCasCAAWnbbbdNL7zwwliFCiNHjgzxNPXUU6frr78+3KcDDzwwZpZYz6hcGFZERMYPP0lFRETamMceeyxEEAuxEqejPQ6H5/e//33MH5WFCUTtiNAxRzTffPNFccPqq68+lnhiDum+++6LtjsWfD3llFOizpt1kGacccYOeJYiIl0TZ5BERETaiP/+979Rv00EDtEz3XTTpVVWWSUWan3wwQfTLrvs0kgcUeWN2ME5+tOf/hSzSKU4wiGiyIHrWAT2gQceSK+99lrab7/90i9/+csQS4ojEZG2RQdJRERkAqEwgTIFFnxlNuirr74KAcNaRFRyL7DAAmO2ffzxx0M4UaZAEQOROW5TLVTASWKb3r17hzBiNgkXarvttksXX3xxo7Y7ERFpOxRIIiIi40lum6OmG1eHBVyPP/74cIaIwK233nqNtv/ss8+ievuyyy6LBV6p5qaWu+TVV18NYUR8ju2mnHLKKGuYf/75Yx0k6rtFRKT9MGInIiIyHjz//PNp1113jXY6HB1KFVZbbbVwi2iVK8URC8NecsklaZFFFkmPPPJItM1dd911jcQR4unII49MW265Zfwc54kLM0aUOzC/pDgSEWl/dJBERERawYcffphOOumkiM/hBj311FMRg2PWaPjw4WmGGWZotD2zRwcccEB66aWX0nHHHRdrFE066aTpzTffTDPPPHOabLLJ0uWXX55OPvnkcKCYQ7rhhhvSHnvsEfG7lVZaqcOeq4hId0SBJCIi0gJomzv33HNjMVYib7g5e+21VzTM0VS3xBJLNNr+rbfeSocddli68sorY4FYihtyocKzzz4b/5511lnjPpdeeumYOeI2uEcbbbRRiCbnjEREJj4KJBERkWZgpgghg3ihiY75ItYhOuGEE2KWqBQyzA5R8X3iiSdG5O7JJ59MSy65ZKP7w2W6//77Y10j5ooWXHDBmF3ielrrmDsSEZGOQYEkIiLSBK+88kqIIBZiZYbo2muvTb169YrZI6Jw5UwQhQ38nIIFInQDBw5Mm266aSPx9OWXX4Z44mcIKyJ1I0aMCAfqiCOOiMVkRUSkY1EgiYiIVBg1alSUI+AG4Rax9tD6668fJQt33XVXRONKmENizogFYlnwle+r4olShj/84Q9R0424wpWipW7fffdNBx10UAc8SxERqYUCSUREpGibu/TSS9Odd94ZrXGUKOAIvfzyy+m0006LRV1LaLBDEF1wwQWxRhHzRrPNNlujbZ5++ukoW5hzzjnTrbfeGuILUbTGGmuEQMJtEhGRzoMCSUREJKWIurHYKwu8nnfeefE9sToE0LbbbtsoKsfCsAMGDEjHHHNMzBdx2xVXXLHR/b3//vtxW9wlYnWLLrpotN8hiE4//fQ07bTTdsCzFBGR5nAdJBER6dbQHNevX780bNiwdOGFF4YQWnnllSNeRxQOwVSKoyFDhqRlllkmRM9ZZ52V7rvvvkbi6JtvvgkBtNZaa6VVV101DR06NEQSMTqquxFJiiMRkc6LDpKIiHRLctvcf/7zn3B6WN9o8803TzPNNFO65ZZb0txzz91oexaCReQwO3TooYdG9K7aNkeEjgrwPn36xPpHVILvtNNOUerA+kciItL5USCJiEi3IrfNDRo0KGaD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yzE9XJLsIiGEWJ+HtXRwM1jnB7FVxvSYjaF9D2elrV2OXOBQ1n2XICp4bOKEzUEkDdFDnfaEFjGU8BGKW5cdM+KGjz76aNScs29E4qjf5nWiBILII7E6tqPum/ILYnVrrbVWrJ0lIiIiHYsCSURqxvRym17+iOBgnzgYoojYWI7pIQryBccHEVDG0HBEiMAhsNqaLOraUvA0Be4OwpAIXBkfZA0nBFp+vpQz4Mhdd9114SDh2OHcIZjYT+KOzBCxnXNEIiIinQ8FkoiMd0xv3nnnDceJg35mlBBBiKRSQFDiUNZ045g0V7c97bTTtihexpwO6//069cvFrhtDcwD5SKGcc0jffLJJ7E9ldws1IvgywKQ71kMl9ggzxV3iNeH27D/CEOcIxwkbisiIiKdHwWSiIw3CAhEAReEEEUIuCTM7SCcaLLjK+KF+Fitdrha3yMw2BZRgnDClWJ2qBYIE4RKc4KKOBvijcfg+7w4b3NzSLltD1GIu8ZirHylYIEFd4Hni2hCKHJBNImIiEh9okASkTYHR4X1gLKg4IILhdDgIwexxLwSF5rbyq+IlhyZI9bG/BHCBsenCmKL8gPKI1pTzpCjbUQKmXHi/nmc/Fj5axZA7Dftf4i9fME9a4/YoIiIiHQsCiQRmegglqpiJH9F9NQSQxPa6Fbrow7RhDtVirTyexwsERER6V4okERERERERBpo/+onERERERGROkGBJCIiIiIi0oACSUREREREpAEFkoiIiIiISAMKJBERERERkQYUSCIiIiIiIg0okERERERERBpQIImIiIiIiDSgQBIREREREWlAgSQiIiIiItKAAklERERERKQBBZKIiIiIiEgDCiQREREREZEGFEgiIiIiIiINKJBEREREREQaUCCJiIiIiIg0oEASERERERFpQIEkIiIiIiLSgAJJRERERESkAQWSiIiIiIhIAwokERERERGRBhRIIiIiIiIiDSiQREREREREGlAgiYiIiIiINKBAEhERERERaUCBJCIiIiIi0oACSUREREREpAEFkoiIiIiISAMKJBERERERkQYUSCIiIiIiIg0okERERERERBpQIImIiIiIiDSgQBIREREREWlAgSQiIiIiItKAAklERERERKQBBZKIiIiIiEgDCiQREREREZH0v/x/n+yl1lcZ0woAAAAASUVORK5CYII="
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "The design checks out: C-1 is 40° left, R=500, L=349.07; C-2 is 25° right, R=700, L=305.43; total length 2080.16 ft ending at 30+80.16. The render shows centerline, both edge pairs, ticks and BC/EC labels. Task complete.\n\n## Report\n\n**1. What I created and drew**\n- **Alignment `ELM-AVE`**: BEGIN [1000.00, 3000.00] (N 3000, E 1000) at 10+00.00; PI-1 [1787.85, 2861.08] R=500 (Δ=40° LT, L=349.07, BC 16+18.01 / EC 19+67.08); PI-2 [2394.06, 3211.08] R=700 (Δ=25° RT, L=305.43, BC 23+29.91 / EC 26+35.34); END [2991.78, 3263.37] at 30+80.16. Bearings: S 80°E → N 60°E → N 85°E. Total 2080.16 ft.\n- **Centerline** on `align_MAIN`: LN-001, AR-001, LN-002, AR-002, LN-003.\n- **Edges of pavement** on `rd_EP` at ±11 ft (two 11 ft lanes): LN-004…LN-009, AR-003…AR-006.\n- **Outside edges of shoulder** on `rd_ES` at ±16 ft (11 + 5): LN-010…LN-015, AR-007…AR-010.\n- **Stationing** on `rd_LAYOUT-NOTE-anno`: 21 ticks every 100 ft from 10+00 to 30+00 with station labels (Caltrans lettering), plus 4 BC/EC labels (LN-016…LN-036, TX-001…TX-025).\n\n**2. Tool calls that mattered, in order**\n1. `get_document_state` — confirmed empty model, layers `align_MAIN`, `rd_EP`, `rd_ES`, `rd_LAYOUT-NOTE-anno` already present.\n2. `create_alignment` name=ELM-AVE, begin_station=\"10+00\", start=[1000, 3000], legs=[{bearing \"S 80°00'00\\\" E\", 800}, {deflection \"40 L\", radius 500, 700}, {deflection \"25 R\", radius 700, 600}].\n3. `draw_alignment` alignment=ELM-AVE, layer=align_MAIN.\n4. `draw_offset` alignment=ELM-AVE, offsets=[-11, 11], layer=rd_EP.\n5. `draw_offset` alignment=ELM-AVE, offsets=[-16, 16], layer=rd_ES.\n6. `annotate_stationing` space=model, alignment=ELM-AVE, interval=100, layer=rd_LAYOUT-NOTE-anno.\n7. `get_design_data` kind=curves + `render_model` — verification.\n\n**3. Failures / workarounds / hand arithmetic**\n- Nothing failed; no error messages or warnings were returned.\n- The only arithmetic I did by hand was the offset distances: lane edge = 11 ft each side; shoulder edge = 11 + 5 = 16 ft each side. All PI/PC/PT coordinates came from the engine via start + legs (no trigonometry by hand). The one point of care was coordinate order: \"N 3000, E 1000\" is `[x=1000, y=3000]` in RoadDraft, which I entered as `start: [1000, 3000]` and the engine confirmed BEGIN [1000.00, 3000.00].\n- Note: no annotation scale was set in the document (`annotation_scale: null`), so the station labels used the fixed feet defaults (8 ft text, 7 ft ticks, i.e. sized for 1\"=50'). The task didn't specify a plot scale, so I left that as-is."
+    }
+   ]
+  }
+ ]
+}
