@@ -36,7 +36,8 @@ def _label_row(spec: LabelSpec, layer: str, height: float) -> dict:
             "rotation": spec.rotation, "position": [float(spec.position[0]),
                                                     float(spec.position[1])],
             "rotation_deg": float(spec.rotation_deg), "halign": spec.halign,
-            "valign": spec.valign, "layer": layer, "height": float(height), "required": True}
+            "valign": spec.valign, "layer": layer, "height": float(height), "required": True,
+            **({"view_rotation": float(spec.view_rotation)} if spec.view_rotation else {})}
 
 
 def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
@@ -47,12 +48,27 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
     layers = S["layers"]
     height = float(D["text_heights"]["model_label_ft"])
     label_offset = float(D["label_offset_ft"])
+    # a real sheet's viewport is twisted: its model labels read upright on the sheet
+    vr = float(D.get("view_rotation") or 0.0)
+    # a real sheet's labels sit where they clear its existing work (tasks.real): the
+    # station numbers' side, and each curve point, bearing and bubble's side and offset
+    poses = D.get("label_poses") or {}
+
+    def posed(spec: LabelSpec, group: str) -> LabelSpec:
+        pz = (poses.get(group) or {}).get(spec.ref)
+        if not pz:
+            return spec
+        ap = resolve_anchor(align, parse_anchor(spec.ref))
+        return compile_label(align, ap, spec.kind, side=pz["side"],
+                             label_offset=float(pz["label_offset_ft"]), content=spec.content,
+                             view_rotation=vr)
 
     plan = stationing_plan(align, interval=float(D["stationing_interval_ft"]),
                            tick_half=float(D["tick_half_len_ft"]), label_offset=label_offset,
                            lettering=D.get("station_lettering", "caltrans"),
-                           station_side=D.get("station_label_side"),
-                           point_offset=float(D.get("point_label_offset_ft", label_offset)))
+                           station_side=poses.get("station_side") or D.get("station_label_side"),
+                           point_offset=float(D.get("point_label_offset_ft", label_offset)),
+                           view_rotation=vr)
     labels: List[dict] = []
     ticks: List[dict] = []
     for item in plan.items:
@@ -61,16 +77,19 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                           "start": list(item.start), "end": list(item.end),
                           "layer": layers["ticks"]})
         else:
-            labels.append(_label_row(item, layers["labels"], height))
+            labels.append(_label_row(posed(item, "points"), layers["labels"], height))
     bearing_offset = float(D.get("bearing_label_offset_ft", label_offset))
     for n in range(1, len(align.tangents()) + 1):
         ap = resolve_anchor(align, parse_anchor(f"T-{n}"))
-        labels.append(_label_row(compile_label(align, ap, "bearing", label_offset=bearing_offset),
+        labels.append(_label_row(posed(compile_label(align, ap, "bearing",
+                                                     label_offset=bearing_offset,
+                                                     view_rotation=vr), "bearings"),
                                  layers["labels"], height))
     mc_offset = float(D.get("mc_label_offset_ft", label_offset))
     for n in range(1, len(align.curves()) + 1):
         ap = resolve_anchor(align, parse_anchor(f"MC-{n}"))
-        labels.append(_label_row(compile_label(align, ap, "mc", label_offset=mc_offset),
+        labels.append(_label_row(posed(compile_label(align, ap, "mc", label_offset=mc_offset,
+                                                     view_rotation=vr), "callouts"),
                                  layers["labels"], height))
 
     elements = [{"ref": align.element_ref(i), "kind": el.kind, "layer": layers["alignment"]}

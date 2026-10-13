@@ -446,6 +446,11 @@ SCHEMAS = {
                         "description": "alignment mode: where the BC/EC and equation "
                                        "lettering goes, square to the line and reading "
                                        "bottom to top; default left"},
+         "view_rotation": {"type": "number",
+                           "description": "alignment mode: the twist (rotation_deg) of the "
+                                          "viewport the labels are read through; they are "
+                                          "lettered upright on that sheet instead of in the "
+                                          "model (default 0, an untwisted view)"},
          "point_label_offset": {**POS, "description": "alignment mode: BC/EC and equation "
                                                       "distance from the line (default "
                                                       "22.5 ft, or the annotation scale x "

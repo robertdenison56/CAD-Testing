@@ -121,17 +121,23 @@ class LabelSpec:
     content: str
     content_auto: bool
     position: List[float]  # model space, after side offset
-    rotation_deg: float  # model space, uprighted
+    rotation_deg: float  # model space, uprighted (as read through ``view_rotation``)
     halign: str
     valign: str
+    #: the twist of the viewport the label is read through (degrees): it is lettered
+    #: upright on that sheet, not in the model; 0 for an untwisted view
+    view_rotation: float = 0.0
 
     def anchor_record(self, viewport: Optional[str] = None) -> dict:
         """The anchor record stored on the entity (spec section 2.7)."""
-        return {"alignment": self.alignment, "ref": self.ref, "kind": self.kind,
-                "station": float(self.station), "offset": float(self.offset),
-                "side": self.side, "label_offset": float(self.label_offset),
-                "rotation": self.rotation, "viewport": viewport,
-                "content_auto": bool(self.content_auto)}
+        record = {"alignment": self.alignment, "ref": self.ref, "kind": self.kind,
+                  "station": float(self.station), "offset": float(self.offset),
+                  "side": self.side, "label_offset": float(self.label_offset),
+                  "rotation": self.rotation, "viewport": viewport,
+                  "content_auto": bool(self.content_auto)}
+        if self.view_rotation:
+            record["view_rotation"] = float(self.view_rotation)
+        return record
 
 
 @dataclass
@@ -188,39 +194,53 @@ def offset_point(p: Sequence[float], angle_deg: float, dist: float) -> List[floa
     return [p[0] + dist * math.cos(a), p[1] + dist * math.sin(a)]
 
 
-def resolve_side(side: str, direction_deg: float) -> str:
+def _fold(angle_deg: float) -> float:
+    """An angle in (-180, 180]."""
+    a = (float(angle_deg) + 180.0) % 360.0 - 180.0
+    return 180.0 if a == -180.0 else a
+
+
+def resolve_side(side: str, direction_deg: float, view_rotation: float = 0.0) -> str:
     """``left`` or ``right`` of a line running ``direction_deg`` for a side that
     may be paper-relative: ``below`` is the side under text set along the line
     (its right when the text reads with the stationing, its left when
-    ``upright`` has turned the text round), ``above`` the other."""
+    ``upright`` has turned the text round), ``above`` the other -- as read
+    through a view twisted ``view_rotation``."""
     if side in ("left", "right"):
         return side
     if side not in SIDES:
         raise DesignError(f"side must be one of {list(SIDES)}, not {side!r}")
-    flipped = 90.0 < float(direction_deg) % 360.0 <= 270.0
+    flipped = 90.0 < (float(direction_deg) + float(view_rotation)) % 360.0 <= 270.0
     below = "left" if flipped else "right"
     return below if side == "below" else ("right" if below == "left" else "left")
 
 
-def beside(p: Sequence[float], direction_deg: float, side: str, dist: float) -> List[float]:
+def beside(p: Sequence[float], direction_deg: float, side: str, dist: float,
+           view_rotation: float = 0.0) -> List[float]:
     """The point ``dist`` off ``p`` on ``side`` of a line running ``direction_deg``."""
-    side = resolve_side(side, direction_deg)
+    side = resolve_side(side, direction_deg, view_rotation)
     return offset_point(p, direction_deg + (90.0 if side == "left" else -90.0), dist)
 
 
-def label_pose(direction_deg: float, side: str, rotation: str) -> Tuple[float, str, str]:
+def label_pose(direction_deg: float, side: str, rotation: str,
+               view_rotation: float = 0.0) -> Tuple[float, str, str]:
     """``(rotation_deg, halign, valign)`` of a label on ``side`` (left/right) of a
     line running ``direction_deg``: text along the line stays upright and
     sits clear of the line on its side; text square to it reads bottom to
-    top and runs away from the line; horizontal text is centred."""
+    top and runs away from the line; horizontal text is centred.  Upright,
+    bottom to top and horizontal are as read through a view twisted
+    ``view_rotation`` (a sheet's viewport): the model rotation is the paper
+    one turned back by the twist."""
+    vr = float(view_rotation or 0.0)
     side_angle = direction_deg + (90.0 if side == "left" else -90.0)
     if rotation == "perpendicular":
-        rot = reading_up(direction_deg + 90.0)
+        rot = reading_up(direction_deg + 90.0) if not vr else _fold(
+            reading_up(direction_deg + vr + 90.0) - vr)
         outward = math.cos(math.radians(rot - side_angle)) > 0.0
         return rot, ("left" if outward else "right"), "middle"
     if rotation == "horizontal":
-        return 0.0, "center", "middle"
-    rot = upright(direction_deg)
+        return (0.0 if not vr else _fold(-vr)), "center", "middle"
+    rot = upright(direction_deg) if not vr else _fold(upright(direction_deg + vr) - vr)
     up = math.cos(math.radians(rot + 90.0 - side_angle)) > 0.0
     return rot, "center", ("bottom" if up else "top")
 
@@ -328,10 +348,13 @@ _KIND_OF_HINT = {"begin": "begin", "end": "end", "pi": "pi", "pc": "pc", "pt": "
 def compile_label(alignment: Alignment, ap: AnchorPoint, kind: str, side: Optional[str] = None,
                   label_offset: Optional[float] = None, rotation: Optional[str] = None,
                   content: Optional[str] = None, halign: Optional[str] = None,
-                  valign: Optional[str] = None) -> LabelSpec:
+                  valign: Optional[str] = None, view_rotation: float = 0.0) -> LabelSpec:
     """Place a label of ``kind`` at anchor ``ap`` in model space.  ``side``,
     ``label_offset`` and ``rotation`` default by kind (the PPM's placement);
-    the spec records the side as left or right of the line."""
+    the spec records the side as left or right of the line.  ``view_rotation``
+    is the twist of the viewport the label is read through: it reads upright
+    on that sheet."""
+    view_rotation = float(view_rotation or 0.0)
     if kind not in LABEL_KINDS:
         raise DesignError(f"unknown label kind {kind!r}; kinds: {', '.join(LABEL_KINDS)}")
     _check_kind_anchor(alignment, ap, kind)
@@ -341,20 +364,21 @@ def compile_label(alignment: Alignment, ap: AnchorPoint, kind: str, side: Option
     if rotation not in ROTATION_MODES:
         raise DesignError(f"rotation must be one of {list(ROTATION_MODES)}, not {rotation!r}")
     direction = float(ap.direction_deg)
-    side = resolve_side(side or DEFAULT_SIDE[kind], direction)
+    side = resolve_side(side or DEFAULT_SIDE[kind], direction, view_rotation)
     content_auto = content is None
     text = label_content(alignment, ap, kind) if content_auto else str(content)
     off = default_offset(kind, "model") if label_offset is None else float(label_offset)
     if off < 0:
         raise DesignError("label_offset must be >= 0")
     position = offset_point(ap.point, direction + (90.0 if side == "left" else -90.0), off)
-    rot, h, v = label_pose(direction, side, rotation)
+    rot, h, v = label_pose(direction, side, rotation, view_rotation)
     return LabelSpec(kind=kind, alignment=alignment.name, ref=ap.ref, station=float(ap.station),
                      offset=float(ap.offset), region=int(ap.region),
                      anchor_point=[float(ap.point[0]), float(ap.point[1])],
                      direction_deg=direction, side=side, label_offset=off, rotation=rotation,
                      content=text, content_auto=content_auto, position=position,
-                     rotation_deg=rot, halign=halign or h, valign=valign or v)
+                     rotation_deg=rot, halign=halign or h, valign=valign or v,
+                     view_rotation=view_rotation)
 
 
 def sheet_pose(spec: LabelSpec, transform, viewport_rotation_deg: float,
@@ -382,7 +406,8 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0,
                     station_range: Optional[Tuple[float, float]] = None,
                     lettering: str = "caltrans", station_side: Optional[str] = None,
                     point_side: Optional[str] = None,
-                    point_offset: Optional[float] = None) -> StationingPlan:
+                    point_offset: Optional[float] = None,
+                    view_rotation: float = 0.0) -> StationingPlan:
     """Ticks + labels for every interval station (per region), BC/EC/PCC/PRC
     labels, and equation labels.  ``station_range`` is in RAW stations.
 
@@ -405,6 +430,7 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0,
     for s in (station_side, point_side):
         if s not in SIDES:
             raise DesignError(f"side must be one of {list(SIDES)}, not {s!r}")
+    vr = float(view_rotation or 0.0)  # labels read upright through a view twisted this much
     label_offset = abs(float(label_offset))
     point_offset = MODEL_POINT_OFFSET if point_offset is None else abs(float(point_offset))
     st = alignment.stations()
@@ -438,15 +464,15 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0,
                                       point=pt, direction_deg=direction,
                                       start=offset_point(pt, direction + 90.0, -tick_half),
                                       end=offset_point(pt, direction + 90.0, tick_half)))
-                side = resolve_side(station_side, direction)
-                rot, h, v = label_pose(direction, side, "along")
+                side = resolve_side(station_side, direction, vr)
+                rot, h, v = label_pose(direction, side, "along", vr)
                 items.append(LabelSpec(
                     kind="station", alignment=alignment.name, ref=text, station=raw, offset=0.0,
                     region=region.index, anchor_point=list(pt), direction_deg=direction,
                     side=side, label_offset=label_offset, rotation="along",
                     content=caltrans_station_text(sd) if lettering == "caltrans" else text,
                     content_auto=True, position=beside(pt, direction, side, label_offset),
-                    rotation_deg=rot, halign=h, valign=v))
+                    rotation_deg=rot, halign=h, valign=v, view_rotation=vr))
                 n_ticks += 1
             sd += interval
 
@@ -465,15 +491,15 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0,
             else:
                 ref = f"PC-{alignment.curve_index(i + 1)}"
             disp, region = st.to_display(raw)
-            side = resolve_side(point_side, direction)
-            rot, h, v = label_pose(direction, side, "perpendicular")
+            side = resolve_side(point_side, direction, vr)
+            rot, h, v = label_pose(direction, side, "perpendicular", vr)
             items.append(LabelSpec(
                 kind=jk, alignment=alignment.name, ref=ref, station=raw, offset=0.0,
                 region=region, anchor_point=list(pt), direction_deg=direction,
                 side=side, label_offset=point_offset, rotation="perpendicular",
                 content=f"{st.format(raw)} {CURVE_POINT_WORDS[jk]}", content_auto=True,
                 position=beside(pt, direction, side, point_offset),
-                rotation_deg=rot, halign=h, valign=v))
+                rotation_deg=rot, halign=h, valign=v, view_rotation=vr))
             n_junctions += 1
 
     n_equations = 0
@@ -484,14 +510,14 @@ def stationing_plan(alignment: Alignment, interval: float = 100.0,
                 continue
             pt, direction = at(raw)
             disp, region = st.to_display(raw)
-            side = resolve_side(point_side, direction)
-            rot, h, v = label_pose(direction, side, "perpendicular")
+            side = resolve_side(point_side, direction, vr)
+            rot, h, v = label_pose(direction, side, "perpendicular", vr)
             items.append(LabelSpec(
                 kind="equation", alignment=alignment.name, ref=f"EQ-{n}", station=raw, offset=0.0,
                 region=region, anchor_point=list(pt), direction_deg=direction, side=side,
                 label_offset=point_offset, rotation="perpendicular", content=equation_label(eq),
                 content_auto=True, position=beside(pt, direction, side, point_offset),
-                rotation_deg=rot, halign=h, valign=v))
+                rotation_deg=rot, halign=h, valign=v, view_rotation=vr))
             n_equations += 1
 
     return StationingPlan(items=items, n_ticks=n_ticks, n_junctions=n_junctions,

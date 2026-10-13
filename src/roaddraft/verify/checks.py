@@ -44,7 +44,9 @@ from roaddraft.verify.geometry import (
     LineworkResult, TickMatch, crosses_at, match_edges, match_linework, match_ticks, pieces_of,
     same_piece,
 )
-from roaddraft.verify.legibility import clipped, outside, overlapping_pairs, sheet_items
+from roaddraft.verify.legibility import (
+    clipped, outside, overlapping_pairs, reference_items, sheet_items, upside_down,
+)
 from roaddraft.verify.match import LabelIndex, index_labels
 from roaddraft.verify.normalize import normalize
 from roaddraft.verify.report import Finding
@@ -303,13 +305,22 @@ class Analysis:
         return [t.chosen for t in self.tables.values() if t.chosen is not None]
 
 
+#: anchored parts of a label (a curve bubble's circle and leader), never ticks
+LABEL_PART_KINDS = ("mc_bubble", "mc_leader")
+
+
 def analyze(ctx: Context) -> Analysis:
     model = list(ctx.doc.model_entities.values())
     tol = float(ctx.tol["position_model_ft"])
     linework = (match_linework(ctx.alignment, model, ctx.layers["alignment"], tol)
                 if ctx.alignment is not None else None)
     lo, hi = ctx.lenient["tick_length_in"]
-    ticks = match_ticks(ctx.truth.ticks, model, tol, exact=ctx.states("tick_length"),
+    # a curve bubble's leader can cross the line at a station: it is the bubble's, not a
+    # tick; nor is a line the drafter was handed (a real sheet's pipe crossing the line)
+    given = {i for sh in ctx.truth.sheets for i in sh.get("given_entities") or ()}
+    tickable = [e for e in model if e.id not in given and (getattr(e, "anchor", None) or {}
+                                                           ).get("kind") not in LABEL_PART_KINDS]
+    ticks = match_ticks(ctx.truth.ticks, tickable, tol, exact=ctx.states("tick_length"),
                         rot_tol_deg=float(ctx.tol["rotation_deg"]),
                         length_range=(lo * ctx.fpi_used, hi * ctx.fpi_used))
     edges = None
@@ -591,18 +602,32 @@ def check_legibility(a: Analysis) -> Result:  # D1-08
         if sv.sheet is None:
             continue
         items = sheet_items(ctx, sv)
-        pairs += overlapping_pairs(items)
-        off += outside(items, sv.usable)
-        cut = clipped(ctx, sv)  # a model label the viewport's edge cuts in two
-        off += cut
+        # a real plan sheet (tasks.real) lists what the drafter was handed: its own
+        # overlaps are the original drafters', so only pairs with new work count, and the
+        # referenced base drawings' text joins it as context
+        given = set(sv.truth.get("given_entities") or ())
+        if given:
+            context = reference_items(ctx, sv)
+            items = items + context
+            given |= {it.entity_id for it in context}
+        sv_pairs = [p for p in overlapping_pairs(items) if not (p[0] in given and p[1] in given)]
+        sv_off = [i for i in outside(items, sv.usable) if i not in given]
+        cut = [i for i in clipped(ctx, sv) if i not in given]  # cut by its viewport's edge
+        flipped = [i for i in upside_down(ctx, sv) if i not in given]  # as plotted
+        pairs += sv_pairs
+        off += sv_off + cut + flipped
         findings += [Finding("overlap", entity_ids=list(p), note=f"on sheet {sv.name}")
-                     for p in overlapping_pairs(items)]
+                     for p in sv_pairs]
         findings += [Finding("off_sheet", entity_ids=[i],
                              note=f"outside the usable area of sheet {sv.name}")
-                     for i in outside(items, sv.usable)]
+                     for i in sv_off]
         findings += [Finding("clipped", entity_ids=[i],
                              note=f"cut by the edge of its viewport on sheet {sv.name}")
                      for i in cut]
+        findings += [Finding("upside_down", entity_ids=[i],
+                             note=f"reads upside down on sheet {sv.name} as plotted (a model "
+                                  f"label under a twisted viewport wants view_rotation)")
+                     for i in flipped]
     return max(0.0, 1.0 - 0.25 * (len(pairs) + len(off))), findings
 
 

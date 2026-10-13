@@ -80,6 +80,9 @@ class _Words:
         self.pave = self.D.get("pavement") or {}
         self.width_dims = self.D.get("width_dimensions") or []
         self.basefile = self.D.get("basefile")
+        self.source = self.D.get("source") or {}  # a real plan sheet's provenance
+        self.ref_name = self.D.get("design_reference") or self.S.get("reference", {}).get(
+            "name", "BASE")
 
     # -- nouns
     @property
@@ -428,6 +431,87 @@ def _create_alignment(w: _Words, explicit: bool) -> str:
     return f"{w.A} {w.geometry()}. Create it and draw it."
 
 
+# -- real plan sheets (tasks.real): one alignment of a redrafted sample sheet
+
+
+def _real_context(w: _Words) -> str:
+    """Where the drafter is: the real sheet, its base drawing, what else it shows."""
+    src = w.source
+    others = src.get("other_alignments") or []
+    also = (f", which also holds alignment{'s' if len(others) > 1 else ''} "
+            + ", ".join(others) if others else "")
+    return (f"This is the sheet file for sheet {w.names[0]} of a {src.get('agency_name', '')} "
+            f"plan set ({w.P['name']}): a {w.size} {src.get('family', 'plan')} sheet at "
+            f"{w.scale}. Its viewport shows the base drawing {w.D.get('design_file')}, attached "
+            f"as reference {w.ref_name}{also}, over the corridor and survey. Alignment {w.A} "
+            f"lives in that base: this file does not own it, and the labelers reach it through "
+            f"the reference as {w.ref_name}:{w.A}. Keep everything already on the sheet."
+            + _real_reading(w))
+
+
+def _real_reading(w: _Words) -> str:
+    twist = float(w.D.get("view_rotation") or 0.0)
+    turned = (f" The viewport is turned {twist:.2f}°: letter model-space labels to read upright "
+              f"on the sheet as plotted (the labelers' view_rotation)." if abs(twist) > 1e-6
+              else "")
+    return (f"{turned} Where a label would land on something already on the sheet, put it on "
+            f"the other side of the line or further off it.")
+
+
+def _real_given(w: _Words) -> str:
+    words = {"stationing": "its stationing", "bearings": "its bearings",
+             "callouts": "its curve callouts", "table": "its curve data table"}
+    al = w.brief.design["alignments"][w.A]
+    has = {"stationing": True,
+           "bearings": any(el["kind"] == "tangent" for el in al["elements"]),
+           "callouts": bool(w.sheets[0]["curves"]),
+           "table": bool(w.sheets[0]["curves"]) and bool(w.D.get("table_given"))}
+    given = [words[p] for p in ("stationing", "bearings", "callouts", "table")
+             if p in w.type.given and has[p]]
+    if not given:
+        return ""
+    text = given[0] if len(given) == 1 else ", ".join(given[:-1]) + f" and {given[-1]}"
+    return f" {text[0].upper()}{text[1:]} {'are' if len(given) > 1 else 'is'} already done."
+
+
+def _real_stationing(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Station the {w.A} line on sheet {w.names[0]}."
+    items = [w.ticks(), w.station_labels(), w.curve_points()]
+    return (f"{_real_context(w)}\nStation {w.A} in model space, anchored through the "
+            f"reference:\n{_bullets(items)}\n{_real_given(w).strip()}")
+
+
+def _real_bearings(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Add the bearings of the {w.A} line to sheet {w.names[0]}."
+    return (f"{_real_context(w)}\nLabel {w.A}'s tangents, anchored through the reference: "
+            f"{w.bearings()}.{_real_given(w)}")
+
+
+def _real_callouts(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Number the curves of the {w.A} line on sheet {w.names[0]}."
+    return (f"{_real_context(w)}\nAdd, anchored through the reference, {w.callouts()}."
+            f"{_real_given(w)}")
+
+
+def _real_curve_table(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Put the curve data of the {w.A} line on sheet {w.names[0]}."
+    return (f"{_real_context(w)}\nAdd, anchored through the reference, {w.table()}, listing "
+            f"the curves of {w.A}.{_real_given(w)}")
+
+
+def _real_alignment_data(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Letter the alignment data of the {w.A} line on sheet {w.names[0]}."
+    items = [w.ticks(), w.station_labels(), w.curve_points(), w.callouts(), w.bearings(),
+             w.table()]
+    return (f"{_real_context(w)}\n{w.A} has no annotation on this sheet. Letter its alignment "
+            f"data in this file, anchored through the reference:\n{_bullets(items)}")
+
+
 PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "draw-alignment": _draw_alignment,
     "stationing": _stationing,
@@ -445,6 +529,11 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "attach-reference": _attach_reference,
     "create-alignment": _create_alignment,
     "annotate-base": _annotate_base,
+    "real-stationing": _real_stationing,
+    "real-bearings": _real_bearings,
+    "real-callouts": _real_callouts,
+    "real-curve-table": _real_curve_table,
+    "real-alignment-data": _real_alignment_data,
 }
 
 

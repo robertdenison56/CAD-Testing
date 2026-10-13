@@ -114,8 +114,8 @@ def as_anchor(value) -> Optional[Dict]:
     """Validate an anchor record (provenance of a design-anchored entity).
 
     Returns None for None, otherwise a plain dict copy. Required string keys:
-    alignment, ref, kind. Optional keys: station/offset/label_offset (number
-    or None), side (left|right|None), rotation (along|perpendicular|
+    alignment, ref, kind. Optional keys: station/offset/label_offset/
+    view_rotation (number or None), side (left|right|None), rotation (along|perpendicular|
     horizontal|None), viewport (str|None), content_auto (bool), placed_by
     (str|None). Anything else raises ValueError('anchor: ...').
 
@@ -137,7 +137,7 @@ def as_anchor(value) -> Optional[Dict]:
     for key, v in value.items():
         if key in ANCHOR_REQUIRED:
             continue
-        if key in ("station", "offset", "label_offset"):
+        if key in ("station", "offset", "label_offset", "view_rotation"):
             if v is not None and not _is_number(v):
                 raise ValueError(f"anchor: {key} must be a number or null, got {v!r}")
             out[key] = None if v is None else float(v)
@@ -167,7 +167,7 @@ def as_anchor(value) -> Optional[Dict]:
         else:
             raise ValueError(f"anchor: unknown key {key!r}; keys: alignment, ref, kind, "
                              f"station, offset, side, label_offset, rotation, viewport, "
-                             f"content_auto, placed_by")
+                             f"view_rotation, content_auto, placed_by")
     return out
 
 

@@ -559,7 +559,8 @@ def plan_label(doc: Document, p: dict) -> dict:
         spec = compile_label(
             align, ap, kind, side=p.get("side"), label_offset=model_offset,
             rotation=p.get("rotation"), content=p.get("content"),
-            halign=p.get("halign"), valign=p.get("valign"))
+            halign=p.get("halign"), valign=p.get("valign"),
+            view_rotation=p.get("view_rotation", 0.0))
     except DesignError as e:
         raise _fault(e)
     vp = None
@@ -782,7 +783,8 @@ def annotate_stationing_alignment(doc: Document, p: dict):
                                include_equations=p.get("include_equations", True),
                                station_range=station_range, lettering=lettering,
                                station_side=p.get("station_side"),
-                               point_side=p.get("point_side"), point_offset=point_off)
+                               point_side=p.get("point_side"), point_offset=point_off,
+                               view_rotation=p.get("view_rotation", 0.0))
     except DesignError as e:
         raise _fault(e)
 

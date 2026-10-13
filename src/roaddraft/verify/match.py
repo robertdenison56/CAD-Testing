@@ -164,7 +164,8 @@ def _expected_pose(ctx: Context, text: Text, space: str, rec: dict, align):
     model_offset = rec.get("label_offset") if space == "model" else None
     try:
         spec = compile_label(align, ap, kind, side=rec.get("side"), label_offset=model_offset,
-                             rotation=rec.get("rotation"), content=text.content)
+                             rotation=rec.get("rotation"), content=text.content,
+                             view_rotation=float(rec.get("view_rotation") or 0.0))
     except DesignError:
         raise _Bad("the label kind does not fit the anchor")
     if space == "model":

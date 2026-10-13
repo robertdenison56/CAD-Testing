@@ -152,7 +152,8 @@ def test_place_label_properties_and_required_space_anchor():
     assert s["required"] == ["space", "anchor"]
     assert set(s["properties"]) == {"space", "alignment", "anchor", "kind", "content", "side",
                                     "label_offset", "rotation", "height", "style", "halign",
-                                    "valign", "layer", "color", "linetype", "viewport"}
+                                    "valign", "layer", "color", "linetype", "viewport",
+                                    "view_rotation"}
     assert s["properties"]["anchor"] == ds.ANCHOR
     assert s["properties"]["kind"] == ds.KIND
     assert s["properties"]["side"] == ds.SIDE

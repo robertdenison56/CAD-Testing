@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 #: The closed set of finding codes.
 FINDING_CODES = (
     "missing", "wrong_value", "unanchored", "anchor_inconsistent", "misplaced", "not_visible",
-    "duplicate", "overlap", "off_sheet", "clipped", "geometry_mismatch", "extra_linework", "wrong_layer",
+    "duplicate", "overlap", "off_sheet", "clipped", "upside_down", "geometry_mismatch", "extra_linework", "wrong_layer",
     "wrong_height", "wrong_layer_props", "missing_field", "wrong_field", "design_tampered",
     "sheet_missing", "viewport_scale", "not_fitted",
 )

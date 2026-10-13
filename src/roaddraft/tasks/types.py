@@ -177,12 +177,45 @@ TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
 
 DEFAULT_TYPE = "plan-sheet"
 
+#: phases a real plan sheet supplies (its base files, sheet, north arrow and title block)
+REAL_SHEET_PHASES = ("layers", "linework", "reference", "sheet", "north", "title")
+
+
+def _real(name, asks, given_annotation, summary) -> TaskType:
+    return _type(name, asks, list(REAL_SHEET_PHASES) + list(given_annotation), summary,
+                 owns_design=False)
+
+
+#: tasks on the redrafted example plan sheets (``tasks.real``, decided 2026-10-13: the
+#: benchmark's sheets come from real plan sets, not only the seeded generator).  The sheet
+#: file references the real base files, so the design is referenced, never owned, and the
+#: labels anchor through the reference (``AA01:TB1``); one alignment is lettered per task.
+REAL_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
+    _real("real-stationing", ["ticks", "stations", "curve_points"],
+          ["bearings", "callouts", "table"],
+          "station one alignment of a real plan sheet: ticks, station numbers, BC/EC"),
+    _real("real-bearings", ["bearings"], ["stationing", "callouts", "table"],
+          "label the tangent bearings of one alignment of a real plan sheet"),
+    _real("real-callouts", ["callouts"], ["stationing", "bearings", "table"],
+          "number the curves of one alignment of a real plan sheet"),
+    _real("real-curve-table", ["table"], ["stationing", "bearings", "callouts"],
+          "add one alignment's curve data table to a real plan sheet"),
+    _real("real-alignment-data", ["ticks", "stations", "curve_points", "bearings", "callouts",
+                                  "table"], [],
+          "letter all the alignment data of one alignment on a real plan sheet"),
+)}
+
 
 def task_type(name: str) -> TaskType:
     try:
         return TASK_TYPES[name]
     except KeyError:
-        raise ValueError(f"unknown task type {name!r}; types: {', '.join(TASK_TYPES)}") from None
+        pass
+    try:
+        return REAL_TASK_TYPES[name]
+    except KeyError:
+        raise ValueError(f"unknown task type {name!r}; types: "
+                         f"{', '.join(list(TASK_TYPES) + list(REAL_TASK_TYPES))}") from None
 
 
 def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str, ...]]] = None
@@ -199,4 +232,5 @@ def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str
 __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "LAYOUT_GROUPS",
            "DESIGN_GROUPS",
            "MODEL_PHASES", "LABEL_GROUPS", "CHECK_GROUPS", "GROUP_LAYER_ROLE", "TaskType",
-           "TASK_TYPES", "DEFAULT_TYPE", "task_type", "checks_in_scope"]
+           "TASK_TYPES", "REAL_TASK_TYPES", "REAL_SHEET_PHASES", "DEFAULT_TYPE", "task_type",
+           "checks_in_scope"]

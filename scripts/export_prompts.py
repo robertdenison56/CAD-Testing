@@ -6,14 +6,17 @@
 
 Sheets: a read-me, the D1 task catalog, one row per D1 task (every task type on
 one and two sheets, explicit and vague prompt per task, links to its files),
-the rules every D1 prompt is prefixed with, and the Track P probe prompts.
+one row per real-sheet task (benchmarks/real_tasks/catalog.json, which
+scripts/real_tasks.py writes first), the rules every D1 prompt is prefixed
+with, and the Track P probe prompts.
 
 The task files go under ``benchmarks/prompts/tasks/<type>/<n>-sheet/seed-<n>/``
 (gitignored; regenerate with this script): the brief and truth, the starting
 document (``start.rdoc.json``, plus any base drawing shipped with the task),
 the reference solution's finished document and journal, and a PNG of every
-sheet (or the model) before and after.  The workbook links to them relative
-to its own folder, so keep the two together.
+sheet (or the model) before and after.  The workbook links to them by
+absolute path (``file://`` URLs to this checkout), so a copy of the workbook
+opened from anywhere on this Mac still reaches them.
 """
 from __future__ import annotations
 
@@ -36,7 +39,11 @@ from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.prompts import RULES_TEMPLATE, rules
 from roaddraft.tasks.reference import reference_solution, session_for_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, SPEC_VERSION, spec_hash
-from roaddraft.tasks.types import PHASE_ORDER, TASK_TYPES, checks_in_scope
+from roaddraft.tasks.real import REAL_GENERATOR_VERSION, build_real_task
+from roaddraft.tasks.types import PHASE_ORDER, REAL_TASK_TYPES, TASK_TYPES, checks_in_scope, task_type
+
+#: the validated real-sheet tasks (scripts/real_tasks.py writes it)
+REAL_CATALOG = Path("benchmarks/real_tasks/catalog.json")
 
 #: the dev-set dial cycle: every curve count with and without a station equation
 DIALS = [(curves, eq) for curves in (1, 2, 3) for eq in (False, True)]
@@ -190,10 +197,11 @@ def d1_rows(seeds, tasks_dir: Optional[Path], workbook_dir: Path):
                     folder = tasks_dir / ttype.name / f"{sheets}-sheet" / f"seed-{seed}"
                     pngs = write_task_files(task, folder)
                     rel = folder.relative_to(workbook_dir).as_posix()
-                    links = [Link("files", rel + "/"),
-                             Link("start", f"{rel}/{pngs['start']}") if pngs["start"]
+                    uri = folder.resolve().as_uri()  # absolute: the workbook may be opened anywhere
+                    links = [Link(rel + "/", uri + "/"),
+                             Link("start", f"{uri}/{pngs['start']}") if pngs["start"]
                              else "(nothing drawn yet)",
-                             Link("finished", f"{rel}/{pngs['finished']}") if pngs["finished"]
+                             Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"]
                              else ""]
                 rows.append([
                     ttype.name, sheets, seed, b.task_id, ttype.summary, _given(ttype),
@@ -204,12 +212,57 @@ def d1_rows(seeds, tasks_dir: Optional[Path], workbook_dir: Path):
     return rows
 
 
+def _real_given(ttype) -> str:
+    done = [PHASE_WORDS[p] for p in ("stationing", "bearings", "callouts", "table")
+            if p in ttype.given]
+    text = ("a real plan sheet file (its border, title block, notes and callouts) referencing "
+            "its real base files (alignments, corridor, survey); the alignment's own published "
+            "annotation removed")
+    return text + (f"; its {', '.join(done)} drafted to the spec" if done else "")
+
+
 def catalog_rows():
     rows = []
     for ttype in TASK_TYPES.values():
         graded = checks_in_scope(ttype.asks, list(WEIGHTS))
         rows.append([ttype.name, ttype.summary, _given(ttype), ", ".join(ttype.asks),
                      ", ".join(graded), sum(WEIGHTS[c] for c in graded)])
+    for ttype in REAL_TASK_TYPES.values():
+        graded = checks_in_scope(ttype.asks, list(WEIGHTS))
+        rows.append([ttype.name, ttype.summary, _real_given(ttype), ", ".join(ttype.asks),
+                     ", ".join(graded), sum(WEIGHTS[c] for c in graded)])
+    return rows
+
+
+def real_rows(catalog: dict, tasks_dir: Optional[Path], workbook_dir: Path):
+    """One row per validated real-sheet task, with links to its files."""
+    rows = []
+    for t in catalog["tasks"]:
+        task = build_real_task(t["sheet_id"], t["alignment"], t["type"])
+        if task.task_id != t["task_id"]:
+            raise SystemExit(f"{REAL_CATALOG} is stale ({t['sheet_id']} {t['alignment']} "
+                             f"{t['type']}): rerun scripts/real_tasks.py")
+        ttype = task_type(t["type"])
+        graded = checks_in_scope(ttype.asks, list(WEIGHTS))
+        D = task.brief.deliverable
+        src = D["source"]
+        links = ["", "", ""]
+        if tasks_dir is not None:
+            folder = (tasks_dir / "real" / t["agency"] / t["sheet_id"]
+                      / t["alignment"].replace(" ", "-") / t["type"])
+            pngs = write_task_files(task, folder)
+            rel = folder.relative_to(workbook_dir).as_posix()
+            uri = folder.resolve().as_uri()
+            links = [Link(rel + "/", uri + "/"),
+                     Link("start", f"{uri}/{pngs['start']}") if pngs["start"] else "",
+                     Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"] else ""]
+        rows.append([
+            src["agency_name"], t["sheet_id"], t["sheet"], src["family"],
+            f"1\" = {D['feet_per_inch']:g}'", t["twist_deg"], t["alignment"],
+            ", ".join(src["other_alignments"]), t["type"], t["task_id"],
+            ", ".join(task.truth.scope), ", ".join(graded), sum(WEIGHTS[c] for c in graded),
+            t["tangents"], t["curves"], t["labels"],
+            task.brief.prompts["explicit"], task.brief.prompts["vague"], *links])
     return rows
 
 
@@ -232,6 +285,10 @@ def main(argv=None) -> int:
     out = Path(ns.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     tasks_dir = None if ns.no_files else out.parent / "tasks"
+    TASKS_ROOT = str((out.parent / "tasks").resolve())
+    if not REAL_CATALOG.exists():
+        raise SystemExit(f"{REAL_CATALOG} is missing: run scripts/real_tasks.py first")
+    real = json.loads(REAL_CATALOG.read_text())
 
     wb = Workbook()
     ws = wb.active
@@ -251,19 +308,32 @@ def main(argv=None) -> int:
                      "scores, paired by task, is the prompt-gap metric. The last three columns "
                      "link to the task's files: its folder, a PNG of what the drafter starts with, "
                      "and a PNG of the reference solution's finished sheet."),
-        ("Task files", "tasks/<type>/<n>-sheet/seed-<n>/ beside this workbook: brief.json, "
+        ("Task files", f"{TASKS_ROOT}/<type>/<n>-sheet/seed-<n>/: brief.json, "
                        "truth.json, start.rdoc.json (the starting document; any base drawing "
                        "beside it), finished.rdoc.json and reference.journal.jsonl (the reference "
                        "solution), start-*.png and finished-*.png (one per sheet, or the model). "
-                       "Open the .rdoc.json files in RoadDraft; the links resolve relative to this "
-                       "workbook, so keep the two together."),
+                       "Open the .rdoc.json files in RoadDraft. The links are absolute paths to "
+                       "that folder on this Mac, so this workbook can be opened from anywhere; "
+                       "if a link does not open, paste the path above into Finder's Go to Folder."),
+        ("Real-sheet tasks", f"{len(real['tasks'])} D1 tasks on real plan sheets: the Caltrans, "
+                             "FHWA WFL and CFL, and FDOT sample sheets redrafted into RoadDraft "
+                             "files. Each sheet file references its real base files (alignments, "
+                             "corridor, survey) through a viewport at the published scale and "
+                             "twist; the task letters one alignment to the spec, around the "
+                             "sheet's own notes, callouts and other alignments. That alignment's "
+                             "published annotation is removed from the copies the task ships. "
+                             "Only pairings whose reference solution verifies 100 and starting "
+                             f"file 0 are kept ({len(real['excluded'])} left out; "
+                             f"{REAL_CATALOG} lists why)."),
+        ("Real task files", f"{TASKS_ROOT}/real/<agency>/<sheet>/<alignment>/<type>/: as for the "
+                            "D1 tasks, plus the real base files beside start.rdoc.json."),
         ("D1 rules", "The benchmark rules sent ahead of every D1 prompt, at both levels."),
         ("Probes", f"The {len(PROBES)} Track P capability probes (the current leaderboard), "
                    "each a single natural-language request."),
         ("Probe rules", "The rules and report request wrapped around each probe prompt."),
         ("", None),
         ("Spec", f"{SPEC_VERSION} ({spec_hash()}), DRAFT for PE review"),
-        ("Generator", GENERATOR_VERSION),
+        ("Generator", f"{GENERATOR_VERSION} (seeded); {REAL_GENERATOR_VERSION} (real sheets)"),
         ("Two sheets", "A longer alignment laid out on C-101 and C-102, breaking at a match line "
                        "on a tangent; each sheet shows its own part, carries its own curve table, "
                        "north arrow and title block, and a MATCH LINE STA ... SEE SHEET ... label."),
@@ -271,7 +341,7 @@ def main(argv=None) -> int:
                        "through 1-3 curves x equation off/on. Provisional: the E2 taskset "
                        "manifests will pin the final assignment."),
         ("Regenerate", "see the docstring of scripts/export_prompts.py"),
-        ("Source", "src/roaddraft/tasks/{types,prompts,generator}.py (D1), "
+        ("Source", "src/roaddraft/tasks/{types,prompts,generator,real}.py (D1), "
                    "src/roaddraft/probes/ (Track P)"),
     ]
     for i, (a, b) in enumerate(readme, start=1):
@@ -297,6 +367,14 @@ def main(argv=None) -> int:
            [15, 7, 6, 24, 30, 36, 28, 30, 7, 7, 12, 95, 40, 8, 8, 9],
            d1_rows(seeds, tasks_dir, out.parent), wrap_cols=(5, 6, 7, 8, 12, 13))
 
+    ws = wb.create_sheet("Real-sheet tasks")
+    _table(ws, ["Agency", "Sample sheet", "Sheet", "Kind", "Scale", "Twist °", "Alignment",
+                "Other alignments", "Type", "Task ID", "Graded groups", "Checks graded",
+                "Points", "Tangents", "Curves", "Labels", "EXPLICIT prompt", "VAGUE prompt",
+                "Files", "Start", "Finished"],
+           [16, 22, 9, 12, 9, 8, 10, 18, 18, 24, 28, 30, 7, 8, 7, 7, 95, 40, 8, 8, 9],
+           real_rows(real, tasks_dir, out.parent), wrap_cols=(8, 11, 12, 17, 18))
+
     ws = wb.create_sheet("D1 rules")
     _table(ws, ["Sent before every D1 prompt (explicit and vague)"], [120],
            [[RULES_TEMPLATE.format(design="<the design bullet: see below>")],
@@ -321,7 +399,8 @@ def main(argv=None) -> int:
 
     wb.save(out)
     print(f"wrote {out}: {len(TASK_TYPES)} types x 2 sheet counts x {len(seeds)} seeds x 2 "
-          f"levels, {len(PROBES)} probes" + ("" if tasks_dir is None else f"; task files under {tasks_dir}"))
+          f"levels, {len(real['tasks'])} real-sheet tasks, {len(PROBES)} probes"
+          + ("" if tasks_dir is None else f"; task files under {tasks_dir}"))
     return 0
 
 

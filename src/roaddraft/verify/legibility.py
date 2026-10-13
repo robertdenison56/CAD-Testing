@@ -94,6 +94,34 @@ def sheet_items(ctx: Context, sv: Optional[SheetView] = None) -> List[Item]:
     return items
 
 
+def reference_items(ctx: Context, sv: Optional[SheetView] = None) -> List[Item]:
+    """Text a sheet's viewports show from the referenced base drawings (the other
+    alignments' stationing, R/W tags on a real plan sheet), ids prefixed with the
+    reference name.  Context to keep new work clear of, never the drafter's own."""
+    from roaddraft.document.references import reference_groups
+    sv = ctx.first if sv is None else sv
+    items: List[Item] = []
+    if sv is None or sv.sheet is None or not sv.views:
+        return items
+    groups = reference_groups(ctx.doc, "model")
+    for view in sv.views:
+        fpi = float(view.vp.feet_per_inch)
+        twist = float(view.vp.rotation_deg)
+        for ref, base, prims in groups:
+            for e in prims:
+                if not isinstance(e, Text) or not e.content:
+                    continue
+                q = view.transform.to_paper(e.position)
+                if not (view.rect[0] <= q[0] <= view.rect[2] and view.rect[1] <= q[1] <= view.rect[3]):
+                    continue
+                style = base.text_styles.get(e.style)
+                items.append(_item(f"{ref.name}:{e.id}",
+                                   text_quad(q, e.content, e.height / fpi, e.rotation_deg + twist,
+                                             e.halign, e.valign,
+                                             style.width_factor if style else 1.0)))
+    return items
+
+
 def _axes(quad: Quad):
     for i in range(len(quad)):
         a, b = quad[i], quad[(i + 1) % len(quad)]
@@ -159,6 +187,41 @@ def clipped(ctx: Context, sv: Optional[SheetView] = None) -> List[str]:
     return sorted(out)
 
 
+#: how far past the reading range a text may turn before it reads upside down (degrees)
+READING_TOL_DEG = 1.0
+
+
+def reads_upside_down(paper_rotation_deg: float) -> bool:
+    """Text on paper reads from the bottom or the right of the sheet: along a
+    line it is upright (-90, 90], square to one it reads bottom to top
+    (-45, 135].  Anything outside (-90, 135] reads upside down, or from the
+    left."""
+    r = (float(paper_rotation_deg) + 180.0) % 360.0 - 180.0
+    return r < -90.0 - READING_TOL_DEG or r > 135.0 + READING_TOL_DEG
+
+
+def upside_down(ctx: Context, sv: Optional[SheetView] = None) -> List[str]:
+    """Texts that read upside down on one deliverable sheet as plotted: model
+    text through each viewport that shows it (its rotation plus the view's
+    twist), and the sheet's own text."""
+    sv = ctx.first if sv is None else sv
+    doc, out = ctx.doc, set()
+    if sv is None or sv.sheet is None:
+        return []
+    for view in sv.views:
+        twist = float(view.vp.rotation_deg)
+        rect = view.rect
+        for owner, e in _texts(doc, doc.model_entities.values()):
+            q = view.transform.to_paper(e.position)
+            if rect[0] <= q[0] <= rect[2] and rect[1] <= q[1] <= rect[3] and \
+                    reads_upside_down(e.rotation_deg + twist):
+                out.add(owner)
+    for owner, e in _texts(doc, sv.sheet.entities.values()):
+        if reads_upside_down(e.rotation_deg):
+            out.add(owner)
+    return sorted(out)
+
+
 def outside(items: Sequence[Item], usable: Optional[Rect]) -> List[str]:
     if usable is None:
         return []
@@ -168,5 +231,6 @@ def outside(items: Sequence[Item], usable: Optional[Rect]) -> List[str]:
                               and usable[1] - eps <= v[1] <= usable[3] + eps for v in it.quad)})
 
 
-__all__ = ["OVERLAP_EPS_IN", "Item", "text_quad", "sheet_items", "overlap_depth",
-           "overlapping_pairs", "outside", "clipped"]
+__all__ = ["OVERLAP_EPS_IN", "READING_TOL_DEG", "Item", "text_quad", "sheet_items",
+           "reference_items", "overlap_depth", "overlapping_pairs", "outside", "clipped",
+           "reads_upside_down", "upside_down"]

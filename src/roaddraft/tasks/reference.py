@@ -52,7 +52,7 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
     ttype = task_type(D.get("task_type", "plan-sheet"))
     # the alignment the labelers are pointed at: the document's own, or the base
     # drawing's through the reference when the design lives only there
-    ref_name = S.get("reference", {}).get("name", "BASE")
+    ref_name = D.get("design_reference") or S.get("reference", {}).get("name", "BASE")
     AL = f"{ref_name}:{A}" if ttype.design_referenced else A
     layers = S["layers"]
     props = S["layer_props"]
@@ -61,6 +61,15 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
     n_tangents = sum(1 for el in alignment["elements"] if el["kind"] == "tangent")
     n_curves = sum(1 for el in alignment["elements"] if el["kind"] == "curve")
     label_h = D["text_heights"]["model_label_ft"]
+    # model labels read upright through a twisted viewport (a real sheet's)
+    view = {"view_rotation": D["view_rotation"]} if D.get("view_rotation") else {}
+    # where a real sheet's labels go to clear its existing work (tasks.real)
+    poses = D.get("label_poses") or {}
+
+    def pose(group: str, ref: str) -> dict:
+        pz = (poses.get(group) or {}).get(ref)
+        return {"side": pz["side"], "label_offset": pz["label_offset_ft"]} if pz else {}
+
     steps: List[tuple] = []
     for phase in PHASE_ORDER:
         if phase not in want:
@@ -95,21 +104,31 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
                 params["station_side"] = D["station_label_side"]
             if D.get("point_label_offset_ft") is not None:
                 params["point_label_offset"] = D["point_label_offset_ft"]
+            params.update(view)
+            if poses.get("station_side"):
+                params["station_side"] = poses["station_side"]
+            if poses.get("points"):  # each curve point placed on its own, where it clears
+                params["include_pc_pt"] = False
             steps.append(("annotate_stationing", params))
+            for ref, pz in (poses.get("points") or {}).items():
+                steps.append(("place_label", {
+                    "space": "model", "alignment": AL, "anchor": ref, "kind": pz["kind"],
+                    "content": pz["content"], "height": label_h, "layer": layers["labels"],
+                    **pose("points", ref), **view}))
         elif phase == "bearings":
             bearing_offset = D.get("bearing_label_offset_ft", D["label_offset_ft"])
             for n in range(1, n_tangents + 1):
                 steps.append(("place_label", {
                     "space": "model", "alignment": AL, "anchor": f"T-{n}", "kind": "bearing",
                     "height": label_h, "label_offset": bearing_offset,
-                    "layer": layers["labels"]}))
+                    "layer": layers["labels"], **pose("bearings", f"T-{n}"), **view}))
         elif phase == "callouts":
             for n in range(1, n_curves + 1):
                 steps.append(("place_label", {
                     "space": "model", "alignment": AL, "anchor": f"MC-{n}", "kind": "mc",
                     "height": label_h,
                     "label_offset": D.get("mc_label_offset_ft", D["label_offset_ft"]),
-                    "layer": layers["labels"]}))
+                    "layer": layers["labels"], **pose("callouts", f"MC-{n}"), **view}))
         elif phase == "widths":
             align = Alignment.from_dict(alignment)
             half = float(D["pavement"]["half_width_ft"])

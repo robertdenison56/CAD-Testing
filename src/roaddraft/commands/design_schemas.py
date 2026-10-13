@@ -204,6 +204,11 @@ DESIGN_SCHEMAS = {
                                                   "the rest along the line"},
          "height": {**POS, "description": "text height, feet in model / inches on sheets; "
                                           "default 8 ft / 0.10 in"},
+         "view_rotation": {"type": "number",
+                           "description": "model space: the twist (rotation_deg) of the "
+                                          "viewport the labels are read through; they are "
+                                          "lettered upright on that sheet instead of in the "
+                                          "model (default 0, an untwisted view)"},
          "style": NSTR, "halign": HALIGN, "valign": VALIGN, "layer": NSTR,
          "color": COLOR, "linetype": LINETYPE,
          "viewport": {**NSTR, "description": "sheet space only: viewport id/name carrying "
