@@ -5,7 +5,7 @@ Oct 9 2026 (654e434). This folder records the serverless endpoint that replaces 
 Runpod-specific: Runpod's vLLM worker speaks the OpenAI chat-completions API, so `--backend openai` drives it
 with a different base URL and key.
 
-**Status, 2026-10-09: set up, nothing run yet.** No probe has gone through the endpoint. One smoke job was
+**Status, 2026-10-12: set up, nothing run yet; prefix caching stays on (decided 2026-10-12, see below).** No probe has gone through the endpoint. One smoke job was
 submitted by mistake and cancelled while still queued (`5e840173-…-u2`, CANCELLED, never ran).
 
 ## The endpoint
@@ -51,9 +51,9 @@ card's thinking-mode settings with every request and writes them into each `run.
     python -m roaddraft.runners run --backend openai --model Qwen/Qwen3.5-9B \
         --base-url https://api.runpod.ai/v2/zee0sos76mivwk/openai/v1 --api-key-env RUNPOD_API_KEY \
         --extra-body '{"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}' \
-        --out benchmarks/probe_runs/2026-10-08-k3 --label qwen3.5-9b-bf16-r1 --budget 30 [PROBE ...]
+        --out benchmarks/probe_runs/2026-10-12-k3 --label qwen3.5-9b-bf16-vllm-r1 --budget 30 [PROBE ...]
 
-The r2 and r3 repeats go in parallel as separate processes, as the Haiku k = 3 run did. Leave out `--lms-context`:
+`--out` is the folder of the campaign in progress (2026-10-12-k3: Haiku, Sonnet 5.5, Gemma on commit 2697ee5), so the board ranks this row beside them. The label carries `bf16-vllm` so the rows cannot be read as the deleted Q4_K_M LM Studio rows. The r2 and r3 repeats go in parallel as separate processes, as the Haiku k = 3 run did. Leave out `--lms-context`:
 the LM Studio guard reloads models through `lms` and means nothing here. Launch detached (`nohup … & disown`);
 a probe run outlives a tool call.
 
@@ -61,12 +61,56 @@ Still unverified, to check on the first probe (edge-c102, as with LM Studio):
 - the first request's cold start: image pull, the 19.3 GB download, vLLM start-up. The runner waits up to
   1,800 s for a response and retries a 5xx three times, but no number is measured yet;
 - that the OpenAI route streams tool-call deltas and the `include_usage` chunk the runner reads;
-- that vLLM keeps prefix caching on for this hybrid model (the worker log says at start-up). Without it every
-  turn re-reads the ~22k-token tool schema plus the conversation;
+- that vLLM keeps prefix caching on for this hybrid model: the start-up log must show the `align` cache mode and
+  the block size it chose (the Prefix caching section below says what to look for);
 - the per-probe budget: a wall-clock budget means something different on this hardware than on the 4060.
+
+## Prefix caching: on (decided 2026-10-12)
+
+`ENABLE_PREFIX_CACHING=true` stays. Caching reuses the key/value state of a prefix an earlier request already
+computed; the reused values are what recomputation would produce, so the model sees the same context and samples
+the same distribution. It is a compute shortcut, not a modelling change, and it does not bias what the probes
+measure.
+
+It matters because the runner resends the whole conversation every turn with the ~22k-token tool schema in front.
+The local Q4 r1 sent 25.4M input tokens per repeat to produce 0.5M new ones. Without caching every turn re-prefills
+the transcript, late turns of long probes slow down, and the 30-minute wall-clock budget ends more episodes for
+reasons that have nothing to do with the model. Every other row runs cached (Anthropic prompt caching on the
+claude-code backend, LM Studio's prompt cache, Ollama cloud), so caching on is the like-for-like setting. It also
+halves the bill.
+
+What the hybrid changes. 24 of the 32 layers are Gated DeltaNet with a recurrent state, so vLLM can only resume
+from a block boundary. The worker image pins vLLM v0.31.0 (`vllm/vllm-openai`), which handles this itself when
+prefix caching is on: it switches Qwen3.5 to `--mamba-cache-mode align` (logged as set "by default when prefix
+caching is enabled", marked experimental), requires chunked prefill (the template has `ENABLE_CHUNKED_PREFILL=true`),
+and overrides the template's `BLOCK_SIZE=16` with a block big enough to hold the recurrent state, about 500 to 800
+tokens ("Setting attention block size to N tokens" in the log). A hit then covers the schema and every completed
+turn down to the last block boundary; the tail under one block is re-prefilled, negligible against the schema.
+The three parallel repeats share the worker's cache, so the schema is prefilled once per worker lifetime.
+
+On the first probe, read the worker log for the two lines above (Runpod MCP `stream-worker-logs`, or the console)
+and write the block size into this file next to the run. The worker's `VLLM_EXTRA_ARGS` env is a raw passthrough to
+`vllm serve` if a flag ever has to be forced. A bf16 recurrent-state cache (`--mamba-ssm-cache-dtype bfloat16`)
+would halve the block but is a precision change and is not needed for this workload; leave it.
 
 ## Cost and teardown
 
 Nothing bills while no worker runs (min workers 0). A worker bills per second from start until it stops,
-including the 120 s idle window after the last request. Teardown when done: delete endpoint `zee0sos76mivwk`,
+including the 120 s idle window after the last request.
+
+Estimate, 2026-10-12 (nothing measured yet). Flex rates from the serverless pricing docs: `AMPERE_48` (A40, A6000)
+$0.00034/s = $1.22/h; `ADA_48_PRO` (L40S, L40, 6000 Ada) $0.00053/s = $1.91/h (the $1.75 above was the console's
+figure on Oct 9). Which pool serves decides the rate. The local Q4 r1 produced 507k output tokens over 11.7 h
+(12 tokens/s); at the A40's ~30-36 tokens/s one repeat is 4 to 5 h, and the three repeats batched on one worker
+take about the same wall time, plus one cold start and the idle tail (~$0.20).
+
+| case | cost |
+|---|---|
+| expected, prefix caching working | $6 (A40) to $10 (L40S) |
+| prefix caching silently off (76M tokens of prefill) | $12 to $20 |
+| ceiling: every probe hits the 30-min budget on every repeat, repeats batched | 16.5 h, $20 to $32 |
+
+Account on 2026-10-12: balance $100, spend limit $80, no spend. gpt-oss:120b-cloud on Ollama cloud is billed by
+plan, not per token: $0 on the Free plan (the Sep 24/27 passes ran on it; glm was refused as not in free usage) if
+the 5-hour and weekly GPU-time windows allow ~99 episodes, otherwise one month of Pro at $20. Teardown when done: delete endpoint `zee0sos76mivwk`,
 then template `txoq97fpbu` (Runpod MCP `delete-endpoint` / `delete-template`, or the console).
