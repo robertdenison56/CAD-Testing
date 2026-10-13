@@ -17,6 +17,7 @@ from typing import Iterable, List
 
 from roaddraft.api.session import Session
 from roaddraft.design.horizontal import Alignment
+from roaddraft.design.labels import DEFAULT_VALIGN
 from roaddraft.document.document import Document
 from roaddraft.document.fileformat import INTERCHANGE_EXT
 from roaddraft.tasks.brief import Task
@@ -48,6 +49,11 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
     D = task.brief.deliverable
     S = task.brief.drafting_spec
     A = task.brief.alignment_name
+    ttype = task_type(D.get("task_type", "plan-sheet"))
+    # the alignment the labelers are pointed at: the document's own, or the base
+    # drawing's through the reference when the design lives only there
+    ref_name = S.get("reference", {}).get("name", "BASE")
+    AL = f"{ref_name}:{A}" if ttype.design_referenced else A
     layers = S["layers"]
     props = S["layer_props"]
     sheets = D["sheets"]
@@ -59,7 +65,17 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
     for phase in PHASE_ORDER:
         if phase not in want:
             continue
-        if phase == "layers":
+        if phase == "design":
+            params = {"name": A, "begin_station": alignment["begin_station"],
+                      "pis": [[pi["point"][0], pi["point"][1]] + ([pi["radius"]] if pi["radius"] else [])
+                              for pi in alignment["pis"]]}
+            if alignment.get("equations"):
+                params["equations"] = [{"back": q["back"], "ahead": q["ahead"]}
+                                       for q in alignment["equations"]]
+            if alignment.get("description"):
+                params["description"] = alignment["description"]
+            steps.append(("create_alignment", params))
+        elif phase == "layers":
             for name in S.get("layer_set") or list(dict.fromkeys(layers.values())):
                 steps.append(("create_layer", {"name": name, **props[name]}))
         elif phase == "linework":
@@ -69,22 +85,28 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
             steps.append(("draw_offset", {"alignment": A, "offsets": list(pave["offsets_ft"]),
                                           "layer": pave["layer"]}))
         elif phase == "stationing":
-            steps.append(("annotate_stationing", {
-                "space": "model", "alignment": A, "interval": D["stationing_interval_ft"],
+            params = {
+                "space": "model", "alignment": AL, "interval": D["stationing_interval_ft"],
                 "tick_half_len": D["tick_half_len_ft"], "text_height": label_h,
                 "label_offset": D["label_offset_ft"], "layer": layers["ticks"],
-                "label_layer": layers["labels"]}))
+                "label_layer": layers["labels"],
+                "lettering": D.get("station_lettering", "caltrans")}
+            if D.get("station_label_side"):
+                params["station_side"] = D["station_label_side"]
+            if D.get("point_label_offset_ft") is not None:
+                params["point_label_offset"] = D["point_label_offset_ft"]
+            steps.append(("annotate_stationing", params))
         elif phase == "bearings":
             bearing_offset = D.get("bearing_label_offset_ft", D["label_offset_ft"])
             for n in range(1, n_tangents + 1):
                 steps.append(("place_label", {
-                    "space": "model", "alignment": A, "anchor": f"T-{n}", "kind": "bearing",
+                    "space": "model", "alignment": AL, "anchor": f"T-{n}", "kind": "bearing",
                     "height": label_h, "label_offset": bearing_offset,
                     "layer": layers["labels"]}))
         elif phase == "callouts":
             for n in range(1, n_curves + 1):
                 steps.append(("place_label", {
-                    "space": "model", "alignment": A, "anchor": f"MC-{n}", "kind": "mc",
+                    "space": "model", "alignment": AL, "anchor": f"MC-{n}", "kind": "mc",
                     "height": label_h,
                     "label_offset": D.get("mc_label_offset_ft", D["label_offset_ft"]),
                     "layer": layers["labels"]}))
@@ -120,20 +142,23 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
                         drawn.add(m["station"])
                         half = m["half_width_ft"]
                         steps.append(("draw_station_offset", {
-                            "alignment": A, "layer": layers.get("match", layers["ticks"]),
+                            "alignment": AL, "layer": layers.get("match", layers["ticks"]),
                             "points": [f"{m['station_text']}@{half:g}L",
                                        f"{m['station_text']}@{half:g}R"]}))
+                    # the match label reads along its match line, centred on the offset
+                    # point and beside the line (the pose the generator fitted on the sheet)
                     steps.append(("place_label", {
-                        "space": sh["name"], "alignment": A, "anchor": m["station_text"],
+                        "space": sh["name"], "alignment": AL, "anchor": m["station_text"],
                         "kind": "custom", "content": m["label"], "rotation": m["rotation"],
                         "side": m["side"], "label_offset": m["label_offset_in"],
+                        "halign": "center", "valign": DEFAULT_VALIGN[m["side"]],
                         "height": S["text"]["label_height_in"],
                         "layer": layers.get("match", layers["labels"])}))
         elif phase == "table":
             for sh in sheets:
                 if not sh["curves"]:
                     continue
-                params = {"space": sh["name"], "alignment": A,
+                params = {"space": sh["name"], "alignment": AL,
                           "position": sh["curve_table_position"],
                           "columns": D["curve_table_columns"],
                           "text_height": D["text_heights"]["sheet_table_in"],

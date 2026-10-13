@@ -34,7 +34,7 @@ def test_recorder_keeps_queries_with_results_and_flags_direct_reads(tmp_path):
     with Recorder(s) as rec:
         listed = s.query("list_sheets", {})
         names = [sheet.name for sheet in s.doc.sheets.values()]      # a direct read
-        created = s.execute("create_layer", {"name": "S-ANNO-CALL", "color": "black"})
+        created = s.execute("create_layer", {"name": "pp_LEGEND-anno", "color": "black"})
         fault = s.execute("create_layer", {"name": 7})
     # the calls came back untouched
     assert listed["ok"] and created["ok"] and not fault["ok"]

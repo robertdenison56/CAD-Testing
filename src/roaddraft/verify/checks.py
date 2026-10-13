@@ -34,6 +34,7 @@ from pathlib import Path
 
 from roaddraft.commands.bus import ANCHOR_PRODUCERS
 from roaddraft.core import geometry as geo
+from roaddraft.core.units import format_station
 from roaddraft.design.errors import DesignError
 from roaddraft.document import dimgeom
 from roaddraft.document.entities import BlockRef, Dimension, Entity, Line, Polyline, Table
@@ -43,7 +44,7 @@ from roaddraft.verify.geometry import (
     LineworkResult, TickMatch, crosses_at, match_edges, match_linework, match_ticks, pieces_of,
     same_piece,
 )
-from roaddraft.verify.legibility import outside, overlapping_pairs, sheet_items
+from roaddraft.verify.legibility import clipped, outside, overlapping_pairs, sheet_items
 from roaddraft.verify.match import LabelIndex, index_labels
 from roaddraft.verify.normalize import normalize
 from roaddraft.verify.report import Finding
@@ -195,7 +196,9 @@ def analyze_tables(ctx: Context) -> Dict[str, TableResult]:
             rec = e.anchor or {}
             if rec.get("placed_by") not in ANCHOR_PRODUCERS or rec.get("kind") != "curve_table":
                 res.unanchored.append(e)
-            elif rec.get("alignment") == want["anchor"]["alignment"]:
+                continue
+            found = ctx.truth_alignment(rec.get("alignment"))
+            if found is not None and found[0] == want["anchor"]["alignment"]:
                 evals.append(evaluate_table(e, want, exact=ctx.states("table_columns"),
                                             core=ctx.lenient["table_core_columns"]))
         evals.sort(key=lambda ev: (-ev.score, ev.table.id))
@@ -590,11 +593,16 @@ def check_legibility(a: Analysis) -> Result:  # D1-08
         items = sheet_items(ctx, sv)
         pairs += overlapping_pairs(items)
         off += outside(items, sv.usable)
+        cut = clipped(ctx, sv)  # a model label the viewport's edge cuts in two
+        off += cut
         findings += [Finding("overlap", entity_ids=list(p), note=f"on sheet {sv.name}")
                      for p in overlapping_pairs(items)]
         findings += [Finding("off_sheet", entity_ids=[i],
                              note=f"outside the usable area of sheet {sv.name}")
                      for i in outside(items, sv.usable)]
+        findings += [Finding("clipped", entity_ids=[i],
+                             note=f"cut by the edge of its viewport on sheet {sv.name}")
+                     for i in cut]
     return max(0.0, 1.0 - 0.25 * (len(pairs) + len(off))), findings
 
 
@@ -881,6 +889,80 @@ def check_reference(a: Analysis) -> Result:  # D1-14
     return _mean(credits), findings
 
 
+def check_alignment_created(a: Analysis) -> Result:  # D1-15
+    """The alignment the prompt described, created in the design: begin
+    station, the elements (ends, centers, radii) and the equations, each
+    within the spec's tolerances.  A difference is wrong design (hard fail);
+    the drawn linework is D1-01's business."""
+    ctx = a.ctx
+    name, want = ctx.alignment_name, ctx.alignment
+    if want is None:
+        return 0.0, [Finding("missing", note="the truth has no alignment")]
+    have = ctx.doc.design.alignments.get(name)
+    if have is None:
+        return 0.0, [Finding("missing", anchor={"alignment": name, "ref": name, "kind": "alignment"},
+                             note="no alignment of this name in the design")]
+    tol_p, tol_s, tol_l = (float(ctx.tol["position_model_ft"]), float(ctx.tol["station_ft"]),
+                           float(ctx.tol["length_ft"]))
+    findings, ok = [], 0
+    total = 1 + len(want.elements) + len(want.equations)
+
+    def near(p, q) -> bool:
+        return geo.distance(p, q) <= tol_p
+
+    if abs(float(have.begin_station) - float(want.begin_station)) <= tol_s:
+        ok += 1
+    else:
+        findings.append(Finding("wrong_value", anchor={"alignment": name, "ref": "BEGIN",
+                                                       "kind": "begin_station"},
+                                expected=format_station(want.begin_station),
+                                actual=format_station(have.begin_station),
+                                note="the alignment begins at the wrong station"))
+    kinds_want = [el.kind for el in want.elements]
+    kinds_have = [el.kind for el in have.elements]
+    if kinds_have != kinds_want:
+        findings.append(Finding("wrong_value", anchor={"alignment": name, "ref": "elements",
+                                                       "kind": "elements"},
+                                expected=kinds_want, actual=kinds_have,
+                                note="the alignment does not have the tangents and curves "
+                                     "described"))
+    else:
+        for i, (w, h) in enumerate(zip(want.elements, have.elements)):
+            anchor = {"alignment": name, "ref": want.element_ref(i), "kind": w.kind}
+            if w.kind == "tangent":
+                good = near(w.start, h.start) and near(w.end, h.end)
+            else:
+                good = (near(w.pc, h.pc) and near(w.pt, h.pt) and near(w.center, h.center)
+                        and abs(float(w.radius) - float(h.radius)) <= tol_l)
+            if good:
+                ok += 1
+            else:
+                findings.append(Finding("wrong_value", anchor=anchor,
+                                        note=f"{want.element_ref(i)} is not where the PIs and "
+                                             f"radii put it"))
+    if len(have.equations) != len(want.equations):
+        findings.append(Finding("wrong_value", anchor={"alignment": name, "ref": "equations",
+                                                       "kind": "equations"},
+                                expected=len(want.equations), actual=len(have.equations),
+                                note="the alignment does not have the station equations "
+                                     "described"))
+    else:
+        for n, (w, h) in enumerate(zip(want.equations, have.equations), start=1):
+            if (abs(float(w.back) - float(h.back)) <= tol_s
+                    and abs(float(w.ahead) - float(h.ahead)) <= tol_s):
+                ok += 1
+            else:
+                findings.append(Finding("wrong_value", anchor={"alignment": name,
+                                                               "ref": f"EQ-{n}",
+                                                               "kind": "equation"},
+                                        expected=f"{format_station(w.back)} BK = "
+                                                 f"{format_station(w.ahead)} AH",
+                                        actual=f"{format_station(h.back)} BK = "
+                                               f"{format_station(h.ahead)} AH",
+                                        note="the station equation reads wrong"))
+    return ok / total, findings
+
+
 CHECKS: Dict[str, Callable[[Analysis], Result]] = {
     "D1-00": check_sheet_setup,
     "D1-01": check_linework,
@@ -897,6 +979,7 @@ CHECKS: Dict[str, Callable[[Analysis], Result]] = {
     "D1-12": check_pavement_edges,
     "D1-13": check_pavement_widths,
     "D1-14": check_reference,
+    "D1-15": check_alignment_created,
 }
 
 __all__ = ["CHECKS", "Analysis", "analyze", "evaluate_table", "TableEval", "TableResult"]

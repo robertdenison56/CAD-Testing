@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple
 from roaddraft.core import colors as colorlib
 from roaddraft.core import geometry as geo
 from roaddraft.core.units import format_station, parse_station
+from roaddraft.design.labels import caltrans_station_text, label_pose, resolve_side
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import LINETYPES, BlockDef, Document, Layer, TextStyle
 from roaddraft.document.entities import (
@@ -1089,13 +1090,19 @@ def annotate_stationing(doc: Document, p: dict):
     tick_half = p.get("tick_half_len", sizes["tick_half_len"])
     text_h = p.get("text_height", sizes["text_height"])
     label_off = p.get("label_offset", sizes["label_offset"])
-    # stations left of the path and BC/EC right; a negative offset swaps the
-    # sides, and each label still reads away from the line
-    side = -1.0 if label_off < 0 else 1.0
+    # station numbers below the line, lettered the Caltrans way, as in alignment
+    # mode; a negative offset is the older way of asking for the right side
+    station_side = p.get("station_side") or ("right" if label_off < 0 else "below")
+    lettering = p.get("lettering", "caltrans")
+    if lettering not in ("caltrans", "full"):
+        raise CommandFault(f"lettering must be 'caltrans' or 'full', not {lettering!r}")
     label_off = abs(label_off)
+    point_side = p.get("point_side", "left")
+    point_off = abs(p.get("point_label_offset", sizes["point_offset"]))
     tol = p.get("connect_tolerance", 1.0)
     tick_rec = anno.tick_record(doc, tick_half)
     text_rec = anno.text_record(doc, text_h, label_off)
+    point_rec = anno.text_record(doc, text_h, point_off)
 
     warnings: List[str] = []
     ids = list(p["path_ids"])
@@ -1141,12 +1148,15 @@ def annotate_stationing(doc: Document, p: dict):
             "layer": tick_layer,
             "start": _offset_pt(pt, ang + 90.0, -tick_half),
             "end": _offset_pt(pt, ang + 90.0, tick_half), "annotative": tick_rec})
+        side = resolve_side(station_side, ang)
+        rot, halign, valign = label_pose(ang, side, "along")
         add("text", Text, {
             "layer": label_layer, "style": style,
-            "position": _offset_pt(pt, ang + 90.0 * side, label_off),
-            "content": format_station(station), "height": text_h,
-            "rotation_deg": _upright(ang), "halign": "center",
-            "valign": "bottom" if side > 0 else "top", "annotative": text_rec})
+            "position": _offset_pt(pt, ang + (90.0 if side == "left" else -90.0), label_off),
+            "content": (caltrans_station_text(station) if lettering == "caltrans"
+                        else format_station(station)),
+            "height": text_h, "rotation_deg": rot, "halign": halign, "valign": valign,
+            "annotative": text_rec})
         n_ticks += 1
         station += interval
 
@@ -1160,13 +1170,16 @@ def annotate_stationing(doc: Document, p: dict):
                 continue
             d = ends[i]
             pt, ang = _path_eval(pieces, d)
+            # the curve point the PPM's way: station then word, square to the line
+            # on its left, reading bottom to top (as alignment mode letters it)
+            pside = resolve_side(point_side, ang)
+            rot, halign, valign = label_pose(ang, pside, "perpendicular")
             add("text", Text, {
                 "layer": label_layer, "style": style,
-                "position": _offset_pt(pt, ang - 90.0 * side, label_off),
-                "content": f"{tag} {format_station(begin + d)}",
-                "height": text_h, "rotation_deg": _upright(ang),
-                "halign": "center", "valign": "top" if side > 0 else "bottom",
-                "annotative": text_rec})
+                "position": _offset_pt(pt, ang + (90.0 if pside == "left" else -90.0), point_off),
+                "content": f"{format_station(begin + d)} {tag}",
+                "height": text_h, "rotation_deg": rot, "halign": halign, "valign": valign,
+                "annotative": point_rec})
             n_junctions += 1
 
     message = (f"stationing annotated in {_space_label(doc, space_key)}: "

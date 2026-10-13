@@ -8,8 +8,8 @@ well as commands; the journal beside each reference in
 `benchmarks/probe_references` keeps only the commands.
 
 Generated, not edited: `python -m roaddraft.trajectories record --out benchmarks/trajectories/families/callout-station --family callout-station --seeds 0-9`
-(roaddraft 0.1.0). `tools.json` holds the 78 tool definitions every
-conversation was recorded against (sha256:56e836778cd8da5d616462b15357626dbc619158d101949a660d1488e2283ef4).
+(roaddraft 0.1.0). `tools.json` holds the 103 tool definitions every
+conversation was recorded against (sha256:97c51a2415649df4303137bd0361ae52a99db789187d9dde0dc17d545fca17d0).
 
     <probe>/trace.jsonl        every call: the MCP server's trace line, result included
     <probe>/conversation.json  the run as messages, with the verdict and the audit
@@ -25,13 +25,13 @@ nowhere a model can see, and it is not training data until that is fixed.
 
 | Probe | Tags | Queries | Commands | Faults | Faithful | Check |
 |---|---|---|---|---|---|---|
-| callout-station@0 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@1 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@2 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@3 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@4 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@5 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@6 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@7 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@8 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
-| callout-station@9 | family, find, station, paper | 2 | 2 | 0 | yes | PASS |
+| callout-station@0 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@1 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@2 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@3 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@4 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@5 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@6 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@7 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@8 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |
+| callout-station@9 | family, find, station, paper | 2 | 1 | 0 | yes | PASS |

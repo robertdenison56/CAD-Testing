@@ -123,7 +123,7 @@ def _build_callout(p: dict, pid: str) -> Probe:
         run(session, "place_callout", {
             "space": sheet, "target_anchor": anchor, "alignment": f"DESIGN:{fixture.ALIGNMENT}",
             "position": [x + dx, y + dy], "content": f"STA {r['station_text']}{offset_text}\n{p['label']}",
-            "layer": ensure_layer(session, "S-ANNO-CALL")})
+            "layer": ensure_layer(session, "rd_LAYOUT-NOTE-anno")})
 
     note = (f"A station and an offset, with no entity there to find: the leader must land within "
             f"{TOLERANCE_FT:g} ft of {what} through the viewport, on the sheet, and the text must read {sta}.")
@@ -203,7 +203,7 @@ def _build_alignment(p: dict, pid: str) -> Probe:
         else:
             text += (" Use " + ", ".join(f"a {t['radius']:g} ft radius curve at PI-{i + 1}"
                                          for i, t in enumerate(turns)) + ".")
-    text += " Draw its centerline on layer V-ALIGN-CNTR."
+    text += " Draw its centerline on layer align_MAIN."
 
     def check(baseline, submitted):
         want = expected_alignment(name, _pis(p, traverse([p["easting"], p["northing"]], legs)), begin)
@@ -268,7 +268,7 @@ def _build_offsets(p: dict, pid: str) -> Probe:
                           f"{shoulders['right']:g} ft paved shoulder on the right")
     prompt = (f"SR-100 is a {2 * lanes}-lane highway with {lane:g} ft lanes and {with_shoulders}. "
               f"Its alignment is designed and drawn; nothing else is. Draw the edges of pavement on "
-              f"layer V-ROAD-EOP and the outside edges of shoulder on layer V-ROAD-SHLD, both sides, "
+              f"layer rd_EP and the outside edges of shoulder on layer rd_ES, both sides, "
               f"for the whole length.")
 
     def check(baseline, submitted):

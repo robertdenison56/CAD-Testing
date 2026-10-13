@@ -25,11 +25,14 @@ EDGE_OFFSETS = [-12.0, 12.0]        # a 24 ft pavement
 SHOULDER_OFFSETS = [-20.0, 20.0]    # 8 ft shoulders
 ALIGNMENT = "SR-100"
 
+#: Caltrans named levels (CADD Users Manual Appendix A10), the layers the benchmark's
+#: drafting spec carries, with its weights: one layer convention for the probes and the
+#: benchmark (decided 2026-10-11); the callout level is the roadway layout-note level
 LAYERS = [
-    {"name": "V-ALIGN-CNTR", "color": "red", "linetype": "center", "lineweight_mm": 0.35},
-    {"name": "V-ROAD-EOP", "color": "yellow", "lineweight_mm": 0.35},
-    {"name": "V-ROAD-SHLD", "color": "gray", "linetype": "dashed", "lineweight_mm": 0.18},
-    {"name": "V-ANNO-TEXT", "color": "black", "lineweight_mm": 0.25},
+    {"name": "align_MAIN", "color": "black", "lineweight_mm": 0.5},
+    {"name": "rd_EP", "color": "black", "lineweight_mm": 0.35},
+    {"name": "rd_ES", "color": "black", "lineweight_mm": 0.25},
+    {"name": "rd_LAYOUT-NOTE-anno", "color": "black", "lineweight_mm": 0.18},
 ]
 
 SHEETS = ["C-101", "C-102", "C-103"]
@@ -58,12 +61,12 @@ START = {"sheets": SHEET_FILE, "model": MODEL_FILE, "blank": BLANK_FILE,
 #: the station equation the sheets-eq design carries, on T-2 (sheet C-102)
 EQUATION = {"back": "35+00", "ahead": "35+50"}
 
-#: right of way for sheets-row, as raw linework on V-ROW (no anchor records,
+#: right of way for sheets-row, as raw linework on rd_RIGHT-OF-WAY (no anchor records,
 #: the way deed lines arrive): 50 ft each side, except a take on the right
 #: that jogs out to 80 ft between 30+00 and 36+00
-ROW = {"layer": "V-ROW", "left": -50.0, "right": 50.0, "jog": 80.0,
+ROW = {"layer": "rd_RIGHT-OF-WAY", "left": -50.0, "right": 50.0, "jog": 80.0,
        "jog_from": 3000.0, "jog_to": 3600.0}
-ROW_LAYER = {"name": "V-ROW", "color": "magenta", "linetype": "phantom", "lineweight_mm": 0.35}
+ROW_LAYER = {"name": "rd_RIGHT-OF-WAY", "color": "cyan", "linetype": "phantom", "lineweight_mm": 0.25}
 
 #: MAIN ST / CROSS AVE for the tier-2 probes: two straight alignments crossing
 #: at right angles, curb faces at constant offsets, 50 ft curb returns. MAIN-ST
@@ -97,11 +100,11 @@ def build_model(out: Path, name: str = MODEL_FILE, equations=(), row: bool = Fal
     check(s.execute("create_alignment", {"name": ALIGNMENT, "begin_station": BEGIN_STATION,
                                          "pis": PIS, "description": "SR-100 mainline",
                                          **({"equations": list(equations)} if equations else {})}))
-    check(s.execute("draw_alignment", {"alignment": ALIGNMENT, "layer": "V-ALIGN-CNTR"}))
+    check(s.execute("draw_alignment", {"alignment": ALIGNMENT, "layer": "align_MAIN"}))
     check(s.execute("draw_offset", {"alignment": ALIGNMENT, "offsets": EDGE_OFFSETS,
-                                    "layer": "V-ROAD-EOP"}))
+                                    "layer": "rd_EP"}))
     check(s.execute("draw_offset", {"alignment": ALIGNMENT, "offsets": SHOULDER_OFFSETS,
-                                    "layer": "V-ROAD-SHLD"}))
+                                    "layer": "rd_ES"}))
     if row:
         check(s.execute("create_layer", ROW_LAYER))
         for piece in row_pieces(s.doc.design.alignments[ALIGNMENT]):
@@ -198,7 +201,7 @@ def build_centerline(out: Path) -> Path:
         s.execute("create_layer", layer)
     check(s.execute("create_alignment", {"name": ALIGNMENT, "begin_station": BEGIN_STATION,
                                          "pis": PIS, "description": "SR-100 mainline"}))
-    check(s.execute("draw_alignment", {"alignment": ALIGNMENT, "layer": "V-ALIGN-CNTR"}))
+    check(s.execute("draw_alignment", {"alignment": ALIGNMENT, "layer": "align_MAIN"}))
     path = out / CENTERLINE_FILE
     check(s.query("save_document", {"path": str(path)}))
     return path
@@ -242,7 +245,7 @@ def build_intersection(out: Path) -> Path:
         pis = [[px - dx * d["leg"], py - dy * d["leg"]], [px + dx * d["leg"], py + dy * d["leg"]]]
         check(s.execute("create_alignment", {"name": d["name"], "begin_station": d["begin"],
                                              "pis": pis}))
-        check(s.execute("draw_alignment", {"alignment": d["name"], "layer": "V-ALIGN-CNTR"}))
+        check(s.execute("draw_alignment", {"alignment": d["name"], "layer": "align_MAIN"}))
     for name, east, north in I["corners"]:
         g = corner_geometry(name)
         done = name != I["open"]
@@ -251,14 +254,14 @@ def build_intersection(out: Path) -> Path:
         main_end = I["main"]["begin"] + I["main"]["leg"] * (2 if east > 0 else 0)
         cross_end = I["cross"]["begin"] + I["cross"]["leg"] * (2 if north > 0 else 0)
         check(s.execute("draw_offset", {
-            "alignment": I["main"]["name"], "offsets": [g["main_offset"]], "layer": "V-ROAD-EOP",
+            "alignment": I["main"]["name"], "offsets": [g["main_offset"]], "layer": "rd_EP",
             "station_range": sorted([main_from, main_end])}))
         check(s.execute("draw_offset", {
-            "alignment": I["cross"]["name"], "offsets": [g["cross_offset"]], "layer": "V-ROAD-EOP",
+            "alignment": I["cross"]["name"], "offsets": [g["cross_offset"]], "layer": "rd_EP",
             "station_range": sorted([cross_from, cross_end])}))
         if done:
             check(s.execute("draw_arc", {
-                "space": "model", "layer": "V-ROAD-EOP", "center": g["center"],
+                "space": "model", "layer": "rd_EP", "center": g["center"],
                 "radius": g["radius"], "start_angle_deg": g["start_deg"],
                 "end_angle_deg": g["end_deg"]}))
     path = out / INTERSECTION_FILE
@@ -293,12 +296,12 @@ def build_flawed(out: Path) -> Path:
     st1 = a.xy_to_station(piece.end)["station"]
     check(s.execute("delete_entities", {"ids": [piece.id]}))
     check(s.execute("draw_line", {
-        "space": "model", "layer": "V-ROAD-EOP",
+        "space": "model", "layer": "rd_EP",
         "start": a.station_to_xy(st0, FLAWS["edge_offset"])[0],
         "end": a.station_to_xy(st1, FLAWS["edge_offset"])[0]}))
     # 2. the left shoulder between the curves, on the wrong layer
     shoulder = _middle_tangent(s, SHOULDER_OFFSETS[0])
-    check(s.execute("modify_entity", {"id": shoulder.id, "changes": {"layer": "V-ROAD-EOP"}}))
+    check(s.execute("modify_entity", {"id": shoulder.id, "changes": {"layer": "rd_EP"}}))
     # 3. a callout on the first tangent that names the right shoulder wrongly
     from roaddraft.document.entities import Line
     first = next(e for e in s.doc.model_entities.values()
@@ -309,7 +312,7 @@ def build_flawed(out: Path) -> Path:
     check(s.execute("place_callout", {
         "space": "model", "target_entity": first.id, "at": 0.5,
         "position": [tip[0] + 120.0, tip[1] - 160.0], "content": FLAWS["callout_text"],
-        "layer": "V-ANNO-TEXT"}))
+        "layer": "rd_LAYOUT-NOTE-anno"}))
     path = out / FLAWED_FILE
     check(s.query("save_document", {"path": str(path)}))
     return path
@@ -331,17 +334,20 @@ def build_qa(out: Path) -> Path:
 
 def build_l2(out: Path) -> Path:
     """Caltrans sheet L-2 with its alignment data stripped: no tangent bearings
-    or BC/EC/PCC stations in the design file (layer V-ANNO-ALGN), and no curve
-    bubbles, curve data table or match lines on the sheet (S-ANNO-CURV,
-    S-ANNO-MTCH). Stationing, callouts, notes and existing ground stay."""
+    or BC/EC/PCC stations in the design file (layer align_MAIN-anno), and no curve
+    bubbles, curve data table or match lines on the sheet (align_CURVE-DATA,
+    border_INSIDE-BORDER-anno). Stationing, callouts, notes and existing ground stay."""
     from roaddraft.probes.l2 import build_model as l2_model, build_sheet as l2_sheet
     model_path = l2_model.build(out, quiet=True)
     sheet_path, _session = l2_sheet.build(out, quiet=True)
-    for path, layers in ((model_path, {"V-ANNO-ALGN"}), (sheet_path, {"S-ANNO-CURV", "S-ANNO-MTCH"})):
+    def keep(e) -> bool:  # the stationing stays: its ticks and numbers carry station anchors
+        return bool(e.anchor) and e.anchor.get("kind") in ("station", "tick")
+
+    for path, layers in ((model_path, {"align_MAIN-anno"}), (sheet_path, {"align_CURVE-DATA", "border_INSIDE-BORDER-anno"})):
         s = Session.load(path, out_dir=out)
-        ids = [eid for eid, e in s.doc.model_entities.items() if e.layer in layers]
+        ids = [eid for eid, e in s.doc.model_entities.items() if e.layer in layers and not keep(e)]
         for sheet in s.doc.sheets.values():
-            ids += [eid for eid, e in sheet.entities.items() if e.layer in layers]
+            ids += [eid for eid, e in sheet.entities.items() if e.layer in layers and not keep(e)]
         if ids:
             check(s.execute("delete_entities", {"ids": ids}))
         check(s.query("save_document", {"path": str(path)}))

@@ -79,12 +79,12 @@ def test_the_scripted_solution_passes_and_the_untouched_document_does_not(probe,
 def test_callouts_pair_text_with_its_leader_however_it_was_drawn(tmp_path):
     s = Session.load(fixture.start_document(tmp_path, "blank"), out_dir=tmp_path)
     do(s, "place_callout", space="model", target=[100.0, 200.0], position=[400.0, 50.0],
-       content="A", layer="V-ANNO-TEXT")
-    do(s, "draw_line", space="model", layer="V-ANNO-TEXT", start=[900.0, 900.0], end=[1000.0, 1000.0])
+       content="A", layer="rd_LAYOUT-NOTE-anno")
+    do(s, "draw_line", space="model", layer="rd_LAYOUT-NOTE-anno", start=[900.0, 900.0], end=[1000.0, 1000.0])
     do(s, "place_text", space="model", position=[1000.0, 1000.0], content="B", height=8.0,
-       layer="V-ANNO-TEXT")
+       layer="rd_LAYOUT-NOTE-anno")
     do(s, "place_text", space="model", position=[3000.0, 3000.0], content="C", height=8.0,
-       layer="V-ANNO-TEXT")
+       layer="rd_LAYOUT-NOTE-anno")
     found = {c.text.content: c for c in tier2.callouts(list(s.doc.model_entities.values()), s.doc)}
     assert math.dist(found["A"].tip, [100.0, 200.0]) < 1e-6
     assert len(found["A"].segments) == 2 and len(found["A"].ids) == 4   # leader, shoulder, arrowhead, text
@@ -178,7 +178,7 @@ def test_station_callouts_count_misses_misreadings_and_model_space(tmp_path):
     a = tier2._sr100_design()
     for st, p, _q in required:
         do(s, "place_callout", space="model", target=p, position=[p[0] + 30.0, p[1] + 60.0],
-           content=f"STA {tier2.station_label(st)}", layer="V-ANNO-TEXT")
+           content=f"STA {tier2.station_label(st)}", layer="rd_LAYOUT-NOTE-anno")
     r = probe.check(base, s)
     assert not r.passed and "paper space" in r.detail
 
@@ -309,7 +309,7 @@ def test_fixing_one_mistake_names_the_next_and_adding_is_not_fixing(tmp_path):
     P = tier2.planted(base)
     _fix_edge(s, P)
     r = probe.check(base, s)
-    assert not r.passed and "shoulder on V-ROAD-SHLD" in r.detail
+    assert not r.passed and "shoulder on rd_ES" in r.detail
     do(s, "modify_entity", id=P["shoulder"].id, changes={"layer": SHLD})
     r = probe.check(base, s)
     assert not r.passed and "still points at the shoulder" in r.detail

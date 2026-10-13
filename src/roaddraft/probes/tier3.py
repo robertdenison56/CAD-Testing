@@ -21,15 +21,16 @@ bottom to top (p. 2-4). None of the first 23 probes asks for any of it.
 * ``l2-match-lines`` -- match lines on the real, twisted Caltrans sheet L-2.
 * ``l2-alignment-data`` -- the whole job on L-2.
 
-Every sheet file here *references* its design: ``place_label``,
-``place_curve_table`` and ``annotate_stationing`` refuse a referenced
-alignment. So an agent either composes the lettering from ``get_design_data``
-or copies the design into the sheet file and uses the engine's labelers. The
-checks read the sheet as it plots (``plotted``) -- paper space and the sheet
-file's model space through each viewport -- so both routes score alike. Values
-are read, not spellings (``notation``): ``N71°33'54"E`` passes where
-``N 71°33'54" E`` does, ``1581.14'`` fails wherever it is written. The words
-are the standard's: BC, EC, PCC, BK, AH.
+Every sheet file here *references* its design. The engine's labelers
+(``place_label``, ``place_curve_table``, ``annotate_stationing``) anchor
+through the reference (``DESIGN:SR-100``), and the scripted solutions letter
+that way (since 2026-10-11, so the probes and the benchmark share one credit
+route); an agent may instead compose the lettering from ``get_design_data``
+with ``place_text``. The checks read the sheet as it plots (``plotted``) --
+paper space and the sheet file's model space through each viewport -- so
+both routes score alike. Values are read, not spellings (``notation``):
+``N71°33'54"E`` passes where ``N 71°33'54" E`` does, ``1581.14'`` fails
+wherever it is written. The words are the standard's: BC, EC, PCC, BK, AH.
 """
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.core import geometry as geo
+from roaddraft.core.units import format_station
 from roaddraft.design.errors import DesignError
 from roaddraft.document import viewmap
 from roaddraft.document.entities import Circle, Line, Polyline, Table, Text
@@ -63,7 +65,7 @@ RADIUS_FT = 0.5           # Caltrans curve tables letter R to the whole foot
 ALIGN = fixture.ALIGNMENT
 SR = f"DESIGN:{ALIGN}"
 SR70 = "DESIGN:SR70"
-LAYER = "S-ANNO-ALGN"
+LAYER = "align_MAIN-anno"
 
 
 # ------------------------------------------------------------------- the road
@@ -555,52 +557,71 @@ def _step(p, deg: float, dist: float) -> List[float]:
     return [p[0] + u[0] * dist, p[1] + u[1] * dist]
 
 
+def _station_anchor(session: Session, qualified: str, raw: float) -> dict:
+    """A station anchor for a RAW station: its display station and region, the
+    way a station past an equation has to be named."""
+    stations = find_reference_alignment(session.doc, qualified)[0].stations()
+    display, region = stations.to_display(raw)
+    return {"station": format_station(display), "region": int(region)}
+
+
+def _point_anchor(word: str, refs: str) -> Tuple[str, str]:
+    """``(anchor, kind)`` for a curve point the road names: ``BC`` of C-1 is
+    the design's ``PC-1``; a PCC/PRC is the PC of the curve ahead."""
+    n = int(re.findall(r"C-(\d+)", refs)[-1])
+    if word == "EC":
+        return f"PT-{n}", "pt"
+    return f"PC-{n}", {"BC": "pc", "PCC": "pcc", "PRC": "prc"}[word]
+
+
 def _letter_tangent(session: Session, qualified: str, sheet: str, t: dict, a: float, b: float,
                     above: float = 0.06, content: Optional[str] = None):
-    p, d = _at(session, qualified, sheet, (a + b) / 2.0)
-    run(session, "place_text", {"space": sheet, "layer": _layer(session),
-                                "position": _step(p, d + 90.0, above), "height": 0.10,
-                                "rotation_deg": geo.upright(d), "halign": "center",
-                                "valign": "bottom",
-                                "content": content or f"{t['bearing']}  {t['length']:.2f}'"})
+    """The tangent's bearing and length above the line at the middle of the
+    part the sheet shows: ``place_label`` kind bearing through the reference."""
+    params = {"space": sheet, "alignment": qualified,
+              "anchor": _station_anchor(session, qualified, (a + b) / 2.0), "kind": "bearing",
+              "label_offset": above, "height": 0.10, "layer": _layer(session)}
+    if content is not None:
+        params["content"] = content
+    run(session, "place_label", params)
 
 
-def _letter_point(session: Session, qualified: str, sheet: str, raw: float, text: str,
-                  out: float = 0.48):
-    p, d = _at(session, qualified, sheet, raw)
-    run(session, "draw_line", {"space": sheet, "layer": _layer(session), "start": p,
-                               "end": _step(p, d + 90.0, out - 0.04)})
-    run(session, "place_text", {"space": sheet, "layer": _layer(session),
-                                "position": _step(p, d + 90.0, out), "height": 0.10,
-                                "rotation_deg": geo.reading_up(d + 90.0), "halign": "left",
-                                "valign": "middle", "content": text})
+def _letter_point(session: Session, qualified: str, sheet: str, anchor: str, kind: str,
+                  out: float = 0.45, content: Optional[str] = None):
+    """A curve point or equation lettered square to the line on its left,
+    reading bottom to top: the engine's own placement for its kind."""
+    params = {"space": sheet, "alignment": qualified, "anchor": anchor, "kind": kind,
+              "label_offset": out, "height": 0.10, "layer": _layer(session)}
+    if content is not None:
+        params["content"] = content
+    run(session, "place_label", params)
 
 
 def _bubble(session: Session, qualified: str, sheet: str, raw: float, number: int,
             rise: float = 1.0):
-    p, d = _at(session, qualified, sheet, raw)
-    centre = _step(p, d + 90.0, rise)
-    layer = _layer(session)
-    run(session, "draw_circle", {"space": sheet, "layer": layer, "center": centre, "radius": 0.2})
-    run(session, "place_text", {"space": sheet, "layer": layer, "position": centre,
-                                "content": str(number), "height": 0.12, "halign": "center",
-                                "valign": "middle"})
-    run(session, "draw_line", {"space": sheet, "layer": layer,
-                               "start": _step(centre, d - 90.0, 0.2), "end": p})
+    """The curve's number in a bubble with a leader to the curve, at the middle
+    of the part this sheet shows: ``place_label`` kind mc at that station."""
+    run(session, "place_label", {"space": sheet, "alignment": qualified,
+                                 "anchor": _station_anchor(session, qualified, raw), "kind": "mc",
+                                 "content": str(number), "label_offset": rise, "height": 0.10,
+                                 "layer": _layer(session)})
 
 
-CURVE_COLUMNS = (("No.", 0.6), ("R", 0.9), ("Δ", 1.2), ("T", 0.9), ("L", 0.9))
+#: the PPM's curve data table, as place_curve_table lays it out by default
+CURVE_COLUMNS = (("No.", 0.6), ("R", 1.0), ("Δ", 1.3), ("T", 1.0), ("L", 1.0))
 
 
-def _curve_table(session: Session, sheet: str, rows: List[List[str]], position=(25.0, 5.6)):
-    run(session, "place_table", {"space": sheet, "layer": _layer(session),
-                                 "position": list(position), "title": "CURVE DATA",
-                                 "columns": [{"header": h, "width": w} for h, w in CURVE_COLUMNS],
-                                 "rows": rows, "text_height": 0.10})
+def _curve_table(session: Session, qualified: str, sheet: str, curves: List[int],
+                 position=(25.0, 5.6), first_number: int = 1):
+    run(session, "place_curve_table", {"space": sheet, "alignment": qualified,
+                                       "position": list(position), "curves": list(curves),
+                                       "first_curve_number": int(first_number),
+                                       "text_height": 0.10, "layer": _layer(session)})
 
 
 def _curve_cells(number: int, c: dict) -> List[str]:
-    return [str(number), f"{c['radius']:.0f}'", c["delta_dms"], f"{c['tangent']:.2f}'",
+    """A curve's row as the table letters it (for tests and hand-built tables)."""
+    return [str(number), f"{c['radius']:.2f}'", c["delta_dms"], f"{c['tangent']:.2f}'",
             f"{c['length']:.2f}'"]
 
 
@@ -663,8 +684,9 @@ def _solve_curve_points(session):
     road = Road(session, SR)
     for name in fixture.SHEETS:
         sheet = sheet_named(session.doc, name)
-        for word, raw, _refs in _points_on(road, sheet):
-            _letter_point(session, SR, name, raw, f'"{ALIGN}" {road.text(raw)} {word}')
+        for word, _raw, refs in _points_on(road, sheet):
+            anchor, kind = _point_anchor(word, refs)
+            _letter_point(session, SR, name, anchor, kind)
 
 
 # 3. curve data -----------------------------------------------------------------------
@@ -710,7 +732,7 @@ def _solve_curve_data(session):
         sheet = sheet_named(session.doc, name)
         vp = _vp(sheet)
         shown = _curves_on(road, sheet)
-        _curve_table(session, name, [_curve_cells(i, curves[i]) for i in shown])
+        _curve_table(session, SR, name, shown)
         for i in shown:
             c = curves[i]
             a, b = road.shown(vp, float(c["pc_station"]), float(c["pt_station"]), step=1.0)
@@ -795,16 +817,16 @@ def _check_stationing(baseline, submitted):
 
 
 def _solve_stationing(session):
+    """The engine's own stationing through the reference, in the sheet file's
+    model space: 7 ft ticks and Caltrans station numbers below the line,
+    for the stations the sheet shows."""
     required, _optional = sheet_stations(session, STATION_SHEET)
     layer = _layer(session)
-    for st, _p, _q in required:
-        p, d = _at(session, SR, STATION_SHEET, float(st))
-        run(session, "draw_line", {"space": STATION_SHEET, "layer": layer,
-                                   "start": _step(p, d + 90.0, 0.07), "end": _step(p, d - 90.0, 0.07)})
-        run(session, "place_text", {"space": STATION_SHEET, "layer": layer,
-                                    "position": _step(p, d - 90.0, 0.10), "height": 0.08,
-                                    "rotation_deg": geo.upright(d), "halign": "center",
-                                    "valign": "top", "content": caltrans_lettering(st)})
+    lo, hi = _station_anchor(session, SR, float(required[0][0])), _station_anchor(session, SR, float(required[-1][0]))
+    run(session, "annotate_stationing", {
+        "space": "model", "alignment": SR, "interval": 100.0,
+        "station_range": [lo["station"], hi["station"]], "include_pc_pt": False,
+        "include_equations": False, "text_height": 4.0, "layer": layer, "label_layer": layer})
 
 
 # 5. width dimensions ------------------------------------------------------------------
@@ -968,7 +990,7 @@ def _roadway_paper(baseline: Session, sheet) -> List[list]:
     out = []
     for _ref, _base, prims in reference_groups(baseline.doc, "model"):
         for e in prims:
-            if e.layer not in ("V-ALIGN-CNTR", "V-ROAD-EOP", "V-ROAD-SHLD"):
+            if e.layer not in ("align_MAIN", "rd_EP", "rd_ES"):
                 continue
             if isinstance(e, Line):
                 pts = [[e.start[0] + (e.end[0] - e.start[0]) * i / 200.0,
@@ -1122,7 +1144,7 @@ def _solve_row_data(session):
     sheet = sheet_named(session.doc, ROW_SHEET)
     vp = _vp(sheet)
     road = Road(session, SR)
-    layer = _layer(session)
+    layer = ensure_layer(session, "rd_RIGHT-OF-WAY-anno")  # right of way annotation, not alignment data
     rights = [p for p in _row_pieces(session, sheet) if p.side == "R"]
     lines, arcs = [], []
     for p in rights:
@@ -1229,16 +1251,14 @@ def _solve_equation(session):
     road = Road(session, SR)
     eq = _rows(session, SR, "equations")[0]
     raw = float(eq["raw_station"])
-    _letter_point(session, SR, EQ_SHEET, raw,
-                  f"{eq['back_text']} BK = {eq['ahead_text']} AH")
+    _letter_point(session, SR, EQ_SHEET, "EQ-1", "equation")
     sheet = sheet_named(session.doc, EQ_SHEET)
     vp = _vp(sheet)
     t2 = next(t for t in road.tangents() if t["ref"] == "T-2")
     a, b = road.shown(vp, float(t2["start_station"]), float(t2["end_station"]))
     # letter the tangent between the equation and the curve, clear of the equation
     _letter_tangent(session, SR, EQ_SHEET, t2, raw + 150.0, b)
-    c2 = next(c for c in road.curves() if int(c["index"]) == 2)
-    _letter_point(session, SR, EQ_SHEET, float(c2["pc_station"]), f"{c2['pc_station_text']} BC")
+    _letter_point(session, SR, EQ_SHEET, "PC-2", "pc")
 
 
 # 8. QA the alignment data -----------------------------------------------------------------
@@ -1592,11 +1612,12 @@ def _solve_l2_data(session):
     for t, a, b, _vp_ in _tangents_on(road, sheet):
         mid = (a + b) / 2.0
         _letter_tangent(session, SR70, L2_SHEET, t, mid - 40.0, mid + 40.0)
-    for word, raw, _refs in _l2_shown_points(road, vp):
-        _letter_point(session, SR70, L2_SHEET, raw, f'"SR70" {road.text(raw)} {word}', out=1.1)
+    for word, _raw, refs in _l2_shown_points(road, vp):
+        anchor, kind = _point_anchor(word, refs)
+        _letter_point(session, SR70, L2_SHEET, anchor, kind, out=1.1)
     shown = _curves_on(road, sheet)
-    _curve_table(session, L2_SHEET, [_curve_cells(numbering[i], curves[i]) for i in shown],
-                 position=(3.923, 4.09))
+    _curve_table(session, SR70, L2_SHEET, shown, position=(3.923, 4.09),
+                 first_number=L2_FIRST_CURVE)
     for i in shown:
         c = curves[i]
         a, b = road.shown(vp, float(c["pc_station"]), float(c["pt_station"]), step=1.0)
@@ -1659,7 +1680,7 @@ TIER3_PROBES: List[Probe] = [
                "outside its extension lines and four at one station collide: stagger them, or "
                "letter the widths in their bands."),
     Probe(id="row-data", start="sheets-row", tags=["tier3", "paper", "line", "curve", "table"],
-          prompt="The right of way of SR-100 is drawn on V-ROW in the design file. On sheet C-102, "
+          prompt="The right of way of SR-100 is drawn on rd_RIGHT-OF-WAY in the design file. On sheet C-102, "
                  "letter the line and curve data of the right-hand right of way line (right of the "
                  "stationing direction) the way a right of way map does. Tag each straight piece "
                  "the sheet shows L1, L2, … and each curved piece C1, C2, …, numbered in order "

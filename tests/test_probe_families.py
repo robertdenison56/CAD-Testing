@@ -75,11 +75,10 @@ def test_callout_on_the_wrong_side_fails(tmp_path):
     doc = fixture.start_document(tmp_path, "sheets")
     base, s = Session.load(doc, out_dir=tmp_path), Session.load(doc, out_dir=tmp_path)
     mirrored = f"{families.station_text(p['station'])}@{p['offset']:g}{'L' if p['side'] == 'R' else 'R'}"
-    run(s, "create_layer", {"name": "S-ANNO-CALL", "color": "black"})
     run(s, "place_callout", {"space": p["sheet"], "target_anchor": mirrored,
                              "alignment": "DESIGN:SR-100", "position": [17.0, 11.0],
                              "content": f"STA {families.station_text(p['station'])}\n{p['label']}",
-                             "layer": "S-ANNO-CALL"})
+                             "layer": "rd_LAYOUT-NOTE-anno"})
     verdict = probe.check(base, s)
     assert not verdict.passed and "ft from" in verdict.detail
 
@@ -94,7 +93,7 @@ def test_alignment_with_northing_and_easting_swapped_fails(tmp_path):
     points = traverse([p["northing"], p["easting"]], legs)        # swapped
     run(s, "create_alignment", {"name": p["name"], "pis": families._pis(p, points),
                                 "begin_station": families.station_text(p["begin"])})
-    run(s, "draw_alignment", {"alignment": p["name"], "layer": "V-ALIGN-CNTR"})
+    run(s, "draw_alignment", {"alignment": p["name"], "layer": "align_MAIN"})
     assert not probe.check(base, s).passed
 
 
@@ -105,10 +104,10 @@ def test_offsets_drawn_at_the_widths_fail(tmp_path):
     doc = fixture.start_document(tmp_path, "centerline")
     base, s = Session.load(doc, out_dir=tmp_path), Session.load(doc, out_dir=tmp_path)
     run(s, "draw_offset", {"alignment": "SR-100", "offsets": [-p["lane"], p["lane"]],
-                           "layer": "V-ROAD-EOP"})
+                           "layer": "rd_EP"})
     run(s, "draw_offset", {"alignment": "SR-100",
                            "offsets": [-p["shoulder_left"], p["shoulder_right"]],
-                           "layer": "V-ROAD-SHLD"})
+                           "layer": "rd_ES"})
     verdict = probe.check(base, s)
     assert not verdict.passed and "edge of pavement" in verdict.detail
 

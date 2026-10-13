@@ -21,20 +21,36 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List
 
+from roaddraft.core.units import format_station
 from roaddraft.design.labels import CURVE_COLUMNS
 from roaddraft.tasks.brief import TaskBrief
 from roaddraft.tasks.types import PHASE_ORDER, task_type
 
 LEVELS = ("explicit", "vague")
 
-RULES = """Do one drafting task on a RoadDraft document, using the tools you have been given. RoadDraft is a headless CAD engine.
+_DESIGN_GIVEN = ("The design (alignments and profiles) is already in the document. Draft it as "
+                 "given; do not create, edit or delete design data.")
+_DESIGN_ASKED = ("The design is empty. Create the alignment exactly as the task gives it (it is "
+                 "design data, not linework), then draft it; create nothing else in the design.")
+
+RULES_TEMPLATE = """Do one drafting task on a RoadDraft document, using the tools you have been given. RoadDraft is a headless CAD engine.
 
 Rules:
 - Every change to the drawing goes through a tool call.
-- The design (alignments and profiles) is already in the document. Draft it as given; do not create, edit or delete design data.
-- Labels and the curve data table count only when the engine anchors them to the design: place_label, annotate_stationing with alignment=..., and place_curve_table. Text typed with place_text or a table built with place_table earns nothing, however right it reads.
+- {design}
+- Labels and the curve data table count only when the engine anchors them to the design: place_label, annotate_stationing with alignment=..., and place_curve_table (on a sheet file whose design is in an attached base drawing, name its alignment through the reference, BASE:ALIGN-1). Text typed with place_text or a table built with place_table earns nothing, however right it reads.
 - Keep what is already drawn, and keep new labels clear of it.
 - Nobody can answer questions. Work until you judge the task done."""
+
+#: the rules of every task that is handed its design
+RULES = RULES_TEMPLATE.format(design=_DESIGN_GIVEN)
+
+
+def rules(brief: TaskBrief) -> str:
+    """The benchmark's rules for this task: the design is given, or is the task."""
+    ttype = task_type(brief.deliverable.get("task_type", "plan-sheet"))
+    return RULES_TEMPLATE.format(design=_DESIGN_ASKED if "design" in ttype.asks
+                                 else _DESIGN_GIVEN)
 
 
 # ----------------------------------------------------------------- pieces
@@ -44,6 +60,7 @@ class _Words:
     """The nouns and standards of one task, ready to be put in sentences."""
 
     def __init__(self, brief: TaskBrief):
+        self.brief = brief
         self.D, self.S, self.P = brief.deliverable, brief.drafting_spec, brief.project
         self.A = brief.alignment_name
         self.type = task_type(self.D.get("task_type", "plan-sheet"))
@@ -97,27 +114,35 @@ class _Words:
                 f"the line, on {self.layer('ticks')}")
 
     def station_labels(self) -> str:
-        return (f"its station in {self.st['format']} form at each tick, {self.label_h}, on the "
-                f"{self.st['label_side']} of the line, on {self.layer('labels')}")
+        every = int(self.st.get("full_station_every_ft", 500))
+        return (f"its station number under each tick, {self.st['label_side']} the line and "
+                f"reading along it, lettered the Caltrans way: the whole station number at every "
+                f"{every} ft station (30, 35) and only the ones digit at the others (1, 2, 3, 4), "
+                f"{self.label_h}, on {self.layer('labels')}")
 
     def curve_points(self) -> str:
-        fmt = self.labels["pc_pt"]["format"]
-        return (f"the beginning and end of every curve lettered {fmt.split()[0]} and EC with "
-                f"their stations ({fmt} form), {self.label_h}, on the "
-                f"{self.labels['pc_pt']['side']} of the line")
+        pp = self.labels["pc_pt"]
+        return (f"the beginning and end of every curve lettered with its station to the "
+                f"hundredth followed by BC or EC ({pp['format']} form), square to the line on its "
+                f"{pp['side']} and reading {pp.get('reads', 'bottom to top')}, {self.label_h}")
 
     def equation(self) -> str:
-        return (f"the station equation, lettered in {self.labels['equation']['format']} form")
+        eq = self.labels["equation"]
+        return (f"the station equation, lettered in {eq['format']} form square to the line on "
+                f"its {eq.get('side', 'left')}, reading bottom to top")
 
     def callouts(self) -> str:
-        return (f"a callout at the middle of every curve naming it "
-                f"({self.labels['mc']['format']}, C-2, ...), {self.label_h}, on the right of "
-                f"the line, on {self.layer('labels')}")
+        mc = self.labels["mc"]
+        return (f"the number of every curve (1, 2, ... along the line) in a bubble off the middle "
+                f"of the curve on its {mc.get('side', 'right')}, with a leader from the bubble to "
+                f"the curve, {self.label_h}, on {self.layer('labels')}")
 
     def bearings(self) -> str:
-        return (f"a quadrant bearing at the middle of every tangent, to the second "
-                f"(N 45°30'15\" E form), {self.label_h}, on the {self.labels['bearing']['side']} "
-                f"of the line, on {self.layer('labels')}")
+        b = self.labels["bearing"]
+        example = b.get("example", "N 45°30'15\" E 1234.56'")
+        return (f"the bearing and length of every tangent as one line of text at its middle, "
+                f"{b['side']} the line and parallel to it (quadrant bearing to the second and "
+                f"length to 0.01 ft: {example} form), {self.label_h}, on {self.layer('labels')}")
 
     def table(self) -> str:
         headers = ", ".join(CURVE_COLUMNS[c][0] for c in self.D["curve_table_columns"])
@@ -192,6 +217,26 @@ class _Words:
     def layer_set(self) -> List[str]:
         return list(self.S.get("layer_set") or dict.fromkeys(self.layers.values()))
 
+    # -- the design itself, for the task that creates it
+    def geometry(self) -> str:
+        """The alignment as a PE would dictate it: N/E of BEGIN, each PI with
+        its radius, END; the begin station; any station equation."""
+        al = self.brief.design["alignments"][self.A]
+        pis = al["pis"]
+        begin = format_station(float(al["begin_station"]))
+
+        def ne(pt) -> str:
+            return f"N {pt[1]:.2f}, E {pt[0]:.2f}"
+
+        parts = [f"begins at {ne(pis[0]['point'])}, station {begin}"]
+        for k, pi in enumerate(pis[1:-1], start=1):
+            parts.append(f"PI-{k} at {ne(pi['point'])}, R = {pi['radius']:.2f}'")
+        parts.append(f"ends at {ne(pis[-1]['point'])}")
+        for q in al.get("equations", []):
+            parts.append(f"station equation {format_station(float(q['back']))} BK = "
+                         f"{format_station(float(q['ahead']))} AH")
+        return "; ".join(parts)
+
     def layer_list(self, with_props: bool) -> str:
         if with_props:
             return "; ".join(self.layer_name(name) for name in self.layer_set)
@@ -207,10 +252,10 @@ class _Words:
 
     # -- what is already there
     def done(self) -> str:
-        given = [p for p in PHASE_ORDER if p in self.type.given and p != "layers"]
+        given = [p for p in PHASE_ORDER if p in self.type.given and p not in ("layers", "design")]
         if not given:
             return ""
-        words = {"linework": "the centerline linework", "edges": "the pavement edges",
+        words = {"design": "", "linework": "the centerline linework", "edges": "the pavement edges",
                  "stationing": "the stationing", "bearings": "the bearings",
                  "callouts": "the curve callouts", "widths": "the width dimensions",
                  "sheet": f"{self.sheet_list} with {'their viewports' if self.many else 'its viewport'}"
@@ -341,6 +386,23 @@ def _pavement(w: _Words, explicit: bool) -> str:
     return f"{w.section_words()}. Draw the pavement edges and dimension the width on each tangent."
 
 
+def _annotate_base(w: _Words, explicit: bool) -> str:
+    ref = w.S.get("reference", {}).get("name", "BASE")
+    items = [w.ticks(), w.station_labels(), w.curve_points()]
+    if w.has_eq:
+        items.append(w.equation())
+    items += [w.callouts(), w.bearings(), w.table()]
+    if not explicit:
+        return (f"The base drawing is attached as {ref}. Add the alignment data of {w.A} to "
+                f"{w.sheet_list}.")
+    return (f"This is the sheet file for {w.sheet_list}: the sheet{'s' if w.many else ''} and "
+            f"{'their viewports' if w.many else 'its viewport'} on {w.A} are set up, and the "
+            f"base drawing {w.basefile} is attached as reference {ref} at its own coordinates. "
+            f"The design, alignment {w.A}, lives in the base: this file does not own it, and "
+            f"the labelers reach it through the reference as {ref}:{w.A}. Letter its alignment "
+            f"data in this file, anchored through the reference:\n{_bullets(items)}")
+
+
 def _attach_reference(w: _Words, explicit: bool) -> str:
     ref = w.S.get("reference", {})
     if explicit:
@@ -351,6 +413,19 @@ def _attach_reference(w: _Words, explicit: bool) -> str:
                 f"space at its own coordinates (no offset, rotation or scale), visible and "
                 f"unclipped, so it shows through the viewport{'s' if w.many else ''}.")
     return f"Attach the base drawing {w.basefile} to this sheet file."
+
+
+# -- design input
+
+
+def _create_alignment(w: _Words, explicit: bool) -> str:
+    if explicit:
+        return (f"Create alignment {w.A} and draw it. {w.A} {w.geometry()}. Coordinates are "
+                f"northing and easting in US survey feet. Create it in the design from its PIs "
+                f"(create_alignment: the PI points with the radius of the curve at each), then "
+                f"draw it in model space: one line per tangent and one arc per curve, on "
+                f"{w.layer('alignment')}. The layers exist; draw nothing else.")
+    return f"{w.A} {w.geometry()}. Create it and draw it."
 
 
 PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
@@ -368,6 +443,8 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "pavement-widths": _pavement_widths,
     "pavement": _pavement,
     "attach-reference": _attach_reference,
+    "create-alignment": _create_alignment,
+    "annotate-base": _annotate_base,
 }
 
 
@@ -389,7 +466,8 @@ def task_text(brief: TaskBrief, level: str = "explicit") -> str:
     if level not in LEVELS:
         raise ValueError(f"unknown prompt level {level!r}; levels: {', '.join(LEVELS)}")
     text = brief.prompts.get(level) if brief.prompts else None
-    return f"{RULES}\n\nTHE TASK:\n{text or prompt(brief, level)}"
+    return f"{rules(brief)}\n\nTHE TASK:\n{text or prompt(brief, level)}"
 
 
-__all__ = ["LEVELS", "RULES", "PROMPTS", "prompt", "render_prompts", "task_text"]
+__all__ = ["LEVELS", "RULES", "RULES_TEMPLATE", "rules", "PROMPTS", "prompt", "render_prompts",
+           "task_text"]

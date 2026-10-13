@@ -22,7 +22,7 @@ from typing import Dict, List
 # d1-v2 (2026-10-10): tangent floor 120 ft, C-n callouts at 2x the label offset, so
 # every reference sheet is legible (verifier D1-08 = 1); d1-v3 (2026-10-10): task types
 # (a starting document with some phases done) and two-sheet layouts with match lines
-GENERATOR_VERSION = "d1-v3"
+GENERATOR_VERSION = "d1-v4"  # (2026-10-11) PPM lettering: Caltrans station numbers, BC/EC square to the line, bearing + length, curve bubbles; annotate-base
 
 
 def round_floats(obj, ndigits: int = 6):
@@ -107,6 +107,7 @@ class GroundTruth:
     dimensions: List[dict] = field(default_factory=list)  # width dimensions, one per tangent
     references: List[dict] = field(default_factory=list)  # base drawings to attach
     layers: List[str] = field(default_factory=list)       # the standard layer set
+    alignments: Dict[str, dict] = field(default_factory=dict)  # the design the truth is drawn from
     scope: List[str] = field(default_factory=list)
     counts: Dict[str, int] = field(default_factory=dict)
 

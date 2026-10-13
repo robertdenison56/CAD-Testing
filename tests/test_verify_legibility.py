@@ -74,3 +74,41 @@ def test_a_twisted_viewport_turns_the_labels_with_it():
         norm = (edge[0] ** 2 + edge[1] ** 2) ** 0.5
         assert edge[0] / norm == pytest.approx(want[0], abs=1e-9)
         assert edge[1] / norm == pytest.approx(want[1], abs=1e-9)
+
+
+# ------------------------------------------------- labels cut by a viewport's edge
+
+
+def test_a_label_cut_by_its_viewport_is_clipped_and_the_reference_is_not():
+    """A two-sheet viewport is sized round the labels its share carries
+    (generator, 2026-10-12), so the reference shows every label whole; a
+    viewport squeezed until the square BC/EC labels cross its edge earns a
+    ``clipped`` finding under D1-08, like an item off the sheet."""
+    from roaddraft.tasks.generator import generate_task
+    from roaddraft.tasks.reference import reference_solution, session_for_task
+    from roaddraft.verify import verify
+    from roaddraft.verify.legibility import clipped
+
+    task = generate_task(1, curves=2, equations=True, task_type="plan-sheet", sheets=2)
+    session = session_for_task(task)
+    reference_solution(task, session)
+    ctx = Context.build(session.doc, task.truth, DRAFTING_SPEC_V1)
+    assert all(clipped(ctx, sv) == [] for sv in ctx.sheets)
+    report = verify(session.doc, task.truth)
+    assert report.effective_score == 100.0 and not report.all_findings()
+    # a viewport 2 in high centred on the PC: the BC label's position (0.45 in off the
+    # line) is inside it, but the text runs past its edge
+    sheet = session.doc.sheet_by_ref("C-101")
+    vp = sheet.viewports[0]
+    pc = session.query("resolve_anchor", {"alignment": "ALIGN-1", "anchor": "PC-1"})["anchor_point"]
+    r = session.execute("modify_viewport", {"sheet": "C-101", "viewport_id": vp.id,
+                                            "changes": {"height_in": 2.0, "width_in": 2.0,
+                                                        "model_center": pc}})
+    assert r["ok"], r
+    ctx = Context.build(session.doc, task.truth, DRAFTING_SPEC_V1)
+    cut = clipped(ctx, ctx.sheet_view("C-101"))
+    assert cut, "the square curve-point labels should now cross the viewport's edge"
+    report = verify(session.doc, task.truth)
+    codes = {f.code for f in report.check("D1-08").findings}
+    assert "clipped" in codes and report.check("D1-08").credit < 1.0
+    assert {i for f in report.check("D1-08").findings if f.code == "clipped" for i in f.entity_ids} >= set(cut)

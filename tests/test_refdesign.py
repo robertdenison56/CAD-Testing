@@ -65,9 +65,9 @@ def test_a_sheet_file_can_read_the_design_it_references(tmp_path):
     assert where["ok"] and where["point"] == pytest.approx([1600.0, 1000.0], abs=1e-6)
 
     pc = s.query("resolve_anchor", {"alignment": "DESIGN:SR-100", "anchor": "PC-1"})
-    assert pc["ok"] and pc["auto_content"] == "BC 16+00.00"
+    assert pc["ok"] and pc["auto_content"] == "16+00.00 BC"
     assert pc["point"] == pytest.approx([1600.0, 1000.0], abs=1e-6)
-    assert "place_label cannot anchor" in pc["labelling"]
+    assert "anchor to this referenced alignment" in pc["labelling"]
 
     curves = s.query("get_design_data", {"kind": "curves", "alignment": "DESIGN:SR-100"})
     assert curves["total"] == 1 and curves["rows"][0]["radius"] == 800.0
@@ -132,22 +132,32 @@ def test_the_design_reads_as_designed_even_when_the_attachment_is_scaled(tmp_pat
 
 
 def test_reading_a_referenced_design_is_not_owning_it(tmp_path):
-    """The boundary: queries answer, commands refuse and say why."""
+    """The boundary: queries answer, the drawing and design commands refuse and
+    say why, and the labelers anchor through the reference (2026-10-11)."""
     s = plans(tmp_path)
     s.execute("create_layer", {"name": "V-ANNO-TEXT"})
     for command, params in (
             ("draw_alignment", {"alignment": "DESIGN:SR-100"}),
             ("draw_offset", {"alignment": "DESIGN:SR-100", "offsets": [-12]}),
-            ("place_label", {"space": "model", "alignment": "DESIGN:SR-100",
-                             "anchor": "PC-1"}),
             ("modify_alignment", {"name": "DESIGN:SR-100",
                                   "changes": {"rename": "MINE"}}),
             ("delete_alignment", {"name": "DESIGN:SR-100"})):
         r = s.execute(command, params)
         assert not r["ok"], f"{command} should refuse a referenced alignment"
         assert "attached reference" in r["error"]["message"], command
-        assert "place_callout" in r["error"]["hint"], command
+        assert "place_label" in r["error"]["hint"], command
     assert s.doc.model_entities == {}
+    r = s.execute("place_label", {"space": "model", "alignment": "DESIGN:SR-100",
+                                  "anchor": "PC-1", "layer": "V-ANNO-TEXT"})
+    assert r["ok"], r
+    e = s.doc.model_entities[r["created"][0]]
+    assert e.content == "16+00.00 BC" and e.anchor["alignment"] == "DESIGN:SR-100"
+    assert e.anchor["placed_by"] == "place_label" and e.position == pytest.approx([1600.0, 1022.5])
+    r = s.execute("modify_reference", {"name": "DESIGN", "changes": {"offset": [10.0, 0.0]}})
+    assert r["ok"], r
+    r = s.execute("place_label", {"space": "model", "alignment": "DESIGN:SR-100",
+                                  "anchor": "PT-1", "layer": "V-ANNO-TEXT"})
+    assert not r["ok"] and "at identity" in r["error"]["message"]
     # the basefile is untouched by all of that
     assert s.query("get_design_data", {"kind": "curves",
                                        "alignment": "DESIGN:SR-100"})["total"] == 1

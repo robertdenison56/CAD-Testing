@@ -42,12 +42,18 @@ def _drafted(seed, ttype, sheets):
 def test_every_group_is_asked_for_by_some_type_and_plan_sheet_asks_for_the_layout():
     assert set(GROUPS) == {g for t in TASK_TYPES.values() for g in t.asks}
     assert task_type("plan-sheet").asks == frozenset(LAYOUT_GROUPS)
-    assert task_type("plan-sheet").given == frozenset()
+    assert task_type("plan-sheet").given == frozenset({"design"})  # the design is handed over
+    assert task_type("annotate-base").design_referenced and task_type("annotate-base").start == "sheet"
+    assert task_type("annotate-base").solution_phases() == ["stationing", "bearings", "callouts", "table"]
     assert task_type("attach-reference").basefile == {"linework", "edges", "stationing",
                                                        "bearings", "callouts"}
     assert task_type("attach-reference").solution_phases() == ["reference"]
     assert task_type("pavement").solution_phases() == ["edges", "widths"]
-    assert task_type("annotate-sheet").given == {"layers", "linework", "sheet"}
+    assert task_type("create-alignment").solution_phases() == ["design", "linework"]
+    assert "design" in task_type("plan-sheet").given and "design" not in task_type(
+        "create-alignment").given
+    assert "design" not in task_type("plan-sheet").shown()  # seeded, never drafted
+    assert task_type("annotate-sheet").given == {"design", "layers", "linework", "sheet"}
     assert task_type("draw-alignment").start == "model" and task_type("bearings").start == "sheet"
     assert set(DRAFTING_SPEC_V1["task_types"]) == set(TASK_TYPES)
     with pytest.raises(ValueError, match="unknown task type"):
@@ -70,6 +76,7 @@ def test_checks_in_scope_follow_the_groups():
     assert checks_in_scope(["widths"], ids) == ["D1-08", "D1-09", "D1-13"]
     assert checks_in_scope(["reference"], ids) == ["D1-14"]
     assert checks_in_scope(["layers"], ids) == ["D1-09"]
+    assert checks_in_scope(["design"], ids) == ["D1-15"]
     assert set(CHECK_GROUPS) == set(ids)
 
 
@@ -114,7 +121,10 @@ def test_starting_documents_carry_exactly_the_given_phases():
             assert any(e.TYPE == "table" for e in sheet.entities.values()) == ("table" in given)
             assert any(e.TYPE == "blockref" for e in sheet.entities.values()) == ("north" in given)
             assert bool(sheet.title_block_fields) == ("title" in given)
-        assert doc.design.fingerprint() == task.truth.design_fingerprint
+        if "design" in given:
+            assert doc.design.fingerprint() == task.truth.design_fingerprint
+        else:
+            assert doc.design.alignments == {} and task.brief.design["profiles"] == {}
 
 
 def test_task_ids_differ_by_type_and_sheets():
@@ -140,9 +150,9 @@ def test_a_bearings_task_scores_only_its_checks_on_100():
     assert r.rubric_score == pytest.approx(100.0 * (10 * (n - 1) / n + 8 + 6 + 6) / 30, abs=1e-3)
     # a wrong bearing hard-fails the task
     e = b.labels("bearing")[0]
-    b.ex("modify_entity", {"id": e.id, "changes": {"content": e.content.replace("E", "W")
-                                                   if e.content.endswith("E")
-                                                   else e.content.replace("W", "E")}})
+    flipped = (e.content.replace(" E ", " W ") if " E " in e.content
+               else e.content.replace(" W ", " E "))  # the quadrant, not the length
+    b.ex("modify_entity", {"id": e.id, "changes": {"content": flipped}})
     assert b.verify().effective_score == 0.0
 
 
@@ -439,3 +449,88 @@ def test_pavement_combo_asks_for_both():
     r = b.verify()
     assert r.scope == ["edges", "widths"] and r.effective_score == 100.0
     assert [c.id for c in r.in_scope()] == ["D1-08", "D1-09", "D1-12", "D1-13"]
+
+
+# ------------------------------------------------------------ design input
+
+
+def _creation(seed=2):
+    """A create-alignment task and a session on its empty-design start."""
+    task = generate_task(seed, curves=2, equations=True, task_type="create-alignment")
+    return task, session_for_task(task)
+
+
+def _create(session, task, radius_delta=0.0, begin_delta=0.0, equations=True, name="ALIGN-1"):
+    al = task.brief.design["alignments"]["ALIGN-1"]
+    pis = [[p["point"][0], p["point"][1]] + ([p["radius"] + radius_delta] if p["radius"] else [])
+           for p in al["pis"]]
+    params = {"name": name, "pis": pis, "begin_station": al["begin_station"] + begin_delta}
+    if equations and al["equations"]:
+        params["equations"] = [{"back": q["back"], "ahead": q["ahead"]} for q in al["equations"]]
+    r = session.execute("create_alignment", params)
+    assert r["ok"], r.get("error")
+    return r
+
+
+def test_create_alignment_prompt_states_the_geometry_and_the_rules_change():
+    task, _ = _creation()
+    from roaddraft.tasks.prompts import rules, task_text
+    for level in LEVELS:
+        text = task.brief.prompts[level]
+        assert "begins at N " in text and "PI-1 at N " in text and "R = " in text
+        assert "ends at N " in text and "station equation" in text and "ALIGN-1" in text
+    assert "The design is empty" in rules(task.brief)
+    assert "already in the document" in rules(generate_task(2).brief)
+    assert task_text(task.brief, "vague").endswith("Create it and draw it.")
+
+
+def test_create_alignment_exact_scores_100_and_the_empty_start_0():
+    task, session = _creation()
+    assert verify(Document.from_dict(task.baseline), task.truth).effective_score == 0.0
+    _create(session, task)
+    session.execute("draw_alignment", {"alignment": "ALIGN-1", "layer": _L["alignment"]})
+    r = verify(session.doc, task.truth)
+    assert r.effective_score == 100.0 and r.scope == ["design", "linework"]
+    assert [c.id for c in r.in_scope()] == ["D1-01", "D1-09", "D1-15"] and r.scope_weight == 28
+    assert r.design_fingerprint_ok
+
+
+def test_create_alignment_created_but_not_drawn():
+    task, session = _creation()
+    _create(session, task)
+    r = verify(session.doc, task.truth)
+    assert r.check("D1-15").credit == 1.0 and r.check("D1-01").credit == 0.0
+    assert {f.code for f in r.check("D1-01").findings} == {"missing"} and not r.hard_failed
+
+
+def test_create_alignment_wrong_radius_hard_fails_and_the_linework_misses():
+    task, session = _creation()
+    _create(session, task, radius_delta=10.0)
+    session.execute("draw_alignment", {"alignment": "ALIGN-1", "layer": _L["alignment"]})
+    r = verify(session.doc, task.truth)
+    assert r.hard_failed and r.effective_score == 0.0
+    codes = [f.code for f in r.check("D1-15").findings]
+    assert codes and set(codes) == {"wrong_value"}
+    n = len(task.truth.elements)
+    assert r.check("D1-15").credit < 1.0
+    # the drawing follows the wrong design: curves and the tangents between them move
+    assert r.check("D1-01").credit < 1.0
+
+
+def test_create_alignment_wrong_begin_station_and_missing_equation():
+    task, session = _creation()
+    _create(session, task, begin_delta=100.0, equations=False)
+    r = verify(session.doc, task.truth)
+    kinds = sorted(f.anchor["kind"] for f in r.check("D1-15").findings)
+    assert kinds == ["begin_station", "equations"]
+    total = 1 + len(task.truth.elements) + task.truth.counts["equations"]
+    assert r.check("D1-15").credit == pytest.approx(len(task.truth.elements) / total)
+    assert r.hard_failed
+
+
+def test_create_alignment_under_another_name_is_missing():
+    task, session = _creation()
+    _create(session, task, name="MAIN")
+    r = verify(session.doc, task.truth)
+    assert r.check("D1-15").credit == 0.0
+    assert [f.code for f in r.check("D1-15").findings] == ["missing"]

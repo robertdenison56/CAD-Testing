@@ -30,7 +30,7 @@ def test_seed_42_twice_identical_json_and_id():
     assert a.baseline == b.baseline and a.task_id == b.task_id
     assert a.task_id.startswith("D1-000042-") and len(a.task_id) == len("D1-000042-") + 12
     assert a.brief.generator_version == GENERATOR_VERSION
-    assert a.brief.spec_hash == spec_hash() and a.brief.spec_version == "draft-v1"
+    assert a.brief.spec_hash == spec_hash() and a.brief.spec_version == "draft-v2"
     assert a.truth.task_id == a.task_id
     # round trips
     assert TaskBrief.from_dict(json.loads(a.brief.to_json())).to_dict() == a.brief.to_dict()
@@ -194,7 +194,7 @@ def test_baseline_has_design_no_entities_no_sheets():
     doc = Document.from_dict(task.baseline)
     assert list(doc.design.alignments) == ["ALIGN-1"] and list(doc.design.profiles) == ["PROF-1"]
     assert doc.model_entities == {} and doc.sheets == {}
-    assert doc.meta["task_id"] == task.task_id and doc.meta["spec_version"] == "draft-v1"
+    assert doc.meta["task_id"] == task.task_id and doc.meta["spec_version"] == "draft-v2"
     assert doc.meta["design_speed_mph"] == task.brief.project["design_speed_mph"]
     assert "NORTH_ARROW" in doc.blocks and list(doc.layers) == ["0"]
     assert doc.design.fingerprint() == task.truth.design_fingerprint

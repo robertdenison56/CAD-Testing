@@ -26,12 +26,15 @@ from roaddraft.core import geometry as geo
 from roaddraft.design.angles import direction_of, unit_vector
 from roaddraft.design.horizontal import PI, Alignment, TangentElement, compile_pis
 from roaddraft.design.anchors import parse_anchor, resolve_anchor
-from roaddraft.design.labels import DEFAULT_VALIGN, compile_label, curve_table_rows, sheet_pose
+from roaddraft.design.labels import (
+    DEFAULT_VALIGN, LabelSpec, compile_label, curve_table_rows, sheet_pose, stationing_plan,
+)
 from roaddraft.design.model import DesignModel
 from roaddraft.design.stations import build_equations
 from roaddraft.design.vertical import PVI, Profile
+from roaddraft.document import dimgeom
 from roaddraft.document.document import Document
-from roaddraft.document.entities import Table
+from roaddraft.document.entities import Dimension, Table, Text
 from roaddraft.document.fileformat import INTERCHANGE_EXT
 from roaddraft.document.sheets import SHEET_SIZES, Sheet
 from roaddraft.tasks.brief import GENERATOR_VERSION, Task, TaskBrief, compute_task_id
@@ -58,8 +61,9 @@ MIN_CURVE_FT = 150.0
 FIT_ATTEMPTS = 10
 PAD_FT = 100.0
 CORNER_INSET_IN = 0.25
-BEARING_OFFSET_FACTOR = 2.5  # bearing labels sit 2.5 label offsets off the tangent
-MC_OFFSET_FACTOR = 2.0  # C-n callouts sit outside the BC/EC labels on a short curve
+# label offsets come from the spec's labels section (the PPM's placement): station numbers
+# below the line, bearings above it, curve points square to it on the left, the curve
+# number bubble on the right
 # two-sheet layouts: longer tangents, a match line on a tangent clear of the curve
 # points, 2 in each side of the centerline on paper, labelled past its end
 TWO_SHEET_STRETCH = 2.2
@@ -127,10 +131,99 @@ def segment_points(align: Alignment, lo: float, hi: float) -> List[List[float]]:
     return [align.point_at(x) for x in sorted(set(dists))]
 
 
-def _fits_window(bb, fpi: float) -> bool:
+def _fits_window(bb, fpi: float, pad: float = PAD_FT) -> bool:
     fit_w, fit_h = DRAFTING_SPEC_V1["sheet"]["fit_window_in"]
-    bb = geo.bbox_expand(bb, PAD_FT)
+    bb = geo.bbox_expand(bb, pad)
     return (bb[2] - bb[0]) <= fit_w * fpi and (bb[3] - bb[1]) <= fit_h * fpi
+
+
+# a two-sheet viewport is sized round the labels it shows (2026-10-12): the square BC/EC
+# and equation labels reach 0.45 in plus their length past the centerline, further than
+# the 100 ft pad, and the renderer clips whatever crosses the viewport's edge
+VIEWPORT_MARGIN_IN = 0.25
+
+
+def _label_boxes(align: Alignment, fpi: float) -> List[Tuple[float, tuple]]:
+    """``(distance from BEGIN, model bbox)`` of every label the finished
+    drawing carries, placed as the ground truth places them (the spec's
+    offsets at this scale): station numbers, curve points, equations,
+    bearings and the curve bubbles."""
+    spec = DRAFTING_SPEC_V1
+    height = _round2(spec["text"]["label_height_in"] * fpi)
+    plan = stationing_plan(align, interval=float(spec["stationing"]["interval_ft"]),
+                           tick_half=_round2(spec["stationing"]["tick_half_len_in"] * fpi),
+                           label_offset=_round2(spec["stationing"]["label_offset_in"] * fpi),
+                           lettering=spec["stationing"]["format"],
+                           station_side=spec["stationing"]["label_side"],
+                           point_offset=_round2(spec["labels"]["pc_pt"]["label_offset_in"] * fpi))
+    specs: List[LabelSpec] = plan.labels()
+    for n in range(1, len(align.tangents()) + 1):
+        specs.append(compile_label(align, resolve_anchor(align, parse_anchor(f"T-{n}")), "bearing",
+                                   label_offset=_round2(spec["labels"]["bearing"]["label_offset_in"] * fpi)))
+    for n in range(1, len(align.curves()) + 1):
+        specs.append(compile_label(align, resolve_anchor(align, parse_anchor(f"MC-{n}")), "mc",
+                                   label_offset=_round2(spec["labels"]["mc"]["label_offset_in"] * fpi)))
+    begin = float(align.begin_station)
+    out = []
+    for s in specs:
+        w, h = geo.text_size(s.content, height)
+        x0 = {"center": -w / 2.0, "right": -w}.get(s.halign, 0.0)
+        y0 = {"middle": -h / 2.0, "top": -h}.get(s.valign, 0.0)
+        corners = [[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]]
+        pts = [geo.translate_point(geo.rotate_point(c, s.rotation_deg), s.position) for c in corners]
+        if s.kind == "mc":  # the bubble round the number
+            r = 2.0 * height
+            pts += [[s.position[0] - r, s.position[1] - r], [s.position[0] + r, s.position[1] + r]]
+        out.append((float(s.station) - begin, tuple(geo.bbox_of_points(pts))))
+    return out
+
+
+def _dimension_boxes(align: Alignment, half_width: float, width_dims: Sequence[dict],
+                     fpi: float) -> List[Tuple[float, tuple]]:
+    """``(distance from BEGIN, model bbox)`` of each width dimension's text, as
+    the engine sets it for the dimension the reference places."""
+    height = _round2(DRAFTING_SPEC_V1["text"]["label_height_in"] * fpi)
+    begin = float(align.begin_station)
+    scratch = Document.new("dimension text")
+    out = []
+    for n, wd in enumerate(width_dims, start=1):
+        raw = float(wd["station"])
+        p1 = align.station_to_xy(raw, -half_width)[0]
+        p2 = align.station_to_xy(raw, half_width)[0]
+        ahead = align.station_to_xy(min(raw + float(wd["line_offset_ft"]), align.end_station), 0.0)[0]
+        dim = Dimension(id=f"DM-{n:03d}", kind="aligned", p1=list(p1), p2=list(p2),
+                        line_point=list(ahead), text_height=height, unit_format="feet",
+                        text_gap=float(wd["text_gap_ft"]) if wd.get("text_gap_ft") else None)
+        for prim in dimgeom.primitives(dim, scratch):
+            if isinstance(prim, Text) and prim.content:
+                out.append((raw - begin, tuple(geo.text_bbox(prim.position, prim.content, prim.height,
+                                                               prim.rotation_deg, prim.halign,
+                                                               prim.valign))))
+    return out
+
+
+def _sheet_box(align: Alignment, lo: float, hi: float, fpi: float,
+               labels: Sequence[Tuple[float, tuple]]) -> tuple:
+    """The model window a two-sheet viewport shows for the share ``lo``..``hi``
+    of the alignment: the centerline and every label anchored on that share,
+    with a margin, then grown until no label of the other share crosses its
+    edge (a label is shown whole or not at all)."""
+    margin = VIEWPORT_MARGIN_IN * fpi
+    pts = segment_points(align, lo, hi)
+    own = [bb for d, bb in labels if lo - 1e-6 <= d <= hi + 1e-6]
+    others = [bb for d, bb in labels if not (lo - 1e-6 <= d <= hi + 1e-6)]
+    box = geo.bbox_expand(geo.bbox_of_points(pts + [[bb[0], bb[1]] for bb in own]
+                                             + [[bb[2], bb[3]] for bb in own]), margin)
+    for _ in range(20):
+        crossing = [bb for bb in others
+                    if geo.bbox_intersects(box, bb) and not geo.bbox_contains(box, bb)]
+        if not crossing:
+            break
+        for bb in crossing:
+            grown = geo.bbox_expand(bb, margin)
+            box = (min(box[0], grown[0]), min(box[1], grown[1]),
+                   max(box[2], grown[2]), max(box[3], grown[3]))
+    return box
 
 
 def _match_dists(align: Alignment, n_sheets: int) -> Optional[List[float]]:
@@ -168,10 +261,15 @@ def _fits(align: Alignment, n_sheets: int) -> Optional[Tuple[int, List[float]]]:
     if matches is None:
         return None
     bounds = [0.0] + matches + [align.length]
-    boxes = [geo.bbox_of_points(segment_points(align, bounds[i], bounds[i + 1]))
-             for i in range(n_sheets)]
     for fpi in DRAFTING_SPEC_V1["sheet"]["allowed_feet_per_inch"]:
-        if all(_fits_window(bb, fpi) for bb in boxes):
+        if n_sheets == 1:
+            bb = geo.bbox_of_points(segment_points(align, 0.0, align.length))
+            if _fits_window(bb, fpi):
+                return int(fpi), matches
+            continue
+        labels = _label_boxes(align, fpi)
+        boxes = [_sheet_box(align, bounds[i], bounds[i + 1], fpi, labels) for i in range(n_sheets)]
+        if all(_fits_window(bb, fpi, pad=0.0) for bb in boxes):
             return int(fpi), matches
     return None
 
@@ -380,6 +478,11 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         start_sta = begin_station + t.start_dist
         end_sta = start_sta + t.length
         back = math.ceil((start_sta + 50.0) / 100.0) * 100.0
+        # clear of a match line: the equation is lettered square to the line like a
+        # match label, and the two would overlap at the same station
+        while (back <= end_sta - 50.0
+               and any(abs(back - (begin_station + d)) < MATCH_CLEAR_FT for d in match_dists)):
+            back += 100.0
         if back <= end_sta - 50.0:
             ahead = back + rng.choice(EQUATION_JUMPS)
             eq_items.append({"back": back, "ahead": ahead})
@@ -415,6 +518,24 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     scale_text = sheet_spec["scale_text_format"].format(fpi=fpi)
     st = align.stations()
     bounds = [0.0] + list(match_dists) + [align.length]
+    eq_raws = [float(q.raw_station) for q in align.equations]
+    width_dims = []
+    for n, t in enumerate(align.tangents(), start=1):
+        raw = _width_station(begin_station + t.start_dist, begin_station + t.end_dist,
+                             eq_raws, fpi)
+        if raw is not None:  # a tangent too short to dimension cleanly is left alone
+            width_dims.append({"ref": f"T-{n}", "station": raw, "station_text": st.format(raw),
+                               "line_offset_ft": _round2(WIDTH_DIM_LINE_IN * fpi),
+                               "text_gap_ft": _round2(WIDTH_TEXT_GAP_FACTOR
+                                                      * spec["text"]["label_height_in"] * fpi)})
+    if "widths" in ttype.asks and not width_dims:
+        raise ValueError(f"seed {seed} has no tangent long enough to dimension the pavement "
+                         f"width; use another seed for a {ttype.name} task")
+    label_boxes: List[Tuple[float, tuple]] = []
+    if n_sheets > 1:
+        label_boxes = _label_boxes(align, fpi)
+        if "widths" in ttype.shown():  # the width dimensions' text shows on these sheets
+            label_boxes += _dimension_boxes(align, half_width, width_dims, fpi)
     sheet_dicts: List[dict] = []
     for i in range(n_sheets):
         name = SHEET_NAMES[i]
@@ -429,10 +550,12 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                                      _round2((bb[1] + bb[3]) / 2.0)],
                     "feet_per_inch": float(fpi), "rotation_deg": 0.0}
         if n_sheets > 1:
-            # a viewport no bigger than this sheet's share plus the pad, so the
-            # next sheet's work does not show through it (the nearest thing to a
-            # viewport clipped at the match line)
-            padded = geo.bbox_expand(bb, PAD_FT)
+            # a viewport sized round this sheet's share and its labels, grown so no
+            # label of the other share is cut by its edge: the nearest thing to a
+            # viewport clipped at the match line
+            padded = _sheet_box(align, lo, hi, fpi, label_boxes)
+            viewport["model_center"] = [_round2((padded[0] + padded[2]) / 2.0),
+                                        _round2((padded[1] + padded[3]) / 2.0)]
             viewport["width_in"] = _round2((padded[2] - padded[0]) / fpi)
             viewport["height_in"] = _round2((padded[3] - padded[1]) / fpi)
         on_sheet = [k + 1 for k, c in enumerate(align.curves())
@@ -462,19 +585,6 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                 "sheet_number": name, "total_sheets": str(n_sheets), "designed_by": "RD",
                 "drawn_by": "AGENT", "checked_by": "RD", "date": date, "scale": scale_text},
             "matches": matches})
-    eq_raws = [float(q.raw_station) for q in align.equations]
-    width_dims = []
-    for n, t in enumerate(align.tangents(), start=1):
-        raw = _width_station(begin_station + t.start_dist, begin_station + t.end_dist,
-                             eq_raws, fpi)
-        if raw is not None:  # a tangent too short to dimension cleanly is left alone
-            width_dims.append({"ref": f"T-{n}", "station": raw, "station_text": st.format(raw),
-                               "line_offset_ft": _round2(WIDTH_DIM_LINE_IN * fpi),
-                               "text_gap_ft": _round2(WIDTH_TEXT_GAP_FACTOR
-                                                      * spec["text"]["label_height_in"] * fpi)})
-    if "widths" in ttype.asks and not width_dims:
-        raise ValueError(f"seed {seed} has no tangent long enough to dimension the pavement "
-                         f"width; use another seed for a {ttype.name} task")
     deliverable = {
         "task_type": ttype.name, "sheets": sheet_dicts, "feet_per_inch": float(fpi),
         "pavement": {"half_width_ft": half_width, "offsets_ft": [-half_width, half_width],
@@ -487,13 +597,13 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         "curve_table_columns": columns,
         "text_heights": {"model_label_ft": _round2(spec["text"]["label_height_in"] * fpi),
                          "sheet_table_in": table_h},
+        "station_lettering": spec["stationing"]["format"],
+        "station_label_side": spec["stationing"]["label_side"],
         "tick_half_len_ft": _round2(spec["stationing"]["tick_half_len_in"] * fpi),
         "label_offset_ft": _round2(spec["stationing"]["label_offset_in"] * fpi),
-        # bearings sit outside the station labels (same side) so the two never collide
-        "bearing_label_offset_ft": _round2(BEARING_OFFSET_FACTOR
-                                           * spec["stationing"]["label_offset_in"] * fpi),
-        "mc_label_offset_ft": _round2(MC_OFFSET_FACTOR * spec["stationing"]["label_offset_in"]
-                                      * fpi),
+        "point_label_offset_ft": _round2(spec["labels"]["pc_pt"]["label_offset_in"] * fpi),
+        "bearing_label_offset_ft": _round2(spec["labels"]["bearing"]["label_offset_in"] * fpi),
+        "mc_label_offset_ft": _round2(spec["labels"]["mc"]["label_offset_in"] * fpi),
         "north_arrow": True,
     }
     if align.equations:
@@ -503,6 +613,8 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     design = {"design_speed_mph": v_mph,
               "alignments": {ALIGNMENT_NAME: align.to_dict()},
               "profiles": {PROFILE_NAME: profile.to_dict()}}
+    if "design" not in ttype.given:  # the alignment is the task; nothing else is designed yet
+        design["profiles"] = {}
     payload = {"generator_version": GENERATOR_VERSION, "spec_hash": spec_hash(),
                "project": project, "design": design, "deliverable": deliverable}
     task_id = compute_task_id(int(seed), level, payload)
@@ -519,14 +631,19 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     # ---- truth, then the starting document (the design plus the given phases) and,
     # for a basefile type, the base drawing shipped beside it
     truth = compute_ground_truth(brief)
-    doc = _baseline(design, project, task_id, v_mph, county, agency)
+    seeded = design if "design" in ttype.given else {"alignments": {}, "profiles": {}}
+    doc = _baseline(seeded, project, task_id, v_mph, county, agency)
     task = Task(brief=brief, truth=truth, baseline=doc.to_dict())
     if ttype.basefile:
-        base = _draft(task, ["layers"] + sorted(ttype.basefile, key=PHASE_ORDER.index), seed)
+        # the base drawing always carries the design, whether or not the sheet file does
+        designed = Task(brief=brief, truth=truth,
+                        baseline=_baseline(design, project, task_id, v_mph, county, agency).to_dict())
+        base = _draft(designed, ["layers"] + sorted(ttype.basefile, key=PHASE_ORDER.index), seed)
         base.meta["description"] = f"{project['name']} — base drawing"
         task.files[deliverable["basefile"]] = base.to_dict()
-    if ttype.given:
-        task.baseline = _draft(task, sorted(ttype.given, key=PHASE_ORDER.index), seed).to_dict()
+    drafted = sorted((p for p in ttype.given if p != "design"), key=PHASE_ORDER.index)
+    if drafted:
+        task.baseline = _draft(task, drafted, seed).to_dict()
     return task
 
 

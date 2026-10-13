@@ -1808,10 +1808,10 @@ class Session:
                 "anchor_point": _place_point(placement, point.on_point),
                 "direction_deg": point.direction_deg,
                 "placement": _placement_block(placement),
-                "labelling": "place_label cannot anchor to a referenced alignment; "
-                             "call it out with place_callout (target_anchor takes this "
-                             "anchor and alignment, from a sheet too), or copy the "
-                             "design into this document first"}
+                "labelling": "place_label, annotate_stationing and place_curve_table anchor "
+                             "to this referenced alignment by its qualified name (the "
+                             "reference must sit at identity); place_callout takes it "
+                             "as target_anchor too"}
         if "sheet" in p:
             out["on_sheet"] = self._on_sheet(p["sheet"], out["point"])
         return out

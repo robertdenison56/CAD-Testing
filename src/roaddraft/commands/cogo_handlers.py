@@ -525,9 +525,9 @@ def label_segments(doc: Document, p: dict):
 # ------------------------------------------------------ station and offset
 
 
-def _alignment(doc: Document, p: dict):
+def _alignment(doc: Document, p: dict, **kw):
     from roaddraft.commands import design_handlers as dh
-    return dh._alignment(doc, p)
+    return dh._alignment(doc, p, **kw)
 
 
 def _design_fault(e) -> CommandFault:
@@ -564,7 +564,7 @@ def draw_station_offset(doc: Document, p: dict):
     if space_key != "model":
         raise CommandFault("stations and offsets are model-space feet; draw in model space",
                            hint="a sheet sees the result through its viewports")
-    align = _alignment(doc, p)
+    align = _alignment(doc, p, referenced=True)
     if len(p["points"]) < 2:
         raise CommandFault("give at least two station-and-offset points to draw between")
     try:

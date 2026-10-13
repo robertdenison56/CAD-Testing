@@ -30,7 +30,8 @@ def test_explicit_prompt_states_the_standards_and_vague_only_the_request():
     explicit, vague = task.brief.prompts["explicit"], task.brief.prompts["vague"]
     tb = task.brief.deliverable["sheets"][0]["title_block_fields"]
     for word in (_L["alignment"], _L["ticks"], _L["labels"], _L["tables"], "0.10 in",
-                 "0.40 in", "12+34.56", "BC 16+00.00", "CH BRG", "STA 20+00.00 BK",
+                 "0.14 in", "ones digit", "24+05.27 BC", "bottom to top", "Δ", "bearing and length",
+                 "bubble", "STA 20+00.00 BK",
                  tb["scale"], tb["date"], "NORTH_ARROW", task.brief.project["name"]):
         assert word in explicit, word
         assert word not in vague, word
@@ -111,8 +112,8 @@ def _clean(report, *except_checks):
 
 def test_station_written_without_decimals_is_wrong_only_when_the_format_was_stated():
     b = Base(**BASE)
-    e = b.labels("station")[3]
-    b.ex("modify_entity", {"id": e.id, "changes": {"content": e.content.replace(".00", "")}})
+    e = b.labels("station")[3]  # lettered the Caltrans way ("3"); written in full without decimals
+    b.ex("modify_entity", {"id": e.id, "changes": {"content": e.anchor["ref"].replace(".00", "")}})
     r = _score(b)
     assert r["explicit"].hard_failed and r["vague"].effective_score == 100.0
 

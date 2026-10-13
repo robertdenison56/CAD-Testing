@@ -31,6 +31,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.design.errors import DesignError
+from roaddraft.design.labels import caltrans_station_text
 from roaddraft.document.entities import Text, entity_distance
 from roaddraft.probes import fixture
 from roaddraft.probes.base import Probe, Result
@@ -38,7 +39,7 @@ from roaddraft.probes.base import Probe, Result
 TOLERANCE_FT = 0.5
 SAMPLE_FT = 25.0
 
-CL, EOP, SHLD, NOTE = "V-ALIGN-CNTR", "V-ROAD-EOP", "V-ROAD-SHLD", "V-ANNO-TEXT"
+CL, EOP, SHLD, NOTE = "align_MAIN", "rd_EP", "rd_ES", "rd_LAYOUT-NOTE-anno"
 
 
 # ------------------------------------------------------------------ geometry
@@ -379,7 +380,7 @@ def _solve_cul_de_sac(session):
 
 # 7. a building ------------------------------------------------------------------
 
-BLDG = {"layer": "V-BLDG", "corner": [1500.0, 1200.0], "azimuth": 30.0,
+BLDG = {"layer": "BUILDING", "corner": [1500.0, 1200.0], "azimuth": 30.0,
         "long": 60.0, "short": 40.0}
 
 
@@ -400,7 +401,7 @@ def _check_building(baseline, submitted):
         sides += between(a, b, step=5.0)
     return verdict(on_layer(baseline, submitted, BLDG["layer"], sides,
                             "the 60 x 40 building footprint"),
-                   "a 60 x 40 ft footprint, long side N 30° E, on V-BLDG")
+                   "a 60 x 40 ft footprint, long side N 30° E, on BUILDING")
 
 
 def _solve_building(session):
@@ -433,7 +434,9 @@ def _check_roadway(baseline, submitted):
     problem = first(*problems)
     if problem:
         return Result(False, problem)
-    # a station label every 100 ft: text that reads the station, near that station
+    # a station label every 100 ft: text that reads the station, near that station --
+    # in full (12+00) or the Caltrans way (the whole number at each 500 ft, the ones
+    # digit elsewhere), which is how the engine letters it
     before = set(baseline.doc.model_entities)
     texts = [e for eid, e in submitted.doc.model_entities.items()
              if eid not in before and isinstance(e, Text)]
@@ -441,8 +444,10 @@ def _check_roadway(baseline, submitted):
     labelled = 0
     for st in stations:
         reads = f"{st // 100}+00"
+        digits = caltrans_station_text(float(st))
         here = want.station_to_xy(float(st))[0]
-        if any(reads in t.content and math.dist(t.position, here) <= 60.0 for t in texts):
+        if any((reads in t.content or t.content.strip() == digits)
+               and math.dist(t.position, here) <= 60.0 for t in texts):
             labelled += 1
     if labelled < 0.8 * len(stations):
         return Result(False, f"only {labelled} of {len(stations)} 100 ft stations carry a "
@@ -467,7 +472,7 @@ DRAFT_PROBES: List[Probe] = [
     Probe(id="draft-tangent-ne", start="blank", tags=["draft", "alignment"],
           prompt="Create an alignment named MAIN-ST. It begins at N 5000.00, E 2000.00, "
                  "station 10+00, and runs due east for 1,200.00 ft. Draw its centerline "
-                 "on layer V-ALIGN-CNTR.",
+                 "on layer align_MAIN.",
           check=_check_ne, solve=_solve_ne,
           note="Engineers give coordinates northing first; the engine takes [x, y], which "
                "is [easting, northing]. Swapped, the alignment starts 4,243 ft away."),
@@ -475,7 +480,7 @@ DRAFT_PROBES: List[Probe] = [
           prompt="Create alignment SR-9, beginning at station 50+00, through these points "
                  "(easting, northing): begin at (1000, 1000); a PI at (2200, 1000) with an "
                  "800 ft radius curve; end at (3100, 1900). Draw its centerline on layer "
-                 "V-ALIGN-CNTR.",
+                 "align_MAIN.",
           check=_check_pi_curve, solve=_solve_pi_curve,
           note="The alignment does not pass through its PI: at this 45 degree deflection "
                "the curve runs 65.9 ft inside it. Lines drawn PI to PI are not the road, "
@@ -485,7 +490,7 @@ DRAFT_PROBES: List[Probe] = [
                  "10+00, and runs N 62°30'00\" E for 900.00 ft to a PI. There it "
                  "deflects 35°00'00\" to the right and continues 1,100.00 ft to its "
                  "end. Use a 600 ft radius curve at the PI. Draw its centerline on layer "
-                 "V-ALIGN-CNTR.",
+                 "align_MAIN.",
           check=_check_bearing, solve=_solve_bearing,
           note="How alignments are actually described. Distances are PI to PI. The engine "
                "reports bearings everywhere but takes none as input, so the PI and the end "
@@ -493,8 +498,8 @@ DRAFT_PROBES: List[Probe] = [
     Probe(id="draft-edges-shoulders", start="centerline", tags=["draft", "offsets"],
           prompt="SR-100 is a two-lane highway with 12 ft lanes and 8 ft paved shoulders. "
                  "Its alignment is designed and drawn; nothing else is. Draw the edges of "
-                 "pavement on layer V-ROAD-EOP and the outside edges of shoulder on layer "
-                 "V-ROAD-SHLD, both sides, for the whole length.",
+                 "pavement on layer rd_EP and the outside edges of shoulder on layer "
+                 "rd_ES, both sides, for the whole length.",
           check=_check_edges, solve=_solve_edges,
           note="A width is not an offset: the shoulder edge is 12 + 8 = 20 ft from the "
                "centerline, not 8. Checked through both curves, so a chorded edge fails."),
@@ -502,7 +507,7 @@ DRAFT_PROBES: List[Probe] = [
           prompt="Add a right-turn lane to SR-100, on the right side: 12 ft wide, full "
                  "width from station 31+20 to station 36+00, opened by a 120 ft straight "
                  "taper that leaves the existing edge of pavement at station 30+00. Draw "
-                 "the new edge of pavement on layer V-ROAD-EOP -- the taper, the full-width "
+                 "the new edge of pavement on layer rd_EP -- the taper, the full-width "
                  "edge, and a square end at 36+00 back to the existing edge.",
           check=_check_turn_lane, solve=_solve_turn_lane,
           note="Station-and-offset drafting: the existing edge is 12 ft right, so the new "
@@ -511,7 +516,7 @@ DRAFT_PROBES: List[Probe] = [
     Probe(id="draft-cul-de-sac", start="blank", tags=["draft", "alignment", "geometry"],
           prompt="Create alignment OAK-CT: it begins at N 2000.00, E 3000.00, station "
                  "10+00, and runs due north for 400.00 ft. Draw its centerline on layer "
-                 "V-ALIGN-CNTR. It ends in a cul-de-sac: on layer V-ROAD-EOP draw the bulb, "
+                 "align_MAIN. It ends in a cul-de-sac: on layer rd_EP draw the bulb, "
                  "a 45 ft radius circle centered on the end of the alignment, and the edges "
                  "of pavement 14 ft either side of the centerline, from the beginning to "
                  "where they meet the bulb -- not through it.",
@@ -520,7 +525,7 @@ DRAFT_PROBES: List[Probe] = [
                "of the end: station 13+57.23. Edges drawn the full length run through the "
                "bulb, which is the mistake the check looks for."),
     Probe(id="draft-building", start="blank", tags=["draft", "geometry", "cogo"],
-          prompt="Draw a building footprint on a new layer named V-BLDG: a 60 ft by 40 ft "
+          prompt="Draw a building footprint on a new layer named BUILDING: a 60 ft by 40 ft "
                  "rectangle. One corner is at N 1200.00, E 1500.00. From that corner the "
                  "60 ft side runs N 30°00'00\" E, and the 40 ft side runs at a right "
                  "angle to it, to the right (S 60°00'00\" E).",
@@ -533,9 +538,9 @@ DRAFT_PROBES: List[Probe] = [
                  "PI-1, where it deflects 40°00'00\" to the left on a 500 ft radius "
                  "curve; then 700.00 ft to PI-2, where it deflects 25°00'00\" to the "
                  "right on a 700 ft radius curve; then 600.00 ft to its end. It has two "
-                 "11 ft lanes and 5 ft shoulders. Draw the centerline on V-ALIGN-CNTR, the "
-                 "edges of pavement on V-ROAD-EOP and the outside edges of shoulder on "
-                 "V-ROAD-SHLD, and label the stations every 100 ft.",
+                 "11 ft lanes and 5 ft shoulders. Draw the centerline on align_MAIN, the "
+                 "edges of pavement on rd_EP and the outside edges of shoulder on "
+                 "rd_ES, and label the stations every 100 ft.",
           check=_check_roadway, solve=_solve_roadway,
           note="The whole T1 job in one instruction: two deflections to carry a bearing "
                "through (S 80 E, then N 60 E, then N 85 E), widths to turn into offsets "

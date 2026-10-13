@@ -28,14 +28,14 @@ from roaddraft.probes.l2 import sr70_geometry as G
 MODEL_NAME = "SR70-Bear-Creek.model"
 
 LAYERS = [
-    ("V-ALIGN-CNTR", "black", "continuous", 0.50, '"SR70" LINE, Route 70 centerline'),
-    ("V-ROAD-EOP", "black", "continuous", 0.40, "Edge of pavement, 12 ft each side"),
-    ("V-ROAD-SHLD", "black", "continuous", 0.40, "Edge of shoulder, 20 ft each side"),
-    ("V-ROAD-CF", "black", "dashed", 0.25, "Cut / fill catch line (C/F, F/C)"),
-    ("V-ROW", "black", "continuous", 0.25, "Right of way"),
-    ("V-ANNO-STAT", "black", "continuous", 0.18, "Stationing ticks and numbers"),
-    ("V-ANNO-ALGN", "black", "continuous", 0.18, "BC / EC / PCC callouts"),
-    ("V-BARR", "black", "continuous", 0.25,
+    ("align_MAIN", "black", "continuous", 0.50, '"SR70" LINE, Route 70 centerline'),
+    ("rd_EP", "black", "continuous", 0.40, "Edge of pavement, 12 ft each side"),
+    ("rd_ES", "black", "continuous", 0.40, "Edge of shoulder, 20 ft each side"),
+    ("rd_SLOPE", "black", "dashed", 0.25, "Cut / fill catch line (C/F, F/C)"),
+    ("rd_RIGHT-OF-WAY", "black", "continuous", 0.25, "Right of way"),
+    ("align_MAIN-anno", "black", "continuous", 0.18,
+     "Stationing ticks and numbers; BC / EC / PCC callouts and tangent bearings"),
+    ("align_BARRIER", "black", "continuous", 0.25,
      "Guard railing and MGS symbology on the barrier lines"),
     ("E-TOPO-MINR", "black", "dot", 0.13, "Existing ground, 5 ft contours"),
     ("E-TOPO-MAJR", "black", "dot", 0.25, "Existing ground, index contours"),
@@ -109,11 +109,11 @@ def build(out_dir, quiet=False):
             f"BC {row['pc_station_text']}  EC {row['pt_station_text']}")
 
     say("== roadway linework")
-    run("draw_alignment", {"alignment": G.ALIGNMENT, "layer": "V-ALIGN-CNTR"})
+    run("draw_alignment", {"alignment": G.ALIGNMENT, "layer": "align_MAIN"})
     run("draw_offset", {"alignment": G.ALIGNMENT, "offsets": [-12, 12],
-                        "layer": "V-ROAD-EOP"})
+                        "layer": "rd_EP"})
     run("draw_offset", {"alignment": G.ALIGNMENT, "offsets": [-20, 20],
-                        "layer": "V-ROAD-SHLD"})
+                        "layer": "rd_ES"})
 
     say("== existing ground")
     existing = json.loads((Path(__file__).parent / "existing.json").read_text())
@@ -135,11 +135,11 @@ def build(out_dir, quiet=False):
     r = run("annotate_stationing", {
         "space": "model", "alignment": G.ALIGNMENT, "interval": 100.0,
         "station_range": [G.MATCH_W - 150, G.MATCH_E + 150],
-        "include_pc_pt": False, "layer": "V-ANNO-STAT",
+        "include_pc_pt": False, "layer": "align_MAIN-anno",
         "text_height": CALLOUT_H, "tick_half_len": 8.0, "label_offset": 9.0})
     say(f"    {r['message']}")
     # Caltrans letters the whole station only every 500 ft
-    labels = ask("find_entities", {"space": "model", "layer": "V-ANNO-STAT",
+    labels = ask("find_entities", {"space": "model", "layer": "align_MAIN-anno",
                                    "type": "text", "limit": 200})["entities"]
     for ent in labels:
         anchor = ent.get("anchor") or {}
@@ -160,17 +160,17 @@ def build(out_dir, quiet=False):
         off = ask("station_to_xy", {"alignment": G.ALIGNMENT, "station": station,
                                     "offset": -LEADER_FT})
         run("draw_line", {"space": "model", "start": at["point"], "end": off["point"],
-                          "layer": "V-ANNO-ALGN"})
+                          "layer": "align_MAIN-anno"})
         run("place_label", {"space": "model", "alignment": G.ALIGNMENT,
                             "anchor": station, "kind": "custom", "content": wording,
                             "side": "left", "label_offset": LEADER_FT,
                             "rotation": "perpendicular", "halign": "left",
                             "valign": "middle", "height": CALLOUT_H,
-                            "layer": "V-ANNO-ALGN"})
+                            "layer": "align_MAIN-anno"})
         run("insert_block", {"space": "model", "block_name": "BC-EC-MARK",
                              "position": at["point"],
                              "rotation_deg": 90.0 - at["azimuth_deg"],
-                             "layer": "V-ANNO-ALGN"})
+                             "layer": "align_MAIN-anno"})
         say(f"    {wording}")
 
     say("== tangent bearings and distances")
@@ -181,11 +181,11 @@ def build(out_dir, quiet=False):
                             "anchor": row["ref"], "kind": "custom",
                             "content": f"{row['length']:.2f}'", "side": "left",
                             "label_offset": 7.0, "height": BEARING_H,
-                            "layer": "V-ANNO-ALGN"})
+                            "layer": "align_MAIN-anno"})
         run("place_label", {"space": "model", "alignment": G.ALIGNMENT,
                             "anchor": row["ref"], "kind": "bearing", "side": "right",
                             "label_offset": 10.0, "height": BEARING_H,
-                            "layer": "V-ANNO-ALGN"})
+                            "layer": "align_MAIN-anno"})
         say(f"    {row['ref']}  {row['length']:.2f}'  {row['bearing']}")
 
     path = ask("save_document", {"path": str(out_dir / f"{MODEL_NAME}.rdraft")})["path"]

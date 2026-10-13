@@ -36,7 +36,8 @@ def test_alignment_mode_A_matches_entity_mode_labels_16_BC_EC():
                                                 "interval": 100.0})
     assert r_ali["ok"], r_ali
     assert r_ali["message"] == ("stationing annotated in model space from ALIGN-1: 16 ticks @ "
-                                "100 ft, 2 BC/EC labels, 0 equation labels, stations 10+00.00 "
+                                "100 ft lettered the whole station at each 500 ft, the ones digit "
+                                "elsewhere, 2 BC/EC labels, 0 equation labels, stations 10+00.00 "
                                 "to 25+18.88")
     assert len(r_ali["created"]) == len(r_ent["created"]) == 34
     ent_texts = sorted(texts(ent), key=lambda t: t.id)
@@ -70,11 +71,12 @@ def test_alignment_mode_every_tick_and_label_anchored_entity_mode_none():
             assert e.layer == "0"
             assert e.anchor["kind"] in ("station", "pc", "pt")
             assert e.anchor["content_auto"] is True and e.anchor["viewport"] is None
-    pc = next(e for e in texts(ali) if e.content.startswith("BC "))
-    assert pc.anchor["ref"] == "PC-1" and pc.anchor["side"] == "right"
-    sta = next(e for e in texts(ali) if e.content == "13+00.00")
-    assert sta.anchor["ref"] == "13+00.00" and sta.anchor["side"] == "left"
-    assert sta.anchor["station"] == pytest.approx(1300.0) and sta.anchor["label_offset"] == 16.0
+    pc = next(e for e in texts(ali) if e.content.endswith(" BC"))
+    assert pc.anchor["ref"] == "PC-1" and pc.anchor["side"] == "left"
+    assert pc.anchor["rotation"] == "perpendicular" and pc.anchor["label_offset"] == 22.5
+    sta = next(e for e in texts(ali) if e.anchor["ref"] == "13+00.00")
+    assert sta.content == "3" and sta.anchor["side"] == "right"  # below an eastbound line
+    assert sta.anchor["station"] == pytest.approx(1300.0) and sta.anchor["label_offset"] == 6.0
 
 
 def test_alignment_mode_equation_2000_2500_16_ticks_labels_19_25_30_not_20_and_EQ1_label():
@@ -83,12 +85,13 @@ def test_alignment_mode_equation_2000_2500_16_ticks_labels_19_25_30_not_20_and_E
     assert r["ok"] and "16 ticks" in r["message"] and "1 equation labels" in r["message"]
     assert "stations 10+00.00 to 30+18.88" in r["message"]
     contents = {t.content for t in texts(s)}
-    assert {"19+00.00", "25+00.00", "30+00.00"} <= contents
-    assert "20+00.00" not in contents and "24+00.00" not in contents
+    refs = {t.anchor["ref"] for t in texts(s) if t.anchor["kind"] == "station"}
+    assert {"9", "25", "30"} <= contents and {"19+00.00", "25+00.00", "30+00.00"} <= refs
+    assert "20+00.00" not in refs and "24+00.00" not in refs
     eq = next(t for t in texts(s) if t.anchor["kind"] == "equation")
     assert eq.content == "STA 20+00.00 BK = STA 25+00.00 AH" and eq.anchor["ref"] == "EQ-1"
-    assert eq.anchor["label_offset"] == 24.0
-    assert "EC 25+18.88" in contents
+    assert eq.anchor["label_offset"] == 22.5
+    assert "25+18.88 EC" in contents
     r = s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1",
                                           "include_equations": False})
     assert r["ok"] and "0 equation labels" in r["message"]

@@ -239,7 +239,10 @@ def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str,
     run, model, backend, vision, effort = key
     meta = attempts[0].meta
     labels = sorted({a.label for a in attempts}, key=_natural)
-    valid = [a for a in attempts if a.outcome != "excluded"]
+    # an episode that ran on an earlier task text (the probe set changed since) does
+    # not count: its document was drafted to other words than the current check expects
+    stale = [a for a in attempts if not a.prompt_current]
+    valid = [a for a in attempts if a.outcome != "excluded" and a.prompt_current]
     per_probe: Dict[str, List[int]] = {p.id: [] for p in tasks.PROBES}
     for a in valid:
         per_probe[a.probe].append(int(a.outcome == "pass"))
@@ -285,6 +288,7 @@ def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str,
                           key=lambda b: (b[0] or 0, b[1] or 0)),
         "base_url": meta.get("base_url"),
         "attempts": len(attempts), "valid": len(valid), "unfinished": unfinished,
+        "stale": len(stale),
         "passes": sum(a.outcome == "pass" for a in valid),
         "probes_attempted": len(attempted), "probes_short": short,
         "score": _mean(list(rates.values())), "ci": [lo, hi],
@@ -381,6 +385,9 @@ def board(attempts: List[Attempt], folders: List[Folder]) -> Dict[str, Any]:
         if r["probes_short"]:
             done = len(tasks.PROBES) - len(r["probes_short"])
             why.append(f"k = {K} on {done} of {len(tasks.PROBES)} probes")
+        if r.get("stale"):
+            why.append(f"{r['stale']} episode{'s' * (r['stale'] != 1)} ran on an earlier task text "
+                       f"(the probe set changed since); rerun")
         if not why:
             newer = latest[(r["model"], r["backend"], r["vision"], r["effort"])]
             why.append(f"superseded by {newer['run']}")

@@ -15,6 +15,10 @@ yet).
 A *basefile* type splits the drawing the way an office does: the model work
 lives in a base drawing shipped with the task, the task's own document is the
 sheet file, and the job is to attach the base as a reference.
+
+``design`` is the alignment itself: every task but ``create-alignment`` is
+handed it (seeded into the document, never drafted), and that one creates it
+from the geometry the prompt states.
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 
 #: the drafting phases in reference order, and the truth group each produces
 PHASES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("design", ("design",)),
     ("layers", ("layers",)),
     ("linework", ("linework",)),
     ("edges", ("edges",)),
@@ -30,8 +35,8 @@ PHASES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("bearings", ("bearings",)),
     ("callouts", ("callouts",)),
     ("widths", ("widths",)),
-    ("sheet", ("sheet",)),
     ("reference", ("reference",)),
+    ("sheet", ("sheet",)),
     ("table", ("table",)),
     ("north", ("north",)),
     ("title", ("title",)),
@@ -67,6 +72,7 @@ CHECK_GROUPS: Dict[str, Tuple[str, ...]] = {
     "D1-12": ("edges",),
     "D1-13": ("widths",),
     "D1-14": ("reference",),
+    "D1-15": ("design",),
 }
 #: which spec layer role each group's work is drawn on (D1-09)
 GROUP_LAYER_ROLE: Dict[str, str] = {
@@ -89,6 +95,13 @@ class TaskType:
         """Where the drafter starts: ``model`` (no sheet yet) or ``sheet``."""
         return "sheet" if "sheet" in self.given else "model"
 
+    @property
+    def design_referenced(self) -> bool:
+        """The design lives only in the attached base drawing: the task's own
+        document neither holds it nor creates it, so every anchored label
+        goes through the reference (``BASE:ALIGN-1``)."""
+        return "design" not in self.given and "design" not in self.asks
+
     def solution_phases(self) -> List[str]:
         """Phases the reference solution runs on the starting document."""
         return [p for p, gs in PHASES
@@ -96,14 +109,19 @@ class TaskType:
                 and (p == "layers" or any(g in self.asks for g in gs))]
 
     def shown(self) -> List[str]:
-        """Phases present on the finished reference drawing: the layers, and
-        every phase given, asked for, or carried by the base drawing."""
+        """Phases the reference drafts for the finished drawing: the layers,
+        the design when it is the task (otherwise it is seeded, not drafted),
+        and every phase given, asked for, or carried by the base drawing."""
         return [p for p, gs in PHASES
-                if p == "layers" or p in self.given or p in self.basefile
-                or any(g in self.asks for g in gs)]
+                if (p == "design" and "design" in self.asks)
+                or (p != "design" and (p == "layers" or p in self.given or p in self.basefile
+                                       or any(g in self.asks for g in gs)))]
 
 
-def _type(name, asks, given, summary, basefile=()) -> TaskType:
+def _type(name, asks, given, summary, basefile=(), owns_design=True) -> TaskType:
+    given = set(given)
+    if "design" not in asks and owns_design:
+        given.add("design")  # the alignment is handed over unless creating it is the task
     return TaskType(name, frozenset(asks), frozenset(given), summary, frozenset(basefile))
 
 
@@ -112,6 +130,8 @@ def _layout_but(*phases) -> List[str]:
 
 
 LAYOUT_GROUPS = tuple(g for p, gs in PHASES if p in LAYOUT_PHASES for g in gs if g != "layers")
+#: groups an agent may add to the design: creating these is the task, not tampering
+DESIGN_GROUPS = ("design",)
 
 TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
     # -- the layout sheet, one phase at a time
@@ -143,6 +163,16 @@ TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
     _type("attach-reference", ["reference"], ["layers", "sheet"],
           "attach the base drawing to the sheet file as a reference",
           basefile=["linework", "edges", "stationing", "bearings", "callouts"]),
+    # -- the sheet file annotates the base drawing it references: the design is in the base
+    # only, and every label anchors through the reference (decided 2026-10-11, so the
+    # benchmark's credit route is the one the Tier 3 probes use)
+    _type("annotate-base", ["ticks", "stations", "curve_points", "bearings", "callouts", "table"],
+          ["layers", "reference", "sheet"],
+          "letter the alignment data of the referenced base drawing on the set-up sheet(s)",
+          basefile=["linework", "edges"], owns_design=False),
+    # -- design input
+    _type("create-alignment", ["design", "linework"], ["layers"],
+          "create the alignment from the PIs, radii and stationing the prompt gives, then draw it"),
 )}
 
 DEFAULT_TYPE = "plan-sheet"
@@ -167,5 +197,6 @@ def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str
 
 
 __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "LAYOUT_GROUPS",
+           "DESIGN_GROUPS",
            "MODEL_PHASES", "LABEL_GROUPS", "CHECK_GROUPS", "GROUP_LAYER_ROLE", "TaskType",
            "TASK_TYPES", "DEFAULT_TYPE", "task_type", "checks_in_scope"]

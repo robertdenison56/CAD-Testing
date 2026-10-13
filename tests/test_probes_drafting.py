@@ -61,7 +61,7 @@ def test_every_drafting_probe_is_wired_in_and_starts_from_a_real_document(tmp_pa
         assert probe.solve and probe.note and len(probe.prompt) > 60
     blank = Session.load(fixture.start_document(tmp_path / "b", "blank"))
     assert not blank.doc.model_entities and not blank.doc.design.alignments
-    assert {CL, EOP, SHLD} <= set(blank.doc.layers) and "V-BLDG" not in blank.doc.layers
+    assert {CL, EOP, SHLD} <= set(blank.doc.layers) and "BUILDING" not in blank.doc.layers
     centerline = Session.load(fixture.start_document(tmp_path / "c", "centerline"))
     assert list(centerline.doc.design.alignments) == ["SR-100"]
     assert {e.layer for e in centerline.doc.model_entities.values()} == {CL}
@@ -351,7 +351,7 @@ def test_a_bulb_trimmed_at_the_mouth_passes_like_a_full_circle(tmp_path):
 # ------------------------------------------------------------- 7. a building
 
 
-def building(s, corners, as_lines=False, layer="V-BLDG"):
+def building(s, corners, as_lines=False, layer="BUILDING"):
     if layer not in s.doc.layers:
         do(s, "create_layer", name=layer, color="black")
     if as_lines:
@@ -383,7 +383,7 @@ def test_a_building_of_four_lines_passes_and_the_layer_has_to_exist(tmp_path):
     probe, base, s = begin("draft-building", tmp_path / "layer")
     building(s, drafting._bldg_corners(), layer=EOP)
     result = probe.check(base, s)
-    assert not result.passed and "no layer V-BLDG" in result.detail
+    assert not result.passed and "no layer BUILDING" in result.detail
 
 
 # -------------------------------------------------------- 8. the whole roadway
@@ -398,7 +398,7 @@ def roadway(s, legs=None, shoulder=16.0, label=True):
     do(s, "draw_offset", alignment="ELM-AVE", offsets=[-shoulder, shoulder], layer=SHLD)
     if label:
         do(s, "annotate_stationing", alignment="ELM-AVE", space="model", interval=100,
-           layer="V-ANNO-TEXT")
+           layer="rd_LAYOUT-NOTE-anno")
 
 
 def test_the_whole_roadway_fails_on_each_part_left_wrong(tmp_path):
@@ -424,7 +424,7 @@ def test_station_labels_typed_by_hand_count_and_labels_in_the_wrong_place_do_not
         for st in range(1000, int(want.end_station) + 1, 100):
             at = want.station_to_xy(float(st), -shift)[0]
             do(s, "place_text", space="model", position=at, height=8.0,
-               content=f"{st // 100}+00", layer="V-ANNO-TEXT")
+               content=f"{st // 100}+00", layer="rd_LAYOUT-NOTE-anno")
         assert probe.check(base, s).passed is passes, case
 
 

@@ -28,13 +28,13 @@ def test_layout_check_weights_sum_to_100_plan_prep_checks_ride_outside():
     weights = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
     assert sum(w for cid, w in weights.items() if cid <= "D1-11") == 100
     assert all(isinstance(w, int) and w > 0 for w in weights.values())
-    assert {cid for cid in weights if cid > "D1-11"} == {"D1-12", "D1-13", "D1-14"}
+    assert {cid for cid in weights if cid > "D1-11"} == {"D1-12", "D1-13", "D1-14", "D1-15"}
 
 
-def test_check_ids_unique_D1_00_to_D1_14():
+def test_check_ids_unique_D1_00_to_D1_15():
     ids = [c["id"] for c in DRAFTING_SPEC_V1["checks"]]
-    assert len(ids) == len(set(ids)) == 15
-    assert ids == ["D1-%02d" % i for i in range(0, 15)]
+    assert len(ids) == len(set(ids)) == 16
+    assert ids == ["D1-%02d" % i for i in range(0, 16)]
     for check in DRAFTING_SPEC_V1["checks"]:
         assert set(check) == {"id", "name", "weight", "hard_fail"}
         assert isinstance(check["hard_fail"], bool)
@@ -47,10 +47,10 @@ def test_status_starts_with_DRAFT():
     assert STANDARDS_STATUS.startswith("DRAFT")
 
 
-def test_spec_id_and_version_draft_v1():
+def test_spec_id_and_version_draft_v2():
     assert DRAFTING_SPEC_V1["spec_id"] == "roaddraft-drafting-spec"
-    assert DRAFTING_SPEC_V1["version"] == "draft-v1"
-    assert spec_v1.SPEC_VERSION == "draft-v1"
+    assert DRAFTING_SPEC_V1["version"] == "draft-v2"
+    assert spec_v1.SPEC_VERSION == "draft-v2"
 
 
 def test_layers_are_caltrans_named_levels_with_props_and_sources():
@@ -79,7 +79,8 @@ def test_layers_are_caltrans_named_levels_with_props_and_sources():
 
 def test_curve_table_columns_in_catalog():
     columns = DRAFTING_SPEC_V1["curve_table"]["columns"]
-    assert columns == ["curve", "pi_sta", "delta", "direction", "radius", "tangent", "length", "chord", "chord_bearing"]
+    assert columns == ["curve", "radius", "delta", "tangent", "length"]  # No., R, Δ, T, L
+    assert DRAFTING_SPEC_V1["curve_table"]["headers"] == ["No.", "R", "Δ", "T", "L"]
     for key in columns:
         assert key in CURVE_TABLE_COLUMN_CATALOG, key
     assert len(columns) == len(set(columns))
@@ -104,21 +105,24 @@ def test_text_0_10_0_12_stationing_100_tick_0_20_offset_0_32():
     assert text["label_height_in"] == pytest.approx(0.10)
     assert text["table_height_in"] == pytest.approx(0.12)
     assert text["height_tolerance_pct"] == 10
-    st = DRAFTING_SPEC_V1["stationing"]
-    assert st["interval_ft"] == 100
-    assert st["format"] == "12+34.56" and st["decimals"] == 2
-    assert st["tick_half_len_in"] == pytest.approx(0.20)
-    assert st["label_offset_in"] == pytest.approx(0.32)
-    assert st["label_side"] == "left" and st["rotation"] == "along"
+    st = DRAFTING_SPEC_V1["stationing"]  # the PPM's stationing (ppm-text p. 2-8)
+    assert st["interval_ft"] == 100 and st["full_station_every_ft"] == 500
+    assert st["format"] == "caltrans" and st["decimals"] == 2
+    assert st["tick_half_len_in"] == pytest.approx(0.07)  # a 7 ft tick at 1" = 50'
+    assert st["label_offset_in"] == pytest.approx(0.12)
+    assert st["label_side"] == "below" and st["rotation"] == "along"
 
 
 def test_labels_required_pc_pt_bearing_mc_not_pi_equation_when_present():
     labels = DRAFTING_SPEC_V1["labels"]
-    assert labels["pc_pt"]["required"] is True and labels["pc_pt"]["side"] == "right"
-    assert labels["pc_pt"]["format"] == "BC 16+00.00"
+    assert labels["pc_pt"]["required"] is True and labels["pc_pt"]["side"] == "left"
+    assert labels["pc_pt"]["format"] == "24+05.27 BC" and labels["pc_pt"]["rotation"] == "perpendicular"
+    assert labels["pc_pt"]["label_offset_in"] == pytest.approx(0.45)
     assert labels["bearing"]["required"] is True and labels["bearing"]["anchor"] == "T-n"
     assert labels["bearing"]["format"] == "quadrant" and labels["bearing"]["seconds_decimals"] == 0
-    assert labels["mc"]["required"] is True and labels["mc"]["format"] == "C-1"
+    assert labels["bearing"]["side"] == "above" and labels["bearing"]["with_length"] is True
+    assert labels["mc"]["required"] is True and labels["mc"]["format"] == "1"
+    assert labels["mc"]["bubble"]["radius_text_heights"] == 2.0
     assert labels["pi"]["required"] is False
     assert labels["equation"]["required_when_present"] is True
     assert labels["equation"]["format"] == "STA 20+00.00 BK = STA 25+00.00 AH"
@@ -134,7 +138,7 @@ def test_sheet_setup_check_and_reweighting_decided_2026_10_09():
     weights = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
     assert weights["D1-00"] == 5 and weights["D1-02"] == 9 and weights["D1-11"] == 1
     hard = {c["id"] for c in DRAFTING_SPEC_V1["checks"] if c["hard_fail"]}
-    assert hard == {"D1-01", "D1-03", "D1-04", "D1-05", "D1-06", "D1-12", "D1-13"}
+    assert hard == {"D1-01", "D1-03", "D1-04", "D1-05", "D1-06", "D1-12", "D1-13", "D1-15"}
     scoring = DRAFTING_SPEC_V1["scoring"]
     assert "hard fail" in scoring["hard_fail"] and scoring["effective_score"].startswith("0 if hard")
 

@@ -133,6 +133,32 @@ def overlapping_pairs(items: Sequence[Item]) -> List[Tuple[str, str]]:
     return sorted(pairs)
 
 
+def clipped(ctx: Context, sv: Optional[SheetView] = None) -> List[str]:
+    """Model-space texts a viewport of this sheet cuts in two: the text's
+    position is inside the viewport but its footprint crosses the
+    viewport's edge, so the plot shows part of it."""
+    sv = ctx.first if sv is None else sv
+    doc, out = ctx.doc, set()
+    if sv is None or sv.sheet is None:
+        return []
+    eps = OVERLAP_EPS_IN
+    for view in sv.views:
+        fpi = float(view.vp.feet_per_inch)
+        twist = float(view.vp.rotation_deg)
+        rect = view.rect
+        for owner, e in _texts(doc, doc.model_entities.values()):
+            q = view.transform.to_paper(e.position)
+            if not (rect[0] <= q[0] <= rect[2] and rect[1] <= q[1] <= rect[3]):
+                continue
+            style = doc.text_styles.get(e.style)
+            quad = text_quad(q, e.content, e.height / fpi, e.rotation_deg + twist, e.halign,
+                             e.valign, style.width_factor if style else 1.0)
+            if not all(rect[0] - eps <= v[0] <= rect[2] + eps
+                       and rect[1] - eps <= v[1] <= rect[3] + eps for v in quad):
+                out.add(owner)
+    return sorted(out)
+
+
 def outside(items: Sequence[Item], usable: Optional[Rect]) -> List[str]:
     if usable is None:
         return []
@@ -143,4 +169,4 @@ def outside(items: Sequence[Item], usable: Optional[Rect]) -> List[str]:
 
 
 __all__ = ["OVERLAP_EPS_IN", "Item", "text_quad", "sheet_items", "overlap_depth",
-           "overlapping_pairs", "outside"]
+           "overlapping_pairs", "outside", "clipped"]

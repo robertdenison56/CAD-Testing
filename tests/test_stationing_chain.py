@@ -24,17 +24,17 @@ def test_chain_from_any_element_finds_the_whole_centerline():
     s, ids = centerline_session()
     assert chain_elements(s.doc, [ids[1]])[0] in (ids, ids[::-1])
     r = s.execute("annotate_stationing", {
-        "space": "model", "path_ids": [ids[0]], "chain": True, "begin_station": 1000.0})
+        "space": "model", "lettering": "full", "path_ids": [ids[0]], "chain": True, "begin_station": 1000.0})
     assert r["ok"], r
     assert "10+00.00 to 25+18.88" in r["message"]
     assert " > ".join(ids) in r["message"]
-    assert "BC 16+00.00" in station_texts(s)
+    assert "16+00.00 BC" in station_texts(s)
 
 
 def test_start_point_at_the_far_end_runs_the_stations_from_there():
     s, lid = straight()
     r = s.execute("annotate_stationing", {
-        "space": "model", "path_ids": [lid], "start_point": [500, 0],
+        "space": "model", "lettering": "full", "path_ids": [lid], "start_point": [500, 0],
         "begin_station": "10+00", "interval": 100.0})
     assert r["ok"], r
     assert "10+00.00 to 15+00.00" in r["message"]
@@ -51,7 +51,7 @@ def test_start_point_at_the_far_end_runs_the_stations_from_there():
 def test_start_point_inside_the_path_fixes_the_station_there():
     s, lid = straight()
     r = s.execute("annotate_stationing", {
-        "space": "model", "path_ids": [lid], "start_point": [130, 0],
+        "space": "model", "lettering": "full", "path_ids": [lid], "start_point": [130, 0],
         "begin_station": 1000.0})
     assert r["ok"], r
     # nearer the start, so stations climb toward x = 500
@@ -66,7 +66,7 @@ def test_start_point_inside_the_path_fixes_the_station_there():
 def test_reverse_turns_the_stations_round_the_start_point():
     s, lid = straight()
     r = s.execute("annotate_stationing", {
-        "space": "model", "path_ids": [lid], "start_point": [130, 0],
+        "space": "model", "lettering": "full", "path_ids": [lid], "start_point": [130, 0],
         "begin_station": 1000.0, "reverse": True})
     assert r["ok"], r
     assert "6+30.00 to 11+30.00" in r["message"]
@@ -78,10 +78,10 @@ def test_reverse_turns_the_stations_round_the_start_point():
 def test_reverse_without_a_start_point_begins_at_the_last_element():
     s, ids = centerline_session()
     r = s.execute("annotate_stationing", {
-        "space": "model", "path_ids": ids, "begin_station": 0.0, "reverse": True})
+        "space": "model", "lettering": "full", "path_ids": ids, "begin_station": 0.0, "reverse": True})
     assert r["ok"], r
     # the far tangent (500 ft) comes first now
-    assert "BC 5+00.00" in station_texts(s)
+    assert "5+00.00 BC" in station_texts(s)
     assert " > ".join(ids[::-1]) in r["message"]
 
 
@@ -89,14 +89,14 @@ def test_start_point_on_the_curve_and_nearer_the_end():
     s, ids = centerline_session()
     mid = [1600 + 800 * math.cos(math.radians(-75)), 1800 + 800 * math.sin(math.radians(-75))]
     r = s.execute("annotate_stationing", {
-        "space": "model", "path_ids": [ids[0]], "chain": True, "start_point": mid,
+        "space": "model", "lettering": "full", "path_ids": [ids[0]], "chain": True, "start_point": mid,
         "begin_station": 2000.0})
     assert r["ok"], r
     # mid-curve is 809.44 ft from the first tangent's start and 709.44 from the
     # far end, so the stations run from the far end: 20+00 - 709.44 = 12+90.56
     assert "12+90.56 to 28+09.44" in r["message"]
     texts = station_texts(s)
-    assert "BC 17+90.56" in texts and "EC 22+09.44" in texts
+    assert "17+90.56 BC" in texts and "22+09.44 EC" in texts
     assert not r["warnings"]
 
 
@@ -115,7 +115,7 @@ def test_a_branch_stops_the_chain_unless_a_layer_or_a_pick_decides_it():
     ids, warnings = chain_elements(s.doc, [a])
     assert ids == [a] and "2 elements meet it" in warnings[0] and "[100.00, 0.00]" in warnings[0]
     assert chain_elements(s.doc, [a, b])[0] == [a, b]     # naming the way on
-    r = s.execute("annotate_stationing", {"space": "model", "path_ids": [a], "chain": True,
+    r = s.execute("annotate_stationing", {"space": "model", "lettering": "full", "path_ids": [a], "chain": True,
                                           "begin_station": 0.0})
     assert r["ok"] and r["warnings"] and "0+00.00 to 1+00.00" in r["message"]
 
@@ -124,14 +124,14 @@ def test_an_element_off_the_chain_is_a_fault():
     s, ids = centerline_session()
     other = s.execute("draw_line", {"space": "model", "start": [0, 500],
                                     "end": [100, 500]})["created"][0]
-    r = s.execute("annotate_stationing", {"space": "model", "path_ids": [ids[0], other],
+    r = s.execute("annotate_stationing", {"space": "model", "lettering": "full", "path_ids": [ids[0], other],
                                           "chain": True, "begin_station": 0.0})
     assert not r["ok"] and "not on the chain" in r["error"]["message"]
 
 
 def test_a_start_point_off_the_path_is_taken_at_the_nearest_point():
     s, lid = straight()
-    r = s.execute("annotate_stationing", {"space": "model", "path_ids": [lid],
+    r = s.execute("annotate_stationing", {"space": "model", "lettering": "full", "path_ids": [lid],
                                           "start_point": [200, 12], "begin_station": 500.0})
     assert r["ok"]
     assert any("12.00 from the path" in w for w in r["warnings"])
@@ -149,7 +149,7 @@ def test_chain_params_are_for_entity_chain_mode_only():
 
 def test_begin_station_text_must_be_a_station():
     s, lid = straight()
-    r = s.execute("annotate_stationing", {"space": "model", "path_ids": [lid],
+    r = s.execute("annotate_stationing", {"space": "model", "lettering": "full", "path_ids": [lid],
                                           "begin_station": "ten"})
     assert not r["ok"] and "not a station" in r["error"]["message"]
 

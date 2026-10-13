@@ -10,6 +10,7 @@ every anchored label by ``(alignment, ref, kind)``, content and position.
 """
 from __future__ import annotations
 
+import copy
 from typing import Dict, List, Optional, Tuple
 
 from roaddraft.core import geometry as geo
@@ -48,7 +49,10 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
     label_offset = float(D["label_offset_ft"])
 
     plan = stationing_plan(align, interval=float(D["stationing_interval_ft"]),
-                           tick_half=float(D["tick_half_len_ft"]), label_offset=label_offset)
+                           tick_half=float(D["tick_half_len_ft"]), label_offset=label_offset,
+                           lettering=D.get("station_lettering", "caltrans"),
+                           station_side=D.get("station_label_side"),
+                           point_offset=float(D.get("point_label_offset_ft", label_offset)))
     labels: List[dict] = []
     ticks: List[dict] = []
     for item in plan.items:
@@ -150,7 +154,8 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                        ticks=ticks, elements=elements, curve_tables=curve_tables, sheets=sheets,
                        edges=edges, dimensions=dimensions, references=references,
                        layers=list(S.get("layer_set") or dict.fromkeys(layers.values())),
-                       scope=scope, counts=counts)
+                       alignments=copy.deepcopy(brief.design["alignments"]), scope=scope,
+                       counts=counts)
 
 
 def _descriptor(label: dict) -> str:

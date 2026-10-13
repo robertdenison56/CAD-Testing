@@ -8,12 +8,13 @@ cached on either.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from roaddraft.core import geometry as geo
 from roaddraft.design.horizontal import Alignment, CurveElement
 from roaddraft.design.model import DesignModel
 from roaddraft.document.document import Document
+from roaddraft.document.references import reference_alignments
 from roaddraft.document.sheets import Sheet, Viewport
 from roaddraft.tasks.brief import GroundTruth
 from roaddraft.tasks.types import GROUPS
@@ -49,19 +50,40 @@ def truth_alignments(truth: GroundTruth) -> List[str]:
     return names
 
 
-def given_design(doc: Document, truth: GroundTruth) -> DesignModel:
-    """The part of ``doc.design`` the task gave: the truth's alignments and
-    the profiles bound to them.  An alignment the agent added is not part of
-    it, so creating one is not tampering (it just anchors nothing the truth
-    asks for); renaming, editing or deleting a given one is."""
-    names = truth_alignments(truth)
-    model = DesignModel()
+def design_sources(doc: Document, names: Sequence[str]) -> List[Tuple[str, Optional[str], Alignment, DesignModel]]:
+    """Where each of ``names`` lives: ``(name, qualified name or None,
+    alignment, design model)`` -- this document's own design first, else an
+    attached reference placed at identity whose design carries it (a sheet
+    file that references its base drawing, labelled through ``BASE:ALIGN-1``).
+    A name found nowhere is left out."""
+    out = []
+    refs = None
     for name in names:
         if name in doc.design.alignments:
-            model.alignments[name] = doc.design.alignments[name]
-    for pname, profile in doc.design.profiles.items():
-        if profile.alignment in names:
-            model.profiles[pname] = profile
+            out.append((name, None, doc.design.alignments[name], doc.design))
+            continue
+        if refs is None:
+            refs = list(reference_alignments(doc))
+        for ref, base, align, placement in refs:
+            if align.name == name and placement.is_identity:
+                out.append((name, f"{ref.name}:{name}", align, base.design))
+                break
+    return out
+
+
+def given_design(doc: Document, truth: GroundTruth) -> DesignModel:
+    """The part of the design the task gave: the truth's alignments and the
+    profiles bound to them, wherever they live (this document, or a base
+    drawing it references at identity).  An alignment the agent added is not
+    part of it, so creating one is not tampering (it just anchors nothing the
+    truth asks for); renaming, editing or deleting a given one is."""
+    names = truth_alignments(truth)
+    model = DesignModel()
+    for name, _qualified, align, design in design_sources(doc, names):
+        model.alignments[name] = align
+        for pname, profile in design.profiles.items():
+            if profile.alignment == name:
+                model.profiles[pname] = profile
     return model
 
 
@@ -148,6 +170,10 @@ class Context:
     sheets: List[SheetView] = field(default_factory=list)
     alignment_name: Optional[str] = None
     alignment: Optional[Alignment] = None
+    #: the truth's alignments by every name an anchor may use for them: the name
+    #: itself (the document's own, or the one the agent created) and the
+    #: qualified name through a reference at identity
+    aliases: Dict[str, Tuple[str, Alignment]] = field(default_factory=dict)
 
     @property
     def tol(self) -> dict:
@@ -164,6 +190,15 @@ class Context:
     def asks(self, *groups: str) -> bool:
         """Does the task ask for any of these truth groups?"""
         return any(g in self.scope for g in groups)
+
+    def truth_alignment(self, name: Optional[str]) -> Optional[Tuple[str, Alignment]]:
+        """``(truth name, alignment)`` for an anchor's alignment name -- a truth
+        alignment named directly (the document's own, or the one the agent
+        created) or through a reference at identity -- or None for any other
+        (one the agent added that the truth never asks for, or a reference
+        moved off identity).  The geometry is the truth's own when the truth
+        carries it, else the copy the name resolves to."""
+        return self.aliases.get(name) if name else None
 
     @property
     def layers(self) -> dict:
@@ -209,9 +244,22 @@ class Context:
                   title_stated=list(levels[level].get("title_fields", [])),
                   scope=frozenset(truth.scope or GROUPS))
         names = ctx.truth_names = truth_alignments(truth)
+        for name, qualified, align, _design in design_sources(doc, names):
+            if name in truth.alignments:  # the geometry the truth was computed from
+                align = Alignment.from_dict(truth.alignments[name])
+            ctx.aliases[name] = (name, align)
+            if qualified:
+                ctx.aliases[qualified] = (name, align)
         if names:
             ctx.alignment_name = names[0]
-            ctx.alignment = doc.design.alignments.get(names[0])
+            # the design the truth was computed from, when the truth carries it; the
+            # document's own copy, or its referenced base drawing's, otherwise (older
+            # truths; equal when the design is given)
+            if names[0] in truth.alignments:
+                ctx.alignment = Alignment.from_dict(truth.alignments[names[0]])
+            else:
+                found = ctx.aliases.get(names[0])
+                ctx.alignment = found[1] if found else None
         for want in truth.sheets:
             sv = SheetView(truth=want, sheet=doc.sheet_by_ref(want["name"]))
             ctx.sheets.append(sv)
@@ -258,6 +306,7 @@ class Context:
         return sv is not None and sv.visible(q)
 
 
-__all__ = ["Context", "SheetView", "ViewportView", "given_design", "truth_alignments",
+__all__ = ["Context", "SheetView", "ViewportView", "given_design", "design_sources",
+           "truth_alignments",
            "alignment_samples", "segment_samples", "rect_contains", "rect_inside",
            "rect_intersection"]

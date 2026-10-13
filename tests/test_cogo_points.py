@@ -145,7 +145,7 @@ def test_draft_row_data_passes_with_one_label_segments_call(tmp_path):
     probe = tasks.get("row-data")
     doc = fixture.start_document(tmp_path, probe.start)
     base, s = Session.load(doc, out_dir=tmp_path), Session.load(doc, out_dir=tmp_path)
-    shown = s.query("find_entities", {"layer": "V-ROW", "visible_on": "C-102", "limit": 100})
+    shown = s.query("find_entities", {"layer": "rd_RIGHT-OF-WAY", "visible_on": "C-102", "limit": 100})
     right = [row["id"] for row in shown["entities"]
              if s.query("xy_to_station", {"point": row["point"],
                                           "alignment": "DESIGN:SR-100"})["offset"] > 0]

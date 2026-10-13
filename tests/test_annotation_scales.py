@@ -57,8 +57,9 @@ def test_new_document_defaults_scale_off_and_legacy_docs_get_settings():
         anno.DEFAULT_SCALES)
     assert doc.settings["annotation_paper"] == anno.DEFAULT_PAPER
     assert anno.model_sizes(doc) is None
-    assert anno.size_defaults(doc) == {"text_height": 8.0, "tick_half_len": 10.0,
-                                       "label_offset": 16.0}
+    assert anno.size_defaults(doc) == anno.FIXED_MODEL_SIZES == {
+        "text_height": 8.0, "tick_half_len": 3.5, "label_offset": 6.0, "point_offset": 22.5,
+        "bearing_offset": 3.0, "bubble_offset": 40.0}
     legacy = doc.to_dict()
     legacy["settings"] = {"current_layer": "0", "current_text_style": "STANDARD"}
     back = Document.from_dict(legacy)
@@ -95,7 +96,7 @@ def test_scale_off_keeps_fixed_feet_defaults_and_stamps_nothing():
     r = s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1"})
     tick, label = (s.doc.model_entities[i] for i in r["created"][:2])
     assert label.height == 8.0 and label.annotative is None and tick.annotative is None
-    assert math.hypot(tick.end[0] - tick.start[0], tick.end[1] - tick.start[1]) == pytest.approx(20)
+    assert math.hypot(tick.end[0] - tick.start[0], tick.end[1] - tick.start[1]) == pytest.approx(7)
     r = s.execute("place_label", {"space": "model", "anchor": "PC-1"})
     assert s.doc.model_entities[r["created"][0]].height == 8.0
     assert s.doc.model_entities[r["created"][0]].annotative is None
@@ -105,17 +106,17 @@ def test_scale_on_sizes_from_paper_defaults_and_stamps_annotative():
     s = session_A()
     r = s.execute("set_annotation_scale", {"scale": "1\"=50'"})
     assert r["ok"], r
-    assert "text 5 ft, ticks 10 ft, label offset 16 ft" in r["message"]
+    assert "text 5 ft, ticks 3.5 ft, label offset 6 ft" in r["message"]
     assert r["modified"] == ["settings"] and s.doc.settings["annotation_scale"] == 50.0
     r = s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1"})
     tick, label = (s.doc.model_entities[i] for i in r["created"][:2])
-    assert label.height == 5.0 and near(label.position, [1000.0, 1016.0])
-    assert label.annotative == {"scale": 50.0, "height_in": 0.1, "offset_in": 0.32}
-    assert tick.annotative == {"scale": 50.0, "half_len_in": 0.2}
+    assert label.height == 5.0 and near(label.position, [1000.0, 994.0])
+    assert label.annotative == {"scale": 50.0, "height_in": 0.1, "offset_in": 0.12}
+    assert tick.annotative == {"scale": 50.0, "half_len_in": 0.07}
     r = s.execute("place_label", {"space": "model", "anchor": "PC-1"})
-    pc = s.doc.model_entities[r["created"][0]]
-    assert pc.height == 5.0 and near(pc.position, [1600.0, 984.0])
-    assert pc.annotative == {"scale": 50.0, "height_in": 0.1, "offset_in": 0.32}
+    pc = s.doc.model_entities[r["created"][0]]  # 0.45 in left of the line at 1" = 50'
+    assert pc.height == 5.0 and near(pc.position, [1600.0, 1022.5])
+    assert pc.annotative == {"scale": 50.0, "height_in": 0.1, "offset_in": 0.45}
     # explicit feet still win, and are recorded at their paper equivalent
     r = s.execute("place_label", {"space": "model", "anchor": "PT-1", "height": 7.5,
                                   "label_offset": 25})
@@ -130,8 +131,8 @@ def test_scale_on_sizes_from_paper_defaults_and_stamps_annotative():
     r = s.execute("place_text", {"space": "C-101", "position": [1, 1], "content": "N",
                                  "height": 0.1})
     assert s.doc.sheets["SH-001"].entities[r["created"][0]].annotative is None
-    dry = s.query("resolve_anchor", {"anchor": "MC-1"})
-    assert dry["height"] == 5.0 and dry["anchor"]["label_offset"] == 16.0
+    dry = s.query("resolve_anchor", {"anchor": "MC-1"})  # the bubble: 0.80 in = 40 ft at 1" = 50'
+    assert dry["height"] == 5.0 and dry["anchor"]["label_offset"] == 40.0
 
 
 def test_entity_mode_stationing_honours_the_scale():
@@ -141,9 +142,9 @@ def test_entity_mode_stationing_honours_the_scale():
     r = s.execute("annotate_stationing", {"space": "model", "path_ids": r["created"],
                                           "begin_station": 0})
     tick, label = (s.doc.model_entities[i] for i in r["created"][:2])
-    assert label.height == 10.0 and near(label.position, [0.0, 32.0])
-    assert near(tick.start, [0.0, -20.0]) and near(tick.end, [0.0, 20.0])
-    assert label.annotative["offset_in"] == pytest.approx(0.32)
+    assert label.height == 10.0 and near(label.position, [0.0, -12.0])  # below the line
+    assert near(tick.start, [0.0, -7.0]) and near(tick.end, [0.0, 7.0])
+    assert label.annotative["offset_in"] == pytest.approx(0.12)
 
 
 def test_negative_label_offset_letters_stations_right_and_the_file_reopens(tmp_path):
@@ -162,8 +163,8 @@ def test_negative_label_offset_letters_stations_right_and_the_file_reopens(tmp_p
     assert near(sta.position, [1000.0, 984.0]) and sta.valign == "top"
     assert sta.anchor["side"] == "right" and sta.anchor["label_offset"] == 16.0
     assert sta.annotative == {"scale": 50.0, "height_in": 0.1, "offset_in": 0.32}
-    assert near(bc.position, [1600.0, 1016.0]) and bc.valign == "bottom"
-    assert bc.anchor["side"] == "left" and bc.annotative["offset_in"] == pytest.approx(0.32)
+    assert near(bc.position, [1600.0, 1022.5]) and bc.valign == "middle"
+    assert bc.anchor["side"] == "left" and bc.annotative["offset_in"] == pytest.approx(0.45)
 
     path = s.query("save_document", {"path": str(tmp_path / "right.rdraft")})["path"]
     again = Session.load(path, out_dir=str(tmp_path))
@@ -186,10 +187,12 @@ def test_entity_mode_negative_label_offset_swaps_the_sides():
                                           "begin_station": 0, "label_offset": -10})
     texts = [s.doc.model_entities[i] for i in r["created"]
              if isinstance(s.doc.model_entities[i], Text)]
-    sta = next(t for t in texts if t.content == "0+00.00")
-    bc = next(t for t in texts if t.content.startswith("BC"))
+    sta = next(t for t in texts if t.content == "0")
+    bc = next(t for t in texts if t.content.endswith("BC"))
     assert near(sta.position, [0.0, -10.0]) and sta.valign == "top"
-    assert near(bc.position, [500.0, 10.0]) and bc.valign == "bottom"
+    # the curve point sits at its own offset, square to the line on the left
+    assert near(bc.position, [500.0, anno.size_defaults(s.doc)["point_offset"]])
+    assert bc.valign == "middle" and bc.rotation_deg == 90.0
     assert sta.annotative["offset_in"] == pytest.approx(0.2)
     assert Document.from_dict(s.doc.to_dict()).to_dict() == s.doc.to_dict()
 
@@ -247,16 +250,16 @@ def test_set_scale_rescales_text_ticks_and_replaces_anchored_labels():
     assert "annotation scale set to 1\"=100' (was 1\"=50')" in r["message"]
     assert f"{n_annotative} annotative entities rescaled" in r["message"]
     assert "settings" in r["modified"] and sta.id in r["modified"] and plain.id not in r["modified"]
-    # station label: height doubled, re-placed 32 ft off the line, anchor updated
-    assert sta.height == 10.0 and near(sta.position, [1000.0, 1032.0])
-    assert sta.annotative == {"scale": 100.0, "height_in": 0.1, "offset_in": 0.32}
-    assert sta.anchor["label_offset"] == 32.0
-    # tick: 20 ft half-length about the same midpoint
-    assert near(tick.start, [1000.0, 980.0]) and near(tick.end, [1000.0, 1020.0])
-    assert tick.annotative == {"scale": 100.0, "half_len_in": 0.2}
-    # bearing on T-2 re-placed through the design at 32 ft
+    # station label: height doubled, re-placed 12 ft under the line, anchor updated
+    assert sta.height == 10.0 and near(sta.position, [1000.0, 988.0])
+    assert sta.annotative == {"scale": 100.0, "height_in": 0.1, "offset_in": 0.12}
+    assert sta.anchor["label_offset"] == 12.0
+    # tick: 7 ft half-length about the same midpoint (a 14 ft tick at 1" = 100')
+    assert near(tick.start, [1000.0, 993.0]) and near(tick.end, [1000.0, 1007.0])
+    assert tick.annotative == {"scale": 100.0, "half_len_in": 0.07}
+    # bearing on T-2 re-placed through the design at 6 ft
     A = alignment_A()
-    spec = compile_label(A, resolve_anchor(A, parse_anchor("T-2")), "bearing", label_offset=32.0)
+    spec = compile_label(A, resolve_anchor(A, parse_anchor("T-2")), "bearing", label_offset=6.0)
     assert near(bearing.position, spec.position) and bearing.height == 10.0
     assert bearing.rotation_deg == pytest.approx(30.0, abs=1e-6)
     # plain annotative text keeps its insertion point, doubles its height
@@ -266,8 +269,8 @@ def test_set_scale_rescales_text_ticks_and_replaces_anchored_labels():
     assert plain.annotative is None and plain.end == [10.0, 0.0]
     # back to 50: everything returns
     s.execute("set_annotation_scale", {"scale": "1\"=50'"})
-    assert sta.height == 5.0 and near(sta.position, [1000.0, 1016.0]) and note.height == 6.0
-    assert near(tick.start, [1000.0, 990.0])
+    assert sta.height == 5.0 and near(sta.position, [1000.0, 994.0]) and note.height == 6.0
+    assert near(tick.start, [1000.0, 996.5])
 
 
 def test_rescale_false_and_off_leave_entities_alone():
@@ -300,12 +303,12 @@ def test_adopt_stamps_legacy_annotation():
     note = s.doc.model_entities[r["created"][0]]
     r = s.execute("set_annotation_scale", {"scale": 50, "adopt": True})
     assert r["ok"] and "adopted" in r["message"]
-    assert sta.annotative == {"scale": 50.0, "height_in": 0.16, "offset_in": 0.32}
-    assert tick.annotative == {"scale": 50.0, "half_len_in": 0.2}
+    assert sta.annotative == {"scale": 50.0, "height_in": 0.16, "offset_in": 0.12}
+    assert tick.annotative == {"scale": 50.0, "half_len_in": 0.07}
     assert note.annotative == {"scale": 50.0, "height_in": 0.08}
     s.execute("set_annotation_scale", {"scale": 25})
-    assert sta.height == 4.0 and near(sta.position, [1000.0, 1008.0]) and note.height == 2.0
-    assert near(tick.start, [1000.0, 995.0])
+    assert sta.height == 4.0 and near(sta.position, [1000.0, 997.0]) and note.height == 2.0
+    assert near(tick.start, [1000.0, 998.25])
 
 
 def test_unknown_scale_is_added_to_the_list_and_viewport_mismatch_warns():
@@ -350,8 +353,9 @@ def test_add_delete_scale_and_defaults():
     assert not r["ok"] and "no annotation scale" in r["error"]["message"]
     r = s.execute("set_annotation_defaults", {"text_height_in": 0.12, "label_offset_in": 0.4})
     assert r["ok"] and "text_height_in = 0.12 in (9 ft at 1\"=75')" in r["message"]
-    assert anno.model_sizes(s.doc) == {"text_height": 9.0, "tick_half_len": 15.0,
-                                       "label_offset": 30.0}
+    assert anno.model_sizes(s.doc) == pytest.approx({
+        "text_height": 9.0, "tick_half_len": 5.25, "label_offset": 30.0, "point_offset": 33.75,
+        "bearing_offset": 4.5, "bubble_offset": 60.0})
     r = s.execute("set_annotation_defaults", {})
     assert not r["ok"]
     r = s.execute("set_annotation_defaults", {"tick_half_len_in": -1})
@@ -397,7 +401,9 @@ def test_list_annotation_scales_query_and_summary():
     s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1"})
     r = s.query("list_annotation_scales")
     assert r["current"] == 50.0 and r["current_name"] == "1\"=50'"
-    assert r["model_sizes"] == {"text_height": 5.0, "tick_half_len": 10.0, "label_offset": 16.0}
+    assert r["model_sizes"] == pytest.approx({
+        "text_height": 5.0, "tick_half_len": 3.5, "label_offset": 6.0, "point_offset": 22.5,
+        "bearing_offset": 3.0, "bubble_offset": 40.0})
     assert r["annotative_entities"] == 34
     assert s.query("get_document_state")["summary"]["annotation_scale"] == 50.0
 

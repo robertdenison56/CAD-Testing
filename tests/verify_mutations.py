@@ -261,9 +261,10 @@ def _free_bc_text(b: Base):
 
 
 def _nudge_bearing(text: str) -> str:
-    """The same bearing a minute off."""
+    """The same bearing a minute off, its length kept."""
     from roaddraft.design.angles import format_bearing, parse_bearing
-    return format_bearing(parse_bearing(text) + 1.0 / 60.0)
+    bearing, _, length = text.rpartition(" ")
+    return f"{format_bearing(parse_bearing(bearing) + 1.0 / 60.0)} {length}"
 
 
 def _wrong_equation(b: Base):
@@ -282,7 +283,7 @@ def _duplicate_station(b: Base):
 def _short_table(b: Base):
     t = b.table()
     _delete(b, [t.id])
-    cols = [c for c in b.D["curve_table_columns"] if c != "chord_bearing"]
+    cols = [c for c in b.D["curve_table_columns"] if c != "tangent"]
     b.ex("place_curve_table", {"space": SHEET, "alignment": b.A, "position": list(t.position),
                                "columns": cols, "text_height": t.text_height, "layer": t.layer})
 
@@ -317,9 +318,9 @@ def d107(minus: int = 1) -> Callable[[Base], float]:
 MUTATIONS: List[Mutation] = [
     Mutation("delete the EC-2 label", lambda b: _delete(b, [b.label("PT-2", "pt").id]),
              {"D1-04": frac("D1-04")}, {"D1-04": {"missing"}}),
-    Mutation("a station label reads 18+00, not 18+00.00",
+    Mutation("a station label reads 18+00, not the Caltrans digit",
              lambda b: _set(b, _first_station(b).id,
-                            content=_first_station(b).content.replace(".00", "")),
+                            content=_first_station(b).anchor["ref"].replace(".00", "")),
              {"D1-03": frac("D1-03")}, {"D1-03": {"wrong_value"}}, hard_fail=True),
     Mutation("drag the BC-1 label 5 ft",
              lambda b: b.ex("move_entities", {"ids": [b.label("PC-1", "pc").id],
@@ -393,7 +394,7 @@ MUTATIONS: List[Mutation] = [
              {"D1-03": frac("D1-03")}, {"D1-03": {"wrong_value"}}, hard_fail=True),
     Mutation("a station label placed twice", _duplicate_station,
              {"D1-08": 0.75}, {"D1-03": {"duplicate"}, "D1-08": {"overlap"}}),
-    Mutation("curve table without its chord bearing column", _short_table,
+    Mutation("curve table without its T column", _short_table,
              {"D1-06": 0.0}, {"D1-06": {"wrong_field"}}),
     Mutation("the sheet deleted", lambda b: b.ex("delete_sheet", {"sheet": SHEET}),
              {"D1-00": 0.0, "D1-03": 0.0, "D1-04": 0.0, "D1-05": 0.0, "D1-06": 0.0,

@@ -79,7 +79,11 @@ ANCHOR = {"type": ["string", "number", "object"],
                          "PT-n"}
 KIND = {"enum": list(LABEL_KINDS)}
 ROTATION = {"enum": ["along", "perpendicular", "horizontal"]}
-SIDE = {"enum": ["left", "right"]}
+SIDE = {"enum": ["left", "right", "above", "below"],
+        "description": "left/right of the stationing direction, or above/below on the paper "
+                       "(resolved to the line's left or right and recorded so); default by "
+                       "kind: station numbers below, bearings above, curve points and "
+                       "equations left, the curve bubble right"}
 
 # --- alignment legs: a layout given by bearings and distances ---------------
 
@@ -177,14 +181,27 @@ DESIGN_SCHEMAS = {
                                     "station_range, only the pieces inside it"}},
         ["offsets"]),
     "place_label": obj(
-        {"space": SPACE, "alignment": NSTR, "anchor": ANCHOR, "kind": KIND,
+        {"space": SPACE,
+         "alignment": {**NSTR, "description": "this document's alignment, or a referenced "
+                                               "one as 'BASE:ALIGN-1' (read through the "
+                                               "attachment, which must sit at identity)"},
+         "anchor": ANCHOR, "kind": KIND,
          "content": {**STR, "description": "explicit text; omit to auto-generate from "
-                                           "design data (recorded either way)"},
+                                           "design data the Caltrans way (recorded either "
+                                           "way): '24+05.27 BC', 'N 71°33\'54\" E 1240.36\'', "
+                                           "the curve number '1' in a bubble with a leader"},
          "side": SIDE,
          "label_offset": {"type": "number", "minimum": 0,
                           "description": "distance from the anchor point, feet in model / "
-                                         "inches on sheets; default 16 ft / 0.32 in"},
-         "rotation": ROTATION,
+                                         "inches on sheets; default by kind, sized for "
+                                         "1\" = 50' in model: stations 6 ft / 0.12 in, "
+                                         "bearings 3 ft / 0.06 in, curve points and "
+                                         "equations 22.5 ft / 0.45 in, the curve bubble "
+                                         "40 ft / 0.80 in"},
+         "rotation": {**ROTATION, "description": "default by kind: curve points and "
+                                                  "equations perpendicular (reading bottom "
+                                                  "to top), the curve number horizontal, "
+                                                  "the rest along the line"},
          "height": {**POS, "description": "text height, feet in model / inches on sheets; "
                                           "default 8 ft / 0.10 in"},
          "style": NSTR, "halign": HALIGN, "valign": VALIGN, "layer": NSTR,
@@ -194,13 +211,24 @@ DESIGN_SCHEMAS = {
                                              "whose frame contains the point"}},
         ["space", "anchor"]),
     "place_curve_table": obj(
-        {"space": SPACE, "alignment": NSTR,
+        {"space": SPACE,
+         "alignment": {**NSTR, "description": "this document's alignment, or a referenced "
+                                               "one as 'BASE:ALIGN-1'"},
          "position": {**POINT, "description": "top-left corner, paper inches"},
-         "curves": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+         "curves": {"type": "array", "items": {"type": "integer", "minimum": 1},
+                    "description": "the curves this sheet shows, by the alignment's own curve "
+                                   "index (C-1, C-2 ...); default all"},
+         "first_curve_number": {"type": "integer", "minimum": 1,
+                                "description": "the plan's number for the alignment's first "
+                                               "curve (default 1): curve numbers run along "
+                                               "the line and never restart on the next sheet, "
+                                               "so a design holding a later part of the line "
+                                               "numbers on from the sheet before"},
          "columns": {"type": "array", "items": NSTR, "minItems": 1,
                      "description": "keys: curve, pi_sta, pc_sta, pt_sta, delta, direction, "
                                     "radius, tangent, length, external, mid_ordinate, "
-                                    "chord, chord_bearing"},
+                                    "chord, chord_bearing; default the Caltrans table: "
+                                    "curve, radius, delta, tangent, length (No., R, Δ, T, L)"},
          "title": STR, "text_height": POS, "layer": NSTR, "style": NSTR, "color": COLOR},
         ["space", "position"]),
     "import_landxml": obj(
@@ -222,8 +250,8 @@ DESIGN_EXAMPLES = {
     "create_profile": {"name": "PROF-1", "alignment": "ALIGN-1",
                        "pvis": [[1000, 100], [2000, 120, 400], [3000, 90]]},
     "delete_profile": {"name": "PROF-1"},
-    "draw_alignment": {"alignment": "ALIGN-1", "layer": "V-ALIGN-CNTR"},
-    "draw_offset": {"alignment": "ALIGN-1", "offsets": [-12, 12], "layer": "V-ROAD-EOP"},
+    "draw_alignment": {"alignment": "ALIGN-1", "layer": "align_MAIN"},
+    "draw_offset": {"alignment": "ALIGN-1", "offsets": [-12, 12], "layer": "rd_EP"},
     "place_label": {"space": "model", "alignment": "ALIGN-1", "anchor": "PC-1"},
     "place_curve_table": {"space": "C-101", "alignment": "ALIGN-1", "position": [24.0, 8.5]},
     "import_landxml": {"path": "survey/alignments.xml"},

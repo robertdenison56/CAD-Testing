@@ -1,7 +1,7 @@
 """Annotation scales: AutoCAD's annotation scale / Civil 3D's drawing scale.
 
-Annotation is designed in *paper* units (a 0.10 in label, a 0.20 in tick,
-a 0.32 in label offset) and drafted in *model* units. The document keeps a
+Annotation is designed in *paper* units (a 0.10 in label, a 0.14 in tick,
+a 0.12 in station-number offset) and drafted in *model* units. The document keeps a
 list of named plot scales (``1"=50'`` = 50 feet per inch), a current
 annotation scale, and the paper-unit defaults; annotation commands convert
 paper sizes to feet through the current scale when a caller omits explicit
@@ -10,8 +10,9 @@ sizes, and stamp the entities they create with an ``annotative`` record
 ``set_annotation_scale`` can re-size them for another plot scale.
 
 With the annotation scale **off** (``settings.annotation_scale`` = null, the
-default) the engine's fixed feet defaults apply unchanged (8 ft text, 10 ft
-ticks, 16 ft offsets) and nothing is stamped.
+default) the engine's fixed feet defaults apply unchanged (the paper defaults
+at 1" = 50': 8 ft text, a 7 ft tick, 6 ft station offsets) and nothing is
+stamped.
 
 This module is pure data helpers; it imports nothing from commands/api/web.
 """
@@ -21,12 +22,28 @@ import re
 from typing import Dict, List, Optional
 
 DEFAULT_SCALES = (10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 100.0, 200.0, 500.0)  # feet per inch
-DEFAULT_PAPER = {"text_height_in": 0.10, "tick_half_len_in": 0.20, "label_offset_in": 0.32}
+# the PPM's layout sizes (ppm-text p. 2-8: a 7.0 ft tick at 1" = 50', the station
+# number half a text height under it; curve points, bearings and the curve bubble
+# as design/labels.py places them)
+DEFAULT_PAPER = {"text_height_in": 0.10, "tick_half_len_in": 0.07, "label_offset_in": 0.12,
+                 "point_offset_in": 0.45, "bearing_offset_in": 0.06, "bubble_offset_in": 0.80}
 PAPER_KEYS = tuple(DEFAULT_PAPER)
-# engine defaults in feet when the annotation scale is off
-FIXED_MODEL_SIZES = {"text_height": 8.0, "tick_half_len": 10.0, "label_offset": 16.0}
+# engine defaults in feet when the annotation scale is off (the paper defaults x 50)
+FIXED_MODEL_SIZES = {"text_height": 8.0, "tick_half_len": 3.5, "label_offset": 6.0,
+                     "point_offset": 22.5, "bearing_offset": 3.0, "bubble_offset": 40.0}
 _PAPER_TO_MODEL = {"text_height_in": "text_height", "tick_half_len_in": "tick_half_len",
-                   "label_offset_in": "label_offset"}
+                   "label_offset_in": "label_offset", "point_offset_in": "point_offset",
+                   "bearing_offset_in": "bearing_offset", "bubble_offset_in": "bubble_offset"}
+MODEL_KEYS = tuple(_PAPER_TO_MODEL[k] for k in PAPER_KEYS)
+#: which size each label kind's offset defaults to
+OFFSET_KEY = {"station": "label_offset", "bearing": "bearing_offset", "pc": "point_offset",
+              "pt": "point_offset", "pcc": "point_offset", "prc": "point_offset",
+              "equation": "point_offset", "mc": "bubble_offset"}
+
+
+def offset_for(sizes: Dict[str, float], kind: str) -> float:
+    """The offset a label of ``kind`` takes from a sizes table."""
+    return float(sizes[OFFSET_KEY.get(kind, "label_offset")])
 
 _EQ_RE = re.compile(r"""^\s*1\s*(?:"|''|in(?:ch)?)?\s*=\s*(\d+(?:\.\d+)?)\s*(?:'|ft|feet)?\s*$""",
                     re.IGNORECASE)
@@ -109,8 +126,9 @@ def paper_defaults(doc) -> Dict[str, float]:
 
 
 def model_sizes(doc) -> Optional[Dict[str, float]]:
-    """Paper defaults × the current scale as model feet
-    (``text_height``, ``tick_half_len``, ``label_offset``), or None when off."""
+    """Paper defaults × the current scale as model feet (``text_height``,
+    ``tick_half_len``, ``label_offset``, ``point_offset``, ``bearing_offset``,
+    ``bubble_offset``), or None when off."""
     scale = current_scale(doc)
     if scale is None:
         return None
@@ -143,7 +161,8 @@ def tick_record(doc, half_len_ft: float) -> Optional[dict]:
     return {"scale": scale, "half_len_in": float(half_len_ft) / scale}
 
 
-__all__ = ["DEFAULT_SCALES", "DEFAULT_PAPER", "PAPER_KEYS", "FIXED_MODEL_SIZES", "format_scale",
+__all__ = ["DEFAULT_SCALES", "DEFAULT_PAPER", "PAPER_KEYS", "MODEL_KEYS", "OFFSET_KEY", "offset_for",
+           "FIXED_MODEL_SIZES", "format_scale",
            "parse_scale", "default_scale_list", "default_settings", "current_scale",
            "scale_list", "scale_name", "paper_defaults", "model_sizes", "size_defaults",
            "text_record", "tick_record"]

@@ -432,7 +432,24 @@ SCHEMAS = {
                                   "unless path_ids names the way on"},
          "alignment": {**NSTR, "description": "design-model alignment name: true "
                                               "stations, equations, and anchored "
-                                              "output (alternative to path_ids)"},
+                                              "output (alternative to path_ids); a "
+                                              "referenced one as 'BASE:ALIGN-1'"},
+         "lettering": {"enum": ["caltrans", "full"],
+                       "description": "alignment mode: 'caltrans' (default) letters the "
+                                      "whole station number at each 500 ft and the ones "
+                                      "digit elsewhere (30, 1, 2, ... 35); 'full' letters "
+                                      "every station 26+00.00"},
+         "station_side": {"enum": ["below", "above", "left", "right"],
+                          "description": "alignment mode: where the station numbers go; "
+                                         "default below the line"},
+         "point_side": {"enum": ["left", "right", "above", "below"],
+                        "description": "alignment mode: where the BC/EC and equation "
+                                       "lettering goes, square to the line and reading "
+                                       "bottom to top; default left"},
+         "point_label_offset": {**POS, "description": "alignment mode: BC/EC and equation "
+                                                      "distance from the line (default "
+                                                      "22.5 ft, or the annotation scale x "
+                                                      "0.45 in)"},
          "begin_station": {**STATION, "description": "entity-chain mode: the station "
                                                      "(feet, or '15+90.29') at the "
                                                      "start of the first element, or "
@@ -453,15 +470,17 @@ SCHEMAS = {
                                               "equations (default true)"},
          "interval": {**POS, "description": "tick spacing in feet (default 100)"},
          "tick_half_len": {**POS, "description": "tick half-length each side of "
-                                                 "the path (default 10 ft, or the "
-                                                 "annotation scale x 0.20 in)"},
+                                                 "the path (default 3.5 ft, a 7 ft tick "
+                                                 "at 1\" = 50', or the annotation scale "
+                                                 "x 0.07 in)"},
          "text_height": {**POS, "description": "label height (default 8 ft, or the "
                                                "annotation scale x 0.10 in)"},
-         "label_offset": {**NUM, "description": "label distance from the path: "
-                                                "stations left of it, BC/EC right "
-                                                "(default 16 ft, or the annotation "
-                                                "scale x 0.32 in); negative swaps the "
-                                                "sides, stations on the right"},
+         "label_offset": {**NUM, "description": "station number distance from the "
+                                                "path, below it (default 6 ft, or the "
+                                                "annotation scale x 0.12 in: half a "
+                                                "text height under the tick); negative "
+                                                "is the older way of asking for "
+                                                "stations on the right, BC/EC left"},
          "layer": {**NSTR, "description": "layer for ticks; default current"},
          "label_layer": {**NSTR, "description": "layer for labels; default same "
                                                 "as ticks"},
@@ -555,10 +574,10 @@ SCHEMAS = {
 EXAMPLES = {
     "set_meta": {"updates": {"project_name": "SR 100 Resurfacing",
                              "description": "Demo project"}},
-    "create_layer": {"name": "V-ALIGN-CNTR", "color": "red", "linetype": "center",
+    "create_layer": {"name": "align_MAIN", "color": "black", "linetype": "continuous",
                      "lineweight_mm": 0.35, "description": "Roadway centerline"},
-    "modify_layer": {"name": "V-ALIGN-CNTR", "changes": {"color": "blue"}},
-    "set_current_layer": {"name": "V-ALIGN-CNTR"},
+    "modify_layer": {"name": "align_MAIN", "changes": {"color": "blue"}},
+    "set_current_layer": {"name": "align_MAIN"},
     "create_text_style": {"name": "ROMANS", "font": "DejaVu Sans",
                           "width_factor": 0.9, "default_height": 0.12},
     "define_block": {"name": "MONUMENT", "base_point": [0, 0], "entities": [

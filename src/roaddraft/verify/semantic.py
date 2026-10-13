@@ -20,7 +20,10 @@ _STATION = r"(-?\d+\s*\+\s*\d+(?:\.\d*)?)"
 _STA_RE = re.compile(r"^(?:STA\.?\s*)?" + _STATION + r"$", re.I)
 _POINT_WORDS = {"pc": ("BC", "PC"), "pt": ("EC", "PT"), "pcc": ("PCC",), "prc": ("PRC",),
                 "pi": ("PI",)}
-_MC_RE = re.compile(r"^C(?:URVE)?\s*(?:NO\.?)?\s*[-#]?\s*(\d+)$", re.I)
+#: a curve number: bare (the PPM's bubble), or C-1, C1, CURVE 1, CURVE NO. 1
+_MC_RE = re.compile(r"^(?:C(?:URVE)?\s*(?:NO\.?)?\s*[-#]?\s*)?(\d+)$", re.I)
+#: a bearing with an optional length after it: N 71°33'54\" E 1240.36'
+_BEARING_LENGTH_RE = re.compile(r"^(.*?[NS].*?[EW])\s*([+-]?\d+(?:\.\d*)?)?\s*(?:'|FT\.?|FEET)?$", re.I)
 _EQ_RE = re.compile(r"^(?:STA\.?\s*)?" + _STATION + r"\s*(?:BK|BACK)\.?\s*=\s*(?:STA\.?\s*)?"
                     + _STATION + r"\s*(?:AH|AHEAD)\.?$", re.I)
 _NUMBER_RE = re.compile(r"^([+-]?\d+(?:\.\d*)?|\.\d+)\s*(?:'|FT\.?|FEET)?$", re.I)
@@ -46,10 +49,25 @@ def _angle_close(a: float, b: float) -> bool:
 
 
 def _bearing(text: str) -> Optional[float]:
+    return _bearing_length(text)[0]
+
+
+def _bearing_length(text: str):
+    """``(azimuth, length)`` of a tangent's lettering: the bearing, with the
+    length the PPM sets after it or none."""
+    t = normalize(text)
     try:
-        return parse_bearing(normalize(text))
+        return parse_bearing(t), None
     except ValueError:
-        return None
+        pass
+    m = _BEARING_LENGTH_RE.match(t)
+    if not m:
+        return None, None
+    try:
+        az = parse_bearing(m.group(1).strip())
+    except ValueError:
+        return None, None
+    return az, (float(m.group(2)) if m.group(2) else None)
 
 
 def _dms(text: str) -> Optional[float]:
@@ -64,6 +82,21 @@ def _number(text: str) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
+def _point_label(text: str, words) -> Optional[float]:
+    """The station a curve-point label gives when its word is one of ``words``
+    (first or last), else None."""
+    parts = text.split()
+    if len(parts) < 2:
+        return None
+    if parts[0].upper() in words:
+        rest = " ".join(parts[1:])
+    elif parts[-1].upper() in words:
+        rest = " ".join(parts[:-1])
+    else:
+        return None
+    return station(rest)
+
+
 def same_label(kind: str, actual: str, expected: str) -> bool:
     """True when ``actual`` says what ``expected`` says, for a label of ``kind``."""
     a, e = normalize(actual), normalize(expected)
@@ -73,18 +106,19 @@ def same_label(kind: str, actual: str, expected: str) -> bool:
         x, y = station(a), station(e)
         return x is not None and y is not None and abs(x - y) <= STATION_TOL
     if kind in _POINT_WORDS:
-        words = _POINT_WORDS[kind]
-        pa, pe = a.split(" ", 1), e.split(" ", 1)
-        if len(pa) != 2 or len(pe) != 2 or pa[0].upper() not in words:
-            return False
-        x, y = station(pa[1]), station(pe[1])
-        return x is not None and y is not None and abs(x - y) <= STATION_TOL
+        # the word before the station (BC 24+05.27) or after it, as the PPM
+        # letters a layout (24+05.27 BC); either way it must be the right word
+        pa, pe = _point_label(a, _POINT_WORDS[kind]), _point_label(e, _POINT_WORDS[kind])
+        return (pa is not None and pe is not None and abs(pa - pe) <= STATION_TOL)
     if kind == "mc":
         ma, me = _MC_RE.match(a), _MC_RE.match(e)
         return bool(ma and me and int(ma.group(1)) == int(me.group(1)))
     if kind == "bearing":
-        x, y = _bearing(a), _bearing(e)
-        return x is not None and y is not None and _angle_close(x, y)
+        # the bearing must agree, and the length too when the expected has one
+        (x, lx), (y, ly) = _bearing_length(a), _bearing_length(e)
+        if x is None or y is None or not _angle_close(x, y):
+            return False
+        return ly is None or (lx is not None and abs(lx - ly) <= LENGTH_TOL)
     if kind == "equation":
         ma, me = _EQ_RE.match(a), _EQ_RE.match(e)
         if not (ma and me):

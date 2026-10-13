@@ -28,11 +28,11 @@ SHEET = "L-2"
 REF = "DESIGN"                       # the design model, as attached here
 
 LAYERS = [
-    ("S-ANNO-NOTE", 0.25, "Sheet notes and place names"),
-    ("S-ANNO-CALL", 0.25, "Station-and-offset callouts"),
-    ("S-ANNO-MTCH", 0.50, "Match lines"),
-    ("S-ANNO-CURV", 0.25, "Curve number bubbles and the curve data table"),
-    ("S-ANNO-SYMB", 0.25, "North arrow and direction of travel"),
+    ("pp_LEGEND-anno", 0.25, "Sheet notes and place names"),
+    ("rd_LAYOUT-NOTE-anno", 0.25, "Station-and-offset callouts"),
+    ("border_INSIDE-BORDER-anno", 0.50, "Match lines"),
+    ("align_CURVE-DATA", 0.25, "Curve number bubbles and the curve data table"),
+    ("pp_PRESENTATION", 0.25, "North arrow and direction of travel"),
 ]
 
 
@@ -124,41 +124,41 @@ def build(out_dir, quiet=False):
     for x, y, h, content in C.NOTES:
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "halign": "left", "valign": "bottom",
-                           "layer": "S-ANNO-NOTE"})
+                           "layer": "pp_LEGEND-anno"})
     for x, y, h, content in C.PLACE_NAMES:
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "halign": "left", "valign": "bottom",
-                           "layer": "S-ANNO-NOTE"})
+                           "layer": "pp_LEGEND-anno"})
     for x, y, h, rot, content in C.FEATURE_NAMES:
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "rotation_deg": rot, "halign": "left",
-                           "valign": "bottom", "layer": "S-ANNO-NOTE"})
+                           "valign": "bottom", "layer": "pp_LEGEND-anno"})
     for x, y, h, content in C.ROAD_NAMES:
         station = ask("xy_to_station", {"alignment": f"{REF}:{G.ALIGNMENT}",
                                         "point": under(x, y)})
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "rotation_deg": road_angle(station["station"]),
                            "halign": "left", "valign": "bottom",
-                           "layer": "S-ANNO-NOTE"})
+                           "layer": "pp_LEGEND-anno"})
     for x, y, h, content in C.CATCH_LABELS:
         station = ask("xy_to_station", {"alignment": f"{REF}:{G.ALIGNMENT}",
                                         "point": under(x, y)})
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "rotation_deg": road_angle(station["station"]),
                            "halign": "left", "valign": "bottom",
-                           "layer": "S-ANNO-NOTE"})
+                           "layer": "pp_LEGEND-anno"})
     for x, y, h, rot, content in C.SECTION_LABELS:
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": h, "rotation_deg": rot, "halign": "left",
-                           "valign": "bottom", "layer": "S-ANNO-NOTE"})
+                           "valign": "bottom", "layer": "pp_LEGEND-anno"})
     for x, y, content, ax0, ax1, ay in C.TRAVEL:
         run("place_text", {"space": SHEET, "position": [x, y], "content": content,
                            "height": 0.152, "halign": "left", "valign": "bottom",
-                           "layer": "S-ANNO-SYMB"})
+                           "layer": "pp_PRESENTATION"})
         run("draw_line", {"space": SHEET, "start": [ax0, ay], "end": [ax1, ay],
-                          "layer": "S-ANNO-SYMB"})
+                          "layer": "pp_PRESENTATION"})
         head = 0.06 if ax1 > ax0 else -0.06
-        run("draw_polyline", {"space": SHEET, "layer": "S-ANNO-SYMB", "vertices": [
+        run("draw_polyline", {"space": SHEET, "layer": "pp_PRESENTATION", "vertices": [
             [ax1, ay], [ax1 - head, ay + 0.035], [ax1 - head, ay - 0.035]],
             "closed": True})
 
@@ -167,23 +167,23 @@ def build(out_dir, quiet=False):
         a, _ = at(station, back)
         b, _ = at(station, ahead)
         run("draw_line", {"space": SHEET, "start": list(a), "end": list(b),
-                          "layer": "S-ANNO-MTCH"})
+                          "layer": "border_INSIDE-BORDER-anno"})
         run("place_text", {"space": SHEET, "position": [tx, ty],
                            "content": f"MATCH LINE  {tag}", "height": th,
                            "rotation_deg": rot, "halign": "left", "valign": "bottom",
-                           "layer": "S-ANNO-MTCH"})
+                           "layer": "border_INSIDE-BORDER-anno"})
         say(f"    MATCH LINE {tag} at {ask('station_to_xy', {'alignment': f'{REF}:{G.ALIGNMENT}', 'station': station})['station_text']}")
 
     say("== curve bubbles")
     for curve, x, y in C.BUBBLES:
         run("draw_circle", {"space": SHEET, "center": [x, y], "radius": 0.200,
-                            "layer": "S-ANNO-CURV"})
+                            "layer": "align_CURVE-DATA"})
         run("place_text", {"space": SHEET, "position": [x, y], "content": str(curve),
                            "height": 0.140, "halign": "center", "valign": "middle",
-                           "layer": "S-ANNO-CURV"})
+                           "layer": "align_CURVE-DATA"})
         tip = _road_below(ask, x, y)
         run("draw_line", {"space": SHEET, "start": [x, y - 0.200], "end": list(tip),
-                          "layer": "S-ANNO-CURV"})
+                          "layer": "align_CURVE-DATA"})
 
     say("== callouts")
     for entry in C.CALLOUTS:
@@ -198,7 +198,7 @@ def build(out_dir, quiet=False):
             "target_anchor": {"station": station, "offset": offset},
             "position": [x, y - (lines - 1) * 0.210 / 2 + height / 2],
             "content": content, "height": height, "landing": 0.30,
-            "arrow_size": 0.11, "layer": "S-ANNO-CALL"})
+            "arrow_size": 0.11, "layer": "rd_LAYOUT-NOTE-anno"})
         say(f"    {q['station_text']} {abs(offset):.2f}' "
             f"{'RT' if offset > 0 else 'LT'}  {content.splitlines()[0]}")
 
@@ -212,7 +212,7 @@ def build(out_dir, quiet=False):
     run("place_table", {
         "space": SHEET, "position": list(t["position"]), "title": t["title"],
         "columns": [{"header": h, "width": w} for h, w in t["columns"]],
-        "rows": rows, "text_height": t["text_height"], "layer": "S-ANNO-CURV"})
+        "rows": rows, "text_height": t["text_height"], "layer": "align_CURVE-DATA"})
     for n, row in zip(sorted(G.DELTA), curves):
         say(f"    curve {n}: R={row['radius']:.0f}'  {row['delta_dms']}  "
             f"T={row['tangent']:.2f}'  L={row['length']:.2f}'")
@@ -231,7 +231,7 @@ def build(out_dir, quiet=False):
                          "description": "Plan north arrow, drawn true north up"})
     run("insert_block", {"space": SHEET, "block_name": "NORTH-ARROW",
                          "position": list(C.NORTH_ARROW_AT),
-                         "rotation_deg": G.TWIST_DEG, "layer": "S-ANNO-SYMB"})
+                         "rotation_deg": G.TWIST_DEG, "layer": "pp_PRESENTATION"})
 
     path = ask("save_document", {"path": str(doc_path)})["path"]
     state = ask("get_sheet_state", {"sheet": SHEET})["sheet"]

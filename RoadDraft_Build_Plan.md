@@ -198,6 +198,8 @@ Each phase ends shippable. Targets assume the existing pace of about 8 to 10 hou
 
 Phases B and C are independent once A has produced the runner, so they can interleave. The engine changes only when a probe, check or training loop needs it, and every such change is recorded in the run that motivated it, as the Tier 3 lettering fixes were.
 
+**One convention set (2026-10-11).** Track P and Track D share the lettering conventions (the PPM's: Caltrans station numbers below the line, `24+05.27 BC` square to the line, bearing and length above the tangent, curve numbers in bubbles, the No./R/Δ/T/L table), the credit route (the engine's anchored labelers, which now work through a referenced base drawing; the Tier 3 solutions and the new `annotate-base` task type both letter that way) and the layer names (Caltrans named levels in the probe fixtures as in the spec). Spec `draft-v2`, generator `d1-v4`, verifier `d1-verify-v3`; eval plan §3.8 has the detail. A rank that moves from Track P to Track D, a training set drawn from both, and a T0 convention sheet all depend on this.
+
 ---
 
 ## 5. Deliverables and success criteria

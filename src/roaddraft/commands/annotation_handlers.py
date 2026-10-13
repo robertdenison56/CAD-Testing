@@ -249,8 +249,7 @@ def set_annotation_defaults(doc: Document, p: dict):
     if scale is not None:
         sizes = anno.model_sizes(doc)
         parts = [f"{k} = {paper[k]:g} in ({sizes[m]:g} ft at {anno.scale_name(doc, scale)})"
-                 for k, m in zip(anno.PAPER_KEYS, ("text_height", "tick_half_len",
-                                                   "label_offset"))]
+                 for k, m in zip(anno.PAPER_KEYS, anno.MODEL_KEYS)]
     return "annotation paper defaults: " + ", ".join(parts), _diff(modified=["settings"]), []
 
 

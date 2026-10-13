@@ -197,7 +197,7 @@ def ensure_layer(session: Session, name: str, color: str = "black") -> str:
 
 def callout_at(session: Session, eid: str, where="mid", content="EP", dy=-150.0):
     """The scripted solution: aim by entity, put the text clear of it."""
-    ensure_layer(session, "V-ANNO-TEXT")
+    ensure_layer(session, "rd_LAYOUT-NOTE-anno")
     r = session.query("point_on_entity", {"id": eid, "where": where})
     if not r["ok"]:
         raise RuntimeError(r["error"]["message"])
@@ -205,7 +205,7 @@ def callout_at(session: Session, eid: str, where="mid", content="EP", dy=-150.0)
     r = session.execute("place_callout", {
         "space": "model", "target_entity": eid, "at": where,
         "position": [point[0] + 150.0, point[1] + dy], "content": content,
-        "layer": "V-ANNO-TEXT"})
+        "layer": "rd_LAYOUT-NOTE-anno"})
     if not r["ok"]:
         raise RuntimeError(r["error"]["message"])
 
@@ -332,17 +332,17 @@ def _check_pc_by_station(baseline, submitted):
 
 def _solve_pc_by_station(session):
     pc = _pc_of_the_first_curve(session)
-    ensure_layer(session, "V-ANNO-TEXT")
+    ensure_layer(session, "rd_LAYOUT-NOTE-anno")
     r = session.execute("place_callout", {
         "space": "model", "target": pc["point"],
         "position": [pc["point"][0] + 200.0, pc["point"][1] - 200.0],
-        "content": pc["auto_content"], "layer": "V-ANNO-TEXT"})
+        "content": pc["auto_content"], "layer": "rd_LAYOUT-NOTE-anno"})
     if not r["ok"]:
         raise RuntimeError(r["error"]["message"])
 
 
 def _paper_layer(session: Session) -> str:
-    return ensure_layer(session, "S-ANNO-CALL")
+    return ensure_layer(session, "rd_LAYOUT-NOTE-anno")
 
 
 def _check_edge_on_paper(baseline, submitted):

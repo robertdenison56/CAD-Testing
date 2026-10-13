@@ -33,7 +33,7 @@ def test_report_shape():
     assert d["spec_version"] == DRAFTING_SPEC_V1["version"] and d["task_id"] == b.task.task_id
     assert [c["id"] for c in d["checks"]] == [c["id"] for c in DRAFTING_SPEC_V1["checks"]]
     assert sum(c["weight"] for c in d["checks"] if c["in_scope"]) == 100
-    assert sum(c["weight"] for c in d["checks"]) == 119  # with the plan-prep checks
+    assert sum(c["weight"] for c in d["checks"]) == 131  # with the plan-prep and design checks
     for c in d["checks"]:
         assert set(c) >= {"id", "name", "weight", "credit", "points", "hard_fail",
                           "hard_fail_triggered", "in_scope", "findings"}

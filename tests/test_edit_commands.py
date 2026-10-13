@@ -135,11 +135,11 @@ def test_a_traverse_on_a_sheet_is_in_inches_and_says_so():
 
 def test_offset_a_line_left_right_toward_through_and_several_at_once():
     s = Session()
-    ok(s, "create_layer", name="V-ROAD-EOP")
-    ok(s, "draw_line", space="model", start=[0, 0], end=[100, 0], layer="V-ROAD-EOP")
+    ok(s, "create_layer", name="rd_EP")
+    ok(s, "draw_line", space="model", start=[0, 0], end=[100, 0], layer="rd_EP")
     r = ok(s, "offset_entity", ids=["LN-001"], distance=12, side="left")
     left = entity(s, r["created"][0])
-    assert (left.start, left.end, left.layer) == ([0.0, 12.0], [100.0, 12.0], "V-ROAD-EOP")
+    assert (left.start, left.end, left.layer) == ([0.0, 12.0], [100.0, 12.0], "rd_EP")
     assert "12.00' left (north side)" in r["message"]
     r = ok(s, "offset_entity", ids=["LN-001"], distance=5, toward=[40, -60])
     assert entity(s, r["created"][0]).start == [0.0, -5.0]
@@ -354,8 +354,8 @@ def test_draft_roadway_passes_from_the_words_alone(tmp_path):
 
 def test_draft_building_passes_as_a_closed_traverse(tmp_path):
     probe, base, s = begin("draft-building", tmp_path)
-    ok(s, "create_layer", name="V-BLDG")
-    r = ok(s, "draw_traverse", space="model", layer="V-BLDG", start=[1500, 1200],
+    ok(s, "create_layer", name="BUILDING")
+    r = ok(s, "draw_traverse", space="model", layer="BUILDING", start=[1500, 1200],
            polyline=True, close=True,
            legs=["N 30°00'00\" E 60", "S 60°00'00\" E 40", "90 R 60", "90 R 40"])
     assert "closes on its start" in r["message"]

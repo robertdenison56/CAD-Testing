@@ -44,15 +44,15 @@ def test_place_label_pc1_content_position_1600_984_anchor_record():
     r = s.execute("place_label", {"space": "model", "alignment": "ALIGN-1", "anchor": "PC-1",
                                   "layer": "V-ANNO-TEXT"})
     assert r["ok"], r
-    assert r["message"] == "label TX-001 'BC 16+00.00' (pc @ PC-1 of ALIGN-1) placed in model space"
+    assert r["message"] == "label TX-001 '16+00.00 BC' (pc @ PC-1 of ALIGN-1) placed in model space"
     e = text_of(s, r)
-    assert e.content == "BC 16+00.00" and near(e.position, [1600.0, 984.0])
-    assert e.rotation_deg == 0.0 and e.halign == "center" and e.valign == "top"
+    assert e.content == "16+00.00 BC" and near(e.position, [1600.0, 1022.5])
+    assert e.rotation_deg == 90.0 and e.halign == "left" and e.valign == "middle"
     assert e.height == 8.0 and e.layer == "V-ANNO-TEXT" and e.style == "STANDARD"
     a = e.anchor
     assert a["alignment"] == "ALIGN-1" and a["ref"] == "PC-1" and a["kind"] == "pc"
     assert a["station"] == pytest.approx(1600.0, abs=1e-6) and a["offset"] == 0.0
-    assert a["side"] == "right" and a["label_offset"] == 16.0 and a["rotation"] == "along"
+    assert a["side"] == "left" and a["label_offset"] == 22.5 and a["rotation"] == "perpendicular"
     assert a["viewport"] is None and a["content_auto"] is True
     assert a["placed_by"] == "place_label"
     assert set(a) == {"alignment", "ref", "kind", "station", "offset", "side", "label_offset",
@@ -63,8 +63,8 @@ def test_place_label_station_13_00_1300_1016():
     s = session_A()
     r = s.execute("place_label", {"space": "model", "anchor": "13+00"})
     e = text_of(s, r)
-    assert e.content == "13+00.00" and near(e.position, [1300.0, 1016.0])
-    assert e.valign == "bottom" and e.anchor["side"] == "left" and e.anchor["kind"] == "station"
+    assert e.content == "3" and near(e.position, [1300.0, 994.0])
+    assert e.valign == "top" and e.anchor["side"] == "right" and e.anchor["kind"] == "station"
     r = s.execute("place_label", {"space": "model", "anchor": 1300, "side": "right",
                                   "label_offset": 20, "height": 5})
     e = text_of(s, r)
@@ -74,9 +74,9 @@ def test_place_label_station_13_00_1300_1016():
 def test_place_label_bearing_T2_N60E_rotation_30():
     s = session_A()
     r = s.execute("place_label", {"space": "model", "anchor": "T-2", "kind": "bearing"})
-    e = text_of(s, r)
-    assert e.content == 'N 60°00\'00" E' and near(e.position, [2208.506, 1246.036])
-    assert e.rotation_deg == pytest.approx(30.0, abs=1e-6)
+    e = text_of(s, r)  # bearing and distance, 3 ft above the middle of the tangent
+    assert e.content == 'N 60°00\'00" E 500.00\'' and near(e.position, [2215.006, 1234.778])
+    assert e.rotation_deg == pytest.approx(30.0, abs=1e-6) and e.anchor["side"] == "left"
 
 
 def test_place_label_perpendicular_reads_bottom_to_top():
@@ -95,13 +95,13 @@ def test_perpendicular_label_on_a_twisted_sheet_reads_bottom_to_top():
     assert r["ok"], r
     assert text_of(s, r).rotation_deg == pytest.approx(97.867, abs=1e-3)
     r = s.execute("place_label", {"space": "C-101", "anchor": "BC-1"})
-    assert r["ok"] and text_of(s, r).content == "BC 16+00.00", r
+    assert r["ok"] and text_of(s, r).content == "16+00.00 BC", r
 
 
 def test_place_label_infers_kind_from_anchor():
     s = session_A()
-    for anchor, kind, content in (("T-1", "bearing", 'N 90°00\'00" E'), ("MC-1", "mc", "C-1"),
-                                  ("PT-1", "pt", "EC 20+18.88"), ("PI-1", "pi", "PI 18+14.36"),
+    for anchor, kind, content in (("T-1", "bearing", 'N 90°00\'00" E 600.00\''), ("MC-1", "mc", "1"),
+                                  ("PT-1", "pt", "20+18.88 EC"), ("PI-1", "pi", "18+14.36 PI"),
                                   ("BEGIN", "begin", "BEGIN STA 10+00.00"),
                                   ("END", "end", "END STA 25+18.88"),
                                   ("12+50", "station", "12+50.00")):
@@ -139,7 +139,7 @@ def test_place_label_custom_without_content_faults():
     assert r["ok"]
     e = text_of(s, r)
     assert e.content == "BEGIN TAPER" and e.anchor["content_auto"] is False
-    assert e.anchor["offset"] == 30.0 and near(e.position, [1600.0, 1000.0 - 30.0 + 16.0])
+    assert e.anchor["offset"] == 30.0 and near(e.position, [1600.0, 1000.0 - 30.0 + 6.0])
 
 
 def test_place_label_explicit_content_verbatim_content_auto_false():
@@ -155,14 +155,14 @@ def test_place_label_sheet_15_0_8_38_viewport_VP001_height_0_10():
     r = s.execute("place_label", {"space": "C-101", "anchor": "PC-1"})
     assert r["ok"], r
     assert r["message"].endswith("placed in sheet C-101 via VP-001")
-    e = text_of(s, r)
-    assert near(e.position, [15.0, 8.38], 1e-6) and e.height == 0.10
-    assert e.anchor["viewport"] == "VP-001" and e.anchor["label_offset"] == 0.32
-    assert e.rotation_deg == 0.0 and e.id in s.doc.sheets["SH-001"].entities
+    e = text_of(s, r)  # 0.45 in left of the line, square to it, reading up
+    assert near(e.position, [15.0, 9.15], 1e-6) and e.height == 0.10
+    assert e.anchor["viewport"] == "VP-001" and e.anchor["label_offset"] == 0.45
+    assert e.rotation_deg == 90.0 and e.id in s.doc.sheets["SH-001"].entities
     r = s.execute("place_label", {"space": "C-101", "anchor": "PC-1", "viewport": "VP-001",
                                   "label_offset": 0.5, "height": 0.15})
     e = text_of(s, r)
-    assert near(e.position, [15.0, 8.2], 1e-6) and e.height == 0.15
+    assert near(e.position, [15.0, 9.2], 1e-6) and e.height == 0.15
     assert e.anchor["label_offset"] == 0.5
     r = s.execute("place_label", {"space": "C-101", "anchor": "PC-1", "viewport": "VP-009"})
     assert not r["ok"] and r["error"]["message"] == "viewport VP-009 is not on C-101"
@@ -171,12 +171,12 @@ def test_place_label_sheet_15_0_8_38_viewport_VP001_height_0_10():
 def test_place_label_sheet_twist20_rotation_20():
     s = sheet_session(rotation=20.0)
     r = s.execute("place_label", {"space": "C-101", "anchor": "PC-1"})
-    e = text_of(s, r)
-    assert e.rotation_deg == pytest.approx(20.0)
+    e = text_of(s, r)  # square to the line as the sheet shows it: 20 + 90
+    assert e.rotation_deg == pytest.approx(110.0)
     vp = s.doc.sheets["SH-001"].viewports[0]
     q = vp.transform().to_paper([1600.0, 1000.0])
-    expect = [q[0] + 0.32 * math.cos(math.radians(-70.0)),
-              q[1] + 0.32 * math.sin(math.radians(-70.0))]
+    expect = [q[0] + 0.45 * math.cos(math.radians(110.0)),
+              q[1] + 0.45 * math.sin(math.radians(110.0))]
     assert near(e.position, expect, 1e-6)
 
 
@@ -233,7 +233,7 @@ def test_move_entities_keeps_anchor():
     anchor = dict(s.doc.model_entities[tid].anchor)
     s.execute("move_entities", {"ids": [tid], "delta": [5, 5]})
     e = s.doc.model_entities[tid]
-    assert e.anchor == anchor and near(e.position, [1605.0, 989.0])
+    assert e.anchor == anchor and near(e.position, [1605.0, 1027.5])
 
 
 def test_place_curve_table_row_and_anchor():
@@ -242,13 +242,11 @@ def test_place_curve_table_row_and_anchor():
     r = s.execute("place_curve_table", {"space": "C-101", "alignment": "ALIGN-1",
                                         "position": [24.0, 8.5], "layer": "V-ANNO-TABL"})
     assert r["ok"], r
-    assert r["message"] == "curve table TB-001 (1 curve, 9 columns) placed on sheet C-101"
+    assert r["message"] == "curve table TB-001 (1 curve, 5 columns) placed on sheet C-101"
     e = s.doc.sheets["SH-001"].entities[r["created"][0]]
     assert isinstance(e, Table) and e.title == "CURVE DATA" and e.text_height == 0.12
-    assert [c["header"] for c in e.columns] == ["CURVE", "PI STA", "DELTA", "DIR", "R", "T", "L",
-                                                "C", "CH BRG"]
-    assert e.rows == [["C-1", "18+14.36", "30°00'00\"", "LT", "800.00'", "214.36'", "418.88'",
-                       "414.11'", "N 75°00'00\" E"]]
+    assert [c["header"] for c in e.columns] == ["No.", "R", "Δ", "T", "L"]
+    assert e.rows == [["1", "800.00'", "30°00'00\"", "214.36'", "418.88'"]]
     assert e.anchor == {"alignment": "ALIGN-1", "ref": "CURVES", "kind": "curve_table",
                         "content_auto": True, "placed_by": "place_curve_table"}
     assert e.layer == "V-ANNO-TABL" and e.position == [24.0, 8.5]
@@ -256,7 +254,7 @@ def test_place_curve_table_row_and_anchor():
                                         "columns": ["curve", "radius"], "title": "CURVES",
                                         "text_height": 0.1})
     e = s.doc.sheets["SH-001"].entities[r["created"][0]]
-    assert e.rows == [["C-1", "800.00'"]] and e.title == "CURVES"
+    assert e.rows == [["1", "800.00'"]] and e.title == "CURVES"
     r = s.execute("place_curve_table", {"space": "C-101", "position": [2.0, 20.0],
                                         "columns": ["curve", "bogus"]})
     assert not r["ok"] and "unknown curve table column" in r["error"]["message"]

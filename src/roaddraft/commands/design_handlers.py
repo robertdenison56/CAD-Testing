@@ -9,6 +9,7 @@ came from, which is what the verifier checks.
 """
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -25,15 +26,15 @@ from roaddraft.design.horizontal import (
     PI, Alignment, TangentElement, alignment_from_elements, compile_pis, elements_from_dicts,
 )
 from roaddraft.design.labels import (
-    MODEL_TEXT_HEIGHT, SHEET_LABEL_OFFSET, SHEET_TEXT_HEIGHT, TickSpec, compile_label,
-    curve_table_rows, sheet_pose, stationing_plan,
+    BUBBLE_RADIUS_FACTOR, MODEL_TEXT_HEIGHT, SHEET_TEXT_HEIGHT, TickSpec, compile_label,
+    curve_table_rows, default_offset, sheet_pose, stationing_plan,
 )
 from roaddraft.design.offsets import offset_pieces
 from roaddraft.design.stations import StationSystem, build_equations
 from roaddraft.design.vertical import PVI, Profile
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import Document
-from roaddraft.document.entities import Arc, Line, Table, Text
+from roaddraft.document.entities import Arc, Circle, Line, Table, Text
 
 ALIGNMENT_CHANGES = ("pis", "begin_station", "equations", "description", "rename")
 
@@ -55,8 +56,38 @@ def _offset_text(value: float) -> str:
     return f"{abs(value):.2f}' {side}"
 
 
-def _alignment(doc: Document, p: dict, key: str = "alignment") -> Alignment:
-    """``p[key]`` or the document's only alignment; teaching faults otherwise."""
+def _referenced_alignment(doc: Document, qualified: str) -> Alignment:
+    """The alignment ``'BASE:ALIGN-1'`` names in an attached reference, as a
+    read-only copy named by its qualified name, so the labels anchored to it
+    record where they came from.  Only a reference placed at identity will
+    do: its design coordinates are then the host's, which is what a label's
+    anchor record (recomputed by a verifier) relies on."""
+    from roaddraft.document.references import find_reference_alignment, reference_alignments
+    found = find_reference_alignment(doc, qualified)
+    if found is None:
+        known = [f"{ref.name}:{a.name}" for ref, _b, a, _pl in reference_alignments(doc)]
+        raise CommandFault(f"no alignment {qualified!r} in any attached reference",
+                           hint=f"referenced alignments: {known}" if known else
+                                "no attachment carries a design model; attach_reference first")
+    align, placement = found
+    if not placement.is_identity:
+        raise CommandFault(
+            f"{qualified} is placed with an offset, rotation or scale (offset "
+            f"{list(placement.offset)}, rotation {placement.rotation_deg:g}, scale "
+            f"{placement.scale:g}); labels anchor to a referenced design only where it sits "
+            f"at identity",
+            hint="modify_reference to place it at identity, or label the base drawing itself")
+    out = copy.copy(align)
+    out.name = qualified
+    return out
+
+
+def _alignment(doc: Document, p: dict, key: str = "alignment",
+               referenced: bool = False) -> Alignment:
+    """``p[key]`` or the document's only alignment; teaching faults otherwise.
+    With ``referenced``, a qualified name (``'BASE:ALIGN-1'``) reads the
+    alignment of an attached reference: the labelers work through a
+    reference, the drawing commands do not."""
     aligns = doc.design.alignments
     name = p.get(key)
     if name is None:
@@ -70,12 +101,16 @@ def _alignment(doc: Document, p: dict, key: str = "alignment") -> Alignment:
             f"({', '.join(aligns)})", hint="run list_alignments")
     if name not in aligns:
         if ":" in str(name):
+            if referenced:
+                return _referenced_alignment(doc, str(name))
             raise CommandFault(
-                f"{name!r} is an alignment in an attached reference, and commands "
-                f"only work on this document's own design",
+                f"{name!r} is an alignment in an attached reference, and this command "
+                f"only works on this document's own design",
                 hint="queries read a referenced design (station_to_xy, resolve_anchor, "
-                     "get_design_data, find_entities); to draw or label it, call it "
-                     "out with place_callout, or bring the design into this document")
+                     "get_design_data, find_entities) and the labelers annotate one "
+                     "(place_label, annotate_stationing, place_curve_table, "
+                     "draw_station_offset, place_callout); to draw its linework, draw the "
+                     "base drawing itself")
         raise CommandFault(f"no alignment named {name!r}", hint=f"alignments: {list(aligns)}")
     return aligns[name]
 
@@ -509,20 +544,21 @@ def plan_label(doc: Document, p: dict) -> dict:
     """Everything ``place_label`` would do, without adding the entity (shared
     with the ``resolve_anchor`` dry-run query)."""
     space_key, container = _space(doc, p["space"])
-    align = _alignment(doc, p)
+    align = _alignment(doc, p, referenced=True)
     try:
         ref = parse_anchor(p["anchor"])
         ap = resolve_anchor(align, ref)
         kind = p.get("kind") or infer_kind(ref)
         scaled = anno.model_sizes(doc)  # None when the annotation scale is off
         if space_key == "model":
+            # the kind's own default offset (the PPM's placement), scaled when on
             model_offset = p.get("label_offset",
-                                 scaled["label_offset"] if scaled else None)
+                                 anno.offset_for(scaled, kind) if scaled else None)
         else:
             model_offset = None
         spec = compile_label(
             align, ap, kind, side=p.get("side"), label_offset=model_offset,
-            rotation=p.get("rotation", "along"), content=p.get("content"),
+            rotation=p.get("rotation"), content=p.get("content"),
             halign=p.get("halign"), valign=p.get("valign"))
     except DesignError as e:
         raise _fault(e)
@@ -536,7 +572,7 @@ def plan_label(doc: Document, p: dict) -> dict:
     else:
         sheet = doc.sheets[space_key]
         vp = _pick_viewport(doc, sheet, p.get("viewport"), spec.anchor_point, ap, align)
-        recorded_offset = float(p.get("label_offset", SHEET_LABEL_OFFSET))
+        recorded_offset = float(p.get("label_offset", default_offset(kind, "sheet")))
         position, rotation_deg = sheet_pose(spec, vp.transform(), vp.rotation_deg,
                                             recorded_offset)
         height = p.get("height", SHEET_TEXT_HEIGHT)
@@ -558,6 +594,9 @@ def place_label(doc: Document, p: dict):
         "halign": spec.halign, "valign": spec.valign, "anchor": plan["anchor"],
         "annotative": plan["annotative"]})
     warnings = _annotation_warnings(doc, space_key, e)
+    created = [e.id]
+    if spec.kind == "mc":
+        created += _add_bubble(doc, p["space"], space_key, plan, e)
     key = (spec.alignment, spec.ref, spec.kind)
     for other in plan["container"].values():
         if other is e or not isinstance(other, Text) or not other.anchor:
@@ -568,8 +607,35 @@ def place_label(doc: Document, p: dict):
     preview = spec.content if len(spec.content) <= 40 else spec.content[:37] + "..."
     where = ("model space" if space_key == "model"
              else f"sheet {doc.sheets[space_key].name} via {plan['viewport'].id}")
+    bubble = " in a bubble with a leader to the curve" if spec.kind == "mc" else ""
     return (f"label {e.id} {preview!r} ({spec.kind} @ {spec.ref} of {spec.alignment}) placed in "
-            f"{where}", _diff(created=[e.id]), warnings)
+            f"{where}{bubble}", _diff(created=created), warnings)
+
+
+def _add_bubble(doc: Document, space_ref: str, space_key: str, plan: dict, text: Text) -> List[str]:
+    """The curve number's bubble (ppm-text p. 2-85): a circle round the number
+    and a leader from its edge to the middle of the curve.  Both carry the
+    label's anchor under their own kinds, so they are known as its parts."""
+    spec = plan["spec"]
+    radius = BUBBLE_RADIUS_FACTOR * float(plan["height"])
+    center = [float(text.position[0]), float(text.position[1])]
+    if space_key == "model":
+        tip = [float(spec.anchor_point[0]), float(spec.anchor_point[1])]
+    else:
+        tip = plan["viewport"].transform().to_paper(spec.anchor_point)
+    common = {"layer": text.layer, "color": text.color, "linetype": text.linetype}
+    rec = dict(plan["anchor"])
+    _, circle = _add(doc, space_ref, "circle", Circle, {
+        **common, "center": center, "radius": radius, "anchor": dict(rec, kind="mc_bubble")})
+    ids = [circle.id]
+    d = geo.distance(center, tip)
+    if d > radius + 1e-9:
+        start = [center[0] + (tip[0] - center[0]) * radius / d,
+                 center[1] + (tip[1] - center[1]) * radius / d]
+        _, leader = _add(doc, space_ref, "line", Line, {
+            **common, "start": start, "end": tip, "anchor": dict(rec, kind="mc_leader")})
+        ids.append(leader.id)
+    return ids
 
 
 def place_curve_table(doc: Document, p: dict):
@@ -577,9 +643,10 @@ def place_curve_table(doc: Document, p: dict):
     if space_key == "model":
         raise CommandFault("place_curve_table places tables on sheets",
                            hint="pass a sheet id/name as space")
-    align = _alignment(doc, p)
+    align = _alignment(doc, p, referenced=True)
     try:
-        headers, rows, widths = curve_table_rows(align, p.get("columns"), p.get("curves"))
+        headers, rows, widths = curve_table_rows(align, p.get("columns"), p.get("curves"),
+                                                 first_number=int(p.get("first_curve_number", 1)))
     except DesignError as e:
         raise _fault(e)
     style = _style(doc, p.get("style", doc.settings["current_text_style"]))
@@ -677,8 +744,9 @@ def import_landxml(doc: Document, p: dict):
 
 def annotate_stationing_alignment(doc: Document, p: dict):
     """Alignment mode of ``annotate_stationing``: true stations, equations,
-    and anchored ticks/labels from the design model."""
-    align = _alignment(doc, p)
+    and anchored ticks/labels from the design model -- this document's or,
+    as ``'BASE:ALIGN-1'``, an attached reference's."""
+    align = _alignment(doc, p, referenced=True)
     st = align.stations()
     if "begin_station" in p:
         raise CommandFault(
@@ -699,6 +767,8 @@ def annotate_stationing_alignment(doc: Document, p: dict):
     tick_half = p.get("tick_half_len", sizes["tick_half_len"])
     text_h = p.get("text_height", sizes["text_height"])
     label_off = p.get("label_offset", sizes["label_offset"])
+    point_off = p.get("point_label_offset", sizes["point_offset"])
+    lettering = p.get("lettering", "caltrans")
     station_range = None
     if "station_range" in p:
         try:
@@ -710,7 +780,9 @@ def annotate_stationing_alignment(doc: Document, p: dict):
                                label_offset=label_off,
                                include_pc_pt=p.get("include_pc_pt", True),
                                include_equations=p.get("include_equations", True),
-                               station_range=station_range)
+                               station_range=station_range, lettering=lettering,
+                               station_side=p.get("station_side"),
+                               point_side=p.get("point_side"), point_offset=point_off)
     except DesignError as e:
         raise _fault(e)
 
@@ -732,9 +804,11 @@ def annotate_stationing_alignment(doc: Document, p: dict):
                                "rotation_deg": item.rotation_deg, "halign": item.halign,
                                "valign": item.valign, "anchor": item.anchor_record(None),
                                "annotative": anno.text_record(doc, text_h, item.label_offset)})
+    how = ("the whole station at each 500 ft, the ones digit elsewhere" if lettering == "caltrans"
+           else "every station in full")
     return (f"stationing annotated in model space from {align.name}: {plan.n_ticks} ticks @ "
-            f"{interval:g} ft, {plan.n_junctions} BC/EC labels, {plan.n_equations} equation "
-            f"labels, stations {plan.begin_text} to {plan.end_text}",
+            f"{interval:g} ft lettered {how}, {plan.n_junctions} BC/EC labels, "
+            f"{plan.n_equations} equation labels, stations {plan.begin_text} to {plan.end_text}",
             _diff(created=created), [])
 
 

@@ -251,7 +251,7 @@ AT = {"the left edge of pavement": 0.2, "the left edge of shoulder": 0.4,
 
 
 def _paper_layer(session: Session) -> str:
-    return ensure_layer(session, "S-ANNO-CALL")
+    return ensure_layer(session, "rd_LAYOUT-NOTE-anno")
 
 
 def _callout_on(session: Session, sheet: str, what: str, find: dict, dx: float, dy: float,
@@ -631,9 +631,9 @@ def _check_fix(baseline, submitted):
         covered(submitted, eop, along(a, 12.0), "the right edge of pavement at 12 ft"),
         clear(submitted, now, along(a, fixture.FLAWS["edge_offset"], st0 + 5.0, st1 - 5.0, 20.0),
               f"the hand-drawn piece at {fixture.FLAWS['edge_offset']:g} ft"),
-        covered(submitted, shld, along(a, -20.0), "the left edge of shoulder on V-ROAD-SHLD"),
+        covered(submitted, shld, along(a, -20.0), "the left edge of shoulder on rd_ES"),
         clear(submitted, eop, along(a, -20.0, st0 + 5.0, st1 - 5.0, 20.0),
-              "shoulder linework on V-ROAD-EOP"),
+              "shoulder linework on rd_EP"),
         _callout_fixed(a, submitted, P),
         _nothing_else_changed(baseline, submitted, untouchable),
         _no_duplicates(a, submitted)),
@@ -758,10 +758,10 @@ TIER2_PROBES: List[Probe] = [
           tags=["tier2", "draft", "geometry", "two-alignments"],
           prompt="MAIN ST (alignment MAIN-ST, running east) and CROSS AVE (alignment CROSS-AVE, "
                  "running north) cross at MAIN-ST 18+00 / CROSS-AVE 27+00. Their curb faces are "
-                 "drawn on V-ROAD-EOP: MAIN ST's 44 ft either side of its centerline, CROSS "
+                 "drawn on rd_EP: MAIN ST's 44 ft either side of its centerline, CROSS "
                  "AVE's 32 ft either side. Three corners have their curb returns; the northeast "
                  "corner does not -- its two curb lines still run to meet at the corner. Draw "
-                 "the northeast curb return on V-ROAD-EOP, a 50 ft radius arc tangent to both "
+                 "the northeast curb return on rd_EP, a 50 ft radius arc tangent to both "
                  "curb faces, and trim both curb lines back to where the return meets them.",
           check=_check_corner, solve=_solve_corner,
           note="Two alignments, no trigonometry: the centre is 50 ft inside each curb, at "
@@ -770,12 +770,12 @@ TIER2_PROBES: List[Probe] = [
                "centred on the corner itself, and curbs left running to it."),
     Probe(id="draft-fix-the-drawing", start="flawed", tags=["tier2", "draft", "qa", "edit"],
           prompt="QA this drawing of SR-100 against its typical section -- two 12 ft lanes and "
-                 "8 ft paved shoulders: edges of pavement on V-ROAD-EOP, outside edges of "
-                 "shoulder on V-ROAD-SHLD, callouts on V-ANNO-TEXT -- and fix what is wrong. "
+                 "8 ft paved shoulders: edges of pavement on rd_EP, outside edges of "
+                 "shoulder on rd_ES, callouts on rd_LAYOUT-NOTE-anno -- and fix what is wrong. "
                  "Change nothing else.",
           check=_check_fix, solve=_solve_fix,
           note="Three mistakes are planted: a piece of the right edge redrawn by hand at 11 ft "
-               "with no anchor record, a piece of the left shoulder on V-ROAD-EOP, and a "
+               "with no anchor record, a piece of the left shoulder on rd_EP, and a "
                "callout on the right shoulder that reads EDGE OF PAVEMENT. The check wants all "
                "three gone, every correct entity still covered, and nothing drawn twice."),
     Probe(id="draft-roadway-sheets", start="blank", tags=["tier2", "draft", "cogo", "whole-job", "sheets"],

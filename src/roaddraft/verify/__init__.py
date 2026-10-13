@@ -26,7 +26,7 @@ from roaddraft.commands.bus import ANCHOR_PRODUCERS
 from roaddraft.document.document import Document
 from roaddraft.tasks.brief import GroundTruth
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
-from roaddraft.tasks.types import CHECK_GROUPS, GROUPS
+from roaddraft.tasks.types import CHECK_GROUPS, DESIGN_GROUPS, GROUPS
 from roaddraft.verify.audit import audit_journal
 from roaddraft.verify.checks import CHECKS, analyze
 from roaddraft.verify.context import Context, given_design
@@ -36,7 +36,7 @@ from roaddraft.verify.report import (
 )
 from roaddraft.verify.rubric import score_checks
 
-VERIFIER_VERSION = "d1-verify-v2"
+VERIFIER_VERSION = "d1-verify-v3"  # (2026-10-11) anchors through references; PPM label forms by meaning
 DEFAULT_LEVEL = "explicit"
 
 
@@ -55,7 +55,14 @@ def verify(doc: Document, truth: Union[GroundTruth, dict], spec: Optional[dict] 
     ctx = Context.build(doc, truth, spec, prompt_level)
     scope = [g for g in GROUPS if g in ctx.scope]
     groups = check_groups(truth)
-    fingerprint_ok = given_design(doc, truth).fingerprint() == truth.design_fingerprint
+    # the given design must come back untouched -- unless creating it is the task, in
+    # which case D1-15 judges what was created; a design that lives only in a base
+    # drawing (annotate-base) and is not attached is not tampered with, just absent,
+    # so the labels simply find nothing to match
+    given = given_design(doc, truth)
+    fingerprint_ok = (ctx.asks(*DESIGN_GROUPS)
+                      or (bool(truth.references) and not given.alignments)
+                      or given.fingerprint() == truth.design_fingerprint)
     findings: List[Finding] = []
     if fingerprint_ok:
         analysis = analyze(ctx)

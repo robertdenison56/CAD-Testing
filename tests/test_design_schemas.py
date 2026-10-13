@@ -102,7 +102,7 @@ def test_fragments_match_spec_preamble():
     assert ds.ANCHOR["type"] == ["string", "number", "object"]
     assert "PC-1@16" in ds.ANCHOR["description"]
     assert ds.ROTATION == {"enum": ["along", "perpendicular", "horizontal"]}
-    assert ds.SIDE == {"enum": ["left", "right"]}
+    assert ds.SIDE["enum"] == ["left", "right", "above", "below"]
 
 
 # --- per-command property sets and required lists ---------------------------
@@ -156,7 +156,7 @@ def test_place_label_properties_and_required_space_anchor():
     assert s["properties"]["anchor"] == ds.ANCHOR
     assert s["properties"]["kind"] == ds.KIND
     assert s["properties"]["side"] == ds.SIDE
-    assert s["properties"]["rotation"] == ds.ROTATION
+    assert s["properties"]["rotation"]["enum"] == ds.ROTATION["enum"]
     assert s["properties"]["label_offset"]["minimum"] == 0
     assert s["properties"]["height"]["exclusiveMinimum"] == 0
     assert s["properties"]["halign"] == ds.HALIGN
@@ -167,7 +167,8 @@ def test_place_curve_table_properties_and_required_space_position():
     s = ds.DESIGN_SCHEMAS["place_curve_table"]
     assert s["required"] == ["space", "position"]
     assert set(s["properties"]) == {"space", "alignment", "position", "curves", "columns",
-                                    "title", "text_height", "layer", "style", "color"}
+                                    "first_curve_number", "title", "text_height", "layer",
+                                    "style", "color"}
     assert s["properties"]["curves"]["items"] == {"type": "integer", "minimum": 1}
     assert s["properties"]["columns"]["minItems"] == 1
     for key in ("curve", "pi_sta", "pc_sta", "pt_sta", "delta", "direction", "radius",

@@ -108,7 +108,12 @@ class LabelMatch:
     def content_ok(self, cand: Candidate) -> bool:
         if self.exact:
             return normalize(cand.entity.content) == normalize(self.truth["content"])
-        return same_label(self.truth["kind"], cand.entity.content, self.truth["content"])
+        if same_label(self.truth["kind"], cand.entity.content, self.truth["content"]):
+            return True
+        # a station number lettered the Caltrans way (the ones digit) or in full:
+        # the anchor ref is the full station text, so both read as the station
+        return (self.truth["kind"] == "station"
+                and same_label("station", cand.entity.content, self.truth["anchor"]))
 
     @property
     def credited(self) -> bool:
@@ -159,7 +164,7 @@ def _expected_pose(ctx: Context, text: Text, space: str, rec: dict, align):
     model_offset = rec.get("label_offset") if space == "model" else None
     try:
         spec = compile_label(align, ap, kind, side=rec.get("side"), label_offset=model_offset,
-                             rotation=rec.get("rotation") or "along", content=text.content)
+                             rotation=rec.get("rotation"), content=text.content)
     except DesignError:
         raise _Bad("the label kind does not fit the anchor")
     if space == "model":
@@ -192,14 +197,14 @@ def index_labels(ctx: Context) -> LabelIndex:
             idx.unanchored.append((text, "the anchor kind is not a label kind"))
             continue
         idx.anchored += 1
-        align = ctx.doc.design.alignments.get(rec["alignment"])
-        if align is None or rec["alignment"] not in ctx.truth_names:
+        found = ctx.truth_alignment(rec.get("alignment"))
+        if found is None:
             continue  # anchored to an alignment the task did not ask for: an extra
+        name, align = found  # the truth's name, however the anchor named it
         try:
             ref, station, position, rotation, tol = _expected_pose(ctx, text, space, rec, align)
         except _Bad as bad:
-            idx.inconsistent.append(Inconsistent(text, (rec["alignment"], rec["ref"], rec["kind"]),
-                                                 str(bad)))
+            idx.inconsistent.append(Inconsistent(text, (name, rec["ref"], rec["kind"]), str(bad)))
             continue
         placed = (geo.distance(text.position, position) <= tol
                   and angle_diff(text.rotation_deg, rotation) <= rot_tol)
@@ -209,7 +214,7 @@ def index_labels(ctx: Context) -> LabelIndex:
         else:
             view = None
             visible = ctx.sheet_visible(space, text.position)
-        key = (rec["alignment"], ref, rec["kind"])
+        key = (name, ref, rec["kind"])
         cand = Candidate(entity=text, space=space, key=key,
                          expected_position=[float(position[0]), float(position[1])],
                          expected_rotation=float(rotation), placed=placed, view=view,

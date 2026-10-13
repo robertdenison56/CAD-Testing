@@ -37,9 +37,10 @@ Beyond the 2D primitives, the bus carries roadway-semantic actions:
 
 - `annotate_stationing` — the stationing engine. Give it connected
   line/polyline/arc entities (the centerline), a begin station, and an
-  interval; it computes length along tangents and curves, draws ticks,
-  formats stations ('12+34.56'), keeps labels upright, and letters BC/EC/PCC
-  the Caltrans way. `chain=true` follows the elements joined end to end from
+  interval; it computes length along tangents and curves, draws 7 ft ticks,
+  letters the station numbers the Caltrans way (the whole number at each
+  500 ft, the ones digit elsewhere, below the line), keeps labels upright, and
+  letters BC/EC/PCC square to the line reading bottom to top (`24+05.27 BC`). `chain=true` follows the elements joined end to end from
   any one of them; `start_point` says where the begin station is known (an
   end, or any point along the path), and the stations run on from the end
   nearer it (`reverse` turns them round).
@@ -153,9 +154,9 @@ from roaddraft import Session
 
 s = Session(project_name="SR 100")
 s.manifest()                          # every command & query: schema + example + aliases
-s.execute("create_layer", {"name": "V-ALIGN-CNTR", "color": "red", "linetype": "center"})
+s.execute("create_layer", {"name": "align_MAIN", "color": "black", "lineweight_mm": 0.5})
 s.execute("draw_line", {"space": "model", "start": [1000, 1000], "end": [1600, 1000],
-                        "layer": "V-ALIGN-CNTR"})
+                        "layer": "align_MAIN"})
 s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"})
 s.execute("create_viewport", {"sheet": "C-101", "center_paper": [17, 12],
                               "width_in": 31, "height_in": 18,
@@ -180,10 +181,11 @@ s.execute("create_alignment", {"name": "ALIGN-1", "begin_station": "10+00",
                                "equations": [{"back": "20+00", "ahead": "25+00"}]})
 s.execute("create_profile", {"name": "PROF-1", "alignment": "ALIGN-1",
                              "pvis": [[1000, 100], [2000, 120, 400], [2500, 90]]})
-s.execute("draw_alignment", {"alignment": "ALIGN-1", "layer": "V-ALIGN-CNTR"})
+s.execute("draw_alignment", {"alignment": "ALIGN-1", "layer": "align_MAIN"})
 s.execute("annotate_stationing", {"space": "model", "alignment": "ALIGN-1"})
-s.execute("place_label", {"space": "model", "anchor": "PC-1"})        # "BC 16+00.00"
-s.execute("place_label", {"space": "model", "anchor": "T-2"})         # bearing N 60°00'00" E
+s.execute("place_label", {"space": "model", "anchor": "PC-1"})        # "16+00.00 BC", square to the line
+s.execute("place_label", {"space": "model", "anchor": "T-2"})         # N 60°00'00" E 500.00', above the tangent
+s.execute("place_label", {"space": "model", "anchor": "MC-1"})        # the curve number in a bubble
 s.execute("place_label", {"space": "C-101", "anchor": "MC-1", "kind": "curve_data"})
 s.execute("place_curve_table", {"space": "C-101", "position": [24, 8.5]})
 s.query("get_design_data", {"kind": "curves"})     # Δ, R, T, L, E, M, C, bearings, stations
@@ -247,7 +249,7 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   entity and the engine computes the tip; that matters most on curves, where
   the midpoint of an arc's endpoints sits 15.5 ft off the arc on the demo
   alignment. A raw `target=[x,y]` still works, and the result says what the tip
-  actually landed on (`DESIGN:AR-007 (arc on V-ROAD-SHLD, 20.00' LT of
+  actually landed on (`DESIGN:AR-007 (arc on rd_ES, 20.00' LT of
   SR-100)`) — worth reading, because roadway linework runs parallel a few feet
   apart, so a hand-computed point that misses usually lands on the *wrong* line
   rather than on nothing. A station and offset is a target too:
@@ -499,7 +501,7 @@ following the alignment exactly wherever consecutive points share an offset
 offset changes. The turn-lane probe is one call:
 
 ```python
-s.execute("draw_station_offset", {"alignment": "SR-100", "layer": "V-ROAD-EOP",
+s.execute("draw_station_offset", {"alignment": "SR-100", "layer": "rd_EP",
     "points": ["30+00@12R", "31+20@24R", "36+00@24R", "36+00@12R"]})
 ```
 
@@ -1020,8 +1022,8 @@ light; sheets stay white paper) — toggle in View ▸ Display.
   anywhere along it — and type that station; the stations run on from the
   end nearer the point, or the other way if you ask. The
   `annotate_stationing` command walks the path and generates perpendicular
-  ticks, upright '12+34.56' labels rotated along the alignment, and BC/EC/PCC
-  labels at the curve points.
+  ticks, Caltrans station numbers below the line, and BC/EC/PCC labels square
+  to the line at the curve points.
 - **References panel**: attach basefiles (other RoadDraft documents) as
   xrefs / reference attachments — toggle display, gray-out, detach, reload;
   status, resolved path and true-scale factor per attachment; expand a row
@@ -1077,7 +1079,7 @@ the app (File ▸ Open): RoadDraft declares the type without claiming to open it
 ```
 
 ```
-RD [model]> mklayer V-ALIGN-CNTR color=red linetype=center
+RD [model]> mklayer align_MAIN color=black lineweight_mm=0.5
 RD [model]> line 1000,1000 1600,1000
 RD [model]> sheet C-101 size=ANSI_D
 RD [model]> viewport sheet=C-101 center_paper=17,12 width_in=31 height_in=18 model_center=1300,1000 feet_per_inch=50
@@ -1088,7 +1090,7 @@ RD [C-101]> render C-101 open
 RD [C-101]> journal session.jsonl        # a replayable expert trajectory
 RD [C-101]> space model
 RD [model]> alignment ALIGN-1 1000,1000 1814.359354,1000,800 2433.012702,1357.179677 begin_station=10+00
-RD [model]> drawalign ALIGN-1 layer=V-ALIGN-CNTR
+RD [model]> drawalign ALIGN-1 layer=align_MAIN
 RD [model]> station alignment=ALIGN-1
 RD [model]> label PC-1
 RD [model]> label T-2 kind=bearing

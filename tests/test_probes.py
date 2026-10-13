@@ -62,15 +62,15 @@ def test_the_curve_trap_fails_the_check(project):
     end = point_at(owner, entity, "end")[0]
     chord_mid = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0]
 
-    session.execute("create_layer", {"name": "V-ANNO-TEXT", "color": "black"})
+    session.execute("create_layer", {"name": "rd_LAYOUT-NOTE-anno", "color": "black"})
     r = session.execute("place_callout", {"space": "model", "target": chord_mid,
                                           "position": [chord_mid[0] + 150.0,
                                                        chord_mid[1] - 150.0],
-                                          "content": "EP", "layer": "V-ANNO-TEXT"})
+                                          "content": "EP", "layer": "rd_LAYOUT-NOTE-anno"})
     # The engine cannot call this empty space -- 15.3 ft off the edge is 7.3 ft
     # from the shoulder -- but it does say which line the tip landed on.
     assert r["ok"] and r["warnings"]
-    assert "V-ROAD-SHLD" in r["warnings"][0] and "20.00' LT" in r["warnings"][0]
+    assert "rd_ES" in r["warnings"][0] and "20.00' LT" in r["warnings"][0]
     result = tasks.get("edge-curve-c102").check(base, session)
     assert not result.passed
     assert "nearest miss" in result.detail
@@ -99,7 +99,7 @@ def test_text_with_no_leader_and_a_leader_with_no_text_both_fail(project):
     probe = tasks.get("edge-c102")
 
     text_only = fresh(project)
-    text_only.execute("create_layer", {"name": "V-ANNO-TEXT", "color": "black"})
+    text_only.execute("create_layer", {"name": "rd_LAYOUT-NOTE-anno", "color": "black"})
     edge = tasks.targets(text_only, anchor={"kind": "offset",
                                             "offset": list(fixture.EDGE_OFFSETS)},
                          visible_on="C-102")[0]
@@ -107,7 +107,7 @@ def test_text_with_no_leader_and_a_leader_with_no_text_both_fail(project):
     on_it = point_at(owner, entity, "mid")[0]
     text_only.execute("place_text", {"space": "model", "position": on_it,
                                      "content": "EDGE OF PAVEMENT", "height": 8.0,
-                                     "layer": "V-ANNO-TEXT"})
+                                     "layer": "rd_LAYOUT-NOTE-anno"})
     result = probe.check(base, text_only)
     assert not result.passed and "no leader" in result.detail
 
@@ -127,14 +127,14 @@ def test_a_callout_built_by_hand_scores_the_same_as_place_callout(project):
                          visible_on="C-102")[0]
     entity, owner, _ref, _space = resolve_entity(session.doc, edge)
     on_it = point_at(owner, entity, "mid")[0]
-    session.execute("create_layer", {"name": "V-ANNO-TEXT", "color": "black"})
+    session.execute("create_layer", {"name": "rd_LAYOUT-NOTE-anno", "color": "black"})
     session.execute("draw_line", {"space": "model", "start": on_it,
                                   "end": [on_it[0] + 150, on_it[1] - 150],
-                                  "layer": "V-ANNO-TEXT"})
+                                  "layer": "rd_LAYOUT-NOTE-anno"})
     session.execute("place_text", {"space": "model",
                                    "position": [on_it[0] + 160, on_it[1] - 150],
                                    "content": "EDGE OF PAVEMENT", "height": 8.0,
-                                   "layer": "V-ANNO-TEXT"})
+                                   "layer": "rd_LAYOUT-NOTE-anno"})
     assert tasks.get("edge-c102").check(base, session).passed
 
 
@@ -168,7 +168,7 @@ def test_pc_by_station_needs_the_referenced_design_and_now_has_it(project):
     qualified = f"DESIGN:{fixture.ALIGNMENT}"
     assert session.query("list_alignments", {"include_references": True})["count"] == 1
     pc = session.query("resolve_anchor", {"alignment": qualified, "anchor": "PC-1"})
-    assert pc["ok"] and pc["station_text"] and pc["auto_content"].startswith("BC ")
+    assert pc["ok"] and pc["station_text"] and pc["auto_content"].endswith(" BC")
     # nothing in the drawing sits at the PC, which is why find_entities cannot do it
     assert all(row["point"] != pc["point"]
                for row in session.query("find_entities", {})["entities"])

@@ -22,7 +22,13 @@ import json
 from typing import Dict, Optional, Sequence
 
 DRAFTING_SPEC_V1 = {
-  "spec_id": "roaddraft-drafting-spec", "version": "draft-v1", "status": "DRAFT — for PE review",
+  "spec_id": "roaddraft-drafting-spec", "version": "draft-v2", "status": "DRAFT — for PE review",
+  # draft-v2 (2026-10-11): the lettering conventions are the Plans Preparation Manual's, the
+  # one set the probes (roaddraft.probes, Tier 3) and this benchmark share -- station numbers
+  # below the line lettered the Caltrans way, BC/EC as station-then-word square to the line
+  # reading bottom to top, bearing and distance above the tangent, the curve number in a
+  # bubble, the curve table No./R/Δ/T/L -- and the labelers anchor through a referenced base
+  # drawing (task type annotate-base). Every value cites its PPM page below.
   "units": {"model": "us_survey_ft", "paper": "inch"},
   "sheet": {"size": "ANSI_D", "allowed_feet_per_inch": [50, 100], "viewport": {"center_paper": [17.0, 11.7], "width_in": 31.0, "height_in": 18.5},
             "fit_window_in": [26.0, 15.0], "north_arrow": {"required": True, "block": "NORTH_ARROW", "position": [31.6, 19.2], "scale": 0.9},
@@ -90,13 +96,34 @@ DRAFTING_SPEC_V1 = {
                                    "layer": "rd_LAYOUT-NOTE-anno", "text_height_in": 0.10, "format": "24.00'"}},
   "reference": {"name": "BASE", "space": "model", "placement": "identity (no offset, rotation or scale), visible, unclipped"},
   "text": {"label_height_in": 0.10, "table_height_in": 0.12, "height_tolerance_pct": 10},
-  "stationing": {"interval_ft": 100, "format": "12+34.56", "decimals": 2, "tick_half_len_in": 0.20, "label_offset_in": 0.32, "label_side": "left", "rotation": "along"},
-  # BC/EC, as Caltrans letters curve points (ppm-text p. 2-85, pdf 114); decided 2026-10-05
-  "labels": {"pc_pt": {"required": True, "side": "right", "format": "BC 16+00.00"},
-             "bearing": {"required": True, "anchor": "T-n", "format": "quadrant", "seconds_decimals": 0, "side": "left"},
-             "mc": {"required": True, "format": "C-1"},
-             "pi": {"required": False}, "equation": {"required_when_present": True, "format": "STA 20+00.00 BK = STA 25+00.00 AH"}},
-  "curve_table": {"required": True, "title": "CURVE DATA", "columns": ["curve", "pi_sta", "delta", "direction", "radius", "tangent", "length", "chord", "chord_bearing"], "length_decimals": 2, "angle_format": "dms"},
+  # Stationing the Caltrans way (ppm-text p. 2-8, pdf 37): 100 ft per station, the whole
+  # station number at 500 ft stations and the ones digit elsewhere, no plus on a whole
+  # station; a 7.0 ft tick at 1" = 50' (14.0 ft at 1" = 100': 0.14 in on paper), centred on
+  # the line; the number below the line, half a text height under the tick
+  "stationing": {"interval_ft": 100, "format": "caltrans", "full_station_every_ft": 500, "decimals": 2,
+                 "tick_half_len_in": 0.07, "label_offset_in": 0.12, "label_side": "below", "rotation": "along",
+                 "example": "30, 1, 2, 3, 4, 35 for 30+00 to 35+00",
+                 "source": "ppm-text p. 2-8 (pdf 37)"},
+  # The alignment data of a layout (ppm-text p. 2-85, 2-89; pdf 114, 118): BC and EC
+  # stations to the hundredth, station then word, square to the line on its left and reading
+  # bottom to top (p. 2-4); bearing and distance of every tangent above the line, parallel to
+  # it; the curve number in a bubble with a leader to the curve; equations lettered like the
+  # curve points. Decided 2026-10-05 (BC/EC words) and 2026-10-11 (the rest).
+  "labels": {"pc_pt": {"required": True, "side": "left", "rotation": "perpendicular", "reads": "bottom to top",
+                       "format": "24+05.27 BC", "label_offset_in": 0.45, "source": "ppm-text p. 2-85, 2-4"},
+             "bearing": {"required": True, "anchor": "T-n", "format": "quadrant", "seconds_decimals": 0, "side": "above",
+                         "with_length": True, "length_decimals": 2, "example": "N 71°33'54\" E 1240.36'",
+                         "label_offset_in": 0.06, "source": "ppm-text p. 2-89 (pdf 118)"},
+             "mc": {"required": True, "format": "1", "bubble": {"radius_text_heights": 2.0, "leader": "from the bubble's edge to the middle of the curve"},
+                    "numbering": "consecutive along the line, never restarted on the next sheet", "side": "right",
+                    "label_offset_in": 0.80, "source": "ppm-text p. 2-85 (pdf 114)"},
+             "pi": {"required": False},
+             "equation": {"required_when_present": True, "format": "STA 20+00.00 BK = STA 25+00.00 AH", "side": "left",
+                          "rotation": "perpendicular", "label_offset_in": 0.45}},
+  # The curve data table as the PPM's layouts carry it: No., R, Δ, T, L (ppm-examples)
+  "curve_table": {"required": True, "title": "CURVE DATA", "columns": ["curve", "radius", "delta", "tangent", "length"],
+                  "headers": ["No.", "R", "Δ", "T", "L"], "length_decimals": 2, "angle_format": "dms",
+                  "source": "ppm-examples layout sheets; ppm-text p. 2-85 (pdf 114)"},
   "tolerances": {"length_ft": 0.005, "station_ft": 0.005, "angle_seconds": 1, "position_model_ft": 0.05, "position_paper_in": 0.05, "rotation_deg": 1.0},
   # The scoring rule (PE decisions 2026-10-09, eval plan 3.7 items 1, 3, 4; D1-00's 5 points
   # came from D1-02 12 -> 9 and D1-11 3 -> 1): text and tables
@@ -127,17 +154,18 @@ DRAFTING_SPEC_V1 = {
   # renormalised to 100. A two-sheet layout breaks at a match line, drawn once across the
   # centerline and labelled on each sheet; the match line scores inside D1-00.
   "task_types": ["draw-alignment", "stationing", "curve-callouts", "bearings", "curve-table", "title-block", "sheet-setup", "annotate-sheet", "plan-sheet",
-                 "layer-setup", "pavement-edges", "pavement-widths", "pavement", "attach-reference"],
+                 "layer-setup", "pavement-edges", "pavement-widths", "pavement", "attach-reference",
+                 "create-alignment", "annotate-base"],
   "sheet_setup": {"one_sheet": {"sheet": 0.25, "scale": 0.25, "fitted": 0.5},
                   "many_sheets": {"sheet": 0.2, "scale": 0.2, "fitted": 0.4, "match_line": 0.2}},
   "checks": [
      {"id": "D1-00", "name": "sheet setup: each deliverable sheet, a viewport at an allowed scale, its part of the alignment fitted, the match line between sheets", "weight": 5, "hard_fail": False},
      {"id": "D1-01", "name": "alignment linework on the alignment layer matches design geometry", "weight": 10, "hard_fail": True},
      {"id": "D1-02", "name": "station tick at every interval station (per region)", "weight": 9, "hard_fail": False},
-     {"id": "D1-03", "name": "station and station-equation labels: content/format correct and anchored", "weight": 12, "hard_fail": True},
-     {"id": "D1-04", "name": "BC/EC (PCC/PRC) label for every curve and a C-n callout at every mid-curve, correct, anchored", "weight": 14, "hard_fail": True},
-     {"id": "D1-05", "name": "bearing label on every tangent, quadrant format, anchored T-n", "weight": 10, "hard_fail": True},
-     {"id": "D1-06", "name": "curve table on the sheet: one row per curve, values within rounding, anchored", "weight": 14, "hard_fail": True},
+     {"id": "D1-03", "name": "station numbers (the Caltrans way, below the line) and station-equation labels: content/format correct and anchored", "weight": 12, "hard_fail": True},
+     {"id": "D1-04", "name": "BC/EC (PCC/PRC) station lettered at every curve point and the curve number in a bubble at every mid-curve, correct, anchored", "weight": 14, "hard_fail": True},
+     {"id": "D1-05", "name": "bearing and distance on every tangent, quadrant format, anchored T-n", "weight": 10, "hard_fail": True},
+     {"id": "D1-06", "name": "curve table on the sheet (No., R, Δ, T, L): one row per curve, values within rounding, anchored", "weight": 14, "hard_fail": True},
      {"id": "D1-07", "name": "label position within tolerance of the anchor-implied position (no free-floating text)", "weight": 8, "hard_fail": False},
      {"id": "D1-08", "name": "legibility: no Text/Table overlaps on the sheet, nothing outside the usable area", "weight": 6, "hard_fail": False},
      {"id": "D1-09", "name": "layers and text heights per spec", "weight": 6, "hard_fail": False},
@@ -147,10 +175,12 @@ DRAFTING_SPEC_V1 = {
      # the task types that ask for them
      {"id": "D1-12", "name": "pavement edges: the offset linework at the typical section's width matches the design", "weight": 8, "hard_fail": True},
      {"id": "D1-13", "name": "pavement width dimensioned across each tangent, between the edges, reading the width", "weight": 6, "hard_fail": True},
-     {"id": "D1-14", "name": "the base drawing attached as a reference in model space, at identity, visible", "weight": 5, "hard_fail": False}],
+     {"id": "D1-14", "name": "the base drawing attached as a reference in model space, at identity, visible", "weight": 5, "hard_fail": False},
+     # design input (2026-10-11): the alignment the prompt describes, created in the design
+     {"id": "D1-15", "name": "alignment created from the given geometry: begin station, PIs and radii, equations within tolerance", "weight": 12, "hard_fail": True}],
 }
 
-SPEC_VERSION = DRAFTING_SPEC_V1["version"]          # "draft-v1"; the brief's ``spec_version``
+SPEC_VERSION = DRAFTING_SPEC_V1["version"]          # "draft-v2"; the brief's ``spec_version``
 SPEC_STATUS = DRAFTING_SPEC_V1["status"]            # starts with "DRAFT"
 
 #: Keys of ``DRAFTING_SPEC_V1`` that ``spec_subset()`` copies into a task brief by default.

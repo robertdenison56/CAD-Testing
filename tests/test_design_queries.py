@@ -115,7 +115,7 @@ def test_resolve_anchor_dry_run_equals_place_label():
         if e.anchor["content_auto"]:
             assert e.content == dry["content"] == dry["auto_content"]
     dry = s.query("resolve_anchor", {"anchor": "PC-1", "space": "C-101"})
-    assert dry["viewport"] == "VP-001" and dry["anchor"]["label_offset"] == 0.32
+    assert dry["viewport"] == "VP-001" and dry["anchor"]["label_offset"] == 0.45
     r = s.query("resolve_anchor", {"anchor": "PT-1", "kind": "pc"})
     assert not r["ok"] and "requires a PC-n anchor" in r["error"]["message"]
     r = s.query("resolve_anchor", {"anchor": "PC-1", "space": "mars"})

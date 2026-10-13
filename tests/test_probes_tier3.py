@@ -96,16 +96,19 @@ def test_the_ten_are_wired_in_and_start_from_real_documents(tmp_path, l2_build):
     rows = eq.query("get_design_data", {"alignment": SR, "kind": "equations"})["rows"]
     assert rows[0]["label"] == "STA 35+00.00 BK = STA 35+50.00 AH"
     row = Session.load(fixture.start_document(tmp_path / "row", "sheets-row"))
-    found = row.query("find_entities", {"layer": "V-ROW", "visible_on": "C-102", "limit": 50})
+    found = row.query("find_entities", {"layer": "rd_RIGHT-OF-WAY", "visible_on": "C-102", "limit": 50})
     assert found["total"] == 10 and all(not e.get("anchor") for e in found["entities"])
     qa = Session.load(fixture.start_document(tmp_path / "qa", "sheets-qa"))
     planted = tier3.qa_planted(qa)
     assert sorted(planted) == ["C-101", "C-102", "C-103"] and sum(map(len, planted.values())) == 8
     l2 = Session.load(l2_build / fixture.L2_SHEET_FILE, out_dir=l2_build)
     sheet = tier2.sheet_named(l2.doc, "L-2")
-    assert not [e for e in sheet.entities.values() if e.layer in ("S-ANNO-CURV", "S-ANNO-MTCH")]
-    assert l2.query("find_entities", {"layer": "V-ANNO-ALGN", "limit": 5})["total"] == 0
-    assert len([e for e in sheet.entities.values() if e.layer == "S-ANNO-CALL"]) == 56
+    assert not [e for e in sheet.entities.values()
+                if e.layer in ("align_CURVE-DATA", "border_INSIDE-BORDER-anno")]
+    # the design file keeps its stationing on align_MAIN-anno and nothing else there
+    anno = l2.query("find_entities", {"layer": "align_MAIN-anno", "limit": 500})["entities"]
+    assert anno and all((e.get("anchor") or {}).get("kind") in ("station", "tick") for e in anno)
+    assert len([e for e in sheet.entities.values() if e.layer == "rd_LAYOUT-NOTE-anno"]) == 56
 
 
 @pytest.mark.parametrize("probe", TIER3_PROBES, ids=lambda p: p.id)
@@ -240,7 +243,7 @@ def test_curve_points_by_the_copy_route_read_bottom_to_top_now(tmp_path):
            label_offset=0.45)
     assert probe.check(base, s).passed, probe.check(base, s).detail
     labels = [t.content for t in texts(s, "C-102")]
-    assert sorted(labels) == ["BC 40+31.72", "EC 27+91.37"]
+    assert sorted(labels) == ["27+91.37 EC", "40+31.72 BC"]
 
 
 # ------------------------------------------------------------- curve data
@@ -301,27 +304,34 @@ def test_a_bubble_aimed_at_the_chord_misses_and_a_hand_built_table_counts(tmp_pa
 # -------------------------------------------------------------- stationing
 
 
+def _model_texts(s):
+    return [e for e in s.doc.model_entities.values() if isinstance(e, Text)]
+
+
 def test_stationing_holds_the_caltrans_lettering_ticks_and_side(tmp_path):
+    # the scripted solution stations through the reference in the sheet file's model
+    # space (annotate_stationing), seen through the viewport
     probe, base, s = solved("stationing", tmp_path)
-    six = next(t for t in texts(s, "C-102") if t.content == "6")
+    six = next(t for t in _model_texts(s) if t.anchor and t.anchor["ref"] == "26+00.00")
+    assert six.content == "6"
     do(s, "modify_entity", id=six.id, changes={"content": "26+00"})
     fails(probe, base, s, "26+00 is lettered '26+00'; Caltrans letters it '6'")
     do(s, "modify_entity", id=six.id, changes={"content": "26"})
     fails(probe, base, s, "lettered '26'")
-    do(s, "modify_entity", id=six.id, changes={"content": "6", "valign": "bottom",
-                                               "position": tier3._at(s, SR, "C-102", 2600.0, -2.0)[0]})
+    above = s.query("station_to_xy", {"alignment": SR, "station": "26+00", "offset": -2.0})["point"]
+    do(s, "modify_entity", id=six.id, changes={"content": "6", "valign": "bottom", "position": above})
     fails(probe, base, s, "above the line")
     probe, base, s = solved("stationing", tmp_path / "b")
-    tick = next(e for e in tier2.sheet_named(s.doc, "C-102").entities.values()
-                if isinstance(e, Line) and math.dist(e.start, tier3._at(s, SR, "C-102", 3000.0, -3.5)[0]) < 0.01)
-    p, _d = tier3._at(s, SR, "C-102", 3000.0)
-    do(s, "modify_entity", id=tick.id, changes={"start": [p[0], p[1] + 0.2], "end": [p[0], p[1] - 0.2]})
+    tick = next(e for e in s.doc.model_entities.values()
+                if isinstance(e, Line) and e.anchor and e.anchor["ref"] == "30+00.00")
+    p = s.query("station_to_xy", {"alignment": SR, "station": "30+00"})["point"]
+    do(s, "modify_entity", id=tick.id, changes={"start": [p[0], p[1] + 10.0], "end": [p[0], p[1] - 10.0]})
     fails(probe, base, s, "the tick at 30+00")
 
 
 def test_station_numbers_may_be_square_to_the_sheet_and_tables_may_carry_units(tmp_path):
     probe, base, s = solved("stationing", tmp_path)
-    for t in texts(s, "C-102"):
+    for t in _model_texts(s):
         do(s, "modify_entity", id=t.id, changes={"rotation_deg": 0.0})
     assert probe.check(base, s).passed, probe.check(base, s).detail
     probe, base, s = solved("curve-data", tmp_path / "b")
