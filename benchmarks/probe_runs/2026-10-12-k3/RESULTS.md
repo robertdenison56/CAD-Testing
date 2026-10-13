@@ -136,6 +136,19 @@ the same failure Haiku showed once in `equation-data`: the model types JSON esca
 On Tier 1 Gemma's 9 to 11 of 17 sits where Qwen3.5-9B stood on Sep 29 (11 of 17, the shell-bridge rig, so not
 a comparison on the board); on Tier 2 and 3 it is where every local model was on Oct 7: nothing.
 
+**Engine under the run: the pins are wrong for 82 of the 99 episodes.** The runner process loaded its code at
+20:45, but every probe starts a fresh `roaddraft-mcp`, and that server imports the checkout's working-tree
+`src/` (an editable install). At 21:38:44 another session's uncommitted real-sheet work changed
+`commands/schemas.py`, `commands/design_schemas.py`, `commands/design_handlers.py` and `design/labels.py` (an
+optional `view_rotation` on `place_label` and `annotate_stationing`; committed later as 6bf396e). Every
+episode that started after that, from r1's `sheet-set-callouts` at 21:40:40 through all of r2 and r3, was
+served that tool list (`sha256:20fe0603…`, the 6bf396e surface) and engine; r1's first 17 probes had the
+2697ee5 surface (`sha256:97c51a24…`) the Haiku and Sonnet rows ran on. `run.json` cannot show it: `pins()` is
+computed once per process, so all 99 record commit 2697ee5 and tools `97c51a24…`. The parameter is optional
+and defaults to the old behaviour, no Gemma episode passed it, and r1 scores the same 9 of 33 as r3, so the
+scores are very unlikely to have moved; but the tool schemas the model read differ in those two descriptions
+from the other rows'.
+
 ## Fable 5.1, repeat 3 of 3: 32 of 33 on disk, 31 on the board
 
 `fable-r3` ran 04:35 to 05:08 PDT on Oct 13 on the Haiku/Sonnet rig (the weekly Fable window had reset at
