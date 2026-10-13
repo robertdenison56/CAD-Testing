@@ -5,6 +5,7 @@
                                     [--repeat K] [--vision] [--effort LEVEL] [--force]
         anthropic:    ANTHROPIC_API_KEY in the environment
         claude-code:  [--claude-bin PATH] [--max-budget-usd D] [--claude-arg ARG ...]
+        codex:        [--codex-bin PATH] [--codex-arg ARG ...]
         openai:       [--base-url URL] [--api-key-env NAME] [--lms-context N] [--extra-body JSON]
     python -m roaddraft.runners score DIR/runs/LABEL [PROBE ...]
     python -m roaddraft.runners leaderboard [--runs benchmarks/probe_runs] [--out benchmarks/leaderboard] [--check]
@@ -20,13 +21,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 from roaddraft.mcp import config as mcpconfig
 from roaddraft.probes import tasks
-from roaddraft.runners import anthropic_api, claude_code, leaderboard, openai_compat  # noqa: F401  (register)
+from roaddraft.runners import anthropic_api, claude_code, codex_cli, leaderboard, openai_compat  # noqa: F401  (register)
 from roaddraft.runners.core import BACKENDS, Options, run_probe
 from roaddraft.runners.score import format_table, score_label
 
@@ -58,6 +60,8 @@ def build_backend(args) -> object:
     if args.backend == "claude-code":
         extra = {"claude_bin": args.claude_bin, "max_budget_usd": args.max_budget_usd,
                  "claude_args": args.claude_arg or []}
+    elif args.backend == "codex":
+        extra = {"codex_bin": args.codex_bin, "codex_args": args.codex_arg or []}
     elif args.backend == "openai":
         extra = {"base_url": args.base_url, "api_key_env": args.api_key_env,
                  "lms_context": args.lms_context, "extra_body": args.extra_body}
@@ -82,6 +86,13 @@ def cmd_run(args) -> int:
             meta = run_probe(backend, folder, probe, server_command, force=args.force)
             if meta.get("skipped"):
                 print(f"skip {label}/{probe.id} (already ran)", flush=True)
+            elif str(meta.get("stop", "")).startswith("error: account limit"):
+                # the account stopped it, not the model: every probe after it would
+                # stop the same way, so stop here and leave the probe to run again
+                shutil.rmtree(folder)
+                print(f"stopped at {label}/{probe.id}: {meta['stop']}; run the same command "
+                      "again once the limit resets", file=sys.stderr, flush=True)
+                return 3
     return 0
 
 
@@ -125,6 +136,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run.add_argument("--claude-bin", help="claude-code: the CLI to run (default: PATH, then the app's)")
     run.add_argument("--max-budget-usd", type=float, help="claude-code: the CLI's own spend cap")
     run.add_argument("--claude-arg", action="append", help="claude-code: an extra CLI argument")
+    run.add_argument("--codex-bin", help="codex: the CLI to run (default: the ChatGPT app's, then PATH)")
+    run.add_argument("--codex-arg", action="append", help="codex: an extra CLI argument")
     run.add_argument("--base-url", help="openai: the endpoint (default http://localhost:1234/v1)")
     run.add_argument("--api-key-env", help="openai: environment variable holding the key (OPENAI_API_KEY)")
     run.add_argument("--lms-context", type=int, help="openai: LM Studio guard, reload the model at this context")

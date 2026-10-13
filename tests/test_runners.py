@@ -23,6 +23,8 @@ from roaddraft.runners import __main__ as cli
 from roaddraft.runners.anthropic_api import (AnthropicBackend, credentials, tool_definitions,
                                              tool_result_block)
 from roaddraft.runners.claude_code import ClaudeCodeBackend, mcp_config, parse_stream
+from roaddraft.runners.codex_cli import CodexBackend
+from roaddraft.runners.codex_cli import Stream as CodexStream
 from roaddraft.runners.openai_compat import OpenAIBackend, parse_args
 from roaddraft.runners.score import measures, score_label
 
@@ -327,6 +329,105 @@ def test_claude_code_not_signed_in_is_an_error_not_a_crash(tmp_path):
     meta = run_probe(backend, tmp_path / "r" / BLANK.id, BLANK, SERVER)
     assert meta["stop"].startswith("error: claude is not signed in")
     assert (tmp_path / "r" / BLANK.id / "report.txt").read_text().startswith("(no final answer")
+
+
+# ---------------------------------------------------------------- codex
+
+def fake_codex(tmp_path, lines, rc=0, stderr="", sleep=0.0):
+    """A stand-in ``codex``: prints the given --json lines and exits."""
+    script = tmp_path / "codex"
+    script.write_text("#!/usr/bin/env python3\nimport sys, json, time\n"
+                      f"open(sys.argv[0] + '.argv', 'w').write(json.dumps(sys.argv[1:]))\n"
+                      f"sys.stderr.write({stderr!r})\n"
+                      f"for line in {[json.dumps(l) for l in lines]!r}: print(line, flush=True)\n"
+                      f"time.sleep({sleep})\n"
+                      f"sys.exit({rc})\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return script
+
+
+CODEX_CALL = {"type": "item.completed", "item": {
+    "id": "item_1", "type": "mcp_tool_call", "server": "roaddraft", "tool": "get_document_state",
+    "arguments": {}, "result": {"content": [{"type": "text", "text": "{\"ok\": true}"}]},
+    "error": None, "status": "completed"}}
+CODEX_STREAM = [
+    {"type": "thread.started", "thread_id": "t1"},
+    {"type": "turn.started"},
+    {"type": "item.completed", "item": {"id": "item_0", "type": "reasoning", "text": "look first"}},
+    CODEX_CALL,
+    {"type": "item.completed", "item": {"id": "item_2", "type": "agent_message", "text": "All done."}},
+    {"type": "turn.completed", "usage": {"input_tokens": 1000, "cached_input_tokens": 900,
+                                         "output_tokens": 50, "reasoning_output_tokens": 20}},
+]
+
+
+def test_codex_command_pares_the_harness_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", "/pinned/src")
+    ep = episode(tmp_path, model="gpt-6-astra", effort="medium")
+    argv = CodexBackend(ep.options, codex_bin="/x/codex").command(ep)
+    assert argv[:2] == ["/x/codex", "exec"] and argv[-1] == "do the task"
+    for flag in ("--json", "--ephemeral", "--ignore-user-config", "--ignore-rules"):
+        assert flag in argv
+    assert argv[argv.index("--model") + 1] == "gpt-6-astra" and argv[argv.index("--sandbox") + 1] == "read-only"
+    assert {argv[i + 1] for i, a in enumerate(argv) if a == "--disable"} >= {"shell_tool", "plugins", "memories"}
+    settings = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "-c")
+    assert settings["approval_policy"] == '"never"' and settings["model_reasoning_effort"] == '"medium"'
+    assert settings["include_environment_context"] == "false" and settings["project_doc_max_bytes"] == "0"
+    assert settings["mcp_servers.roaddraft.default_tools_approval_mode"] == '"approve"'
+    assert json.loads(settings["mcp_servers.roaddraft.command"]) == sys.executable
+    args = json.loads(settings["mcp_servers.roaddraft.args"])
+    assert args[:2] == ["-m", "roaddraft.mcp.server"] and "--autosave" in args
+    assert settings["mcp_servers.roaddraft.env"] == '{PYTHONPATH = "/pinned/src"}'
+    instructions = Path(json.loads(settings["model_instructions_file"]))
+    assert instructions.is_absolute() and "model space" in instructions.read_text().lower()
+
+
+def test_codex_stream_becomes_the_transcript(tmp_path):
+    e = episode(tmp_path)
+    log = e.log
+    stream = CodexStream(e)
+    for event in CODEX_STREAM:
+        stream.feed(json.dumps(event))
+    out = stream.outcome()
+    assert out.stop == "answered" and out.final == "All done." and out.cost_usd is None
+    assert out.usage == {"input_tokens": 1000, "cached_input_tokens": 900, "output_tokens": 50,
+                         "reasoning_output_tokens": 20}
+    assert out.extra["thread_id"] == "t1" and out.extra["tool_calls"] == 1 and out.turns == 2
+    assert [m["role"] for m in log] == ["assistant", "user", "assistant"]
+    assert [b["type"] for b in log[0]["content"]] == ["thinking", "tool_use"]
+    assert log[1]["content"][0] == {"type": "tool_result", "tool_use_id": "item_1",
+                                    "content": "{\"ok\": true}", "is_error": False}
+    # a refused call is an error result; an account limit is the infrastructure's stop
+    refused = dict(CODEX_CALL["item"], result=None, error={"message": "requires approval"})
+    stream = CodexStream(e)
+    stream.feed(json.dumps({"type": "item.completed", "item": refused}))
+    stream.feed(json.dumps({"type": "turn.failed", "error": {"message": "You've hit your usage limit."}}))
+    assert log[-1]["content"][0]["is_error"] and log[-1]["content"][0]["content"] == "[tool error] requires approval"
+    assert stream.outcome().stop.startswith("error: account limit")
+
+
+def test_codex_runs_the_cli_and_leaves_the_run_folder(tmp_path):
+    bin_ = fake_codex(tmp_path, CODEX_STREAM)
+    backend = CodexBackend(Options(model="gpt-6-luna", effort="medium"), codex_bin=str(bin_))
+    meta = run_probe(backend, tmp_path / "runs" / "cx" / BLANK.id, BLANK, SERVER)
+    assert meta["stop"] == "answered" and meta["backend"] == "codex" and meta["effort"] == "medium"
+    folder = tmp_path / "runs" / "cx" / BLANK.id
+    assert (folder / "report.txt").read_text() == "All done."
+    transcript = json.loads((folder / "transcript.json").read_text())
+    assert [m["role"] for m in transcript["messages"]] == ["system", "user", "assistant", "user", "assistant"]
+    assert (folder / "instructions.md").exists() and (folder / "codex.log").exists()
+
+
+def test_codex_stops_past_the_turn_cap_and_the_budget(tmp_path):
+    many = [CODEX_STREAM[0]] + [CODEX_CALL] * 5
+    capped = CodexBackend(Options(model="m", max_turns=3), codex_bin=str(fake_codex(tmp_path, many, sleep=30)))
+    assert run_probe(capped, tmp_path / "a" / BLANK.id, BLANK, SERVER)["stop"] == "max_turns"
+    slow = CodexBackend(Options(model="m", budget=1), codex_bin=str(fake_codex(tmp_path, [], sleep=30)))
+    assert run_probe(slow, tmp_path / "b" / BLANK.id, BLANK, SERVER)["stop"] == "budget"
+    broken = CodexBackend(Options(model="m"),
+                          codex_bin=str(fake_codex(tmp_path, [], rc=1, stderr="Not signed in\n")))
+    assert run_probe(broken, tmp_path / "c" / BLANK.id, BLANK, SERVER)["stop"] == \
+        "error: codex exited 1: Not signed in"
 
 
 # ---------------------------------------------------------------- openai
@@ -864,3 +965,14 @@ def test_cli_run_with_the_fake_claude(tmp_path):
         assert (tmp_path / "out" / "runs" / label / BLANK.id / "report.txt").read_text() == "All done."
     rows = score_label(tmp_path / "out" / "runs" / "cc-r1")
     assert rows[0]["calls"] == 0 and rows[0]["detail"] == "no tool calls"   # the fake CLI never called the server
+
+
+def test_cli_run_stops_at_an_account_limit_and_leaves_the_probe_to_rerun(tmp_path):
+    limited = [CODEX_STREAM[0], {"type": "turn.failed", "error": {"message": "You've hit your usage limit."}}]
+    bin_ = fake_codex(tmp_path, limited, rc=1)
+    second = next(p for p in tasks.PROBES if p.start == "blank" and p.id != BLANK.id)
+    rc = cli.main(["run", "--backend", "codex", "--model", "gpt-6-luna", "--out", str(tmp_path / "out"),
+                   "--label", "cx", "--codex-bin", str(bin_), BLANK.id, second.id])
+    assert rc == 3
+    assert not (tmp_path / "out" / "runs" / "cx" / BLANK.id).exists()
+    assert not (tmp_path / "out" / "runs" / "cx" / second.id).exists()

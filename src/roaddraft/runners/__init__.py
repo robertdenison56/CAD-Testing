@@ -14,6 +14,8 @@ Backends are the only vendor-specific part:
 - ``anthropic``: the Messages API over HTTP (an API key, billed per token).
 - ``claude-code``: Claude Code in headless mode, on a subscription; the CLI
   starts the server from an MCP config and the model calls the tools natively.
+- ``codex``: Codex in headless mode (``codex exec``), on a ChatGPT
+  subscription; the same arrangement for OpenAI's models.
 - ``openai``: any OpenAI-compatible chat-completions endpoint -- LM Studio,
   Ollama, vLLM -- streamed, with the LM Studio rigs' guards: a cap on the
   calls one turn may make, a per-turn time limit, a stop when the
