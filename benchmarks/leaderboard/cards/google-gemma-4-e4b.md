@@ -7,41 +7,41 @@
 | model | `google/gemma-4-e4b` |
 | class | local small |
 | runner | runners · openai (LM Studio), `http://localhost:1234/v1` |
-| run folder | `2026-10-12-k3`, labels `gemma-r1` |
+| run folder | `2026-10-12-k3`, labels `gemma-r1`, `gemma-r2`, `gemma-r3` |
 | budgets | 120 turns, 30 min per probe; text only; default effort |
-| standing | not ranked yet: in progress: 1 episode unfinished; k = 3 on 0 of 33 probes |
-| engine commit | `2697ee5093` (11); changed past it: `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/tasks/brief.py`, `src/roaddraft/tasks/generator.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/spec_v1.py` |
+| standing | rank 3 of 3 |
+| engine commit | `2697ee5093` (99); changed past it: `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/tasks/brief.py`, `src/roaddraft/tasks/generator.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/spec_v1.py` |
 | tool surface | `sha256:97c51a241564` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**63.6%** pass rate, 95% CI [36.4, 90.9]: 7 of 11 attempts that count, on 11 of 33 probes.
+**29.3%** pass rate, 95% CI [16.2, 44.4]: 29 of 99 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 7/11 (64%) | — | — | 7/11 |
+| passed | 29/51 (57%) | 0/18 (0%) | 0/30 (0%) | 29/99 |
 
-By attempt: gemma-r1 7/11. Of the 11 probes attempted, 7 pass every time, 4 never pass (hard-fail rate 36%), 0 split.
+By attempt: gemma-r1 9/33, gemma-r2 11/33, gemma-r3 9/33. Of the 33 probes attempted, 7 pass every time, 20 never pass (hard-fail rate 61%), 6 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 29.3% (12 of 41 calls) | faulted calls over calls, from the traces |
-| fault recovery | 9 of 12 faults (75%) | a fault followed within three calls by a successful call of the same tool |
-| repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
-| query before compute | 1 of 11 episodes that changed the drawing asked a design query first; 0.2 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| invalid-call rate | 47.7% (413 of 865 calls) | faulted calls over calls, from the traces |
+| fault recovery | 145 of 413 faults (35%) | a fault followed within three calls by a successful call of the same tool |
+| repeated-fault loops | 5 episodes; longest run 9 | the same fault five or more times in a row |
+| query before compute | 21 of 88 episodes that changed the drawing asked a design query first; 0.7 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
 | report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
-| steps | 3.7 calls, 4.7 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 89 s per episode, 0.3 h in all | the runner's clock, episode start to report |
-| tokens | 166k in, 2.8k out per episode (2.2k of it reasoning) | input counts cache reads and writes |
+| steps | 8.7 calls, 9.0 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 281 s per episode, 7.7 h in all | the runner's clock, episode start to report |
+| tokens | 333k in, 9.4k out per episode (8.3k of it reasoning) | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a local model |
 | render use | 0 renders in 0 episodes; 0 followed by a change | a render is followed by a change when a successful command comes before the next render |
 | scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
 
-Stops: answered 11.
+Stops: answered 99. 1 tool results were cut to the runner's cap.
 
 ## Every probe
 
@@ -49,36 +49,36 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 
 | probe | tier | attempts | calls | faults | the first failing attempt, as its check read it |
 |---|---|---|---|---|---|
-| edge-c102 | T1 | P | 2.0 | 0 |  |
-| edge-curve-c102 | T1 | P | 5.0 | 1 |  |
-| shoulder-c101 | T1 | · | 5.0 | 1 | gemma-r1: hit 0 of 1 required; nearest miss on the left shoulder on C-101 was DESIGN:LN-010 at 4.69 ft from [1698.8, 1015.3] (needed 1.00 ft) |
-| centerline-c103 | T1 | P | 7.0 | 5 |  |
-| both-edges-c101 | T1 | P | 5.0 | 1 |  |
-| title-blocks | T1 | · | 4.0 | 0 | gemma-r1: C-101.scale='1\\" = 50\'' (wanted '1" = 50\''); C-102.scale='1\\" = 50\'' (wanted '1" = 50\''); C-103.scale='1\\" = 50\'' (wanted '1" = 50\'') |
-| pc-by-station | T1 | P | 3.0 | 1 |  |
-| edge-c102-paper | T1 | P | 2.0 | 0 |  |
-| sta-offset-c101-paper | T1 | P | 3.0 | 2 |  |
-| draft-tangent-ne | T1 | · | 2.0 | 0 | gemma-r1: MAIN-ST ends at [2000.00, 6200.00], 1697.06 ft from [3200.00, 5000.00] where it was described |
-| draft-pi-curve | T1 | · | 3.0 | 1 | gemma-r1: SR-9 begins at station 0+00.00, not 50+00.00 |
-| draft-bearing-distance | T1 | — | | | |
-| draft-edges-shoulders | T1 | — | | | |
-| draft-turn-lane | T1 | — | | | |
-| draft-cul-de-sac | T1 | — | | | |
-| draft-building | T1 | — | | | |
-| draft-roadway | T1 | — | | | |
-| sheet-set-callouts | T2 | — | | | |
-| station-callouts | T2 | — | | | |
-| clean-callouts | T2 | — | | | |
-| draft-intersection-corner | T2 | — | | | |
-| draft-fix-the-drawing | T2 | — | | | |
-| draft-roadway-sheets | T2 | — | | | |
-| line-data | T3 | — | | | |
-| curve-points | T3 | — | | | |
-| curve-data | T3 | — | | | |
-| stationing | T3 | — | | | |
-| width-dims | T3 | — | | | |
-| row-data | T3 | — | | | |
-| equation-data | T3 | — | | | |
-| qa-alignment-data | T3 | — | | | |
-| l2-match-lines | T3 | — | | | |
-| l2-alignment-data | T3 | — | | | |
+| edge-c102 | T1 | P P P | 2.0 | 0 |  |
+| edge-curve-c102 | T1 | P P P | 3.3 | 1 |  |
+| shoulder-c101 | T1 | · · · | 3.7 | 1 | gemma-r1: hit 0 of 1 required; nearest miss on the left shoulder on C-101 was DESIGN:LN-010 at 4.69 ft from [1698.8, 1015.3] (needed 1.00 ft) |
+| centerline-c103 | T1 | P P · | 9.3 | 18 | gemma-r3: hit 0 of 1 required; nearest miss on the SR-100 centerline on C-103 was DESIGN:AR-002 at 2995.62 ft from [1001.2, 995.1] (needed 1.00 ft) |
+| both-edges-c101 | T1 | P P P | 4.3 | 1 |  |
+| title-blocks | T1 | · · · | 4.0 | 0 | gemma-r1: C-101.scale='1\\" = 50\'' (wanted '1" = 50\''); C-102.scale='1\\" = 50\'' (wanted '1" = 50\''); C-103.scale='1\\" = 50\'' (wanted '1" = 50\'') |
+| pc-by-station | T1 | P P P | 4.3 | 5 |  |
+| edge-c102-paper | T1 | P P P | 2.3 | 1 |  |
+| sta-offset-c101-paper | T1 | P P P | 2.3 | 4 |  |
+| draft-tangent-ne | T1 | · · P | 2.7 | 2 | gemma-r1: MAIN-ST ends at [2000.00, 6200.00], 1697.06 ft from [3200.00, 5000.00] where it was described |
+| draft-pi-curve | T1 | · · P | 3.0 | 2 | gemma-r1: SR-9 begins at station 0+00.00, not 50+00.00 |
+| draft-bearing-distance | T1 | P P · | 4.3 | 8 | gemma-r3: nothing drawn for the centerline |
+| draft-edges-shoulders | T1 | P P P | 9.7 | 14 |  |
+| draft-turn-lane | T1 | · P · | 3.7 | 2 | gemma-r1: the full-width edge, 24 ft right: 25 of 25 check points have no linework within 0.5 ft; the worst is [3521.52, 1281.87], 12.00 ft from the nearest |
+| draft-cul-de-sac | T1 | · · · | 11.0 | 21 | gemma-r1: the 45 ft bulb is drawn, but not on rd_EP (added linework is on ['0', 'align_MAIN']) |
+| draft-building | T1 | · P · | 6.0 | 3 | gemma-r1: the 60 x 40 building footprint: 20 of 44 check points have no linework within 0.5 ft; the worst is [1534.64, 1180.00], 40.00 ft from the nearest |
+| draft-roadway | T1 | · · · | 11.7 | 21 | gemma-r1: the left edge of shoulder: 85 of 85 check points have no linework within 0.5 ft; the worst is [1849.03, 2926.10], 11.00 ft from the nearest |
+| sheet-set-callouts | T2 | · · · | 15.7 | 20 | gemma-r1: C-101, the left edge of pavement: nothing was drawn on sheet C-101 itself -- this probe wants the callout in paper space, not in the model |
+| station-callouts | T2 | · · · | 15.7 | 8 | gemma-r1: 11 of 15 stations have no leader on them: 11+00, 13+00, 14+00, 15+00, 16+00 ... |
+| clean-callouts | T2 | · · · | 30.7 | 70 | gemma-r1: the right edge of shoulder: hit 0 of 1 required; nearest miss on the right edge of shoulder on C-102 was DESIGN:AR-009 at 20.00 ft from [2668.7, 1029.3] (needed 1.00 ft) |
+| draft-intersection-corner | T2 | · · · | 6.3 | 3 | gemma-r1: nothing drawn for the 50 ft curb return |
+| draft-fix-the-drawing | T2 | · · · | 6.3 | 4 | gemma-r1: the right edge of pavement at 12 ft: 49 of 189 check points have no linework within 0.5 ft; the worst is [3707.83, 1356.63], 1.00 ft from the nearest |
+| draft-roadway-sheets | T2 | · · · | 14.3 | 13 | gemma-r1: ELM-AVE begins at station 0+00.00, not 10+00.00 |
+| line-data | T3 | · · · | 5.3 | 10 | gemma-r1: T-1 on C-101: no lettering gives N 90°00'00" E 1405.27' |
+| curve-points | T3 | · · · | 14.7 | 34 | gemma-r1: the BC at 24+05.27 on C-101 (PC of C-1): no lettering reads 24+05.27 BC |
+| curve-data | T3 | · · · | 12.7 | 14 | gemma-r1: C-101's table lists curve 2, which C-101 does not show; it shows 1 |
+| stationing | T3 | · · · | 5.7 | 13 | gemma-r1: nothing was added to C-102 |
+| width-dims | T3 | · · · | 5.0 | 8 | gemma-r1: the left shoulder (8') is not dimensioned across the road at 17+00 |
+| row-data | T3 | · · · | 5.3 | 8 | gemma-r1: the tag C1 is on the left right of way line; the task is the right-hand one |
+| equation-data | T3 | · · · | 16.3 | 43 | gemma-r1: no lettering gives the equation 35+00.00 BK = 35+50.00 AH at its point |
+| qa-alignment-data | T3 | · · · | 10.3 | 11 | gemma-r1: the BC at 24+05.27 on C-101: no lettering reads 24+05.27 BC |
+| l2-match-lines | T3 | · · · | 17.3 | 20 | gemma-r1: the match line at 574+50.00 runs at 83.54° on the sheet; square to "SR70" there is 90.14° |
+| l2-alignment-data | T3 | · · · | 19.0 | 30 | gemma-r1: the tangent 576+16.93 to 578+47.69: no lettering gives N 78°30'50" E 230.76' |

@@ -12,12 +12,15 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Claude Sonnet 5.5 | frontier API | runners · claude-code (Claude Code headless) | 96.0% [87.9, 100.0] | 51/51 (100%) | 18/18 (100%) | 26/30 (87%) | 3% (1/33) | 2.0% | $0.10 | 99 (k = 3) | [card](cards/claude-sonnet-5-5.md) |
 | 2 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | 74.7% [60.6, 86.9] | 49/51 (96%) | 12/18 (67%) | 13/30 (43%) | 15% (5/33) | 4.2% | $0.11 | 99 (k = 3) | [card](cards/claude-haiku-4-5.md) |
+| 3 | Gemma 4 E4B | local small | runners · openai (LM Studio) | 29.3% [16.2, 44.4] | 29/51 (57%) | 0/18 (0%) | 0/30 (0%) | 61% (20/33) | 47.7% | — | 99 (k = 3) | [card](cards/google-gemma-4-e4b.md) |
+
+- Budgets differ between ranked rows: Claude Sonnet 5.5 120 turns, 15 min; Claude Haiku 4.5 120 turns, 15 min; Gemma 4 E4B 120 turns, 30 min.
 
 ## Not ranked yet
 
 | model | class | runner | run folder | attempts | passed | why not ranked | card |
 |---|---|---|---|---|---|---|---|
-| Gemma 4 E4B | local small | runners · openai (LM Studio) | `2026-10-12-k3` | 11 on 11 probes | 7/11 | in progress: 1 episode unfinished; k = 3 on 0 of 33 probes | [card](cards/google-gemma-4-e4b.md) |
+| Claude Fable 5.1 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-12-k3` | 4 on 4 probes | 4/4 | in progress: 1 episode unfinished; k = 3 on 0 of 33 probes | [card](cards/claude-fable-5-1.md) |
 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-08-k3` | 63 on 21 probes | 35/63 | k = 3 on 21 of 33 probes; 36 episodes ran on an earlier task text (the probe set changed since); rerun | [card](cards/claude-haiku-4-5--2026-10-08-k3.md) |
 
 ## Run folders not on the board

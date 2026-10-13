@@ -9,7 +9,7 @@
 | runner | runners · claude-code (Claude Code headless) |
 | run folder | `2026-10-12-k3`, labels `haiku-r1`, `haiku-r2`, `haiku-r3` |
 | budgets | 120 turns, 15 min per probe; text only; default effort |
-| standing | rank 2 of 2 |
+| standing | rank 2 of 3 |
 | engine commit | `2697ee5093` (99) |
 | tool surface | `sha256:97c51a241564` |
 | server instructions | current |

@@ -1,10 +1,10 @@
-# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5 (Gemma 4 E4B and Fable 5.1 to follow)
+# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B (Fable 5.1 to follow)
 
 The probe set changed on 2026-10-12 (commit `2697ee5`: the engine's labelers default to the Plans Preparation
 Manual's lettering, the probe fixtures sit on Caltrans named levels, the checks read the Caltrans station digit;
 probe set `sha256:2fce3b5c1c75`), so every row on the board had to be rerun. This folder holds the reruns; each
-model's repeats go under `runs/<model>-r1..r3`. Haiku 4.5 ran first, Sonnet 5.5 next; Gemma 4 E4B is running
-through LM Studio as this is written and Fable 5.1 waits for the account's weekly Fable window to reset.
+model's repeats go under `runs/<model>-r1..r3`. Haiku 4.5 ran first, Sonnet 5.5 next, Gemma 4 E4B overnight
+through LM Studio; Fable 5.1 waited for the account's weekly Fable window to reset and is running as this is written.
 
 **Rig.** The same as `2026-10-08-k3`: `python -m roaddraft.runners run --backend claude-code` on the standalone
 CLI (2.1.296) signed in to claude.ai, so a subscription, no API key. One `roaddraft-mcp` per probe, started by
@@ -85,14 +85,62 @@ the turns; both are billed to the subscription, not per token. The Oct 8 Haiku r
 fall to 4.2% is the labelers accepting the referenced-alignment names the models reach for (`DESIGN:SR-100`)
 instead of faulting on them.
 
+## Gemma 4 E4B: 9, 11, 9 of 33
+
+The smallest tool-use model LM Studio lists (`google/gemma-4-e4b`, Q4_K_M, 4B effective parameters), on
+RobertsPC over LM Link, loaded at a 65,536 context, through `--backend openai` with the LM Studio guard. One
+process ran the three repeats one after another, 20:46 to 04:31 PDT (7 h 45 min; 140, 170 and 154 minutes of
+episode time per repeat). 30 minutes and 120 turns per probe; renders replaced by a note, as on Oct 7. The
+guard fired twice at the start and never again: Gemma's chat template refused the list-valued schema `type`
+(rewritten to `anyOf`, the Oct 7 fix), and LM Studio had JIT-loaded the model at a smaller context than the
+first request needed (reloaded at 65,536). One result was cut at the 30,000-character cap.
+
+| set | r1 | r2 | r3 | Gemma on Oct 7 (Tier 3 B and C only, old probe set) |
+|---|---|---|---|---|
+| the 17 (9 find, 8 draft) | 9 | 11 | 9 | not run |
+| Tier 2 (6) | 0 | 0 | 0 | not run |
+| Tier 3 batch A (4) | 0 | 0 | 0 | not run |
+| Tier 3 batches B and C (6) | 0 | 0 | 0 | 0 |
+| **all 33** | **9** | **11** | **9** | |
+
+Seven probes pass every time (edge-c102, edge-curve-c102, both-edges-c101, pc-by-station, edge-c102-paper,
+sta-offset-c101-paper, draft-edges-shoulders), twenty fail every time, six split. Nothing above Tier 1 passes.
+
+| probe | r1 r2 r3 | what a failing repeat left on disk (the first one) |
+|---|---|---|
+| shoulder-c101 | . . . | the leader lands 4.69 ft from the shoulder line, on nothing |
+| centerline-c103 | P P . | the leader lands 2,996 ft from the centerline on C-103: a point from another sheet |
+| title-blocks | . . . | every scale reads `1\" = 50'`: the escape character typed into the field, all three times |
+| draft-tangent-ne | . . P | MAIN-ST ends 1,697 ft from where it was described |
+| draft-pi-curve | . . P | SR-9 begins at 0+00, not the 50+00 the task gives |
+| draft-bearing-distance | P P . | nothing drawn for the centerline |
+| draft-turn-lane | . P . | the full-width edge 24 ft right has no linework on any check point |
+| draft-cul-de-sac | . . . | the 45 ft bulb is drawn, but on layers `0` and `align_MAIN`, not `rd_EP` |
+| draft-building | . P . | 20 of 44 footprint check points bare; the worst 40 ft off |
+| draft-roadway | . . . | the left edge of shoulder not drawn (85 of 85 check points bare) |
+| sheet-set-callouts | . . . | the callouts went into the model, not onto the sheet |
+| station-callouts | . . . | 11 of 15 stations have no leader |
+| clean-callouts | . . . | the leader for the right edge of shoulder lands 20 ft off, on the centerline |
+| draft-intersection-corner, draft-fix-the-drawing, draft-roadway-sheets | . . . | the curb return not drawn; the 12 ft edge not redrawn; ELM-AVE begins at 0+00 |
+| the 10 Tier 3 probes | . . . | nothing lettered where the check looks: `stationing` added nothing to C-102; `curve-data`'s table lists the wrong curve; `row-data` tags the wrong right-of-way line |
+
+**Measures (99 episodes).** 99 answered: no budget, turn-cap or context stops. 865 tool calls (8.7 per
+episode), 413 faulted: **47.7% invalid**, with 145 recovered and 5 fault loops. The longest episode was 20
+minutes (`clean-callouts`, r2). The faults are the schema, not the drawing: `place_callout` named an alignment
+without a `target_anchor` 38 times and gave no `position` 16 times, `place_label` omitted its `anchor` 24 times
+and sent `content: null` 14 times, `annotate_stationing` was asked to draw on a sheet 21 times, and
+`create_alignment` was given a start without legs 15 times. Half of its calls are the engine teaching it the
+schema, and on the probes beyond Tier 1 it never gets to the drawing. The escaped quote in every title block is
+the same failure Haiku showed once in `equation-data`: the model types JSON escapes into a text field.
+
+On Tier 1 Gemma's 9 to 11 of 17 sits where Qwen3.5-9B stood on Sep 29 (11 of 17, the shell-bridge rig, so not
+a comparison on the board); on Tier 2 and 3 it is where every local model was on Oct 7: nothing.
+
 ## Still to run in this folder
 
-- **Gemma 4 E4B** (`google/gemma-4-e4b`, Q4_K_M, LM Studio on RobertsPC over LM Link, context 65,536, the
-  smallest tool-use model LM Studio lists): `--backend openai --lms-context 65536 --budget 30 --repeat 3`, one
-  process, the three repeats one after another, started 20:46 PDT. Its first probes took 1 to 2.5 minutes each.
-- **Fable 5.1**: the account's weekly Fable window stood at 81% when the Haiku repeats launched and resets at
+- **Fable 5.1**: the account's weekly Fable window stood at 81% when the Haiku repeats launched and reset at
   midnight PDT; 99 Fable episodes before that would have hit the cap part way through. Same rig as Haiku and
-  Sonnet, `--model claude-fable-5-1`.
+  Sonnet, `--model claude-fable-5-1`; `fable-r3` launched at 04:40 PDT on Oct 13, r1 and r2 to follow.
 
     python -m roaddraft.runners run --backend claude-code --model claude-haiku-4-5 --claude-bin ~/.local/bin/claude \
         --out benchmarks/probe_runs/2026-10-12-k3 --label haiku-r1 --budget 15 --max-budget-usd 3   # and r2, r3; sonnet-r1..r3 with --model claude-sonnet-5-5
