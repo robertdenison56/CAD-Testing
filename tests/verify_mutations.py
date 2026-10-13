@@ -367,9 +367,9 @@ MUTATIONS: List[Mutation] = [
     Mutation("title block without checked_by",
              lambda b: b.ex("fill_title_block", {"sheet": SHEET, "fields": {"checked_by": ""}}),
              {"D1-10": 0.9}, {"D1-10": {"missing_field"}}),
-    Mutation("scale text 1\" = 50' at 1\" = 100'",
-             lambda b: b.ex("fill_title_block", {"sheet": SHEET,
-                                                 "fields": {"scale": "1\" = 50'"}}),
+    Mutation("scale text at another standard scale",
+             lambda b: b.ex("fill_title_block", {"sheet": SHEET, "fields": {
+                 "scale": "1\" = 20'" if b.D["feet_per_inch"] != 20 else "1\" = 50'"}}),
              {"D1-10": 0.9}, {"D1-10": {"wrong_field"}}),
     Mutation("north arrow deleted", lambda b: _delete(b, [b.north_arrow().id]),
              {"D1-11": 0.0}, {"D1-11": {"missing"}}),

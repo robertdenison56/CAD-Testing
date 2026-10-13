@@ -214,12 +214,12 @@ def test_title_block_values_the_terse_prompt_never_gave():
     b = Base(**BASE)
     b.ex("fill_title_block", {"sheet": SHEET, "fields": {"designed_by": "JQD",
                                                          "date": "2026-10-10",
-                                                         "scale": "1\"=100'"}})
+                                                         "scale": f"1\"={int(b.D['feet_per_inch'])}'"}})
     r = _score(b)
     assert r["vague"].effective_score == 100.0
     assert r["explicit"].check("D1-10").credit == pytest.approx(0.7)
     b.ex("fill_title_block", {"sheet": SHEET, "fields": {"project": "SOMETHING ELSE",
-                                                         "scale": "1\" = 50'"}})
+                                                         "scale": "1\" = 100'"}})
     r = _score(b)
     assert r["vague"].check("D1-10").credit == pytest.approx(0.8)
     assert {f.note for f in r["vague"].check("D1-10").findings} == {

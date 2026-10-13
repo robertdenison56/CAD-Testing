@@ -22,7 +22,13 @@ import json
 from typing import Dict, Optional, Sequence
 
 DRAFTING_SPEC_V1 = {
-  "spec_id": "roaddraft-drafting-spec", "version": "draft-v2", "status": "DRAFT — for PE review",
+  "spec_id": "roaddraft-drafting-spec", "version": "draft-v3", "status": "DRAFT — for PE review",
+  # draft-v3 (2026-10-12, PE decision, Robert): plan scales are the common ones, 1" = 10',
+  # 20', 40' and 50'; the generator fits each layout at the largest of them that shows it
+  # (1" = 50' for most). Station numbers and bearings keep the PPM placement whatever the
+  # pavement width: text touching an edge line on a narrow road is ordinary practice and
+  # is not a defect (the 2026-10-12 sweep found the bearing cut by the 12 ft edge only at
+  # 1" = 100', which is no longer used).
   # draft-v2 (2026-10-11): the lettering conventions are the Plans Preparation Manual's, the
   # one set the probes (roaddraft.probes, Tier 3) and this benchmark share -- station numbers
   # below the line lettered the Caltrans way, BC/EC as station-then-word square to the line
@@ -30,7 +36,7 @@ DRAFTING_SPEC_V1 = {
   # bubble, the curve table No./R/Δ/T/L -- and the labelers anchor through a referenced base
   # drawing (task type annotate-base). Every value cites its PPM page below.
   "units": {"model": "us_survey_ft", "paper": "inch"},
-  "sheet": {"size": "ANSI_D", "allowed_feet_per_inch": [50, 100], "viewport": {"center_paper": [17.0, 11.7], "width_in": 31.0, "height_in": 18.5},
+  "sheet": {"size": "ANSI_D", "allowed_feet_per_inch": [10, 20, 40, 50], "viewport": {"center_paper": [17.0, 11.7], "width_in": 31.0, "height_in": 18.5},
             "fit_window_in": [26.0, 15.0], "north_arrow": {"required": True, "block": "NORTH_ARROW", "position": [31.6, 19.2], "scale": 0.9},
             "required_title_fields": ["project", "agency", "sheet_title", "sheet_number", "total_sheets", "designed_by", "drawn_by", "checked_by", "date", "scale"],
             "scale_text_format": "1\" = {fpi:.0f}'"},
@@ -98,7 +104,7 @@ DRAFTING_SPEC_V1 = {
   "text": {"label_height_in": 0.10, "table_height_in": 0.12, "height_tolerance_pct": 10},
   # Stationing the Caltrans way (ppm-text p. 2-8, pdf 37): 100 ft per station, the whole
   # station number at 500 ft stations and the ones digit elsewhere, no plus on a whole
-  # station; a 7.0 ft tick at 1" = 50' (14.0 ft at 1" = 100': 0.14 in on paper), centred on
+  # station; a 7.0 ft tick at 1" = 50' (2.8 ft at 1" = 20': 0.14 in on paper), centred on
   # the line; the number below the line, half a text height under the tick
   "stationing": {"interval_ft": 100, "format": "caltrans", "full_station_every_ft": 500, "decimals": 2,
                  "tick_half_len_in": 0.07, "label_offset_in": 0.12, "label_side": "below", "rotation": "along",

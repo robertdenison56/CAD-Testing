@@ -54,12 +54,34 @@ COUNTIES = ["HARLAN COUNTY", "MERCER COUNTY", "LINCOLN COUNTY", "CLAY COUNTY", "
 EQUATION_JUMPS = [100, 200, 300, 500]
 # the fit loop never shrinks a tangent below this: at 1"=100' it leaves the EC of one
 # curve and the BC of the next 1.2 in apart on paper, clear of each other
-MIN_EXTRA_FT = 120.0
+#: the shortest tangent beyond the curve tangents and the shortest curve, as paper
+#: lengths at the coarsest plan scale in use: a bearing letters along the one, the BC
+#: and EC labels stay apart on the other (seed 123 at 1" = 100' had them touch on a
+#: 105 ft curve, 1.05 in)
+MIN_EXTRA_IN = 1.2
+MIN_CURVE_IN = 1.5
+_COARSEST_FPI = float(max(DRAFTING_SPEC_V1["sheet"]["allowed_feet_per_inch"]))
+MIN_EXTRA_FT = MIN_EXTRA_IN * _COARSEST_FPI  # 60 ft at 1" = 50'
 # ... nor a curve below this length: at 1"=100' the BC and EC labels of a shorter
 # curve (each about 1 in of lettering) run into each other on the inside of the bend
-MIN_CURVE_FT = 150.0
-FIT_ATTEMPTS = 10
-PAD_FT = 100.0
+MIN_CURVE_FT = MIN_CURVE_IN * _COARSEST_FPI  # 75 ft at 1" = 50'
+FIT_ATTEMPTS = 22
+#: how much the fit loop shrinks the tangents and radii per attempt: a two-sheet layout
+#: shrinks more gently, because its match line needs a tangent at least
+#: ``MATCH_END_CLEAR_FT + MATCH_CLEAR_FT`` long on one side of its only curve and a
+#: steep shrink jumps over the lengths where that holds and the shares still fit
+SHRINK = {1: (0.85, 0.92), 2: (0.8, 0.9)}
+#: fit loop: the design speed steps down a notch per attempt from here (a road this
+#: fast with this many curves is longer than one sheet shows at the plan scales in
+#: use: it is a slower road), and the chord is laid along the window's diagonal from
+#: ``DIAGONAL_ATTEMPT`` on
+SLOWER_ATTEMPT = 8
+DIAGONAL_ATTEMPT = 9
+#: room kept round a one-sheet alignment inside the plan window for the labels that
+#: reach past its ends (the square curve-point labels reach about 1.35 in), on paper
+#: at the coarsest scale in use
+PAD_IN = 1.5
+PAD_FT = PAD_IN * _COARSEST_FPI  # 75 ft at 1" = 50'
 CORNER_INSET_IN = 0.25
 # label offsets come from the spec's labels section (the PPM's placement): station numbers
 # below the line, bearings above it, curve points square to it on the left, the curve
@@ -226,16 +248,19 @@ def _sheet_box(align: Alignment, lo: float, hi: float, fpi: float,
     return box
 
 
-def _match_dists(align: Alignment, n_sheets: int) -> Optional[List[float]]:
-    """Distances from BEGIN at which the sheets break (``n_sheets - 1`` of
-    them): even 100-ft stations on a tangent, clear of its curve points and
-    of the alignment's ends, nearest the even split.  None when one cannot be
-    found."""
+def _match_options(align: Alignment, n_sheets: int) -> List[List[float]]:
+    """Ways to break the alignment into ``n_sheets`` shares: lists of
+    ``n_sheets - 1`` distances from BEGIN, each an even 100-ft station on a
+    tangent, clear of its curve points and of the alignment's ends.  For two
+    sheets every legal break is offered, nearest the even split first (the
+    share holding the curve may need a break well off the middle to fit a
+    sheet); for more, the one set of breaks nearest the even splits.  Empty
+    when there is none."""
     L = align.length
-    out: List[float] = []
+    per_break: List[List[float]] = []
     for k in range(1, n_sheets):
         want = L * k / n_sheets
-        best = None
+        legal: List[float] = []
         for m in range(1, int(L // 100.0) + 1):
             d = 100.0 * m
             if d < MATCH_END_CLEAR_FT or d > L - MATCH_END_CLEAR_FT:
@@ -246,31 +271,37 @@ def _match_dists(align: Alignment, n_sheets: int) -> Optional[List[float]]:
                 continue
             if d - el.start_dist < MATCH_CLEAR_FT or el.end_dist - d < MATCH_CLEAR_FT:
                 continue
-            if best is None or abs(d - want) < abs(best - want):
-                best = d
-        if best is None or (out and best <= out[-1]):
-            return None
-        out.append(best)
-    return out
+            legal.append(d)
+        if not legal:
+            return []
+        per_break.append(sorted(legal, key=lambda d: abs(d - want)))
+    if n_sheets == 2:
+        return [[d] for d in per_break[0]]
+    chosen = [cands[0] for cands in per_break]
+    return [chosen] if all(b > a for a, b in zip(chosen, chosen[1:])) else []
 
 
 def _fits(align: Alignment, n_sheets: int) -> Optional[Tuple[int, List[float]]]:
     """``(feet_per_inch, match_dists)`` at the smallest allowed scale that
-    shows every sheet's share of the alignment in the plan window."""
-    matches = _match_dists(align, n_sheets) if n_sheets > 1 else []
-    if matches is None:
+    shows every sheet's share of the alignment in the plan window, breaking
+    the alignment at the legal match line nearest the even split that lets
+    every share fit."""
+    options = _match_options(align, n_sheets) if n_sheets > 1 else [[]]
+    if not options:
         return None
-    bounds = [0.0] + matches + [align.length]
     for fpi in DRAFTING_SPEC_V1["sheet"]["allowed_feet_per_inch"]:
         if n_sheets == 1:
             bb = geo.bbox_of_points(segment_points(align, 0.0, align.length))
             if _fits_window(bb, fpi):
-                return int(fpi), matches
+                return int(fpi), []
             continue
         labels = _label_boxes(align, fpi)
-        boxes = [_sheet_box(align, bounds[i], bounds[i + 1], fpi, labels) for i in range(n_sheets)]
-        if all(_fits_window(bb, fpi, pad=0.0) for bb in boxes):
-            return int(fpi), matches
+        for matches in options:
+            bounds = [0.0] + matches + [align.length]
+            boxes = [_sheet_box(align, bounds[i], bounds[i + 1], fpi, labels)
+                     for i in range(n_sheets)]
+            if all(_fits_window(bb, fpi, pad=0.0) for bb in boxes):
+                return int(fpi), matches
     return None
 
 
@@ -449,6 +480,10 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         if fit is not None:
             break
         if attempt == FIT_ATTEMPTS:
+            if design_speed_mph:
+                raise ValueError(f"seed {seed}: a {v_mph} mph road with {n} curve(s) does not fit "
+                                 f"{n_sheets} sheet(s) at the plan scales in use; ask for more "
+                                 f"sheets, fewer curves or no fixed design speed")
             raise AssertionError(f"generator bug: seed {seed} never fit {n_sheets} sheet(s)")
         if n_sheets > 1 and not rotated:
             # a two-sheet layout is long: lay the BEGIN-END chord along the sheet
@@ -457,13 +492,21 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
             chord = direction_of(pis[0].point, pis[-1].point)
             d0 = (d0 - chord) % 360.0
             continue
-        extras = [max(MIN_EXTRA_FT, e * 0.7) for e in extras]
-        radii = [max(r_floor, math.ceil(r * 0.85 / 50.0) * 50.0) for r in radii]
+        k_extra, k_radius = SHRINK.get(n_sheets, SHRINK[2])
+        extras = [max(MIN_EXTRA_FT, e * k_extra) for e in extras]
+        if attempt >= SLOWER_ATTEMPT and v_mph > SPEEDS[0] and not design_speed_mph:
+            v_mph = SPEEDS[SPEEDS.index(v_mph) - 1]
+            r_min = min_radius(v_mph)
+            r_floor = math.ceil(r_min * 1.15 / 50.0) * 50.0
+        radii = [max(r_floor, math.ceil(r * k_radius / 50.0) * 50.0) for r in radii]
         deltas = [max(_delta_floor(r), math.floor(d * 0.85 * 2.0) / 2.0)
                   for d, r in zip(deltas, radii)]
-        if attempt >= 4:  # lay the BEGIN-END chord along the sheet
+        if attempt >= 4:  # lay the BEGIN-END chord along the sheet, then its diagonal
             chord = direction_of(pis[0].point, pis[-1].point)
             d0 = (d0 - chord) % 360.0
+            if attempt >= DIAGONAL_ATTEMPT:
+                fit_w, fit_h = DRAFTING_SPEC_V1["sheet"]["fit_window_in"]
+                d0 = (d0 + math.degrees(math.atan2(fit_h, fit_w))) % 360.0
     assert fit is not None
     fpi, match_dists = fit
 

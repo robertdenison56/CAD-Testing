@@ -65,7 +65,7 @@ def test_a_twisted_viewport_turns_the_labels_with_it():
     ctx = Context.build(b.doc, b.truth, DRAFTING_SPEC_V1)
     items = {it.entity_id: it for it in sheet_items(ctx)}
     shown = [e for e in b.labels("station") if e.id in items]
-    assert len(shown) > 10
+    assert len(shown) >= len(b.labels("station")) // 2 > 1
     for e in shown:
         q = items[e.id].quad
         edge = (q[1][0] - q[0][0], q[1][1] - q[0][1])
