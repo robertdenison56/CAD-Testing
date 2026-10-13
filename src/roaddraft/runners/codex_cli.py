@@ -31,9 +31,10 @@ The binary: ``--codex-bin``, ``$CODEX_BIN``, the copy inside the ChatGPT app,
 then ``codex`` on PATH. The app's copy comes first because it updates with
 the app: on 2026-10-12 the npm install (0.145) could not read the models
 cache the app's 0.162 wrote and the service refused ``gpt-6-luna`` from it.
-A ``PYTHONPATH`` in the runner's environment is handed to the server (Codex
-starts MCP servers with a short list of variables), so a run from a pinned
-worktree serves that worktree's engine.
+Since the app updates it on its own, each episode's ``run.json`` records
+``codex --version``. A ``PYTHONPATH`` in the runner's environment is handed
+to the server (Codex starts MCP servers with a short list of variables), so
+a run from a pinned worktree serves that worktree's engine.
 """
 from __future__ import annotations
 
@@ -135,7 +136,17 @@ class CodexBackend(Backend):
         argv.append(episode.task)
         return argv
 
+    def version(self) -> Optional[str]:
+        """``codex --version``, asked per episode: the ChatGPT app updates its
+        copy on its own, so a campaign can span two versions."""
+        try:
+            out = subprocess.run([self.codex, "--version"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return (out.stdout.strip() or None) if out.returncode == 0 else None
+
     def run(self, episode: Episode) -> Outcome:
+        version = self.version()
         argv = self.command(episode)
         episode.log.append({"role": "system", "content": INSTRUCTIONS})
         episode.log.append({"role": "user", "content": episode.task})
@@ -169,6 +180,7 @@ class CodexBackend(Backend):
             reader.join(timeout=5)
         (episode.folder / "codex.log").write_text("".join(err_lines))
         outcome = stream.outcome()
+        outcome.extra["codex_version"] = version
         if stopped:
             outcome.stop = stopped["why"]
         elif proc.returncode != 0 and (outcome.stop == "answered" or outcome.stop == Stream.UNFINISHED):

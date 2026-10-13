@@ -337,6 +337,7 @@ def fake_codex(tmp_path, lines, rc=0, stderr="", sleep=0.0):
     """A stand-in ``codex``: prints the given --json lines and exits."""
     script = tmp_path / "codex"
     script.write_text("#!/usr/bin/env python3\nimport sys, json, time\n"
+                      "if sys.argv[1:] == ['--version']: print('codex-cli 9.9.9'); sys.exit(0)\n"
                       f"open(sys.argv[0] + '.argv', 'w').write(json.dumps(sys.argv[1:]))\n"
                       f"sys.stderr.write({stderr!r})\n"
                       f"for line in {[json.dumps(l) for l in lines]!r}: print(line, flush=True)\n"
@@ -411,6 +412,7 @@ def test_codex_runs_the_cli_and_leaves_the_run_folder(tmp_path):
     backend = CodexBackend(Options(model="gpt-6-luna", effort="medium"), codex_bin=str(bin_))
     meta = run_probe(backend, tmp_path / "runs" / "cx" / BLANK.id, BLANK, SERVER)
     assert meta["stop"] == "answered" and meta["backend"] == "codex" and meta["effort"] == "medium"
+    assert meta["codex_version"] == "codex-cli 9.9.9"
     folder = tmp_path / "runs" / "cx" / BLANK.id
     assert (folder / "report.txt").read_text() == "All done."
     transcript = json.loads((folder / "transcript.json").read_text())
