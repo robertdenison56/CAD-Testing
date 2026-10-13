@@ -1,10 +1,10 @@
-# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B (Fable 5.1 to follow)
+# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B, Fable 5.1 (one repeat so far)
 
 The probe set changed on 2026-10-12 (commit `2697ee5`: the engine's labelers default to the Plans Preparation
 Manual's lettering, the probe fixtures sit on Caltrans named levels, the checks read the Caltrans station digit;
 probe set `sha256:2fce3b5c1c75`), so every row on the board had to be rerun. This folder holds the reruns; each
 model's repeats go under `runs/<model>-r1..r3`. Haiku 4.5 ran first, Sonnet 5.5 next, Gemma 4 E4B overnight
-through LM Studio; Fable 5.1 waited for the account's weekly Fable window to reset and is running as this is written.
+through LM Studio; Fable 5.1 waited for the account's weekly Fable window to reset, and one of its three repeats has run.
 
 **Rig.** The same as `2026-10-08-k3`: `python -m roaddraft.runners run --backend claude-code` on the standalone
 CLI (2.1.296) signed in to claude.ai, so a subscription, no API key. One `roaddraft-mcp` per probe, started by
@@ -136,14 +136,33 @@ the same failure Haiku showed once in `equation-data`: the model types JSON esca
 On Tier 1 Gemma's 9 to 11 of 17 sits where Qwen3.5-9B stood on Sep 29 (11 of 17, the shell-bridge rig, so not
 a comparison on the board); on Tier 2 and 3 it is where every local model was on Oct 7: nothing.
 
+## Fable 5.1, repeat 3 of 3: 32 of 33 on disk, 31 on the board
+
+`fable-r3` ran 04:35 to 05:08 PDT on Oct 13 on the Haiku/Sonnet rig (the weekly Fable window had reset at
+midnight). 33 episodes: 32 answered, one stopped by the $3 CLI spend cap. 468 calls (14.2 per episode), 5
+faulted: **1.1% invalid**, the lowest of any model here. $41.86 by the CLI's figure, **$1.27 per episode**,
+twelve times Sonnet; one repeat is about 42% of the account's 5-hour window.
+
+| probe | r3 | what it left on disk |
+|---|---|---|
+| 31 probes | P | |
+| sheet-set-callouts | B | all 15 callouts on paper across the three sheets, each on its edge, the title blocks numbered: a pass on disk, but the episode hit the $3 cap at 38 turns ($3.24), and the board counts a budget stop as a failure whatever the document shows |
+| l2-alignment-data | . | '585+36.75 BC' overlaps the sheet's '1450' (Sonnet's r3 failed the same way) |
+
+The $3 cap was set for Haiku's cost profile on Oct 8; at Fable's prices it binds on the long probes
+(`curve-data` reached $2.78, `l2-alignment-data` $2.43). Before `fable-r1` and `fable-r2` run, decide whether
+the cap is part of the rig (keep $3, and Fable's cap-bound episodes count as budget failures) or a spend guard
+(raise it, say `--max-budget-usd 6`, for all three Fable repeats, and rerun r3's `sheet-set-callouts` with
+`--force` under the same cap). The 15-minute budget and 120 turns stay as they are either way. The two
+repeats launch with the commands below; each one needs a 5-hour window with room for about 45%.
+
 ## Still to run in this folder
 
-- **Fable 5.1**: the account's weekly Fable window stood at 81% when the Haiku repeats launched and reset at
-  midnight PDT; 99 Fable episodes before that would have hit the cap part way through. Same rig as Haiku and
-  Sonnet, `--model claude-fable-5-1`; `fable-r3` launched at 04:40 PDT on Oct 13, r1 and r2 to follow.
+- **Fable 5.1 r1 and r2**: same rig, `--model claude-fable-5-1`, labels `fable-r1` and `fable-r2`, one per
+  5-hour window; the cap decision above first.
 
     python -m roaddraft.runners run --backend claude-code --model claude-haiku-4-5 --claude-bin ~/.local/bin/claude \
-        --out benchmarks/probe_runs/2026-10-12-k3 --label haiku-r1 --budget 15 --max-budget-usd 3   # and r2, r3; sonnet-r1..r3 with --model claude-sonnet-5-5
+        --out benchmarks/probe_runs/2026-10-12-k3 --label haiku-r1 --budget 15 --max-budget-usd 3   # and r2, r3; sonnet-r1..r3 with --model claude-sonnet-5-5; fable-r1..r3 with --model claude-fable-5-1
     python -m roaddraft.runners run --backend openai --model google/gemma-4-e4b --base-url http://localhost:1234/v1 \
         --lms-context 65536 --out benchmarks/probe_runs/2026-10-12-k3 --label gemma --repeat 3 --budget 30
     python -m roaddraft.runners score benchmarks/probe_runs/2026-10-12-k3/runs/haiku-r1          # scores.json beside it

@@ -1,0 +1,29 @@
+All three sheets check out: tables sit clear of the roadway, each bubble is a numbered circle with a leader landing on the centerline arc, and curve numbers are consistent across sheets. The task is complete.
+
+## Report
+
+**1. What was placed, where, and what it points at**
+
+All annotation is on the sheets (paper inches), on layer `rd_LAYOUT-NOTE-anno`. SR-100 lives in the referenced basefile `DESIGN`, so everything targets `DESIGN:` entities / `DESIGN:SR-100`.
+
+| Sheet | Curves shown | Table (anchored to DESIGN:SR-100) | Bubbles (leader → centerline arc) |
+|---|---|---|---|
+| C-101 | 1 | TB-001 at (26.0, 20.5), top-right; road is at y≈6.7 | ① TX-001/CI-001 at (29.4, 9.5) → DESIGN:AR-001 (C-1) |
+| C-102 | 1, 2 | TB-002 at (1.5, 20.5), top-left; road runs low-left to high-right | ① at (6.1, 10.0) → DESIGN:AR-001; ② at (28.4, 19.0) → DESIGN:AR-002 (C-2) |
+| C-103 | 2 | TB-003 at (26.0, 6.5), bottom-right; road is at y≈16.7 | ② at (5.6, 13.5) → DESIGN:AR-002 |
+
+Tables have columns No., R, Δ, T, L (the tool's default Caltrans layout). Curve 1: R=1200.00', Δ=18°26'06", T=194.73', L=386.10'. Curve 2: R=900.00', Δ=18°26'06", T=146.05', L=289.58'. Curve 1 straddles the C-101/C-102 boundary and curve 2 straddles C-102/C-103, so each appears on two sheets with the same number.
+
+**2. Tool calls that mattered, in order**
+1. `get_document_state`, `list_alignments {include_references:true}` → found `DESIGN:SR-100`, 3 sheets, no owned geometry.
+2. `get_design_data {kind:"curves", alignment:"DESIGN:SR-100"}` → 2 curves; `get_sheet_state` ×3 → viewport windows.
+3. `find_entities {type:"arc", anchor:{alignment:"SR-100", kind:"element"}, visible_on:"C-101"/"C-102"/"C-103"}` → which curve arcs each sheet shows, with their `sheet_point`s (used to place text clear of the road).
+4. `place_curve_table {space:"C-101", alignment:"DESIGN:SR-100", curves:[1], position:[26,20.5], title:"CURVE DATA"}`; likewise C-102 `curves:[1,2]` at [1.5,20.5]; C-103 `curves:[2]` at [26,6.5].
+5. `place_callout {space:<sheet>, target_entity:"DESIGN:AR-001"/"DESIGN:AR-002", at:"mid", content:"1"/"2", height:0.15, landing:0}` ×4.
+6. `get_entity` on TX-001..004 to read the text bboxes; `draw_circle` R=0.2 centered on each bbox (CI-001..004).
+7. `trim {targets:[{id:"LN-00n", at:<text position>}], boundaries:["CI-00n"]}` ×4 so the leaders stop at the bubble rim.
+8. `render_sheet` ×3 to verify.
+
+**3. Failures / workarounds**
+- No errors from any call. One workaround: there is no "number in a circle" callout primitive. `place_label kind=curve_data` would draw a bubble, but the system notes say nothing can be anchored to an alignment this document doesn't own (`DESIGN:SR-100`), so I built each bubble from a `place_callout` (text + leader + arrowhead), a `draw_circle` centered on the text's actual bbox (the callout justifies text left/right by target side, so the center is ~0.065 in off the given position), and a `trim` of the leader at the circle. The bubbles are therefore plain sheet entities, not design-anchored.
+- The curve table tool placed its columns as No., R, Δ, T, L by default, matching the request exactly, so no `columns` override was needed.

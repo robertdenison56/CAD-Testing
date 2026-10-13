@@ -9,39 +9,43 @@
 | runner | runners · claude-code (Claude Code headless) |
 | run folder | `2026-10-12-k3`, labels `fable-r3` |
 | budgets | 120 turns, 15 min per probe; text only; default effort |
-| standing | not ranked yet: in progress: 1 episode unfinished; k = 3 on 0 of 33 probes |
-| engine commit | `6bf396e527` (4); changed past it: `src/roaddraft/runners/__init__.py`, `src/roaddraft/runners/__main__.py`, `src/roaddraft/runners/codex_cli.py`, `src/roaddraft/runners/leaderboard.py` |
+| standing | not ranked yet: k = 3 on 0 of 33 probes |
+| engine commit | `6bf396e527` (33); changed past it: `src/roaddraft/runners/__init__.py`, `src/roaddraft/runners/__main__.py`, `src/roaddraft/runners/codex_cli.py`, `src/roaddraft/runners/leaderboard.py` |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**100.0%** pass rate, 95% CI [100.0, 100.0]: 4 of 4 attempts that count, on 4 of 33 probes.
+**93.9%** pass rate, 95% CI [84.8, 100.0]: 31 of 33 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 4/4 (100%) | — | — | 4/4 |
+| passed | 17/17 (100%) | 5/6 (83%) | 9/10 (90%) | 31/33 |
 
-By attempt: fable-r3 4/4. Of the 4 probes attempted, 4 pass every time, 0 never pass (hard-fail rate 0%), 0 split.
+By attempt: fable-r3 31/33. Of the 33 probes attempted, 31 pass every time, 2 never pass (hard-fail rate 6%), 0 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 0.0% (0 of 32 calls) | faulted calls over calls, from the traces |
-| fault recovery | 0 of 0 faults | a fault followed within three calls by a successful call of the same tool |
-| repeated-fault loops | 0 episodes; longest run 0 | the same fault five or more times in a row |
-| query before compute | 1 of 4 episodes that changed the drawing asked a design query first; 0.2 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| invalid-call rate | 1.1% (5 of 468 calls) | faulted calls over calls, from the traces |
+| fault recovery | 4 of 5 faults (80%) | a fault followed within three calls by a successful call of the same tool |
+| repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
+| query before compute | 18 of 33 episodes that changed the drawing asked a design query first; 2.4 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
 | report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
-| steps | 8.0 calls, 9.0 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 38 s per episode, 0.0 h in all | the runner's clock, episode start to report |
-| tokens | 430k in, 2.5k out per episode | input counts cache reads and writes |
-| cost | $1.56 per episode, $6.24 in all | the CLI's own figure at list price, billed to a subscription |
-| render use | 4 renders in 4 episodes; 1 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| steps | 14.2 calls, 15.2 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 61 s per episode, 0.6 h in all | the runner's clock, episode start to report |
+| tokens | 431k in, 4.4k out per episode | input counts cache reads and writes |
+| cost | $1.27 per episode, $41.86 in all | the CLI's own figure at list price, billed to a subscription |
+| render use | 36 renders in 27 episodes; 6 followed by a change | a render is followed by a change when a successful command comes before the next render |
 | scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
 
-Stops: answered 4.
+Stops: answered 32, budget_usd 1.
+
+Ended by budget, counted as failures:
+
+- fable-r3/sheet-set-callouts: budget_usd, the document passes its check
 
 ## Every probe
 
@@ -53,32 +57,32 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | edge-curve-c102 | T1 | P | 10.0 | 0 |  |
 | shoulder-c101 | T1 | P | 8.0 | 0 |  |
 | centerline-c103 | T1 | P | 8.0 | 0 |  |
-| both-edges-c101 | T1 | — | | | |
-| title-blocks | T1 | — | | | |
-| pc-by-station | T1 | — | | | |
-| edge-c102-paper | T1 | — | | | |
-| sta-offset-c101-paper | T1 | — | | | |
-| draft-tangent-ne | T1 | — | | | |
-| draft-pi-curve | T1 | — | | | |
-| draft-bearing-distance | T1 | — | | | |
-| draft-edges-shoulders | T1 | — | | | |
-| draft-turn-lane | T1 | — | | | |
-| draft-cul-de-sac | T1 | — | | | |
-| draft-building | T1 | — | | | |
-| draft-roadway | T1 | — | | | |
-| sheet-set-callouts | T2 | — | | | |
-| station-callouts | T2 | — | | | |
-| clean-callouts | T2 | — | | | |
-| draft-intersection-corner | T2 | — | | | |
-| draft-fix-the-drawing | T2 | — | | | |
-| draft-roadway-sheets | T2 | — | | | |
-| line-data | T3 | — | | | |
-| curve-points | T3 | — | | | |
-| curve-data | T3 | — | | | |
-| stationing | T3 | — | | | |
-| width-dims | T3 | — | | | |
-| row-data | T3 | — | | | |
-| equation-data | T3 | — | | | |
-| qa-alignment-data | T3 | — | | | |
-| l2-match-lines | T3 | — | | | |
-| l2-alignment-data | T3 | — | | | |
+| both-edges-c101 | T1 | P | 13.0 | 0 |  |
+| title-blocks | T1 | P | 14.0 | 1 |  |
+| pc-by-station | T1 | P | 7.0 | 0 |  |
+| edge-c102-paper | T1 | P | 7.0 | 0 |  |
+| sta-offset-c101-paper | T1 | P | 10.0 | 0 |  |
+| draft-tangent-ne | T1 | P | 5.0 | 0 |  |
+| draft-pi-curve | T1 | P | 4.0 | 0 |  |
+| draft-bearing-distance | T1 | P | 5.0 | 0 |  |
+| draft-edges-shoulders | T1 | P | 9.0 | 0 |  |
+| draft-turn-lane | T1 | P | 9.0 | 0 |  |
+| draft-cul-de-sac | T1 | P | 9.0 | 0 |  |
+| draft-building | T1 | P | 5.0 | 0 |  |
+| draft-roadway | T1 | P | 8.0 | 0 |  |
+| sheet-set-callouts | T2 | B | 30.0 | 0 | fable-r3: 15 callouts on paper across 3 sheets, each on its edge, the centerline named, title blocks numbered 1 to 3 (ended by budget: budget_usd) |
+| station-callouts | T2 | P | 25.0 | 0 |  |
+| clean-callouts | T2 | P | 14.0 | 0 |  |
+| draft-intersection-corner | T2 | P | 9.0 | 0 |  |
+| draft-fix-the-drawing | T2 | P | 14.0 | 0 |  |
+| draft-roadway-sheets | T2 | P | 12.0 | 0 |  |
+| line-data | T3 | P | 19.0 | 0 |  |
+| curve-points | T3 | P | 17.0 | 0 |  |
+| curve-data | T3 | P | 36.0 | 0 |  |
+| stationing | T3 | P | 17.0 | 1 |  |
+| width-dims | T3 | P | 26.0 | 0 |  |
+| row-data | T3 | P | 12.0 | 0 |  |
+| equation-data | T3 | P | 16.0 | 0 |  |
+| qa-alignment-data | T3 | P | 22.0 | 0 |  |
+| l2-match-lines | T3 | P | 19.0 | 0 |  |
+| l2-alignment-data | T3 | · | 43.0 | 3 | fable-r3: '585+36.75 BC' overlaps the sheet's '1450' |

@@ -1,0 +1,26 @@
+The render confirms the title block on C-101 is populated and legible: PROJECT "SR-100 WIDENING", SHEET TITLE "ROADWAY PLAN / STA 10+00 TO STA 25+50", SCALE "1" = 50'", DATE, and SHEET "C-101 OF 3". The other two sheets were filled by the same command with identical structure, so the task is done.
+
+## Report
+
+**1. What I placed**
+Title block field values on all three sheets (paper space — they live in each sheet's title block, not as free entities pointing at any model geometry):
+
+| Sheet | project | sheet_title | scale | sheet_number / total | date |
+|---|---|---|---|---|---|
+| C-101 (SH-001) | SR-100 WIDENING | ROADWAY PLAN / STA 10+00 TO STA 25+50 | 1" = 50' | C-101 of 3 | 2026-10-13 |
+| C-102 (SH-002) | SR-100 WIDENING | ROADWAY PLAN / STA 25+50 TO STA 41+00 | 1" = 50' | C-102 of 3 | 2026-10-13 |
+| C-103 (SH-003) | SR-100 WIDENING | ROADWAY PLAN / STA 41+00 TO STA 56+75.25 (END) | 1" = 50' | C-103 of 3 | 2026-10-13 |
+
+The station ranges in the titles were taken from the design: each viewport is 1"=50' and 31 in wide (1550 ft), and `xy_to_station` on the referenced alignment `DESIGN:SR-100` gave ~25+87 and ~41+22 at the sheet joints, so I rounded to the 25+50 / 41+00 breaks; the alignment ends at 56+75.25 inside C-103. The scale text matches the actual viewport scale (feet_per_inch = 50 on all three).
+
+**2. Tool calls that mattered**
+1. `get_document_state` — found 3 ANSI D sheets (C-101..C-103) with empty title blocks, "standard" template, no owned model entities.
+2. `get_sheet_state` ×3 (C-101, C-102, C-103) — confirmed `title_block_fields: {}` and each viewport at `feet_per_inch: 50`, plus visible model bbox per sheet.
+3. `list_references` / `list_alignments include_references=true` — design is referenced in as `DESIGN` with alignment `DESIGN:SR-100` (10+00.00 to 56+75.25).
+4. `xy_to_station alignment="DESIGN:SR-100"` at the viewport edge x-values (1000, 2550, 4100) — to derive the station range for each sheet title.
+5. `fill_title_block sheet=C-101 fields={project:"SR-100 WIDENING", sheet_title:"ROADWAY PLAN\nSTA 10+00 TO STA 25+50", sheet_number:"C-101", total_sheets:3, scale:"1\" = 50'", date:"2026-10-13"}` — and the same for C-102 and C-103 with their ranges.
+6. `render_sheet sheet=C-101 dpi=60` — visual check.
+
+**3. Failures / workarounds**
+- `xy_to_station` at [5650, 1250] (the right edge of C-103's viewport) returned: `"point (5650.00, 1250.00) does not project onto SR-100 (stations 10+00.00 to 56+75.25)"` with hint `"points before BEGIN, after END, or at a curve center have no perpendicular station"`. Expected — the alignment ends at 56+75.25 before the sheet edge — so I used the END station from `list_alignments` for the C-103 title instead.
+- No command failures otherwise. One note: `render_sheet` with `include_base64` returned a very large payload that got truncated; the embedded image still came through, so it was sufficient for verification.

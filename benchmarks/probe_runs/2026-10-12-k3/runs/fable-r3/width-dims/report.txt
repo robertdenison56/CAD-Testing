@@ -1,0 +1,26 @@
+The render shows the four readings staggered across the road at 17+00 — 8' / 12' on the right column, 12' / 8' on the left — each clear of the others. Done.
+
+## Report
+
+**1. What I placed**
+Four linear dimensions on sheet **C-101** (paper space, layer `rd_LAYOUT-NOTE-anno`), measured vertically across SR-100 at station 17+00 (model [1700, 1000] → paper [15.5, 6.7] through VP-001 at 1"=50'), each reading model feet via `measure_scale: 50`:
+- **DM-001 "8'"** — left shoulder, ES(-20) to EP(-12): paper y 7.10→6.94, dimension line at x = 16.0
+- **DM-002 "12'"** — left lane, EP(-12) to CL: y 6.94→6.70, line at x = 15.0
+- **DM-003 "12'"** — right lane, CL to EP(+12): y 6.70→6.46, line at x = 16.0
+- **DM-004 "8'"** — right shoulder, EP(+12) to ES(+20): y 6.46→6.30, line at x = 15.0
+
+The points are the referenced edges `DESIGN:LN-010` / `LN-004` (left ES/EP), the centerline `DESIGN:LN-001`, and `DESIGN:LN-007` / `LN-013` (right EP/ES) as seen through the viewport at 17+00. Final extents are pairwise disjoint: right column x 15.56–16.10 holds 6.94–7.10 and 6.46–6.70; left column x 14.85–15.44 holds 6.70–6.94 and 6.30–6.46.
+
+**2. Tool calls that mattered**
+1. `get_document_state`, `list_alignments {include_references: true}` → design lives in reference `DESIGN:SR-100`; host owns no geometry.
+2. `get_sheet_state {sheet: C-101}` → VP-001, 50 ft/in, no twist. `find_entities {visible_on: C-101, layer: [rd_EP, rd_ES, align_MAIN]}` → edges at offsets ±12 / ±20.
+3. `station_to_xy {alignment: DESIGN:SR-100, station: 17+00, offset: -20 / -12 / 12 / 20, sheet: C-101}` → paper points (15.5, 7.10 / 6.94 / 6.46 / 6.30).
+4. `place_dimension {space: C-101, kind: linear, rotation_deg: 90, measure_scale: 50, unit_format: feet, precision: 0}` ×4 (DM-001..004), initially with `arrow: tick`.
+5. `modify_entity` on DM-001 to test p1/p2 order and `arrow: none`; `modify_entity` DM-002/DM-004 `line_point` x → 15.0 to move them to the other side of the station.
+6. `get_entity` ×4 to verify extents; `render_sheet C-101`.
+
+**3. Problems / workarounds**
+- At 1"=50' the spans are only 0.16" and 0.24" on paper. The first placement with ticks warned: *"DM-001 is too short for its text: the text needs 0.12 plus arrowheads across a 0.16 span, so both are drawn outside the extension lines"* — the text spilled 0.4" past p2 into the neighbouring lane. I found that swapping p1/p2 flips which side it spills to, but with four stacked spans any outboard text collides with a neighbour's extension lines, so I switched to `arrow: "none"`, after which each number fits inside its own span (no warning).
+- With all four in one column, placing them gave *"DM-002 overlaps DM-001"*, *"DM-003 overlaps DM-002"*, *"DM-004 overlaps DM-003"* (bbox-level: extension lines passing through the adjacent column at the shared edge y). Moving the two alternate dimensions to the opposite side of the station (x = 15.0 vs 16.0) removed every crossing; the modifies returned no warnings.
+- `place_dimension` could not take the referenced edges as `from_entity`/`to_entity` through a sheet viewport in any documented way, so I fed it the paper points that `station_to_xy ... sheet: C-101` returned rather than computing them by hand.
+- The `render_sheet` with `include_base64` produced output too large to display inline; a plain `render_sheet` returned the image fine.
