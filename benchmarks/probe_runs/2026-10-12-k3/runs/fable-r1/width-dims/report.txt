@@ -1,0 +1,28 @@
+The render shows the four stacked dimensions at station 17+00 reading 8' / 12' / 12' / 8' from the top (20L) shoulder edge to the bottom (20R) shoulder edge, each number inside its own span. The task is done.
+
+## Report
+
+**1. What was placed**
+Four chained linear dimensions on sheet **C-101** (paper space, layer `rd_LAYOUT-NOTE-anno`), stacked on one dimension line at x = 14.9 in, measuring across SR-100 at station 17+00 (the road runs due east there, so the widths are vertical on the sheet, x = 15.5 in):
+- **DM-007** "8'" — 20L shoulder edge → 12L edge of pavement (rd_ES `DESIGN:LN-010` → rd_EP `DESIGN:LN-004`)
+- **DM-008** "12'" — 12L EP → centerline (`DESIGN:LN-004` → `DESIGN:LN-001`)
+- **DM-009** "12'" — centerline → 12R EP (`DESIGN:LN-001` → `DESIGN:LN-007`)
+- **DM-010** "8'" — 12R EP → 20R shoulder edge (`DESIGN:LN-007` → rd_ES `DESIGN:LN-013`)
+
+Each uses `measure_scale: 50` (viewport VP-001 is 1"=50') so the paper spans of 0.16 / 0.24 in read as model feet, `precision 0`, `unit_format feet`, text 0.08 in, tick terminators 0.025 in. Verified via bboxes: texts sit at y ≈ 6.97–7.07, 6.735–6.905, 6.495–6.665, 6.33–6.43 — no two numbers overlap (≥0.065 in clear between neighbours).
+
+**2. Tool calls that mattered**
+1. `get_document_state` / `list_alignments include_references=true` → design is referenced; alignment is `DESIGN:SR-100`.
+2. `get_sheet_state C-101` → VP-001, 1"=50', no twist.
+3. `station_to_xy alignment=DESIGN:SR-100 station=17+00 sheet=C-101` with offsets −20, −12, 0, 12, 20 → paper points (15.5, 7.1 / 6.94 / 6.7 / 6.46 / 6.3).
+4. `find_entities layer=[rd_EP, rd_ES, align_MAIN] visible_on=C-101` → confirmed the edge/shoulder linework at offsets ±12 / ±20.
+5. `place_dimension` ×4 (first attempt, text 0.10, arrows) → fit warnings; `get_entity` on them → text thrown outside spans; `delete_entities`.
+6. `place_dimension` ×2 trial (text 0.08, tick, arrow_size 0.05) → still too short; `delete_entities`.
+7. `place_dimension` ×4 final: `space C-101, kind linear, p1/p2 as above, line_point [14.9, mid], rotation_deg 90, measure_scale 50, precision 0, unit_format feet, text_height 0.08, arrow tick, arrow_size 0.025` → DM-007…DM-010, no fit warnings.
+8. `get_entity` ×4 and `render_sheet C-101` to verify.
+
+**3. Problems / workarounds**
+- At 1"=50' the spans are tiny (8 ft = 0.16 in). First pass warned: *"DM-001 is too short for its text: the text needs 0.12 plus arrowheads across a 0.16 span, so both are drawn outside the extension lines"* and *"DM-002 overlaps DM-001"* etc. Inspecting bboxes showed the outside-placed text landed across the neighbouring dimensions, so I deleted them.
+- Second trial with ticks at arrow_size 0.05 still failed: *"the text needs 0.17 plus arrowheads across a 0.24 span"* — the engine counts tick size against the span too. Workaround: text 0.08 in + tick 0.025 in so text + 2×tick ≤ span (0.15 ≤ 0.16, 0.22 ≤ 0.24).
+- The final placement still reports *"DM-008 overlaps DM-007"* (and so on down the chain). That's just the shared tick at each chain joint (bboxes overlap by ~0.012 in at the common endpoint); the numbers themselves are confirmed clear.
+- The first `render_sheet` with `include_base64` was too large to return inline (persisted to a file), so I verified geometry from `get_entity` bboxes instead; the final render without base64 displayed fine.

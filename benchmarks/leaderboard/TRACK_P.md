@@ -20,8 +20,10 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 
 | model | class | runner | run folder | attempts | passed | why not ranked | card |
 |---|---|---|---|---|---|---|---|
-| Claude Fable 5.1 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-12-k3` | 33 on 33 probes | 31/33 | k = 3 on 0 of 33 probes | [card](cards/claude-fable-5-1.md) |
+| Claude Fable 5.1 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-12-k3` | 66 on 33 probes | 60/66 | k = 3 on 0 of 33 probes | [card](cards/claude-fable-5-1.md) |
 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-08-k3` | 63 on 21 probes | 35/63 | k = 3 on 21 of 33 probes; 36 episodes ran on an earlier task text (the probe set changed since); rerun | [card](cards/claude-haiku-4-5--2026-10-08-k3.md) |
+| GPT-6-Luna | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 21 on 8 probes | 19/21 | k = 3 on 6 of 33 probes | [card](cards/gpt-6-luna.md) |
+| GPT-6-Astra | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 14 on 5 probes | 14/14 | k = 3 on 4 of 33 probes | [card](cards/gpt-6-astra.md) |
 
 ## Run folders not on the board
 
