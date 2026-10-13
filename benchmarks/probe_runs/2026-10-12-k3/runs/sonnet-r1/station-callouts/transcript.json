@@ -1,0 +1,809 @@
+{
+ "meta": {
+  "backend": "claude-code",
+  "model": "claude-sonnet-5-5",
+  "probe": "station-callouts",
+  "stop": "answered",
+  "turns": 23,
+  "seconds": 28.1,
+  "tokens": {
+   "input_tokens": 8,
+   "cache_creation_input_tokens": 10218,
+   "cache_read_input_tokens": 227219,
+   "output_tokens": 3687
+  },
+  "cost_usd": 0.1079,
+  "max_turns": 120,
+  "budget_s": 900.0,
+  "vision": false,
+  "effort": null,
+  "pins": {
+   "roaddraft": "0.1.0",
+   "commit": "2697ee50938f25b90d9725a391c0ec9ee2455461",
+   "dirty": [
+    "src/roaddraft/tasks/brief.py",
+    "src/roaddraft/tasks/generator.py",
+    "src/roaddraft/tasks/prompts.py",
+    "src/roaddraft/tasks/spec_v1.py"
+   ],
+   "tools_sha256": "sha256:97c51a2415649df4303137bd0361ae52a99db789187d9dde0dc17d545fca17d0",
+   "instructions_sha256": "sha256:d0d4c020ebd06cc3d8f41f8dde0f52612a7157220a7ebf514dc3096dcb0e4a80"
+  },
+  "mcp_servers": {
+   "roaddraft": "connected"
+  },
+  "session_id": "718229f8-1374-451e-b0bb-16cf7ad5a39f",
+  "num_turns": 21,
+  "claude_cost_usd": 0.10047990000000001,
+  "duration_ms": 26900
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, visible_on: 'C-102'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('18+00@12R', 'PC-1'; BC-1 and EC-1 name the PC and PT too) and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well.\n\nDrafting from a description works the same way: give the engine the description, not coordinates you worked out. A bearing and distance goes in as written -- create_alignment takes start + legs (each leg a bearing, azimuth or deflection and the distance to the next PI, with the radius of the curve at the PI it starts from), draw_traverse draws lines and curves course by course, and traverse computes the points without drawing. offset_entity copies linework parallel at a distance (one entity, or a chain offset as one path), fillet rounds the corner between two lines with a curve (a curb return), and measure with along gives distances along a line, chain or alignment and square off it. key_points and snap give the exact endpoints, intersections, centers and alignment design points (PI, BC, EC) to build on. Station-and-offset drafting is draw_station_offset with the stations and offsets given ('30+00@12R'). Linework drawn through something is cut back with trim (a point on the part to cut away) or run on with extend, not redrawn from computed points; break, join, lengthen, chamfer, copy, rotate, mirror, scale and array edit what is there. create_points sets COGO points, label_segments letters bearings and distances or L1/C1 tags with line and curve tables, place_along sets blocks or points at an interval, hatch fills an area (a point inside is enough), and area and get_entity read areas, lengths, bearings and curve data off the drawing."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n\nTHE TASK:\nOn sheet C-101, in paper space, call out every even 100 ft station of SR-100 that the sheet shows (11+00, 12+00 and so on, as far as the view runs): one callout per station, its leader on the centerline at that station and its text reading the station.\n\nWhen finished, reply briefly with:\n1. What you placed, in which space, and what it points at.\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages."
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01KxjUS7rS2zHozBDQFtQATS",
+     "name": "mcp__roaddraft__get_sheet_state",
+     "input": {
+      "sheet": "C-101"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01DeisbAKmjfhc7m5USjuNcs",
+     "name": "mcp__roaddraft__list_alignments",
+     "input": {
+      "include_references": true
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01KxjUS7rS2zHozBDQFtQATS",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"get_sheet_state\",\n  \"sheet\": {\n    \"id\": \"SH-001\",\n    \"name\": \"C-101\",\n    \"size\": \"ANSI_D\",\n    \"width_in\": 34.0,\n    \"height_in\": 22.0,\n    \"title_block_template\": \"standard\",\n    \"title_block_fields\": {},\n    \"viewports\": [\n      {\n        \"id\": \"VP-001\",\n        \"center_paper\": [\n          17.0,\n          11.7\n        ],\n        \"width_in\": 31.0,\n        \"height_in\": 18.5,\n        \"model_center\": [\n          1775.0,\n          1250.0\n        ],\n        \"feet_per_inch\": 50.0,\n        \"rotation_deg\": 0.0,\n        \"visible_model_bbox\": [\n          1000.0,\n          787.5,\n          2550.0,\n          1712.5\n        ]\n      }\n    ],\n    \"entities\": {},\n    \"usable_area\": [\n      0.5,\n      1.75,\n      33.5,\n      21.5\n    ]\n  }\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01DeisbAKmjfhc7m5USjuNcs",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"list_alignments\",\n  \"count\": 1,\n  \"alignments\": [\n    {\n      \"name\": \"DESIGN:SR-100\",\n      \"description\": \"SR-100 mainline\",\n      \"source\": \"pis\",\n      \"begin_station\": 1000.0,\n      \"begin_station_text\": \"10+00.00\",\n      \"end_station\": 5675.248821609945,\n      \"end_station_text\": \"56+75.25\",\n      \"length\": 4675.248821609945,\n      \"curves\": 2,\n      \"tangents\": 3,\n      \"equations\": 0,\n      \"profiles\": [],\n      \"drawn\": true,\n      \"reference\": \"DESIGN\",\n      \"read_only\": true,\n      \"placement\": {\n        \"reference\": \"DESIGN\",\n        \"rotation_deg\": 0.0,\n        \"scale\": 1.0,\n        \"offset\": [\n          0.0,\n          0.0\n        ],\n        \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n        \"read_only\": true\n      }\n    }\n  ]\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "Need which stations are visible: x 1000–2550. Check station positions."
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01LUKAUSLHsTPSo5UyQbxkdy",
+     "name": "mcp__roaddraft__station_to_xy",
+     "input": {
+      "alignment": "DESIGN:SR-100",
+      "station": "11+00",
+      "sheet": "C-101"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01LUKAUSLHsTPSo5UyQbxkdy",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1100.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1100.0,\n    1000.0\n  ],\n  \"station\": 1100.0,\n  \"station_text\": \"11+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      3.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01KZwfbzTGrFoR1VZDmb2D74",
+     "name": "mcp__roaddraft__station_to_xy",
+     "input": {
+      "alignment": "DESIGN:SR-100",
+      "station": "25+00",
+      "sheet": "C-101"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01KZwfbzTGrFoR1VZDmb2D74",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2499.901631184595,\n    1003.7373824270117\n  ],\n  \"on_point\": [\n    2499.901631184595,\n    1003.7373824270117\n  ],\n  \"station\": 2500.0,\n  \"station_text\": \"25+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 4.5231767441495085,\n  \"azimuth_deg\": 85.47682325585049,\n  \"bearing\": \"N 85°28'37\\\" E\",\n  \"element_index\": 1,\n  \"element_kind\": \"curve\",\n  \"element_ref\": \"C-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      31.498033,\n      6.774748\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01Hnoy6soPCyPbgY8w4mw25S",
+     "name": "mcp__roaddraft__station_to_xy",
+     "input": {
+      "alignment": "DESIGN:SR-100",
+      "station": "30+00",
+      "sheet": "C-101"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01Hnoy6soPCyPbgY8w4mw25S",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2982.666320743001,\n    1127.5554402476669\n  ],\n  \"on_point\": [\n    2982.666320743001,\n    1127.5554402476669\n  ],\n  \"station\": 3000.0,\n  \"station_text\": \"30+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 18.434948822922003,\n  \"azimuth_deg\": 71.565051177078,\n  \"bearing\": \"N 71°33'54\\\" E\",\n  \"element_index\": 2,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-2\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      41.153326,\n      9.251109\n    ],\n    \"visible\": false,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0,\n    \"note\": \"no viewport of C-101 shows this point; sheet_point is where VP-001 would put it, outside its window. viewports: VP-001 shows x 1000..2550, y 788..1712\"\n  }\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "",
+     "signature": "CAQSkQcKEAgSGAI4AUIIdGhpbmtpbmcSDICtc5VdtI/B8e96iBoMH4ZZDzK/r9KKt/dxIjBDoufkiig3ZPgErIxCc4g9a1AG97GCJONihFO++tzHHNBN3Ie785w27YRdZ4DGz2UqrgbZez3ibrzVMknpi/njtdTVFE2bJZ97Zr3yzcU7/U5xxw/hHKQl63KrE9P5+MOcQiim6V9+eJhXnU6k7VwRRYKnAGqwPayIb1vLSjp4rSCPL+ojD03bv9DmFaP7VViu0VM0gjupxoTyO6P2pqf2bXdN1RrjkrYwlwJSaH+fqw5DDt2hTOObGxaPIzq2OSQNdvs0riR99TEye+mRF02xcfQDxmjCgoPpy0fCzGwSVg+ziJDwuBIcNnUptnMJP8lgxjdcwbU5+jxjAJ/hadZChK/vFa40jnPHC7dwz5rQQPJo4QnHw0E+1i2osAN3MWnGn57mybvVb/CASBysKM9B+mLJ6Kbxa9VqHIR0VSUIIrx3az+drbyfxl7sVWtyEDnjDMA9xKNgdj3HnPEWmcomUJdo9in+DJ8Em1yW4iP4MVOZRfWGX4fveVikcxTPLnCC27n3Bi4+tadYslwX29zm4ttCGd4TmB8ZmCIbLKCalljSTIpHXmPv+0jn/UXZo5trNNd3N8Yb+wq8B0hOUKB3swsvW/Y5CBxZSMNVP79WL1P2+7T1T+f4m9C2GjfdnPX/0K0yRel4KaFXg29TuAoGElBPbdjYzr5jKosgMddAD8OnrQvRnjX/1s6eIVsJJ36Ce1GttPqAOUcbuSOtfYthON3+enHXXBjmnYbafHT+mRLkpNlUVEUo/2rCWYN1xwnDbOwcdPVxptiBYP5m8Q7I21i/TXOi8+N638QEkKpEqHRR0Kgk6ymd+RFjUYyL0EVDJbX6B8ZNk8PGSLCojwt7PltkpbN5tGn8JEU/m7Sh9mWGc4gITpbdv2jD8hJZnPkHCl5D0WXN56fpMcIazZoxfbanJHfQ5sEX21hJfem/tXoE7/qVaE3F5dr71PwxLji0tyARcvnukzAFc5FpTq4QpHgkSQZzVvZxo0gJ+m3KFJShZDgv5iwNkhlrOtMXT780DDeIKXt1hjQjz2q6VTFCm1PHpoF/pVRhm/WMVGvNqG+RfWmuu8ih57Su3WhB/hR7ueczIfhAZFpHFnpWaSeFpdNfVZhPMM4uxZe9AD22ZKGgS/cJ14XAsvJ5mfbBD+LsGAE="
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01Q9M8KmTgqNPE21iNeH23E4",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "11+00",
+      "position": [
+       3.5,
+       9.5
+      ],
+      "content": "11+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01Q9M8KmTgqNPE21iNeH23E4",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-001 ('11+00') placed in sheet C-101, pointing at DESIGN:SR-100 11+00.00 through VP-001\",\n  \"created\": [\n    \"LN-001\",\n    \"LN-002\",\n    \"PL-001\",\n    \"TX-001\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01DjCZMMMKaS2oU9kJRYdiHZ",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "12+00",
+      "position": [
+       5.5,
+       9.5
+      ],
+      "content": "12+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01DjCZMMMKaS2oU9kJRYdiHZ",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 2,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-002 ('12+00') placed in sheet C-101, pointing at DESIGN:SR-100 12+00.00 through VP-001\",\n  \"created\": [\n    \"LN-003\",\n    \"LN-004\",\n    \"PL-002\",\n    \"TX-002\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01BHr5SPt9WaNeZ3ZfnkUcEm",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "13+00",
+      "position": [
+       7.5,
+       9.5
+      ],
+      "content": "13+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01BHr5SPt9WaNeZ3ZfnkUcEm",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 3,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-003 ('13+00') placed in sheet C-101, pointing at DESIGN:SR-100 13+00.00 through VP-001\",\n  \"created\": [\n    \"LN-005\",\n    \"LN-006\",\n    \"PL-003\",\n    \"TX-003\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01MB19DTPEKjeupPUYe51mEV",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "14+00",
+      "position": [
+       9.5,
+       9.5
+      ],
+      "content": "14+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01MB19DTPEKjeupPUYe51mEV",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 4,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-004 ('14+00') placed in sheet C-101, pointing at DESIGN:SR-100 14+00.00 through VP-001\",\n  \"created\": [\n    \"LN-007\",\n    \"LN-008\",\n    \"PL-004\",\n    \"TX-004\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01GQ5FdYyNqxYxDTHUf1HBqo",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "15+00",
+      "position": [
+       11.5,
+       9.5
+      ],
+      "content": "15+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01GQ5FdYyNqxYxDTHUf1HBqo",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 5,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-005 ('15+00') placed in sheet C-101, pointing at DESIGN:SR-100 15+00.00 through VP-001\",\n  \"created\": [\n    \"LN-009\",\n    \"LN-010\",\n    \"PL-005\",\n    \"TX-005\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01X2zSf1WnBK6DPQyjLMakdG",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "16+00",
+      "position": [
+       13.5,
+       9.5
+      ],
+      "content": "16+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01X2zSf1WnBK6DPQyjLMakdG",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 6,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-006 ('16+00') placed in sheet C-101, pointing at DESIGN:SR-100 16+00.00 through VP-001\",\n  \"created\": [\n    \"LN-011\",\n    \"LN-012\",\n    \"PL-006\",\n    \"TX-006\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_016npr9kkS4FtnwJSN18A9ZP",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "17+00",
+      "position": [
+       15.5,
+       9.5
+      ],
+      "content": "17+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_016npr9kkS4FtnwJSN18A9ZP",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 7,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-007 ('17+00') placed in sheet C-101, pointing at DESIGN:SR-100 17+00.00 through VP-001\",\n  \"created\": [\n    \"LN-013\",\n    \"LN-014\",\n    \"PL-007\",\n    \"TX-007\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01FvUbkWn7DsQXqXyAVdJfqb",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "18+00",
+      "position": [
+       17.5,
+       9.5
+      ],
+      "content": "18+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01FvUbkWn7DsQXqXyAVdJfqb",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 8,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-008 ('18+00') placed in sheet C-101, pointing at DESIGN:SR-100 18+00.00 through VP-001\",\n  \"created\": [\n    \"LN-015\",\n    \"LN-016\",\n    \"PL-008\",\n    \"TX-008\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01Nz83aqzruYPLSeNvYJmkAA",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "19+00",
+      "position": [
+       19.5,
+       9.5
+      ],
+      "content": "19+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01Nz83aqzruYPLSeNvYJmkAA",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 9,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-009 ('19+00') placed in sheet C-101, pointing at DESIGN:SR-100 19+00.00 through VP-001\",\n  \"created\": [\n    \"LN-017\",\n    \"LN-018\",\n    \"PL-009\",\n    \"TX-009\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01PiZo8tZkLUz4xPYh4TxjGn",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "20+00",
+      "position": [
+       21.5,
+       9.5
+      ],
+      "content": "20+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01PiZo8tZkLUz4xPYh4TxjGn",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 10,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-010 ('20+00') placed in sheet C-101, pointing at DESIGN:SR-100 20+00.00 through VP-001\",\n  \"created\": [\n    \"LN-019\",\n    \"LN-020\",\n    \"PL-010\",\n    \"TX-010\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01DjQJEsFYg6NVz7znehmfjn",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "21+00",
+      "position": [
+       23.5,
+       9.5
+      ],
+      "content": "21+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01DjQJEsFYg6NVz7znehmfjn",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 11,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-011 ('21+00') placed in sheet C-101, pointing at DESIGN:SR-100 21+00.00 through VP-001\",\n  \"created\": [\n    \"LN-021\",\n    \"LN-022\",\n    \"PL-011\",\n    \"TX-011\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01ETM8XATBMQfTZWEggD33oQ",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "22+00",
+      "position": [
+       25.5,
+       9.5
+      ],
+      "content": "22+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01ETM8XATBMQfTZWEggD33oQ",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 12,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-012 ('22+00') placed in sheet C-101, pointing at DESIGN:SR-100 22+00.00 through VP-001\",\n  \"created\": [\n    \"LN-023\",\n    \"LN-024\",\n    \"PL-012\",\n    \"TX-012\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_012JLjNWgk5WcWRxjxAqPhvQ",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "23+00",
+      "position": [
+       27.5,
+       9.5
+      ],
+      "content": "23+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_012JLjNWgk5WcWRxjxAqPhvQ",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 13,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-013 ('23+00') placed in sheet C-101, pointing at DESIGN:SR-100 23+00.00 through VP-001\",\n  \"created\": [\n    \"LN-025\",\n    \"LN-026\",\n    \"PL-013\",\n    \"TX-013\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01Xn7Gby41meZBgASsPw56yT",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "24+00",
+      "position": [
+       29.5,
+       9.5
+      ],
+      "content": "24+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01Xn7Gby41meZBgASsPw56yT",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 14,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-014 ('24+00') placed in sheet C-101, pointing at DESIGN:SR-100 24+00.00 through VP-001\",\n  \"created\": [\n    \"LN-027\",\n    \"LN-028\",\n    \"PL-014\",\n    \"TX-014\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_016Wfv4sZPUW3U3Gjt4eNLhE",
+     "name": "mcp__roaddraft__place_callout",
+     "input": {
+      "space": "C-101",
+      "alignment": "DESIGN:SR-100",
+      "target_anchor": "25+00",
+      "position": [
+       31.5,
+       9.5
+      ],
+      "content": "25+00"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_016Wfv4sZPUW3U3Gjt4eNLhE",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 15,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-015 ('25+00') placed in sheet C-101, pointing at DESIGN:SR-100 25+00.00 through VP-001\",\n  \"created\": [\n    \"LN-029\",\n    \"LN-030\",\n    \"PL-015\",\n    \"TX-015\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "1. I placed 15 callouts on sheet C-101 in paper space, for stations 11+00 through 25+00. Each leader ends on the SR-100 centerline at that station, and the text reads the station. The text sits at paper y=9.5, directly above its station. The viewport shows model x 1000 to 2550, which runs to about station 25+50. I left out 10+00, which falls on the viewport's left edge, and 26+00 and beyond, which are off the sheet. I didn't render the sheet afterward, so I haven't looked at the result.\n\n2. Tool calls, in order:\n   - `get_sheet_state` with sheet C-101. It showed one viewport, VP-001, at 1\"=50'.\n   - `list_alignments` with include_references=true. It listed `DESIGN:SR-100` with stations 10+00 to 56+75.\n   - `station_to_xy` for 11+00, 25+00 and 30+00 on the DESIGN alignment, with sheet=C-101. 11+00 and 25+00 are visible. 30+00 is not.\n   - 15 calls to `place_callout` with space=C-101, alignment=DESIGN:SR-100, target_anchor set to each station from \"11+00\" to \"25+00\", and content set to the same station. Positions were [3.5, 9.5], [5.5, 9.5] and so on in 2 in steps to [31.5, 9.5]. Each call returned no warnings.\n\n3. Nothing failed."
+    }
+   ]
+  }
+ ]
+}

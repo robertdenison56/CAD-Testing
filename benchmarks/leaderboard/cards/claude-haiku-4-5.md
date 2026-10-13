@@ -7,38 +7,38 @@
 | model | `claude-haiku-4-5` |
 | class | frontier API |
 | runner | runners · claude-code (Claude Code headless) |
-| run folder | `2026-10-08-k3`, labels `haiku-r1`, `haiku-r2`, `haiku-r3` |
+| run folder | `2026-10-12-k3`, labels `haiku-r1`, `haiku-r2`, `haiku-r3` |
 | budgets | 120 turns, 15 min per probe; text only; default effort |
-| standing | not ranked yet: k = 3 on 21 of 33 probes; 36 episodes ran on an earlier task text (the probe set changed since); rerun |
-| engine commit | not recorded (99) |
-| tool surface | not recorded |
-| server instructions | 99 of 99 episodes differ from the current server's |
-| task prompts | 36 of 99 differ from the current task text |
+| standing | rank 2 of 2 |
+| engine commit | `2697ee5093` (99) |
+| tool surface | `sha256:97c51a241564` |
+| server instructions | current |
+| task prompts | current |
 
 ## Score
 
-**55.6%** pass rate, 95% CI [36.5, 74.6]: 35 of 63 attempts that count, on 21 of 33 probes (36 excluded).
+**74.7%** pass rate, 95% CI [60.6, 86.9]: 74 of 99 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 27/27 (100%) | 5/9 (56%) | 3/27 (11%) | 35/63 |
+| passed | 49/51 (96%) | 12/18 (67%) | 13/30 (43%) | 74/99 |
 
-By attempt: haiku-r1 13/21, haiku-r2 12/21, haiku-r3 10/21. Of the 21 probes attempted, 9 pass every time, 7 never pass (hard-fail rate 33%), 5 split.
+By attempt: haiku-r1 23/33, haiku-r2 27/33, haiku-r3 24/33. Of the 33 probes attempted, 21 pass every time, 5 never pass (hard-fail rate 15%), 7 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 8.2% (107 of 1,312 calls) | faulted calls over calls, from the traces |
-| fault recovery | 20 of 107 faults (19%) | a fault followed within three calls by a successful call of the same tool |
-| repeated-fault loops | 4 episodes; longest run 16 | the same fault five or more times in a row |
-| query before compute | 37 of 63 episodes that changed the drawing asked a design query first; 3.3 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| invalid-call rate | 4.2% (58 of 1,375 calls) | faulted calls over calls, from the traces |
+| fault recovery | 37 of 58 faults (64%) | a fault followed within three calls by a successful call of the same tool |
+| repeated-fault loops | 0 episodes; longest run 3 | the same fault five or more times in a row |
+| query before compute | 46 of 99 episodes that changed the drawing asked a design query first; 1.3 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
 | report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
-| steps | 20.8 calls, 21.8 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 70 s per episode, 1.2 h in all | the runner's clock, episode start to report |
-| tokens | 374k in, 6.4k out per episode | input counts cache reads and writes |
-| cost | $0.11 per episode, $6.97 in all | the CLI's own figure at list price, billed to a subscription |
-| render use | 142 renders in 63 episodes; 23 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| steps | 13.9 calls, 14.9 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 62 s per episode, 1.7 h in all | the runner's clock, episode start to report |
+| tokens | 466k in, 5.8k out per episode | input counts cache reads and writes |
+| cost | $0.11 per episode, $11.15 in all | the CLI's own figure at list price, billed to a subscription |
+| render use | 185 renders in 99 episodes; 29 followed by a change | a render is followed by a change when a successful command comes before the next render |
 | scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
 
 Stops: answered 99.
@@ -50,35 +50,35 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | probe | tier | attempts | calls | faults | the first failing attempt, as its check read it |
 |---|---|---|---|---|---|
 | edge-c102 | T1 | P P P | 7.0 | 0 |  |
-| edge-curve-c102 | T1 | P P P | 8.7 | 0 |  |
-| shoulder-c101 | T1 | P P P | 7.0 | 0 |  |
-| centerline-c103 | T1 | P P P | 8.0 | 0 |  |
-| both-edges-c101 | T1 | P P P | 6.7 | 0 |  |
-| title-blocks | T1 | P P P | 9.3 | 0 |  |
-| pc-by-station | T1 | P P P | 8.3 | 0 |  |
-| edge-c102-paper | T1 | P P P | 7.7 | 0 |  |
-| sta-offset-c101-paper | T1 | P P P | 8.7 | 0 |  |
-| draft-tangent-ne | T1 | · · · | 4.7 | 0 | haiku-r1: the centerline is drawn, but not on align_MAIN (added linework is on ['V-ALIGN-CNTR']) |
-| draft-pi-curve | T1 | · · · | 5.7 | 0 | haiku-r1: the centerline is drawn, but not on align_MAIN (added linework is on ['V-ALIGN-CNTR']) |
-| draft-bearing-distance | T1 | · · · | 6.7 | 0 | haiku-r1: RAMP-B ends at [1941.89, 324.98], 1339.28 ft from [2888.90, 1271.99] where it was described |
-| draft-edges-shoulders | T1 | · · · | 5.7 | 0 | haiku-r1: the left edge of pavement is drawn, but not on rd_EP (added linework is on ['V-ROAD-EOP', 'V-ROAD-SHLD']) |
-| draft-turn-lane | T1 | · · · | 18.7 | 0 | haiku-r1: the full-width edge, 24 ft right is drawn, but not on rd_EP (added linework is on ['V-ROAD-EOP']) |
-| draft-cul-de-sac | T1 | · · · | 7.3 | 0 | haiku-r1: the 45 ft bulb is drawn, but not on rd_EP (added linework is on ['V-ALIGN-CNTR', 'V-ROAD-EOP']) |
-| draft-building | T1 | · · · | 6.0 | 0 | haiku-r1: there is no layer BUILDING |
-| draft-roadway | T1 | · · · | 10.7 | 3 | haiku-r1: the centerline is drawn, but not on align_MAIN (added linework is on ['V-ALIGN-CNTR', 'V-ANNO-TEXT', 'V-ROAD-EOP', 'V-ROAD-SHLD']) |
-| sheet-set-callouts | T2 | P P · | 36.0 | 0 | haiku-r3: C-101: title block: sheet_number='C-101' (wanted 1 or '1 of 3') |
-| station-callouts | T2 | · P · | 30.3 | 0 | haiku-r1: 8 of 15 stations have no leader on them: 11+00, 13+00, 15+00, 17+00, 19+00 ... |
-| clean-callouts | T2 | P P · | 11.3 | 0 | haiku-r3: the leaders of 'EDGE OF SHOULDER' and 'SR-100' cross |
-| draft-intersection-corner | T2 | · · · | 16.0 | 0 | haiku-r1: the 50 ft curb return is drawn, but not on rd_EP (added linework is on ['V-ROAD-EOP']) |
-| draft-fix-the-drawing | T2 | · · · | 12.0 | 0 | haiku-r1: nothing drawn for the right edge of pavement at 12 ft |
-| draft-roadway-sheets | T2 | · · · | 15.3 | 1 | haiku-r1: ELM-AVE ends at [2781.58, 2071.36], 1210.41 ft from [2991.78, 3263.37] where it was described |
-| line-data | T3 | P · P | 17.7 | 0 | haiku-r2: T-1 on C-101: 'N 90°00\'00" E 1405.27\'' runs over linework at [14.58, 7.10] in (less than 0.02 in of air) |
-| curve-points | T3 | · · · | 31.0 | 16 | haiku-r1: the BC at 24+05.27 on C-101 (PC of C-1): '24+05.27 BC' is 8.95 in off the line square to the centerline through the point it names |
-| curve-data | T3 | P · · | 33.3 | 5 | haiku-r2: C-101: curve 1's Δ reads None; it is 18°26'06" |
-| stationing | T3 | · · · | 66.7 | 50 | haiku-r1: the tick at 26+00 is not square to the line (it runs at 138.9°; square is 99.3°) |
-| width-dims | T3 | · · · | 37.7 | 4 | haiku-r1: the left shoulder (8') is not dimensioned across the road at 17+00 |
-| row-data | T3 | · · · | 30.0 | 0 | haiku-r1: the tag C1 is 0.87 in from the nearest right of way line; set it beside its piece |
-| equation-data | T3 | · · · | 17.0 | 5 | haiku-r1: no lettering gives the equation 35+00.00 BK = 35+50.00 AH at its point |
-| qa-alignment-data | T3 | · · · | 22.3 | 0 | haiku-r1: the text 'N 90°00\'00" E 1405.27\'' on C-101 was changed or removed, and it was right |
-| l2-match-lines | T3 | · · · | 19.0 | 0 | haiku-r1: 'MATCH LINE (L-1)' is not lettered along its match line |
-| l2-alignment-data | T3 | · · · | 43.7 | 27 | haiku-r1: the tangent 576+16.93 to 578+47.69: 'N 78°30\'50" E\\n230.76\'' runs at 0.00° on the sheet; the line runs at 5.03° there |
+| edge-curve-c102 | T1 | P P P | 8.0 | 0 |  |
+| shoulder-c101 | T1 | P P P | 7.3 | 0 |  |
+| centerline-c103 | T1 | P P P | 7.0 | 0 |  |
+| both-edges-c101 | T1 | P P P | 8.0 | 0 |  |
+| title-blocks | T1 | P P P | 8.7 | 0 |  |
+| pc-by-station | T1 | P P P | 7.3 | 0 |  |
+| edge-c102-paper | T1 | P P P | 6.0 | 0 |  |
+| sta-offset-c101-paper | T1 | P P P | 7.0 | 0 |  |
+| draft-tangent-ne | T1 | P P P | 5.7 | 0 |  |
+| draft-pi-curve | T1 | P P P | 5.3 | 0 |  |
+| draft-bearing-distance | T1 | P P P | 6.3 | 0 |  |
+| draft-edges-shoulders | T1 | P P P | 6.7 | 0 |  |
+| draft-turn-lane | T1 | · P · | 13.7 | 0 | haiku-r1: the full-width edge, 24 ft right: 25 of 25 check points have no linework within 0.5 ft; the worst is [3521.52, 1281.87], 12.00 ft from the nearest |
+| draft-cul-de-sac | T1 | P P P | 9.0 | 2 |  |
+| draft-building | T1 | P P P | 6.0 | 0 |  |
+| draft-roadway | T1 | P P P | 10.3 | 2 |  |
+| sheet-set-callouts | T2 | P P P | 37.0 | 0 |  |
+| station-callouts | T2 | P P P | 23.7 | 0 |  |
+| clean-callouts | T2 | P P · | 12.0 | 0 | haiku-r3: the text 'EDGE OF PAVEMENT' sits over linework at [1.53, 6.48] in (less than 0.05 in of air) |
+| draft-intersection-corner | T2 | · P P | 12.7 | 4 | haiku-r1: the 50 ft curb return: 19 of 19 check points have no linework within 0.5 ft; the worst is [5032.00, 5094.00], 61.80 ft from the nearest |
+| draft-fix-the-drawing | T2 | · · · | 14.0 | 0 | haiku-r1: the right edge of pavement at 12 ft: 49 of 189 check points have no linework within 0.5 ft; the worst is [3707.83, 1356.63], 24.00 ft from the nearest |
+| draft-roadway-sheets | T2 | P P · | 14.0 | 2 | haiku-r3: the left edge of pavement: 85 of 85 check points have no linework within 0.5 ft; the worst is [1318.95, 2954.93], 1.00 ft from the nearest |
+| line-data | T3 | · · · | 17.0 | 0 | haiku-r1: T-2 on C-102: 'N 71°33\'54" E 1240.36\'' runs at 71.56° on the sheet; the line runs at 18.43° there |
+| curve-points | T3 | P P P | 13.7 | 0 |  |
+| curve-data | T3 | · · · | 32.0 | 22 | haiku-r1: C-101 has no bubble numbered 1 on its curve |
+| stationing | T3 | P P P | 11.0 | 3 |  |
+| width-dims | T3 | P P P | 22.7 | 4 |  |
+| row-data | T3 | · P · | 17.7 | 0 | haiku-r1: the tag C1 is on the left right of way line; the task is the right-hand one |
+| equation-data | T3 | · P P | 18.3 | 4 | haiku-r1: T-2: no lettering gives N 71°33'54" E 1240.36'; nearest lettering: 'N 71°33\'54\\" E\\n1240.36\'' |
+| qa-alignment-data | T3 | · · P | 32.7 | 2 | haiku-r1: C-101 has no bubble numbered 1 on its curve |
+| l2-match-lines | T3 | · · · | 19.7 | 2 | haiku-r1: the match line at 574+50.00 runs at 166.94° on the sheet; square to "SR70" there is 90.14° |
+| l2-alignment-data | T3 | · · · | 31.0 | 11 | haiku-r1: the PCC at 588+34.95: '588+34.95 EC' letters 588+34.95 as EC; it is the PCC |

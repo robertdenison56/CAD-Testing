@@ -1,0 +1,179 @@
+{
+ "meta": {
+  "backend": "claude-code",
+  "model": "claude-sonnet-5-5",
+  "probe": "draft-turn-lane",
+  "stop": "answered",
+  "turns": 6,
+  "seconds": 13.0,
+  "tokens": {
+   "input_tokens": 6,
+   "cache_creation_input_tokens": 6364,
+   "cache_read_input_tokens": 169896,
+   "output_tokens": 1174
+  },
+  "cost_usd": 0.0616,
+  "max_turns": 120,
+  "budget_s": 900.0,
+  "vision": false,
+  "effort": null,
+  "pins": {
+   "roaddraft": "0.1.0",
+   "commit": "2697ee50938f25b90d9725a391c0ec9ee2455461",
+   "dirty": [
+    "src/roaddraft/tasks/brief.py",
+    "src/roaddraft/tasks/generator.py",
+    "src/roaddraft/tasks/prompts.py",
+    "src/roaddraft/tasks/spec_v1.py"
+   ],
+   "tools_sha256": "sha256:97c51a2415649df4303137bd0361ae52a99db789187d9dde0dc17d545fca17d0",
+   "instructions_sha256": "sha256:d0d4c020ebd06cc3d8f41f8dde0f52612a7157220a7ebf514dc3096dcb0e4a80"
+  },
+  "mcp_servers": {
+   "roaddraft": "connected"
+  },
+  "session_id": "fcdd7e05-5bee-451c-89da-9339aa594a26",
+  "num_turns": 4,
+  "claude_cost_usd": 0.0541976,
+  "duration_ms": 11866
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, visible_on: 'C-102'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('18+00@12R', 'PC-1'; BC-1 and EC-1 name the PC and PT too) and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well.\n\nDrafting from a description works the same way: give the engine the description, not coordinates you worked out. A bearing and distance goes in as written -- create_alignment takes start + legs (each leg a bearing, azimuth or deflection and the distance to the next PI, with the radius of the curve at the PI it starts from), draw_traverse draws lines and curves course by course, and traverse computes the points without drawing. offset_entity copies linework parallel at a distance (one entity, or a chain offset as one path), fillet rounds the corner between two lines with a curve (a curb return), and measure with along gives distances along a line, chain or alignment and square off it. key_points and snap give the exact endpoints, intersections, centers and alignment design points (PI, BC, EC) to build on. Station-and-offset drafting is draw_station_offset with the stations and offsets given ('30+00@12R'). Linework drawn through something is cut back with trim (a point on the part to cut away) or run on with extend, not redrawn from computed points; break, join, lengthen, chamfer, copy, rotate, mirror, scale and array edit what is there. create_points sets COGO points, label_segments letters bearings and distances or L1/C1 tags with line and curve tables, place_along sets blocks or points at an interval, hatch fills an area (a point inside is enough), and area and get_entity read areas, lengths, bearings and curve data off the drawing."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n- You have no calculator and no code execution. Any arithmetic you need, do yourself.\n\nTHE TASK:\nAdd a right-turn lane to SR-100, on the right side: 12 ft wide, full width from station 31+20 to station 36+00, opened by a 120 ft straight taper that leaves the existing edge of pavement at station 30+00. Draw the new edge of pavement on layer rd_EP -- the taper, the full-width edge, and a square end at 36+00 back to the existing edge.\n\nWhen finished, reply briefly with:\n1. What you created and drew (names, layers, key coordinates).\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages. If you had to compute coordinates yourself, show the arithmetic."
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01WdroAGybHV7iHg8cjqvHrC",
+     "name": "mcp__roaddraft__list_alignments",
+     "input": {},
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01XLaTojt3QwKY6T6MfqiJaj",
+     "name": "mcp__roaddraft__find_entities",
+     "input": {
+      "anchor": {
+       "kind": "offset"
+      }
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01WdroAGybHV7iHg8cjqvHrC",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"name\": \"list_alignments\",\n  \"count\": 1,\n  \"alignments\": [\n    {\n      \"name\": \"SR-100\",\n      \"description\": \"SR-100 mainline\",\n      \"source\": \"pis\",\n      \"begin_station\": 1000.0,\n      \"begin_station_text\": \"10+00.00\",\n      \"end_station\": 5675.248821609945,\n      \"end_station_text\": \"56+75.25\",\n      \"length\": 4675.248821609945,\n      \"curves\": 2,\n      \"tangents\": 3,\n      \"equations\": 0,\n      \"profiles\": [],\n      \"drawn\": true\n    }\n  ]\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01XLaTojt3QwKY6T6MfqiJaj",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\"ok\": true, \"name\": \"find_entities\", \"space\": \"model\", \"total\": 20, \"count\": 20, \"entities\": [{\"id\": \"LN-004\", \"type\": \"line\", \"layer\": \"rd_EP\", \"point\": [1702.6334, 1012.0], \"length\": 1405.2668, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-1\", \"kind\": \"offset\", \"station\": 1000.0, \"offset\": -12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-003\", \"type\": \"arc\", \"layer\": \"rd_EP\", \"point\": [2595.5633, 1027.3401], \"length\": 382.2397, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-1\", \"kind\": \"offset\", \"station\": 2405.2668077979447, \"offset\": -12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-005\", \"type\": \"line\", \"layer\": \"rd_EP\", \"point\": [3369.2978, 1269.0817], \"length\": 1240.3557, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-2\", \"kind\": \"offset\", \"station\": 2791.3674730739153, \"offset\": -12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-004\", \"type\": \"arc\", \"layer\": \"rd_EP\", \"point\": [4099.9637, 1500.2238], \"length\": 293.4365, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-2\", \"kind\": \"offset\", \"station\": 4031.7232168045084, \"offset\": -12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-006\", \"type\": \"line\", \"layer\": \"rd_EP\", \"point\": [4923.0249, 1512.0], \"length\": 1353.9501, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-3\", \"kind\": \"offset\", \"station\": 4321.298715761486, \"offset\": -12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-007\", \"type\": \"line\", \"layer\": \"rd_EP\", \"point\": [1702.6334, 988.0], \"length\": 1405.2668, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-1\", \"kind\": \"offset\", \"station\": 1000.0, \"offset\": 12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-005\", \"type\": \"arc\", \"layer\": \"rd_EP\", \"point\": [2599.4077, 1003.65], \"length\": 389.9617, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-1\", \"kind\": \"offset\", \"station\": 2405.2668077979447, \"offset\": 12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-008\", \"type\": \"line\", \"layer\": \"rd_EP\", \"point\": [3376.8872, 1246.3133], \"length\": 1240.3557, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-2\", \"kind\": \"offset\", \"station\": 2791.3674730739153, \"offset\": 12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-006\", \"type\": \"arc\", \"layer\": \"rd_EP\", \"point\": [4103.8081, 1476.5337], \"length\": 285.7145, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-2\", \"kind\": \"offset\", \"station\": 4031.7232168045084, \"offset\": 12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-009\", \"type\": \"line\", \"layer\": \"rd_EP\", \"point\": [4923.0249, 1488.0], \"length\": 1353.9501, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-3\", \"kind\": \"offset\", \"station\": 4321.298715761486, \"offset\": 12.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-010\", \"type\": \"line\", \"layer\": \"rd_ES\", \"point\": [1702.6334, 1020.0], \"length\": 1405.2668, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-1\", \"kind\": \"offset\", \"station\": 1000.0, \"offset\": -20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-007\", \"type\": \"arc\", \"layer\": \"rd_ES\", \"point\": [2594.2819, 1035.2368], \"length\": 379.6657, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-1\", \"kind\": \"offset\", \"station\": 2405.2668077979447, \"offset\": -20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-011\", \"type\": \"line\", \"layer\": \"rd_ES\", \"point\": [3366.768, 1276.6712], \"length\": 1240.3557, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-2\", \"kind\": \"offset\", \"station\": 2791.3674730739153, \"offset\": -20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-008\", \"type\": \"arc\", \"layer\": \"rd_ES\", \"point\": [4098.6822, 1508.1205], \"length\": 296.0105, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-2\", \"kind\": \"offset\", \"station\": 4031.7232168045084, \"offset\": -20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-012\", \"type\": \"line\", \"layer\": \"rd_ES\", \"point\": [4923.0249, 1520.0], \"length\": 1353.9501, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-3\", \"kind\": \"offset\", \"station\": 4321.298715761486, \"offset\": -20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-013\", \"type\": \"line\", \"layer\": \"rd_ES\", \"point\": [1702.6334, 980.0], \"length\": 1405.2668, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-1\", \"kind\": \"offset\", \"station\": 1000.0, \"offset\": 20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-009\", \"type\": \"arc\", \"layer\": \"rd_ES\", \"point\": [2600.6891, 995.7533], \"length\": 392.5357, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-1\", \"kind\": \"offset\", \"station\": 2405.2668077979447, \"offset\": 20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-014\", \"type\": \"line\", \"layer\": \"rd_ES\", \"point\": [3379.4171, 1238.7238], \"length\": 1240.3557, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-2\", \"kind\": \"offset\", \"station\": 2791.3674730739153, \"offset\": 20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"AR-010\", \"type\": \"arc\", \"layer\": \"rd_ES\", \"point\": [4105.0895, 1468.637], \"length\": 283.1405, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"C-2\", \"kind\": \"offset\", \"station\": 4031.7232168045084, \"offset\": 20.0, \"placed_by\": \"draw_offset\"}}, {\"id\": \"LN-015\", \"type\": \"line\", \"layer\": \"rd_ES\", \"point\": [4923.0249, 1480.0], \"length\": 1353.9501, \"anchor\": {\"alignment\": \"SR-100\", \"ref\": \"T-3\", \"kind\": \"offset\", \"station\": 4321.298715761486, \"offset\": 20.0, \"placed_by\": \"draw_offset\"}}]}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "",
+     "signature": "CAQS9AYKEAgSGAI4AUIIdGhpbmtpbmcSDNJxCKzOeAnBCl/XLxoMsKaCLL4XwTCsJyCHIjAf+1moIwxGriqZh0f4MYkTyeQ/zSLusSY2HOc7q/f7NNfeL0jBVMQkMk1ftMl2B2kqkQYsdBU3Qu6fiwtuUKo/oPUCO1+UTAqPGUyIZrEvbltcO9vE1dnHBfKRqtPxlYbpoNSnIF0o4KGWClz5pyTce0kUy0oOnrw+WeHiHvPOvJ02R26a5QgBnau7H1fqoOsPTc0TMShoxinIF7N0kM1vDd2GcGjK7JghBRMSScYUdsdIfL4vx/ljjWELQpHK8U7U0Zt2r1Scni6MkWz16WSZVDneQ37ADV/O1iBDZlwrK7wE5DalVaArkFvJmYP6FSeKw7MAs4ztEIAwZrtbleE6rP4d5WMfzdiw1t+MVBAtG+snGrYXop0f5hRgJTzYIvGIvGns5EgCJ3QiMZROTX4DpUvTaVSg3WhoKuE6yeANpmlJsJdwol1NCWC9dNCJy5Ow4QtXoQodVay+gpDnemjx/GBW7fBeC6XT4QzxZtQrD8n/ypaG6cNFn8/oLuEUJcbpLkzKq49ZeZI0AsqB6gUfd+Vn00MWFlx+izuznszEqOgJsWaeD0xvDzGX3IaaFDryOp0sTgZ3JbzV/KARtMnNarmO25NjlYSYnLB2aVLwuOEL1qhoRBKP5G2UAHuyB97qyy3iljHxUOL0I4Zs1ybUhie4aD5ITn+bZJj0cDFsaiL7UT/lJA/mvrW5gWL5bBVY86EXG6IJNMi7OPaG0etRP+osnctFGvolFLgeCX++Yjla00Q6AEjj45YdNAn89BjrENiooIcOtWT48vjEKSbZ+V368XIEXTs/Wi5WbEd5hlYGlHvxpK0ZltKOXUJiajnWv45Em7Eqp4uiQc0kTjLz5F5oAaKdZI23jfftkmIq4QvVF1qKEgrlfBwt3gJD4dWdr2nKt+EgzLUp8JHuz6fuxbMENBiS6wQWnRRJmtA6OwMm1Ell+QxiT7mfJBR+rChrwbcEZ22rtY3vsDTOzsHfgZnifnROrcE7itQen1Nzv3qrGFffDcb79TgTAQiuoul+55xDjNFA4Uxha3D0JXNDcRy1XRa1XWwhJImn4wLbY0nBmuErYkHhyU+o9mPQQJ/woz2ipZHChWpHkZggNRhBpovxwBgB"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01Fk3K8uq5of7gztzf2wVxv1",
+     "name": "mcp__roaddraft__draw_station_offset",
+     "input": {
+      "alignment": "SR-100",
+      "points": [
+       "30+00@12R",
+       "31+20@24R",
+       "36+00@24R",
+       "36+00@12R"
+      ],
+      "layer": "rd_EP"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01Fk3K8uq5of7gztzf2wVxv1",
+     "type": "tool_result",
+     "content": [
+      {
+       "type": "text",
+       "text": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"draw_station_offset\",\n  \"message\": \"drawn by station and offset on SR-100 (3 entities: LN-016, LN-017, LN-018): N 77°16'32\\\" E 120.60' from 30+00.00 12.00' RT to 31+20.00 24.00' RT; along SR-100 24.00' RT from 31+20.00 to 36+00.00; N 18°26'06\\\" W 12.00' from 36+00.00 24.00' RT to 36+00.00 12.00' RT. Points: 30+00.00 12.00' RT = [2986.46, 1116.17]; 31+20.00 24.00' RT = [3104.10, 1142.73]; 36+00.00 24.00' RT = [3559.47, 1294.52]; 36+00.00 12.00' RT = [3555.67, 1305.91]\",\n  \"created\": [\n    \"LN-016\",\n    \"LN-017\",\n    \"LN-018\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "",
+     "signature": "CAQS7gUKEAgSGAI4AUIIdGhpbmtpbmcSDG8cPH1h6xQP8vpXgxoMd64L6iUAhATxU7ntIjCy808HNUuI2r0xIzxJjwx6Agg414HufTuHbYM1UYjCYF3j5DIEYEQeCDmKw+03eFwqiwUMgpyGBm6YpXKZ3vOP/v7qEWeuTsrs0+91P6Mih0cdODv8kkJ3ssLLGCfhjiQNJtB6062CVb21dlB7KOyEAncRLgL2YO3DbToR89O7WxuyqfoR5ZqbB7evsikQdDaF7VbXlCX2+4Qb9jITlCvnf99QQV1lnHrHvCKFUjYCtmcPLLTheKXbfiX4wqbtKk6ZP+X1TuPj+FvezDtpjyBUhAY09MOcHFqP+0rSyQ7CkclKsGweUzt04epgrqOrcm4M5Cc69QsqwNXduHMy1WkqNw+MqfwycjE+N15SC5XEZmI7YtqHHlq/RqgT6yiomv25ez9Wk7XnxrnGUNAVSKRFWxQtO/TdrA//fnK/HbNuRWhbZrB1NoOuXvko87kVzDM7JqretVxg3/oCPgo5LDJfjtrM6AyBYZQ6cu2MWHYipdOZGhAROZqjQrX6Ele0O7pjAbRfiJnyjLf0F1IFM8tqXX1XqrmFkUxj9cPy81rjgy11ueZmJug9JyHlDPrLMnhZtWD0daAayKP85iYhMG6p1R+xYcTu3GAg9Dbo6Rcnt+BA2QZNo/ifSf4rLaI/0qFWizBE/urqvue/wZ8OEADb00wOzGOuIuv86xWwdLSm+HjiQezj+fnoZ3RYyZRtmD9yDQG57BKgxoSTb9Vz7zgNa+Jk5fyxM3UtI0arzPrhCDwPVXvb3Ct8so2fhfDjNQB+eMlaHdyf04sqic9ZfQAiwNnxR6jxHieZgKbgcdkR+URGsg97MgdmcyonadpeXjc54aLeYvmhIVWPAC6egiey02F+jM/ZIRD5zGwfNcql8mtNlE3oiL+0s1JCuZjiMpTovFQqL1rxkhrRtFH6mXNmAj7OWzGQKbqYhZj/x04YAQ=="
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "The right-turn lane edge is drawn on layer rd_EP as three entities, LN-016 to LN-018. I didn't render the drawing to check it.\n\n**1. What I created**\n- **Taper, LN-016:** from 30+00 at 12 ft right, which is the existing edge, to 31+20 at 24 ft right. Points are [2986.46, 1116.17] to [3104.10, 1142.73]. The tool reports its length as 120.60 ft, which is the slanted length of a taper that runs 120 ft along the station line and 12 ft across.\n- **Full-width edge, LN-017:** along SR-100 at 24 ft right from 31+20 to 36+00, ending at [3559.47, 1294.52].\n- **Square end, LN-018:** at 36+00 from 24 ft right back to 12 ft right, [3559.47, 1294.52] to [3555.67, 1305.91]. It is 12 ft long and square to the alignment, bearing N 18°26'06\" W.\n- **Lane width:** the existing edge of pavement is 12 ft right of centerline, so a 12 ft lane puts the new edge at 24 ft right.\n- **Alignment geometry:** stations 30+00 to 36+00 all fall on the straight tangent T-2. The curve C-1 runs from about 24+05 to 27+91, so the new edge is all straight lines.\n\n**2. Tool calls that mattered**\n- `list_alignments` showed SR-100 as the only alignment.\n- `find_entities` with `anchor: {kind: \"offset\"}` showed the existing edge of pavement on rd_EP at ±12 ft, plus rd_ES at ±20 ft.\n- `draw_station_offset` with `alignment: SR-100`, `points: [\"30+00@12R\", \"31+20@24R\", \"36+00@24R\", \"36+00@12R\"]`, `layer: rd_EP`.\n\n**3. Problems**\n- Nothing failed and there were no warnings.\n- I computed no coordinates myself. The engine worked out all the points from the stations and offsets."
+    }
+   ]
+  }
+ ]
+}
