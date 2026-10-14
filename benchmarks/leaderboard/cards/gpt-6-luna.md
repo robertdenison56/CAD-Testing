@@ -10,14 +10,14 @@
 | run folder | `2026-10-12-k3`, labels `gpt6-luna-r1`, `gpt6-luna-r2`, `gpt6-luna-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
 | standing | not ranked yet: k = 3 on 32 of 33 probes |
-| engine commit | `555bf496a8` (99) |
+| engine commit | `555bf496a8` (98) |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**66.7%** pass rate, 95% CI [52.5, 80.8]: 66 of 98 attempts that count, on 33 of 33 probes (1 excluded).
+**66.7%** pass rate, 95% CI [52.5, 80.8]: 66 of 98 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
@@ -37,15 +37,11 @@ By attempt: gpt6-luna-r1 22/33, gpt6-luna-r2 21/33, gpt6-luna-r3 23/32. Of the 3
 | steps | 11.6 calls, 12.7 turns per episode | model turns; for Claude Code the CLI's own count |
 | wall clock | 22 s per episode, 0.6 h in all | the runner's clock, episode start to report |
 | tokens | 266k in, 1.0k out per episode | input counts cache reads and writes |
-| cost | — per episode, — in all | no price: a local model |
+| cost | — per episode, — in all | no price: a ChatGPT subscription, which reports none |
 | render use | 48 renders in 37 episodes; 20 followed by a change | a render is followed by a change when a successful command comes before the next render |
 | scope completion | 320 of 447 items (72%) in 74 episodes of the 25 probes that ask for more than one thing; 47 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
-Stops: answered 98, error: Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting 1.
-
-Excluded, ended by the infrastructure:
-
-- `gpt6-luna-r3/draft-fix-the-drawing: error: Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting`
+Stops: answered 98.
 
 ## Every probe
 
@@ -74,7 +70,7 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | station-callouts | T2 | · P P | 46.0 | 1 | gpt6-luna-r1: 5 of 15 stations have no leader on them: 21+00, 22+00, 23+00, 24+00, 25+00 |
 | clean-callouts | T2 | · · · | 12.3 | 1 | gpt6-luna-r1: the leaders of 'EDGE OF PAVEMENT' and 'SR-100' cross |
 | draft-intersection-corner | T2 | P P P | 6.3 | 0 |  |
-| draft-fix-the-drawing | T2 | · · X | 6.5 | 0 | gpt6-luna-r1: the right edge of pavement at 12 ft: 49 of 189 check points have no linework within 0.5 ft; the worst is [3707.83, 1356.63], 1.00 ft from the nearest |
+| draft-fix-the-drawing | T2 | · · | 6.5 | 0 | gpt6-luna-r1: the right edge of pavement at 12 ft: 49 of 189 check points have no linework within 0.5 ft; the worst is [3707.83, 1356.63], 1.00 ft from the nearest |
 | draft-roadway-sheets | T2 | P P · | 10.3 | 0 | gpt6-luna-r3: the viewport (1.5, 1.5, 32.5, 20.5) in runs outside the sheet's drawing area (0.5, 1.75, 33.5, 21.5) |
 | line-data | T3 | · · · | 10.0 | 0 | gpt6-luna-r1: T-1 on C-101: no lettering gives N 90°00'00" E 1405.27'; nearest lettering: 'N 90°00\'00" E' |
 | curve-points | T3 | P P P | 15.0 | 16 |  |

@@ -310,6 +310,7 @@ def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str,
         "cost_source": ("the CLI's own figure at list price, billed to a subscription"
                         if any(a.meta.get("claude_cost_usd") is not None for a in valid)
                         else "the runner's estimate at list price" if any(c is not None for c in costs)
+                        else "no price: a ChatGPT subscription, which reports none" if backend == "codex"
                         else "no price: a local model"),
         "per_label": {l: {"passes": sum(a.outcome == "pass" for a in valid if a.label == l),
                           "valid": sum(1 for a in valid if a.label == l)} for l in labels},

@@ -1,4 +1,4 @@
-# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B, Fable 5.1, Qwen3.5-9B
+# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B, Fable 5.1, Qwen3.5-9B, GPT-6-Luna, GPT-6-Astra (running)
 
 The probe set changed on 2026-10-12 (commit `2697ee5`: the engine's labelers default to the Plans Preparation
 Manual's lettering, the probe fixtures sit on Caltrans named levels, the checks read the Caltrans station digit;
@@ -237,8 +237,84 @@ Against the local Q4_K_M rows this is the same model told the same things with a
 the Tier 1 score rises from 11 to 13-14 of 17, and Tier 2 and 3 move off zero only on the splits. Not
 comparable row to row (precision, engine, probe set all differ); the direction is the point.
 
+## GPT-6-Luna and GPT-6-Astra (medium effort) through Codex: Luna 22, 21, 23 of 33; Astra running
+
+Robert's go on Oct 12 ("run probes through codex GPT-6 Asta Med and GPT-6 Luna"): `gpt-6-astra` at reasoning
+effort medium and `gpt-6-luna` at its default, medium, on Robert's ChatGPT Plus account.
+
+**Rig.** A new backend, `python -m roaddraft.runners run --backend codex` (`runners/codex_cli.py`, commits
+`1f6a634`, `555bf49`, `442800d`): Codex headless (`codex exec --json --ephemeral --ignore-user-config`), the
+copy bundled with the ChatGPT app (`codex-cli 0.162.0-alpha.17.2`, recorded per episode; the npm install, 0.145,
+was refused `gpt-6-luna` by the service). The one `roaddraft-mcp` per probe is Codex's only MCP server, its
+tools pre-approved; the server's instructions replace Codex's base instructions, the environment, permissions
+and collaboration messages are off, the shell, web search, sub-agents and plugins are disabled, and the sandbox
+is read-only, so the drawing can change only through the server. What Codex keeps regardless (`apply_patch`,
+`view_image`, a clock, the MCP resource listers) was never used. 15 minutes and 120 model turns per probe, as
+for the Claude rows. The episodes ran from a worktree pinned at `555bf49`, then `442800d` (the same tool
+surface, `sha256:20fe0603`, the view_rotation one Fable ran on, and the same instructions and probe set), so
+other sessions' edits on main could not reach them. Unlike Claude Code, Codex shows the model tool results
+under its own output limit rather than the runner's 30,000 characters.
+
+**The account set the pace.** ChatGPT Plus stopped the six parallel processes after about three minutes on
+Oct 13 (35 episodes, all find probes) and again after three minutes that evening (44 more); a usage reset
+Robert bought at 21:36 carried Luna to the end and Astra r1 to 20 of 33 before the limit returned at 21:49.
+Run in parallel, Astra drew `429 Too Many Requests` within a second of each start while one process at a time
+ran clean, so its repeats run one after another (a scratchpad chain that resumes after each limit). A Plus
+window holds roughly 40 find probes or 10-15 drafting and Tier 3 ones. On a limit the runner deletes the probe
+it was on and stops (exit 3), so the same command resumes it.
+
+**Two episodes set aside, in `runs/_superseded/`.** Astra r1 `stationing` hit the turn cap after 122 calls in
+40 seconds: the backend counted tool calls, and Astra had made 96 `station_to_xy` calls in one response, so
+the cap was far tighter than Claude Code's `--max-turns`, which counts responses. `442800d` counts model
+turns (read from the event order and timing; it can undercount, never overcount) and keeps Codex's own event
+stream as `codex.jsonl`; the episode reruns under it. Luna r3 `draft-fix-the-drawing` was stopped by OpenAI's
+input filter ("your prompt was flagged as potentially violating our usage policy") on a drafting task, an
+infrastructure stop the board excludes; it reruns so Luna's row can rank.
+
+| set | Luna r1 | r2 | r3 | Astra r1 | r2 | r3 |
+|---|---|---|---|---|---|---|
+| the 17 (9 find, 8 draft) | 15 | 14 | 17 | 17 | 17 | 11 of 11 run |
+| Tier 2 (6) | 3 | 4 | 2 of 5 run | 5 | 6 | not yet |
+| Tier 3 batch A and batches B and C (10) | 4 | 3 | 4 | 8 of 9 run | 1 of 1 run | not yet |
+| **all 33** | **22** | **21** | **23 of 32 run** | **30 of 32 run** | **24 of 24 run** | **11 of 11 run** |
+
+Luna: 16 probes pass every time, 5 fail every time, 11 split, and `draft-fix-the-drawing` failed both of the
+repeats it has so far.
+
+| probe | Luna r1 r2 r3 | what a failing repeat left on disk (the first one) |
+|---|---|---|
+| shoulder-c101 | . . P | the callout's leader lands 32 ft, then 2.9 ft, off the left shoulder |
+| draft-edges-shoulders, draft-turn-lane | P . P / P . P | r2: the left edge of pavement 6 ft off; the 24 ft full-width edge not drawn |
+| draft-cul-de-sac | . P P | linework runs through the bulb where there should be none |
+| sheet-set-callouts | P P . | the title block's sheet number reads `C-101`, not `1` (the miss Haiku and Qwen made) |
+| station-callouts | . P P | 5 of 15 stations have no leader |
+| clean-callouts | . . . | two leaders cross ('EDGE OF PAVEMENT' and 'SR-100') |
+| draft-fix-the-drawing | . . (rerun) | the 12 ft edge only partly redrawn (49 of 189 check points bare) |
+| draft-roadway-sheets | P P . | the viewport runs outside the sheet's drawing area |
+| line-data | . . . | the bearing lettered without the length (`N 90°00'00" E`) |
+| curve-data, qa-alignment-data | P . . / . . . | no bubble numbered 1 on the curve; no `24+05.27 BC` |
+| stationing | . . P | no tick at 26+00 |
+| width-dims, row-data | P P . / . . P | the right shoulder not dimensioned; no L1/C1 tags |
+| l2-match-lines, l2-alignment-data | . . . / . . . | the match line stops at ±40 ft, not 40 ft past the edges; the PCC lettered EC |
+
+Astra so far (67 episodes): 65 pass. `draft-roadway-sheets` r1 lettered none of the 21 stations, and
+`l2-alignment-data` r1 set the tangent data level on the sheet where the line runs at 5.03° (the turned viewport
+every model has missed); nothing else has failed.
+
+**Measures, Luna (98 counted episodes).** 98 answered. 1,141 tool calls (11.6 per episode), 56 faulted: **4.9%
+invalid**, between Haiku and Qwen; 73% of faults recovered within three calls. 22 seconds per episode, 0.6 h in
+all, as quick as Haiku. 266k input tokens per episode (cache reads included), 1k output. Report
+fidelity is the weak point: 19 of its 32 failed episodes' reports said the task was done (57 claims the check
+contradicts), though none cited an id that never existed. Astra so far: 904 calls, 2 faulted (0.2%), 38 s per
+episode. Cost: none recorded, both on the subscription.
+
 ## Still to run in this folder
 
+- GPT-6-Astra: the r1 `stationing` rerun, 9 probes of r2 and 22 of r3; and the GPT-6-Luna r3
+  `draft-fix-the-drawing` rerun. Each ChatGPT Plus window holds 10-15 of these; one process at a time.
+
+        python -m roaddraft.runners run --backend codex --model gpt-6-astra --effort medium \
+            --out benchmarks/probe_runs/2026-10-12-k3 --label gpt6-astra-med-r2 --budget 15   # r1, r3 the same; gpt-6-luna as gpt6-luna-rN
 - The seven Fable `--force` reruns, if the cap is raised: `sheet-set-callouts` in r1, r2, r3; `line-data` and
   `curve-data` in r1 and r2. About $30 at list price, one 5-hour window.
 
