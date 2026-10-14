@@ -212,7 +212,24 @@ def d1_rows(seeds, tasks_dir: Optional[Path], workbook_dir: Path):
     return rows
 
 
+REAL_STARTS = {
+    "draw": "the real alignment base file (alignments, corridor) with one alignment in its "
+            "design but not drawn, nor annotated",
+    "attach": "the real sheet file as published, its base files beside it but not attached",
+    "title": "the real sheet file as published, its title block's project fields empty",
+    "setup": "the real sheet file's base files attached and one alignment annotated in the "
+             "model to read on the published twist; no sheet",
+    "blank": "the real sheet set up (border, viewport at the published scale and twist) but "
+             "blank and its title block empty; one alignment unannotated",
+    "scratch": "the real base files attached and nothing else: no sheet",
+}
+
+
 def _real_given(ttype) -> str:
+    from roaddraft.tasks.real import START_KIND
+    kind = START_KIND[ttype.name]
+    if kind in REAL_STARTS:
+        return REAL_STARTS[kind]
     done = [PHASE_WORDS[p] for p in ("stationing", "bearings", "callouts", "table")
             if p in ttype.given]
     text = ("a real plan sheet file (its border, title block, notes and callouts) referencing "
@@ -249,7 +266,8 @@ def real_rows(catalog: dict, tasks_dir: Optional[Path], workbook_dir: Path):
         links = ["", "", ""]
         if tasks_dir is not None:
             folder = (tasks_dir / "real" / t["agency"] / t["sheet_id"]
-                      / t["alignment"].replace(" ", "-") / t["type"])
+                      / ("whole-sheet" if t.get("per_sheet") else t["alignment"].replace(" ", "-"))
+                      / t["type"])
             pngs = write_task_files(task, folder)
             rel = folder.relative_to(workbook_dir).as_posix()
             uri = folder.resolve().as_uri()
@@ -258,7 +276,8 @@ def real_rows(catalog: dict, tasks_dir: Optional[Path], workbook_dir: Path):
                      Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"] else ""]
         rows.append([
             src["agency_name"], t["sheet_id"], t["sheet"], src["family"],
-            f"1\" = {D['feet_per_inch']:g}'", t["twist_deg"], t["alignment"],
+            f"1\" = {D['feet_per_inch']:g}'", t["twist_deg"],
+            "(whole sheet)" if t.get("per_sheet") else t["alignment"],
             ", ".join(src["other_alignments"]), t["type"], t["task_id"],
             ", ".join(task.truth.scope), ", ".join(graded), sum(WEIGHTS[c] for c in graded),
             t["tangents"], t["curves"], t["labels"],

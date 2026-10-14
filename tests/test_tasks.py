@@ -30,7 +30,7 @@ def test_seed_42_twice_identical_json_and_id():
     assert a.baseline == b.baseline and a.task_id == b.task_id
     assert a.task_id.startswith("D1-000042-") and len(a.task_id) == len("D1-000042-") + 12
     assert a.brief.generator_version == GENERATOR_VERSION
-    assert a.brief.spec_hash == spec_hash() and a.brief.spec_version == "draft-v3"
+    assert a.brief.spec_hash == spec_hash() and a.brief.spec_version == "draft-v4"
     assert a.truth.task_id == a.task_id
     # round trips
     assert TaskBrief.from_dict(json.loads(a.brief.to_json())).to_dict() == a.brief.to_dict()
@@ -75,7 +75,7 @@ def test_200_seeds_R_ge_min_radius_grade_le_max_K_ge_min_compile_ok_fits_window(
                 assert 200.0 <= row["length"] <= 500.0
                 assert row["K"] >= min_k(v, row["type"]) - 1e-9
         fpi = task.brief.deliverable["feet_per_inch"]
-        assert fpi in (10.0, 20.0, 40.0, 50.0)
+        assert fpi in (40.0, 50.0)
         bb = align.bbox()
         assert (bb[2] - bb[0]) + 2.0 * PAD_FT <= fit_w * fpi + 1e-6
         assert (bb[3] - bb[1]) + 2.0 * PAD_FT <= fit_h * fpi + 1e-6
@@ -194,7 +194,7 @@ def test_baseline_has_design_no_entities_no_sheets():
     doc = Document.from_dict(task.baseline)
     assert list(doc.design.alignments) == ["ALIGN-1"] and list(doc.design.profiles) == ["PROF-1"]
     assert doc.model_entities == {} and doc.sheets == {}
-    assert doc.meta["task_id"] == task.task_id and doc.meta["spec_version"] == "draft-v3"
+    assert doc.meta["task_id"] == task.task_id and doc.meta["spec_version"] == "draft-v4"
     assert doc.meta["design_speed_mph"] == task.brief.project["design_speed_mph"]
     assert "NORTH_ARROW" in doc.blocks and list(doc.layers) == ["0"]
     assert doc.design.fingerprint() == task.truth.design_fingerprint

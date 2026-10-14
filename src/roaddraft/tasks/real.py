@@ -10,7 +10,14 @@ drafter letters one of the sheet's alignments to the spec; everything else
 on the sheet -- the other alignments, the corridor, notes, callouts,
 legend, border and title block -- is the real sheet's and stays.
 
-A task is made from (sheet, alignment, task type):
+Eleven types: five letter one alignment around the sheet's own work
+(stationing, bearings, curve callouts, curve table, all of it); the rest are
+the sheet's other jobs on the same sets -- draw the alignment in its base
+file, re-attach the sheet's base files, fill its title block, lay the sheet
+out on the annotated model, annotate it blank, or draft it from the base
+files alone (``START_KIND`` says how each starts).
+
+A lettering task is made from (sheet, alignment, task type):
 
 1. The design is the base file's alignment as it is.  The sheet file does
    not own it, so labels anchor through the reference (``AA01:TB1``), the
@@ -81,6 +88,38 @@ AGENCIES: Dict[str, str] = {
     "CFL": "FHWA Central Federal Lands",
     "FDOT-NexGen": "FDOT",
 }
+#: how each real type starts: the file the drafter works in, and how it is cut --
+#: ``letter`` the sheet file without the alignment's annotation; ``draw`` the alignment's
+#: base file without its centerline; ``attach`` the sheet file with no references;
+#: ``title`` the sheet file with its title block emptied; ``setup`` the sheet file with
+#: its sheet gone and the alignment annotated in the model; ``blank`` the sheet emptied;
+#: ``scratch`` the sheet file with its sheet gone
+START_KIND = {
+    "real-stationing": "letter", "real-bearings": "letter", "real-callouts": "letter",
+    "real-curve-table": "letter", "real-alignment-data": "letter",
+    "real-draw-alignment": "draw", "real-attach-reference": "attach",
+    "real-title-block": "title", "real-sheet-setup": "setup",
+    "real-annotate-sheet": "blank", "real-plan-sheet": "scratch",
+}
+#: types about the sheet itself, not one of its alignments: one task per sheet
+SHEET_TYPES = ("real-attach-reference", "real-title-block")
+#: the fields of each border a drafter fills for a sheet (key, how the prompt names it),
+#: and the two a vague prompt still states (the rest need only be filled)
+TITLE_FIELDS = {
+    "caltrans": (("dist", "Dist"), ("county", "County"), ("route", "Route"),
+                 ("post_miles", "Post miles"), ("project_number_phase", "Project number & phase"),
+                 ("sheet_title", "Sheet title"), ("sheet_id", "Sheet"), ("scale", "Scale")),
+    "wfl": (("project", "Project"), ("project_name", "Project name"),
+            ("sheet_number", "Sheet number"), ("sheet_title", "Sheet title")),
+    "fdot": (("road_no", "Road no."), ("county", "County"), ("fpid", "Financial project ID"),
+             ("sheet_number", "Sheet no."), ("eor_name", "Engineer of record"),
+             ("eor_license", "License"), ("eor_firm", "Firm")),
+}
+TITLE_VAGUE = {"caltrans": ("route", "sheet_id"), "wfl": ("project", "sheet_number"),
+               "fdot": ("fpid", "sheet_number")}
+#: the north arrow's scale per inch of sheet height (the spec's 0.9 on a 22-in ANSI D)
+NORTH_SCALE_PER_IN = 0.9 / 22.0
+
 #: phases the real files supply: never drafted by the reference
 REAL_PHASES = ("design", "linework", "reference", "sheet", "north", "title")
 #: annotation phases the reference drafts on the sheet file, in order
@@ -241,12 +280,12 @@ def candidates() -> List[Tuple[RealSheet, str, str]]:
         fpi = float(sheet.viewports[0].feet_per_inch)
         if fpi not in [float(f) for f in DRAFTING_SPEC_V1["sheet"]["allowed_feet_per_inch"]]:
             continue  # a scale the spec does not draft at
-        for ref, _base, align, placement in reference_alignments(doc):
-            if not placement.is_identity or usable_alignment(align):
-                continue
-            for name, ttype in REAL_TASK_TYPES.items():
-                if not type_fits(align, ttype):
-                    out.append((src, align.name, name))
+        aligns = [align for _ref, _base, align, placement in reference_alignments(doc)
+                  if placement.is_identity and not usable_alignment(align)]
+        for name, ttype in REAL_TASK_TYPES.items():
+            fits = [a for a in aligns if not type_fits(a, ttype)]
+            for align in fits[:1] if name in SHEET_TYPES else fits:
+                out.append((src, align.name, name))
     return out
 
 
@@ -553,14 +592,15 @@ def _leaders(ents: Dict[str, object], removed_quads: List[list], unit: float) ->
 
 
 def _strip_space(ents: Dict[str, object], doc: Document, tg: _Targets, name: str,
-                 quad_of, own_anchor: bool) -> Dict[str, List[str]]:
-    """Remove the alignment's annotation from one space; returns the ids by kind."""
+                 quad_of, own_anchor: bool, linework: bool = False) -> Dict[str, List[str]]:
+    """Remove the alignment's annotation from one space (and, with ``linework``,
+    its drawn centerline); returns the ids by kind."""
     gone: Dict[str, List[str]] = {}
     if own_anchor:  # stationing and labels anchored to it in the base
         gone["anchored"] = [e.id for e in ents.values()
                             if getattr(e, "anchor", None) and e.anchor.get("alignment") == name
                             and e.anchor.get("placed_by") in ANCHOR_PRODUCERS
-                            and e.anchor.get("placed_by") != "draw_alignment"]
+                            and (linework or e.anchor.get("placed_by") != "draw_alignment")]
     quads = {e.id: quad_of(e) for e in ents.values() if isinstance(e, Text)}
     taken = set(gone.get("anchored", []))
 
@@ -605,10 +645,11 @@ def geo_circle_quad(c: Circle) -> List[List[float]]:
 
 
 def strip_alignment(sheet_doc: Document, bases: Dict[str, Document], design_file: str,
-                    align: Alignment, truth_labels: Sequence[dict]) -> dict:
+                    align: Alignment, truth_labels: Sequence[dict],
+                    linework: bool = False) -> dict:
     """Remove ``align``'s own real annotation from the sheet file and the base
-    files (in place); returns what went, by file and kind, and the corner of
-    any curve table removed."""
+    files (in place), and with ``linework`` its drawn centerline too; returns
+    what went, by file and kind, and the corner of any curve table removed."""
     sheet = _only_sheet(sheet_doc)
     vp = sheet.viewports[0]
     t = vp.transform()
@@ -619,7 +660,8 @@ def strip_alignment(sheet_doc: Document, bases: Dict[str, Document], design_file
     tg_model = _targets(align, truth_labels, lambda p: list(p), fpi)
     for fname, base in bases.items():
         got = _strip_space(base.model_entities, base, tg_model, align.name,
-                           lambda e, b=base: _quad(e, b), own_anchor=(fname == design_file))
+                           lambda e, b=base: _quad(e, b), own_anchor=(fname == design_file),
+                           linework=linework)
         if got:
             report[fname] = got
     # the sheet: paper inches
@@ -967,14 +1009,44 @@ def _brief(src, ttype, project, design, D) -> TaskBrief:
     return brief
 
 
+def _title(sheet, template: str) -> List[Tuple[str, str, str]]:
+    """``(key, label, value)`` of the published fields a drafter fills on this border."""
+    fields = sheet.title_block_fields or {}
+    return [(k, label, str(fields[k])) for k, label in TITLE_FIELDS.get(template, ())
+            if str(fields.get(k) or "").strip()]
+
+
+def _attachable(doc: Document) -> Optional[str]:
+    """Why re-attaching this sheet file's base files is more than attaching them."""
+    refs = list(doc.references.values())
+    if not refs:
+        return "the sheet file references nothing"
+    for r in refs:
+        if (r.clip is not None or r.masks or r.levels_off or r.space != "model"
+                or r.model != "model" or not r.visible or geo.distance(r.offset, [0.0, 0.0]) > 1e-9
+                or abs(r.rotation_deg) > 1e-9 or abs(r.scale - 1.0) > 1e-9):
+            return f"{r.name} is attached clipped, masked, moved or with levels off"
+    return None
+
+
+def _block_box(doc: Document, block: str, scale: float, rotation: float):
+    """The footprint of a block insertion relative to its insertion point."""
+    probe = BlockRef(id="probe", block_name=block, position=[0.0, 0.0], scale=scale,
+                     rotation_deg=rotation)
+    return probe.bbox(doc)
+
+
 def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
-    """The task lettering ``alignment`` on real sheet ``sheet_id`` (see the
-    module docstring).  Raises ValueError when the pairing does not make one."""
+    """The ``type_name`` task on real sheet ``sheet_id`` about ``alignment`` (for
+    the sheet's own jobs, the alignment the truth is drawn from); see the module
+    docstring and ``START_KIND``.  Raises ValueError when the pairing does not
+    make one."""
     src = real_sheet(sheet_id)
     ttype = task_type(type_name)
     if ttype.name not in REAL_TASK_TYPES:
         raise ValueError(f"{type_name} is not a real-sheet task type; types: "
                          f"{', '.join(REAL_TASK_TYPES)}")
+    kind = START_KIND[ttype.name]
     sheet_doc = _load(src.folder / src.sheet_file)
     sheet = _only_sheet(sheet_doc)
     if len(sheet.viewports) != 1:
@@ -988,6 +1060,14 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
     why = usable_alignment(align) or type_fits(align, ttype)
     if why:
         raise ValueError(f"{src.id} {alignment}: {why}")
+    template = getattr(sheet, "title_block_template", None) or "standard"
+    title = _title(sheet, template)
+    if "title" in ttype.asks and not title:
+        raise ValueError(f"{src.id}: its border ({template}) has no title block fields to fill")
+    if kind == "attach":
+        why = _attachable(sheet_doc)
+        if why:
+            raise ValueError(f"{src.id}: {why}")
     design_file = Path(ref.path).name
     others = sorted({al.name for _r, _b, al, _p in reference_alignments(sheet_doc)} - {align.name})
     design = {"alignments": {align.name: align.to_dict()},
@@ -995,54 +1075,126 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
                            if p.alignment == align.name}}
     project = _project(src, sheet)
     D = _deliverable(src, sheet, vp, align, ref.name, design_file, ttype, others)
+    D["start"] = kind
+    D["base_files"] = [Path(r.path).name for r in sheet_doc.references.values()]
+    sh = D["sheets"][0]
+    sh["template"] = template
+    if "sheet" in ttype.asks:
+        sh["twist_deg"] = float(vp.rotation_deg)  # the layout reads as published
+    if "title" in ttype.asks:
+        sh["title_block_fields"] = {k: v for k, _label, v in title}
+        sh["title_labels"] = {k: label for k, label, _v in title}
+        sh["required_title_fields"] = [k for k, _label, _v in title]
+        sh["title_stated"] = {"explicit": [k for k, _l, _v in title],
+                              "vague": [k for k in TITLE_VAGUE.get(template, ())
+                                        if k in sh["title_block_fields"]]}
+    if kind == "attach":
+        D["references"] = [{"file": Path(r.path).name, "name": r.name, "space": r.space}
+                           for r in sheet_doc.references.values()]
     brief = _brief(src, ttype, project, design, D)
     truth = compute_ground_truth(brief)
 
-    # -- the shipped copies, without the alignment's own real annotation
+    # -- the shipped copies: the base files, and the sheet file cut for the task
     bases = {name: _load(src.folder / name) for name in src.files if name != src.sheet_file}
-    stripped_sheet = _load(src.folder / src.sheet_file)
-    stripped = strip_alignment(stripped_sheet, bases, design_file, align, truth.labels)
-    stripped_sheet.meta.update(task_id=brief.task_id, spec_version=SPEC_VERSION)
-    files = {name: doc.to_dict() for name, doc in bases.items()}
+    work = _load(src.folder / src.sheet_file)
+    stripped = {"removed": {}, "table_corner": None}
+    if kind in ("letter", "draw", "setup", "blank", "scratch"):
+        stripped = strip_alignment(work, bases, design_file, align, truth.labels,
+                                   linework=(kind == "draw"))
+    work_sheet = work.sheet_by_ref(sheet.name)
+    if kind in ("setup", "blank", "scratch"):
+        work_sheet.entities.clear()  # the finished sheet holds only the drafter's work
+    if kind in ("blank", "scratch") or kind == "title":
+        for k, _label, _v in title:
+            work_sheet.title_block_fields.pop(k, None)
+    work.meta.update(task_id=brief.task_id, spec_version=SPEC_VERSION)
 
-    # -- where its labels go: clear of the sheet's own work
-    D["label_poses"] = choose_poses(Task(brief=brief, truth=truth,
-                                         baseline=stripped_sheet.to_dict(), files=files))
-    brief = _brief(src, ttype, project, design, D)
-    truth = compute_ground_truth(brief)
+    def files_for(doc_name: Optional[str]) -> dict:
+        return {name: doc.to_dict() for name, doc in bases.items() if name != doc_name}
 
-    # -- the curve table's spot: clear of everything the finished sheet shows
-    if align.curves():
-        scratch = Task(brief=brief, truth=truth, baseline=stripped_sheet.to_dict(), files=files)
-        session = _draft(scratch, ["layers", "stationing", "bearings", "callouts"])
-        grid = occupancy(session.doc, sheet.name)
-        from roaddraft.tasks.generator import _table_size
-        w, h = _table_size(align, D["sheets"][0]["curves"], D["curve_table_columns"],
-                           D["text_heights"]["sheet_table_in"])
-        usable = tuple(sheet.usable_area())
-        prefer = stripped["table_corner"] or [usable[2] - w - 0.25, usable[1] + h + 0.25]
-        spot = table_spot(grid, usable, w, h, prefer)
-        if spot is None and "table" in ttype.asks:
-            raise ValueError(f"{src.id} {alignment}: no clear space for the curve table")
-        # a sheet too full for the table starts without one when the task is not the table
-        D["table_given"] = spot is not None and "table" in ttype.given
-        D["sheets"][0]["curve_table_position"] = spot or [round(v, 2) for v in prefer]
-        D["sheets"][0]["curve_table_replaces"] = bool(stripped["table_corner"]) and spot is not None
+    files = files_for(None)
+    lettered = kind in ("letter", "setup", "blank", "scratch")
+    if lettered:
+        # -- where its labels go: clear of the sheet's own work
+        D["label_poses"] = choose_poses(Task(brief=brief, truth=truth,
+                                             baseline=work.to_dict(), files=files))
         brief = _brief(src, ttype, project, design, D)
         truth = compute_ground_truth(brief)
-        stripped_sheet.meta.update(task_id=brief.task_id)
 
-    # -- the starting document: the stripped sheet file with the given phases drafted
-    task = Task(brief=brief, truth=truth, baseline=stripped_sheet.to_dict(), files=files)
-    drafted = ["layers"] + [p for p in ANNOTATION_PHASES if p in ttype.given
-                            and (p != "table" or D.get("table_given"))]
-    session = _draft(task, drafted)
-    task.baseline = session.doc.to_dict()
-    start_sheet = session.doc.sheet_by_ref(sheet.name)
-    given = sorted(set(start_sheet.entities) | set(session.doc.model_entities))
-    for sh in truth.sheets:
-        sh["given_entities"] = given
-        sh["stripped"] = stripped["removed"]
+    # -- the curve table's spot and the north arrow's: clear of everything the finished
+    # sheet shows
+    table_wanted = align.curves() and kind in ("letter", "blank", "scratch")
+    north_wanted = "north" in ttype.asks
+    if table_wanted or north_wanted:
+        scratch = Task(brief=brief, truth=truth, baseline=work.to_dict(), files=files)
+        session = _draft(scratch, ["layers", "stationing", "bearings", "callouts"])
+        grid = occupancy(session.doc, sheet.name)
+        usable = tuple(sheet.usable_area())
+        if table_wanted:
+            from roaddraft.tasks.generator import _table_size
+            w, h = _table_size(align, sh["curves"], D["curve_table_columns"],
+                               D["text_heights"]["sheet_table_in"])
+            prefer = stripped["table_corner"] or [usable[2] - w - 0.25, usable[1] + h + 0.25]
+            spot = table_spot(grid, usable, w, h, prefer)
+            if spot is None and "table" in ttype.asks:
+                raise ValueError(f"{src.id} {alignment}: no clear space for the curve table")
+            # a sheet too full for the table starts without one when the task is not the table
+            D["table_given"] = spot is not None and "table" in ttype.given
+            sh["curve_table_position"] = spot or [round(v, 2) for v in prefer]
+            sh["curve_table_replaces"] = bool(stripped["table_corner"]) and spot is not None
+            if spot is not None:
+                grid.fill([[spot[0], spot[1] - h], [spot[0] + w, spot[1] - h],
+                           [spot[0] + w, spot[1]], [spot[0], spot[1]]])
+        if north_wanted:
+            na = DRAFTING_SPEC_V1["sheet"]["north_arrow"]
+            scale = round(NORTH_SCALE_PER_IN * float(sheet.height_in), 3)
+            turn = round(float(vp.rotation_deg), 2)
+            bb = _block_box(work, na["block"], scale, turn)
+            w, h = bb[2] - bb[0], bb[3] - bb[1]
+            corner = table_spot(grid, usable, w, h, [usable[2] - w - 0.5, usable[3] - 0.5])
+            if corner is None:
+                raise ValueError(f"{src.id} {alignment}: no clear space for the north arrow")
+            # the block's insertion point from the clear rect's top-left corner
+            sh["north_arrow"] = {"position": [round(corner[0] - bb[0], 3),
+                                              round(corner[1] - h - bb[1], 3)],
+                                 "scale": scale, "rotation_deg": turn}
+        brief = _brief(src, ttype, project, design, D)
+        truth = compute_ground_truth(brief)
+        work.meta.update(task_id=brief.task_id)
+
+    # -- the starting document
+    if kind == "draw":
+        doc = bases[design_file]
+        doc.meta.update(task_id=brief.task_id, spec_version=SPEC_VERSION)
+        files = files_for(design_file)
+    else:
+        doc = work
+        if kind == "attach":
+            doc.references.clear()
+        if kind in ("setup", "scratch"):
+            del doc.sheets[work_sheet.id]
+    task = Task(brief=brief, truth=truth, baseline=doc.to_dict(), files=files)
+    if kind == "letter":
+        drafted = ["layers"] + [p for p in ANNOTATION_PHASES if p in ttype.given
+                                and (p != "table" or D.get("table_given"))]
+    elif kind == "setup":
+        drafted = ["layers", "stationing", "bearings", "callouts"]
+    elif kind in ("draw", "blank", "scratch"):
+        drafted = ["layers"]
+    else:  # attach, title: the published sheet file as it is
+        drafted = []
+    if drafted:
+        session = _draft(task, drafted)
+        task.baseline = session.doc.to_dict()
+        start = session.doc
+    else:
+        start = Document.from_dict(task.baseline)
+    start_sheet = start.sheet_by_ref(sheet.name)
+    given = sorted((set(start_sheet.entities) if start_sheet is not None else set())
+                   | set(start.model_entities))
+    for tsh in truth.sheets:
+        tsh["given_entities"] = given
+        tsh["stripped"] = stripped["removed"]
     return task
 
 
@@ -1092,6 +1244,7 @@ def catalog(progress=None) -> dict:
             sheet = task.brief.deliverable["sheets"][0]
             align = Alignment.from_dict(task.brief.design["alignments"][alignment])
             row.update(task_id=task.task_id, sheet=sheet["name"],
+                       per_sheet=type_name in SHEET_TYPES, start=START_KIND[type_name],
                        feet_per_inch=task.brief.deliverable["feet_per_inch"],
                        twist_deg=round(task.brief.deliverable["view_rotation"], 2),
                        tangents=len(align.tangents()), curves=len(align.curves()),

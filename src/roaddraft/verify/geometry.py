@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
 from roaddraft.core import geometry as geo
+from roaddraft.design.angles import direction_of
 from roaddraft.design.angles import unit_vector
 from roaddraft.design.errors import DesignError
 from roaddraft.design.horizontal import Alignment, CurveElement
@@ -84,7 +85,11 @@ def element_piece(el) -> Piece:
         phi = el.phi0_deg + el.sign * half
         m = [el.center[0] + el.radius * unit_vector(phi)[0],
              el.center[1] + el.radius * unit_vector(phi)[1]]
-        return Piece("arc", list(el.pc), list(el.pt), m, None)
+        # the curve is its circle: its ends where the PC and PT bear from the center (a
+        # curve rebuilt from published linework stores ends a few hundredths off it)
+        ends = [geo.arc_point(el.center, el.radius, direction_of(el.center, q))
+                for q in (el.pc, el.pt)]
+        return Piece("arc", ends[0], ends[1], m, None)
     return _line_piece(el.start, el.end, None)
 
 

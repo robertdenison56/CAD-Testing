@@ -203,6 +203,33 @@ REAL_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
     _real("real-alignment-data", ["ticks", "stations", "curve_points", "bearings", "callouts",
                                   "table"], [],
           "letter all the alignment data of one alignment on a real plan sheet"),
+    # -- the rest of a sheet's jobs on the same real sets (decided 2026-10-13, Robert:
+    # "convert"): drawing an alignment in its base file, re-attaching a sheet's base
+    # files, its title block, and laying out or annotating a sheet from scratch
+    _type("real-draw-alignment", ["linework"], ["layers"],
+          "draw one alignment of a real plan set in its alignment base file"),
+    _type("real-attach-reference", ["reference"],
+          ["layers", "linework", "sheet", "north", "title", "stationing", "bearings",
+           "callouts", "table"],
+          "attach a real sheet file's base files as references", owns_design=False),
+    _type("real-title-block", ["title"],
+          ["layers", "linework", "reference", "sheet", "north", "stationing", "bearings",
+           "callouts", "table"],
+          "fill in a real sheet's title block", owns_design=False),
+    _type("real-sheet-setup", ["sheet"],
+          ["layers", "linework", "reference", "stationing", "bearings", "callouts"],
+          "lay out a real sheet: its border and a viewport on the annotated model",
+          owns_design=False),
+    _type("real-annotate-sheet", ["ticks", "stations", "curve_points", "bearings", "callouts",
+                                  "table", "north", "title"],
+          ["layers", "linework", "reference", "sheet"],
+          "annotate a blank real sheet from scratch: one alignment, table, north arrow, title",
+          owns_design=False),
+    _type("real-plan-sheet", ["sheet", "ticks", "stations", "curve_points", "bearings",
+                              "callouts", "table", "north", "title"],
+          ["layers", "linework", "reference"],
+          "draft a real plan sheet from the base files: sheet, viewport, annotation",
+          owns_design=False),
 )}
 
 

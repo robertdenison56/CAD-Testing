@@ -8,21 +8,30 @@ its own base files (alignments, corridor, survey) through a viewport at the
 published scale and twist, and carries the published border, title block,
 notes, legend and callouts.
 
-A task letters **one alignment** of a sheet to the drafting spec, around
-everything else the sheet already shows. `catalog.json` lists every task that
-validates, and every candidate left out with the reason.
+Eleven task types cover a plan sheet's jobs. `catalog.json` lists every task
+that validates, and every candidate left out with the reason.
 
 ## Task types
 
-| Type | Asks for | Already done on the start sheet |
+| Type | The drafter starts with | Asks for |
 |---|---|---|
-| `real-stationing` | ticks, station numbers, BC/EC | its bearings, curve callouts, curve table (spec style) |
-| `real-bearings` | the bearing and length of each tangent | its stationing, callouts, table |
-| `real-callouts` | the curve number bubbles | its stationing, bearings, table |
-| `real-curve-table` | the CURVE DATA table | its stationing, bearings, callouts |
-| `real-alignment-data` | all of the above | none of it |
+| `real-stationing` | the sheet file, the alignment's published annotation removed, its bearings, callouts and table drafted to the spec | ticks, station numbers, BC/EC |
+| `real-bearings` | the same, its stationing, callouts and table drafted | the bearing and length of each tangent |
+| `real-callouts` | the same, its stationing, bearings and table drafted | the curve number bubbles |
+| `real-curve-table` | the same, its stationing, bearings and callouts drafted | the CURVE DATA table |
+| `real-alignment-data` | the sheet file, the alignment unannotated | all of the above |
+| `real-draw-alignment` | the alignment base file, the alignment in its design but not drawn | the centerline |
+| `real-attach-reference` | the sheet file as published, its base files beside it but detached | the base files attached at their own coordinates |
+| `real-title-block` | the sheet file as published, its title block's project fields empty | the agency border's fields filled |
+| `real-sheet-setup` | the base files attached, the alignment annotated in the model to read on the published twist, no sheet | the sheet on the agency border and a viewport at the published scale and twist |
+| `real-annotate-sheet` | the sheet set up on its border at the published scale and twist, but blank | the alignment's data, the table, a north arrow pointing north, the title block |
+| `real-plan-sheet` | the base files attached and nothing else | the sheet and viewport, then all of the above |
 
-## How a task is made (`src/roaddraft/tasks/real.py`)
+The first five letter one alignment around everything the published sheet already
+shows. `real-attach-reference` and `real-title-block` are one task per sheet; the rest
+are one per alignment.
+
+## How a lettering task is made (`src/roaddraft/tasks/real.py`)
 
 1. **Design.** The base file's alignment, as rebuilt by the redraft. The sheet
    file does not own it, so labels anchor through the reference, for example
@@ -45,6 +54,21 @@ validates, and every candidate left out with the reason.
    A sheet with no room starts without a table when the table is not the task.
 6. **Start.** The stripped sheet file with the spec layers and the given phases
    drafted on it.
+
+The other types cut the same files differently (`START_KIND`). Their checks needed
+three additions, each read only from a real truth sheet:
+
+- **Title block.** Each agency border has its own fields: Caltrans Dist, County,
+  Route, Post miles, Project number and phase, Sheet title, Sheet and Scale; WFL and
+  CFL Project and Sheet number; FDOT Road no., County, Financial project ID, Sheet
+  no. and the engineer of record. The explicit prompt gives every value and grades it
+  exactly; the vague prompt gives two and the rest need only be filled, as on the
+  seeded sheets.
+- **Twist.** A laid-out sheet must keep the published viewport twist, or the
+  labels lettered for it read upside down; a viewport turned otherwise loses the fit
+  credit.
+- **North arrow.** On a turned sheet it must point to north, so it is inserted turned
+  by the twist; one pointing up the paper earns half.
 
 ## Validation
 
@@ -88,3 +112,9 @@ with each task's prompts and links to its start and finished files.
   land on existing text is left out rather than hand-placed.
 - Each sample sheet has its own copy of its base files, so real tasks are
   one sheet each; consecutive sheets do not share one continuous alignment.
+- The base alignments' curves store ends a few hundredths of a foot off their own
+  circles (L-1's TB1: 0.056 ft). The verifier takes a curve to be its circle, so a
+  drawn arc matches it.
+- Still seeded only: pavement edges and widths (the real corridors have varying
+  widths, curbs and tapers, not one typical section), create-alignment (the rebuilt
+  alignments store no PIs to dictate), two-sheet layouts, and layer setup.

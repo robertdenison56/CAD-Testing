@@ -144,6 +144,9 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
                     params["text_gap"] = wd["text_gap_ft"]
                 steps.append(("place_dimension", params))
         elif phase == "reference":
+            for r in D.get("references") or []:  # a real sheet's base files, as published
+                steps.append(("attach_reference", {"name": r["name"], "path": r["file"],
+                                                   "space": r.get("space", "model")}))
             if not D.get("basefile"):
                 continue  # nothing to attach: the drawing is all in this document
             ref_spec = S.get("reference", {})
@@ -152,7 +155,10 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
                 "space": ref_spec.get("space", "model")}))
         elif phase == "sheet":
             for sh in sheets:
-                steps.append(("create_sheet", {"name": sh["name"], "size": sh["size"]}))
+                params = {"name": sh["name"], "size": sh["size"]}
+                if sh.get("template"):  # a real sheet's border
+                    params["title_block_template"] = sh["template"]
+                steps.append(("create_sheet", params))
                 steps.append(("create_viewport", {"sheet": sh["name"], **sh["viewport"]}))
             drawn = set()
             for sh in sheets:
@@ -188,9 +194,14 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
         elif phase == "north":
             na = S["sheet"]["north_arrow"]
             for sh in sheets:
-                steps.append(("insert_block", {"space": sh["name"], "block_name": na["block"],
-                                               "position": na["position"], "scale": na["scale"],
-                                               "layer": layers.get("symbols", "0")}))
+                here = sh.get("north_arrow") or {}  # a real sheet's: where it is clear, to north
+                params = {"space": sh["name"], "block_name": na["block"],
+                          "position": here.get("position", na["position"]),
+                          "scale": here.get("scale", na["scale"]),
+                          "layer": layers.get("symbols", "0")}
+                if here.get("rotation_deg"):
+                    params["rotation_deg"] = here["rotation_deg"]
+                steps.append(("insert_block", params))
         elif phase == "title":
             for sh in sheets:
                 steps.append(("fill_title_block", {"sheet": sh["name"],

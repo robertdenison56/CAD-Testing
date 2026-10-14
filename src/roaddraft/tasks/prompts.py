@@ -512,6 +512,144 @@ def _real_alignment_data(w: _Words, explicit: bool) -> str:
             f"data in this file, anchored through the reference:\n{_bullets(items)}")
 
 
+# -- real plan sheets: the sheet's own jobs and the sheet from scratch
+
+
+def _real_set(w: _Words) -> str:
+    src = w.source
+    return f"a {src.get('agency_name', '')} plan set ({w.P['name']})"
+
+
+def _real_twist(w: _Words) -> float:
+    return float(w.D.get("view_rotation") or 0.0)
+
+
+def _real_border(w: _Words) -> str:
+    tpl = w.sheets[0].get("template") or "standard"
+    return f"the {tpl} border (create_sheet title_block_template '{tpl}')"
+
+
+def _real_files(w: _Words) -> str:
+    files = [r["file"] for r in w.D.get("references") or []] or w.D.get("base_files") or []
+    return ", ".join(files) or w.D.get("design_file", "")
+
+
+_LINE_COUNTS = {2: "two", 3: "three", 4: "four", 5: "five"}
+
+
+def _field_value(v: str) -> str:
+    """A title block value as a prompt states it: a value lettered on several lines
+    reads as its lines in quotes (graded with the line breaks as spaces)."""
+    lines = [ln.strip() for ln in str(v).split("\n") if ln.strip()]
+    if len(lines) < 2:
+        return str(v).strip()
+    quoted = [f'"{ln}"' for ln in lines]
+    return (", ".join(quoted[:-1]) + f" and {quoted[-1]} on "
+            f"{_LINE_COUNTS.get(len(lines), len(lines))} lines")
+
+
+def _real_title(w: _Words, keys: bool) -> str:
+    sh = w.sheets[0]
+    labels = sh.get("title_labels") or {}
+    return "; ".join(f"{labels.get(k, k)}{f' [{k}]' if keys else ''}: {_field_value(v)}"
+                     for k, v in sh["title_block_fields"].items())
+
+
+def _real_title_vague(w: _Words) -> str:
+    sh = w.sheets[0]
+    labels = sh.get("title_labels") or {}
+    keys = (sh.get("title_stated") or {}).get("vague") or []
+    return ", ".join(f"{labels.get(k, k).lower()} {_field_value(sh['title_block_fields'][k])}"
+                     for k in keys)
+
+
+def _real_north(w: _Words) -> str:
+    na = w.sheets[0].get("north_arrow") or {}
+    block = w.S["sheet"]["north_arrow"]["block"]
+    turn = float(na.get("rotation_deg", 0.0))
+    return (f"a north arrow (the {block} block) pointing to true north, which is turned "
+            f"{turn:.2f}° on this sheet, inside the border and clear of the title block and "
+            f"the plan, on {w.layer('symbols')}")
+
+
+def _real_lettering(w: _Words) -> str:
+    twist = _real_twist(w)
+    turned = (f", model labels lettered to read upright on the sheet as plotted "
+              f"(view_rotation {twist:.2f})" if abs(twist) > 1e-6 else "")
+    return f"anchored through the reference as {w.ref_name}:{w.A}{turned}"
+
+
+def _real_draw_alignment(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Draw the {w.A} line in this alignment file."
+    return (f"This is {w.D.get('design_file')}, the alignment base file of {_real_set(w)}; "
+            f"sheet {w.names[0]} shows it at {w.scale}. Alignment {w.A} is in its design but "
+            f"is not drawn. Draw {w.linework()}. The layers exist; keep everything already in "
+            f"the file and draw nothing else.")
+
+
+def _real_attach_reference(w: _Words, explicit: bool) -> str:
+    refs = w.D.get("references") or []
+    if not explicit:
+        return f"Attach the base files {_real_files(w)} to sheet {w.names[0]}."
+    each = "; ".join(f"{r['file']} as {r['name']}" for r in refs)
+    return (f"This is the sheet file for sheet {w.names[0]} of {_real_set(w)}: its border, "
+            f"title block, notes and callouts are drawn, but its viewport shows nothing because "
+            f"the base files beside it are not attached. Attach each into {refs[0]['space']} "
+            f"space at its own coordinates (no offset, rotation or scale), visible and "
+            f"unclipped, under the name given: {each}.")
+
+
+def _real_title_block(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Fill in the title block of sheet {w.names[0]}: {_real_title_vague(w)}."
+    tpl = w.sheets[0].get("template") or "standard"
+    return (f"Fill in the title block of sheet {w.names[0]} of {_real_set(w)}, on its {tpl} "
+            f"border (the fill_title_block key in brackets): {_real_title(w, True)}.")
+
+
+def _real_sheet_setup(w: _Words, explicit: bool) -> str:
+    twist = _real_twist(w)
+    if not explicit:
+        return (f"Set up plan sheet {w.names[0]} for the {w.A} line: {w.size}, on "
+                f"{_real_border(w)}, the viewport turned {twist:.2f}° as published.")
+    return (f"This is the sheet file of {_real_set(w)}: the base files {_real_files(w)} are "
+            f"attached, and alignment {w.A} is drawn and annotated in model space, its labels "
+            f"lettered to read on a sheet turned {twist:.2f}°, but there is no sheet. Create plan "
+            f"sheet {w.names[0]}: {w.size}, on {_real_border(w)}, with one viewport at {w.scale}, "
+            f"turned {twist:.2f}°, showing all of {w.A} inside the border and clear of the title "
+            f"block.")
+
+
+def _real_sheet_items(w: _Words) -> List[str]:
+    return [w.ticks(), w.station_labels(), w.curve_points(), w.callouts(), w.bearings(),
+            w.table(), _real_north(w), f"the title block: {_real_title(w, True)}"]
+
+
+def _real_annotate_sheet(w: _Words, explicit: bool) -> str:
+    twist = _real_twist(w)
+    if not explicit:
+        return (f"Sheet {w.names[0]} is blank. Annotate the {w.A} line and finish the sheet; "
+                f"title block: {_real_title_vague(w)}.")
+    return (f"Sheet {w.names[0]} of {_real_set(w)} is set up on {_real_border(w)} with a "
+            f"viewport at {w.scale}, turned {twist:.2f}°, on the attached base files; alignment "
+            f"{w.A} is drawn, but nothing on the sheet is lettered and the sheet itself is "
+            f"blank. Annotate it completely, {_real_lettering(w)}:\n"
+            f"{_bullets(_real_sheet_items(w))}")
+
+
+def _real_plan_sheet(w: _Words, explicit: bool) -> str:
+    twist = _real_twist(w)
+    if not explicit:
+        return (f"Draft plan sheet {w.names[0]} for the {w.A} line from the base files, on "
+                f"{_real_border(w)}, turned {twist:.2f}° as published; title block: "
+                f"{_real_title_vague(w)}.")
+    return (f"Draft plan sheet {w.names[0]} of {_real_set(w)} from the attached base files "
+            f"{_real_files(w)}: {w.size}, on {_real_border(w)}, with one viewport at {w.scale}, "
+            f"turned {twist:.2f}°, showing all of {w.A} inside the border and clear of the title "
+            f"block. Show, {_real_lettering(w)}:\n{_bullets(_real_sheet_items(w))}")
+
+
 PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "draw-alignment": _draw_alignment,
     "stationing": _stationing,
@@ -534,6 +672,12 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "real-callouts": _real_callouts,
     "real-curve-table": _real_curve_table,
     "real-alignment-data": _real_alignment_data,
+    "real-draw-alignment": _real_draw_alignment,
+    "real-attach-reference": _real_attach_reference,
+    "real-title-block": _real_title_block,
+    "real-sheet-setup": _real_sheet_setup,
+    "real-annotate-sheet": _real_annotate_sheet,
+    "real-plan-sheet": _real_plan_sheet,
 }
 
 

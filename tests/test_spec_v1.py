@@ -49,8 +49,8 @@ def test_status_starts_with_DRAFT():
 
 def test_spec_id_and_version_draft_v2():
     assert DRAFTING_SPEC_V1["spec_id"] == "roaddraft-drafting-spec"
-    assert DRAFTING_SPEC_V1["version"] == "draft-v3"
-    assert spec_v1.SPEC_VERSION == "draft-v3"
+    assert DRAFTING_SPEC_V1["version"] == "draft-v4"
+    assert spec_v1.SPEC_VERSION == "draft-v4"
 
 
 def test_layers_are_caltrans_named_levels_with_props_and_sources():
@@ -90,7 +90,7 @@ def test_curve_table_columns_in_catalog():
 def test_sheet_ANSI_D_viewport_17_11_7_31x18_5_fit_26x15_north_arrow_31_6_19_2():
     sheet = DRAFTING_SPEC_V1["sheet"]
     assert sheet["size"] == "ANSI_D"
-    assert sheet["allowed_feet_per_inch"] == [10, 20, 40, 50]
+    assert sheet["allowed_feet_per_inch"] == [40, 50]
     assert sheet["viewport"] == {"center_paper": [17.0, 11.7], "width_in": 31.0, "height_in": 18.5}
     assert sheet["fit_window_in"] == [26.0, 15.0]
     assert sheet["north_arrow"] == {"required": True, "block": "NORTH_ARROW", "position": [31.6, 19.2], "scale": 0.9}

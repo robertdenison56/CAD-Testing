@@ -80,7 +80,9 @@ def test_real_types_are_found_by_name_but_kept_apart_from_the_seeded_ones():
     assert not set(REAL_TASK_TYPES) & set(TASK_TYPES)
     for name, ttype in REAL_TASK_TYPES.items():
         assert task_type(name) is ttype
-        assert ttype.design_referenced  # the design lives in the real base file
+        # the design lives in the real base file: a sheet file reaches it through the
+        # reference; drawing the alignment is done in that base file itself
+        assert ttype.design_referenced == (name != "real-draw-alignment")
 
 
 # ------------------------------------------------------------- one real task
@@ -144,8 +146,47 @@ def test_a_real_task_survives_a_save_and_reopen(l1_task, tmp_path):
     ("PPM-045", "TB1", "real-bearings"),
     ("PPM-045", "TB1", "real-callouts"),
     ("PPM-045", "TB1", "real-curve-table"),
+    ("PPM-045", "TB1", "real-draw-alignment"),
+    ("PPM-045", "D13", "real-attach-reference"),
+    ("PPM-045", "D13", "real-title-block"),
+    ("PPM-045", "TB1", "real-sheet-setup"),
+    ("PPM-045", "TB1", "real-annotate-sheet"),
+    ("PPM-045", "TB1", "real-plan-sheet"),
+    ("CFL-D-Plan-and-Plan", "CL1", "real-plan-sheet"),
 ])
 def test_each_real_type_on_l1(sheet_id, alignment, type_name):
     task = build_real_task(sheet_id, alignment, type_name)
     v = validate(task)
     assert v["ok"], v
+
+
+def test_each_start_cuts_the_real_files_for_its_job():
+    draw = build_real_task("PPM-045", "TB1", "real-draw-alignment")
+    assert draw.baseline["meta"]["project_name"] != "" and not draw.baseline["sheets"]
+    assert "0000000000aa01.rdraft" not in draw.files  # the base file is the document
+    attach = build_real_task("PPM-045", "D13", "real-attach-reference")
+    assert not attach.baseline["references"]
+    assert {r["file"] for r in attach.truth.references} == {"0000000000aa01.rdraft",
+                                                            "0000000000bb01.rdraft"}
+    title = build_real_task("PPM-045", "D13", "real-title-block")
+    sheet = Document.from_dict(title.baseline).sheet_by_ref("L-1")
+    assert "route" not in sheet.title_block_fields and "agency" in sheet.title_block_fields
+    assert title.truth.sheets[0]["title_block_fields"]["route"] == "65"
+    plan = build_real_task("PPM-045", "TB1", "real-plan-sheet")
+    assert Document.from_dict(plan.baseline).sheet_by_ref("L-1") is None
+    na = plan.truth.sheets[0]["north_arrow"]
+    assert na["rotation_deg"] == pytest.approx(-89.94, abs=0.01)  # north on the turned sheet
+    assert plan.truth.sheets[0]["twist_deg"] == pytest.approx(-89.94, abs=0.01)
+
+
+def test_a_layout_turned_off_the_published_twist_loses_the_fit():
+    task = build_real_task("PPM-045", "TB1", "real-sheet-setup")
+    session = session_for_task(task)
+    reference_solution(task, session)
+    vp = session.doc.sheet_by_ref("L-1").viewports[0]
+    assert verify(session.doc, task.truth).check("D1-00").credit == 1.0
+    assert session.execute("modify_viewport", {"sheet": "L-1", "viewport_id": vp.id,
+                                               "changes": {"rotation_deg": 0.0}})["ok"]
+    report = verify(session.doc, task.truth)
+    assert report.check("D1-00").credit < 1.0
+    assert any(f.code == "not_fitted" for f in report.check("D1-00").findings)

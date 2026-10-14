@@ -27,7 +27,8 @@ _BEARING_LENGTH_RE = re.compile(r"^(.*?[NS].*?[EW])\s*([+-]?\d+(?:\.\d*)?)?\s*(?
 _EQ_RE = re.compile(r"^(?:STA\.?\s*)?" + _STATION + r"\s*(?:BK|BACK)\.?\s*=\s*(?:STA\.?\s*)?"
                     + _STATION + r"\s*(?:AH|AHEAD)\.?$", re.I)
 _NUMBER_RE = re.compile(r"^([+-]?\d+(?:\.\d*)?|\.\d+)\s*(?:'|FT\.?|FEET)?$", re.I)
-_SCALE_RE = re.compile(r"^1\s*(?:\"|IN\.?|INCH)\s*=\s*(\d+(?:\.\d*)?)\s*(?:'|FT\.?|FEET)$", re.I)
+_SCALE_RE = re.compile(r"^(?:SCALE:?\s*)?1\s*(?:\"|IN\.?|INCH)\s*=\s*(\d+(?:\.\d*)?)\s*(?:'|FT\.?|FEET)$",
+                       re.I)
 
 STATION_TOL = 0.005 + 1e-9
 ANGLE_TOL_DEG = 1.0 / 3600.0 + 1e-9

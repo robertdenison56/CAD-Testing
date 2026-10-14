@@ -29,6 +29,13 @@ from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
 from roaddraft.tasks.types import GROUPS, task_type
 
 
+#: what a real plan sheet's deliverable adds to its truth sheet (tasks.real): its border,
+#: the viewport twist the layout must keep, its own title block fields (which must be
+#: filled, and which a prompt level states), and its north arrow's place and turn
+REAL_SHEET_KEYS = ("template", "twist_deg", "required_title_fields", "title_stated",
+                   "north_arrow")
+
+
 def _label_row(spec: LabelSpec, layer: str, height: float) -> dict:
     return {"kind": spec.kind, "alignment": spec.alignment, "anchor": spec.ref,
             "content": spec.content, "station": float(spec.station), "space": "model",
@@ -121,7 +128,8 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                 "other_sheet": m["other_sheet"], "side": m["side"],
                 "label_offset_in": float(m["label_offset_in"]), "rotation": m["rotation"]})
             match_stations.add(float(m["station"]))
-        sheets.append({"name": sh["name"], "size": sh["size"],
+        extra = {k: sh[k] for k in REAL_SHEET_KEYS if k in sh}
+        sheets.append({**extra, "name": sh["name"], "size": sh["size"],
                        "feet_per_inch": float(D["feet_per_inch"]),
                        "viewport": dict(sh["viewport"]),
                        "station_range": list(sh["station_range"]), "curves": list(sh["curves"]),
@@ -156,7 +164,7 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
             "tangent_range": [float(align.begin_station + t.start_dist),
                               float(align.begin_station + t.end_dist)],
             "layer": D.get("dims_layer", layers.get("dims"))})
-    references: List[dict] = []
+    references: List[dict] = [dict(r) for r in D.get("references") or []]
     if D.get("basefile"):
         ref_spec = S.get("reference", {})
         references.append({"file": D["basefile"], "name": ref_spec.get("name", "BASE"),

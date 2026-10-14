@@ -305,6 +305,9 @@ class Analysis:
         return [t.chosen for t in self.tables.values() if t.chosen is not None]
 
 
+#: how far a north arrow may turn from north on the sheet (degrees)
+NORTH_TOL_DEG = 2.0
+
 #: anchored parts of a label (a curve bubble's circle and leader), never ticks
 LABEL_PART_KINDS = ("mc_bubble", "mc_leader")
 
@@ -312,7 +315,10 @@ LABEL_PART_KINDS = ("mc_bubble", "mc_leader")
 def analyze(ctx: Context) -> Analysis:
     model = list(ctx.doc.model_entities.values())
     tol = float(ctx.tol["position_model_ft"])
-    linework = (match_linework(ctx.alignment, model, ctx.layers["alignment"], tol)
+    # what the drafter was handed (a real sheet's base file) earns no linework credit
+    handed = {i for sh in ctx.truth.sheets for i in sh.get("given_entities") or ()}
+    drawn = [e for e in model if e.id not in handed]
+    linework = (match_linework(ctx.alignment, drawn, ctx.layers["alignment"], tol)
                 if ctx.alignment is not None else None)
     lo, hi = ctx.lenient["tick_length_in"]
     # a curve bubble's leader can cross the line at a station: it is the bubble's, not a
@@ -433,8 +439,18 @@ def check_sheet_setup(a: Analysis) -> Result:  # D1-00
             findings.append(Finding("viewport_scale", expected=allowed, actual=scales,
                                     note=(f"no viewport on {sv.name} is at the scale asked for"
                                           if scales else f"sheet {sv.name} has no viewport")))
-        if sv.fitted is not None:
+        twist = want.get("twist_deg")
+        turned = (sv.fitted is None or twist is None
+                  or abs((float(sv.fitted.vp.rotation_deg) - float(twist) + 180.0) % 360.0 - 180.0)
+                  <= float(ctx.tol["rotation_deg"]))
+        if sv.fitted is not None and turned:
             credit += parts["fitted"]
+        elif sv.fitted is not None:
+            findings.append(Finding(
+                "not_fitted", entity_ids=[sv.fitted.vp.id], expected=float(twist),
+                actual=float(sv.fitted.vp.rotation_deg),
+                note=f"the viewport on {sv.name} is not turned to the sheet's twist, so the "
+                     f"plan does not read as published"))
         else:
             findings.append(Finding(
                 "not_fitted", entity_ids=[sv.showing.vp.id] if sv.showing else [],
@@ -768,7 +784,6 @@ def check_standards(a: Analysis) -> Result:  # D1-09
 
 def check_title_block(a: Analysis) -> Result:  # D1-10
     ctx = a.ctx
-    required = ctx.spec["sheet"]["required_title_fields"]
     credits, findings = [], []
     for sv in ctx.sheets:
         if sv.sheet is None:
@@ -776,10 +791,17 @@ def check_title_block(a: Analysis) -> Result:  # D1-10
             credits.append(0.0)
             continue
         # a field the prompt gave a value for must carry it; any other need only be
-        # filled in -- except the scale, which must always match the viewport used
+        # filled in -- except the scale, which must always match the viewport used.  A
+        # real sheet (tasks.real) names its own border's fields and what each level states
+        real = "required_title_fields" in sv.truth
+        required = (sv.truth["required_title_fields"] if real
+                    else ctx.spec["sheet"]["required_title_fields"])
+        stated = (set((sv.truth.get("title_stated") or {}).get(ctx.level, ())) if real
+                  else set(ctx.title_stated))
         expected = dict(sv.truth["title_block_fields"])
         fpi = sv.fpi
-        expected["scale"] = ctx.spec["sheet"]["scale_text_format"].format(fpi=fpi)
+        if not real:
+            expected["scale"] = ctx.spec["sheet"]["scale_text_format"].format(fpi=fpi)
         fields = sv.sheet.title_block_fields
         ok = 0
         for name in required:
@@ -788,9 +810,9 @@ def check_title_block(a: Analysis) -> Result:  # D1-10
                 findings.append(Finding("missing_field",
                                         note=f"title block field {name} on sheet {sv.name}"))
                 continue
-            if name == "scale" and name not in ctx.title_stated:
+            if name == "scale" and name not in stated:
                 right = scale_fpi(value) is not None and abs(scale_fpi(value) - fpi) < 1e-9
-            elif name in ctx.title_stated:
+            elif name in stated:
                 right = normalize(value) == normalize(expected.get(name, value))
             else:
                 right = True
@@ -816,7 +838,17 @@ def check_north_arrow(a: Analysis) -> Result:  # D1-11
                 if isinstance(e, BlockRef) and e.block_name == block]
         inside = [e for e in refs
                   if (bb := e.bbox(ctx.doc)) is not None and rect_inside(tuple(bb), sv.usable)]
-        if inside:
+        north = (sv.truth.get("north_arrow") or {}).get("rotation_deg")
+        if inside and north is not None and not any(
+                abs((float(e.rotation_deg) - float(north) + 180.0) % 360.0 - 180.0)
+                <= NORTH_TOL_DEG for e in inside):
+            credits.append(0.5)
+            findings.append(Finding("wrong_value", entity_ids=[e.id for e in inside],
+                                    expected=float(north),
+                                    actual=[float(e.rotation_deg) for e in inside],
+                                    note=f"the north arrow on {sv.name} does not point to "
+                                         f"north through the turned viewport"))
+        elif inside:
             credits.append(1.0)
         elif refs:
             credits.append(0.0)
