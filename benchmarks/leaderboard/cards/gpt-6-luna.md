@@ -9,39 +9,39 @@
 | runner | runners · codex (Codex headless) |
 | run folder | `2026-10-12-k3`, labels `gpt6-luna-r1`, `gpt6-luna-r2`, `gpt6-luna-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
-| standing | not ranked yet: k = 3 on 6 of 33 probes |
-| engine commit | `555bf496a8` (21) |
+| standing | not ranked yet: k = 3 on 15 of 33 probes |
+| engine commit | `555bf496a8` (48) |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**91.7%** pass rate, 95% CI [70.8, 100.0]: 19 of 21 attempts that count, on 8 of 33 probes.
+**90.2%** pass rate, 95% CI [78.4, 100.0]: 43 of 48 attempts that count, on 17 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 19/21 (92%) | — | — | 19/21 |
+| passed | 43/48 (90%) | — | — | 43/48 |
 
-By attempt: gpt6-luna-r1 5/6, gpt6-luna-r2 7/8, gpt6-luna-r3 7/7. Of the 8 probes attempted, 7 pass every time, 0 never pass (hard-fail rate 0%), 1 split.
+By attempt: gpt6-luna-r1 13/15, gpt6-luna-r2 14/17, gpt6-luna-r3 16/16. Of the 17 probes attempted, 13 pass every time, 0 never pass (hard-fail rate 0%), 4 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 5.4% (6 of 111 calls) | faulted calls over calls, from the traces |
-| fault recovery | 5 of 6 faults (83%) | a fault followed within three calls by a successful call of the same tool |
+| invalid-call rate | 4.2% (11 of 265 calls) | faulted calls over calls, from the traces |
+| fault recovery | 10 of 11 faults (91%) | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
-| query before compute | 3 of 21 episodes that changed the drawing asked a design query first; 0.3 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| query before compute | 10 of 48 episodes that changed the drawing asked a design query first; 0.6 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
 | report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
-| steps | 5.3 calls, 6.4 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 26 s per episode, 0.2 h in all | the runner's clock, episode start to report |
-| tokens | 155k in, 0.6k out per episode | input counts cache reads and writes |
+| steps | 5.5 calls, 6.6 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 21 s per episode, 0.3 h in all | the runner's clock, episode start to report |
+| tokens | 168k in, 0.7k out per episode | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a local model |
-| render use | 6 renders in 5 episodes; 2 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| render use | 11 renders in 10 episodes; 3 followed by a change | a render is followed by a change when a successful command comes before the next render |
 | scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
 
-Stops: answered 21.
+Stops: answered 48.
 
 ## Every probe
 
@@ -55,17 +55,17 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | centerline-c103 | T1 | P P P | 5.0 | 0 |  |
 | both-edges-c101 | T1 | P P P | 4.3 | 0 |  |
 | title-blocks | T1 | P P P | 7.0 | 0 |  |
-| pc-by-station | T1 | P P | 6.0 | 1 |  |
-| edge-c102-paper | T1 | P | 3.0 | 0 |  |
-| sta-offset-c101-paper | T1 | — | | | |
-| draft-tangent-ne | T1 | — | | | |
-| draft-pi-curve | T1 | — | | | |
-| draft-bearing-distance | T1 | — | | | |
-| draft-edges-shoulders | T1 | — | | | |
-| draft-turn-lane | T1 | — | | | |
-| draft-cul-de-sac | T1 | — | | | |
-| draft-building | T1 | — | | | |
-| draft-roadway | T1 | — | | | |
+| pc-by-station | T1 | P P P | 6.0 | 1 |  |
+| edge-c102-paper | T1 | P P P | 4.0 | 1 |  |
+| sta-offset-c101-paper | T1 | P P P | 4.0 | 0 |  |
+| draft-tangent-ne | T1 | P P P | 3.3 | 0 |  |
+| draft-pi-curve | T1 | P P P | 5.0 | 0 |  |
+| draft-bearing-distance | T1 | P P P | 5.0 | 0 |  |
+| draft-edges-shoulders | T1 | P · P | 5.7 | 0 | gpt6-luna-r2: the left edge of pavement: 189 of 189 check points have no linework within 0.5 ft; the worst is [2733.12, 1058.13], 6.00 ft from the nearest |
+| draft-turn-lane | T1 | P · P | 9.7 | 0 | gpt6-luna-r2: the full-width edge, 24 ft right: 25 of 25 check points have no linework within 0.5 ft; the worst is [3521.52, 1281.87], 12.00 ft from the nearest |
+| draft-cul-de-sac | T1 | · P P | 8.3 | 3 | gpt6-luna-r1: the left edge inside the bulb: linework runs through [2986.00, 2360.23] (10 of 10 check points), where there should be none |
+| draft-building | T1 | P P | 3.5 | 1 |  |
+| draft-roadway | T1 | P | 9.0 | 0 |  |
 | sheet-set-callouts | T2 | — | | | |
 | station-callouts | T2 | — | | | |
 | clean-callouts | T2 | — | | | |

@@ -25,8 +25,8 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 | model | class | runner | run folder | attempts | passed | why not ranked | card |
 |---|---|---|---|---|---|---|---|
 | Claude Haiku 4.5 | frontier API | runners · claude-code (Claude Code headless) | `2026-10-08-k3` | 63 on 21 probes | 35/63 | k = 3 on 21 of 33 probes; 36 episodes ran on an earlier task text (the probe set changed since); rerun | [card](cards/claude-haiku-4-5--2026-10-08-k3.md) |
-| GPT-6-Luna | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 21 on 8 probes | 19/21 | k = 3 on 6 of 33 probes | [card](cards/gpt-6-luna.md) |
-| GPT-6-Astra | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 14 on 5 probes | 14/14 | k = 3 on 4 of 33 probes | [card](cards/gpt-6-astra.md) |
+| GPT-6-Luna | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 48 on 17 probes | 43/48 | k = 3 on 15 of 33 probes | [card](cards/gpt-6-luna.md) |
+| GPT-6-Astra | frontier API | runners · codex (Codex headless) | `2026-10-12-k3` | 31 on 11 probes | 31/31 | k = 3 on 10 of 33 probes | [card](cards/gpt-6-astra.md) |
 
 ## Run folders not on the board
 
@@ -43,6 +43,7 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 | `2026-10-07-runner-smoke` | 2 | 2026-10-07 — the native runner's first live runs (smoke, not a benchmark) | roaddraft.runners, single runs without `--repeat`: Llama 3.1 8B Instruct on 1 probe (0/1 passed), Qwen3.5-9B on 1 probe (1/1 passed). A smoke test of the runner, not a Track P run |
 | `2026-10-08-claude-code-smoke` | 1 | 2026-10-08 — the `claude-code` backend's first live run (smoke, not a benchmark) | roaddraft.runners, single runs without `--repeat`: Claude Haiku 4.5 on 1 probe (1/1 passed). A smoke test of the runner, not a Track P run |
 | `2026-10-08-runner-guards` | 2 | 2026-10-08 — the LM Studio guards in `roaddraft.runners` (smoke, not a benchmark) | roaddraft.runners, single runs without `--repeat`: Qwen3.5-9B on 1 probe (1/1 passed). A smoke test of the runner, not a Track P run |
+| `2026-10-13-mistral-smoke` | 1 | 2026-10-13 — Mistral 7B Instruct v0.3 through LM Studio: one smoke probe, and why there is no run | roaddraft.runners, single runs without `--repeat`: Mistral 7B Instruct v0.3 on 1 probe (0/1 passed). A smoke test of the runner, not a Track P run |
 
 ## How the board is computed
 
