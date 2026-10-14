@@ -86,7 +86,21 @@ def test_the_cli_keeps_references_and_indexes_them(tmp_path, capsys):
     assert main(["reference", "no-such-probe", "--out", str(tmp_path)]) == 2
 
 
+#: what each probe that asks for more than one thing asks for, item by item:
+#: scope completion counts against these
+ITEMS_ASKED = {
+    "both-edges-c101": 2, "title-blocks": 3, "draft-tangent-ne": 2, "draft-pi-curve": 2,
+    "draft-bearing-distance": 2, "draft-edges-shoulders": 4, "draft-turn-lane": 3,
+    "draft-cul-de-sac": 4, "draft-roadway": 7, "sheet-set-callouts": 18, "station-callouts": 15,
+    "clean-callouts": 3, "draft-intersection-corner": 3, "draft-fix-the-drawing": 3,
+    "draft-roadway-sheets": 9, "line-data": 3, "curve-points": 4, "curve-data": 7,
+    "stationing": 16, "width-dims": 4, "row-data": 14, "equation-data": 3,
+    "qa-alignment-data": 5, "l2-match-lines": 2, "l2-alignment-data": 12,
+}
+
+
 def test_the_tracked_references_cover_every_probe_and_still_pass(tmp_path, l2_build):
+    asked = {}
     for probe in tasks.PROBES:
         folder = TRACKED / probe.id
         assert (folder / reference.RECORD).is_file(), f"no reference for {probe.id}: {REGENERATE}"
@@ -98,7 +112,13 @@ def test_the_tracked_references_cover_every_probe_and_still_pass(tmp_path, l2_bu
                                 out_dir=tmp_path)
         result = probe.check(base, Session.load(folder / record["document"], out_dir=tmp_path))
         assert result.passed, f"{probe.id}: {result.detail} -- {REGENERATE}"
+        # the reference does every item asked, and the untouched start none of them
+        done, asked[probe.id] = result.scope()
+        assert done == asked[probe.id], f"{probe.id} passes missing {result.items}"
+        untouched = probe.check(base, base)
+        assert untouched.scope() == (0, asked[probe.id]), f"{probe.id}'s start does {untouched.items}"
         for kept in ("journal", "pdf", "dxf"):
             assert (folder / record[kept]).is_file(), f"{probe.id} has no {kept}: {REGENERATE}"
         for name, path in record["references"].items():
             assert (folder / path).is_file(), f"{probe.id}: reference {name} is not beside it"
+    assert {pid: n for pid, n in asked.items() if n > 1} == ITEMS_ASKED

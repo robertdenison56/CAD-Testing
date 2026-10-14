@@ -50,7 +50,7 @@ from roaddraft.document.references import find_reference_alignment, reference_gr
 from roaddraft.probes import fixture
 from roaddraft.probes import notation as nt
 from roaddraft.probes import plotted as pl
-from roaddraft.probes.base import Probe, Result
+from roaddraft.probes.base import Probe, Result, Tally
 from roaddraft.probes.drafting import run
 from roaddraft.probes.tasks import ensure_layer
 from roaddraft.probes.tier2 import paper_linework, sheet_named, sheet_stations
@@ -180,6 +180,10 @@ def _views(baseline: Session, submitted: Session, name: str, added_only: bool = 
         return sheet_b, None, None
     view = pl.plot(submitted, sheet_s, pl.sheet_items(baseline, submitted, name, added_only))
     return sheet_b, sheet_s, view
+
+
+def _said(prefix: str, problem: Optional[str]) -> Optional[str]:
+    return f"{prefix}: {problem}" if problem else None
 
 
 def _q(text: str, limit: int = 60) -> str:
@@ -630,18 +634,18 @@ def _curve_cells(number: int, c: dict) -> List[str]:
 
 def _check_line_data(baseline, submitted):
     road = Road(baseline, SR)
-    done = 0
+    tally = Tally()
     for name in fixture.SHEETS:
         sheet_b, sheet_s, view = _views(baseline, submitted, name)
-        if sheet_s is None:
-            return Result(False, f"sheet {name} is gone")
+        gone = f"sheet {name} is gone" if sheet_s is None else None
+        tally.fail(gone)
         lines = paper_linework(baseline, sheet_b)
         for t, a, b, vp in _tangents_on(road, sheet_b):
-            problem = _line_data_problem(view, road, vp, t, a, b, side=1, clear=lines)
-            if problem:
-                return Result(False, f"{t['ref']} on {name}: {problem}")
-            done += 1
-    return Result(True, f"all {done} tangents lettered with bearing and length on the sheet that "
+            tally.add(f"{t['ref']} on {name}", gone or _said(
+                f"{t['ref']} on {name}",
+                _line_data_problem(view, road, vp, t, a, b, side=1, clear=lines)))
+    done = sum(tally.done.values())
+    return tally.result(f"all {done} tangents lettered with bearing and length on the sheet that "
                         f"shows them: above the line, parallel to it, clear of the linework")
 
 
@@ -664,19 +668,19 @@ def _points_on(road: Road, sheet, inset: float = 0.25):
 
 def _check_curve_points(baseline, submitted):
     road = Road(baseline, SR)
-    done = 0
+    tally = Tally()
     for name in fixture.SHEETS:
         sheet_b, sheet_s, view = _views(baseline, submitted, name)
-        if sheet_s is None:
-            return Result(False, f"sheet {name} is gone")
+        gone = f"sheet {name} is gone" if sheet_s is None else None
+        tally.fail(gone)
         vp = _vp(sheet_b)
         for word, raw, refs in _points_on(road, sheet_b):
-            problem = _point_problem(view, word, road.display(raw), road.paper(vp, raw),
-                                     road.paper_heading(vp, raw))
-            if problem:
-                return Result(False, f"the {word} at {road.text(raw)} on {name} ({refs}): {problem}")
-            done += 1
-    return Result(True, f"all {done} curve points lettered with station and BC/EC, square to the "
+            tally.add(f"the {word} at {road.text(raw)} on {name}", gone or _said(
+                f"the {word} at {road.text(raw)} on {name} ({refs})",
+                _point_problem(view, word, road.display(raw), road.paper(vp, raw),
+                               road.paper_heading(vp, raw))))
+    done = sum(tally.done.values())
+    return tally.result(f"all {done} curve points lettered with station and BC/EC, square to the "
                         f"line, reading bottom to top, beside the point")
 
 
@@ -692,35 +696,35 @@ def _solve_curve_points(session):
 # 3. curve data -----------------------------------------------------------------------
 
 
-def _curve_data_problem(view, road: Road, sheet_b, name: str, numbering: Dict[int, int],
-                        clear=None) -> Optional[str]:
-    """``numbering``: the design's curve index -> the number the plan gives it."""
+def _curve_data_items(view, road: Road, sheet_b, name: str, numbering: Dict[int, int],
+                      clear=None, gone: Optional[str] = None) -> List[Tuple[str, Optional[str]]]:
+    """The sheet's curve table, then each curve's bubble, as ``(item,
+    problem)``. ``numbering``: the design's curve index -> the number the plan
+    gives it. ``gone`` is the problem of every item when the sheet is."""
     curves = {int(c["index"]): c for c in road.curves()}
     shown = _curves_on(road, sheet_b)
     wanted = {numbering[i]: curves[i] for i in shown}
-    problem = _table_problem(view, road, sheet_b, wanted, name, clear)
-    if problem:
-        return problem
     vp = _vp(sheet_b)
+    out = [(f"{name}'s CURVE DATA table",
+            gone or _table_problem(view, road, sheet_b, wanted, name, clear))]
     for number, c in sorted(wanted.items()):
-        problem = _bubble_problem(view, road, vp, number, c, name)
-        if problem:
-            return problem
-    return None
+        out.append((f"curve {number}'s bubble on {name}",
+                    gone or _bubble_problem(view, road, vp, number, c, name)))
+    return out
 
 
 def _check_curve_data(baseline, submitted):
     road = Road(baseline, SR)
     numbering = {int(c["index"]): int(c["index"]) for c in road.curves()}
+    tally = Tally()
     for name in fixture.SHEETS:
         sheet_b, sheet_s, view = _views(baseline, submitted, name)
-        if sheet_s is None:
-            return Result(False, f"sheet {name} is gone")
-        problem = _curve_data_problem(view, road, sheet_b, name, numbering,
-                                      clear=paper_linework(baseline, sheet_b))
-        if problem:
-            return Result(False, problem)
-    return Result(True, "each sheet's CURVE DATA table lists exactly the curves it shows, numbered "
+        gone = f"sheet {name} is gone" if sheet_s is None else None
+        tally.fail(gone)
+        for item, problem in _curve_data_items(view, road, sheet_b, name, numbering,
+                                               clear=paper_linework(baseline, sheet_b), gone=gone):
+            tally.add(item, problem)
+    return tally.result("each sheet's CURVE DATA table lists exactly the curves it shows, numbered "
                         "along SR-100 with the design's R, Δ, T and L, and every curve carries its "
                         "numbered bubble with a leader to the curve")
 
@@ -798,20 +802,19 @@ def _station_label_problem(view, q, d: float, want: str, label: str) -> Optional
 def _check_stationing(baseline, submitted):
     road = Road(baseline, SR)
     sheet_b, sheet_s, view = _views(baseline, submitted, STATION_SHEET)
-    if sheet_s is None:
-        return Result(False, f"sheet {STATION_SHEET} is gone")
     vp = _vp(sheet_b)
     required, _optional = sheet_stations(baseline, STATION_SHEET)
-    if not (view.segs or view.texts):
-        return Result(False, f"nothing was added to {STATION_SHEET}")
+    tally = Tally()
+    every = (f"sheet {STATION_SHEET} is gone" if sheet_s is None
+             else None if (view.segs or view.texts) else f"nothing was added to {STATION_SHEET}")
+    tally.fail(every)
     for st, _p, q in required:
         label = road.text(float(st))[:-3]
         d = road.paper_heading(vp, float(st))
-        problem = (_tick_problem(view, q, d, vp.feet_per_inch, label)
-                   or _station_label_problem(view, q, d, caltrans_lettering(st), label))
-        if problem:
-            return Result(False, problem)
-    return Result(True, f"all {len(required)} stations {road.text(required[0][0])[:-3]} to "
+        tally.add(f"station {label}", every or (
+            _tick_problem(view, q, d, vp.feet_per_inch, label)
+            or _station_label_problem(view, q, d, caltrans_lettering(st), label)))
+    return tally.result(f"all {len(required)} stations {road.text(required[0][0])[:-3]} to "
                         f"{road.text(required[-1][0])[:-3]} ticked 7 ft across the line and "
                         f"lettered Caltrans-style below it")
 
@@ -848,8 +851,11 @@ def _width_value(text: str) -> Optional[float]:
 def _check_width_dims(baseline, submitted):
     road = Road(baseline, SR)
     sheet_b, sheet_s, view = _views(baseline, submitted, WIDTH_SHEET)
+    tally = Tally()
     if sheet_s is None:
-        return Result(False, f"sheet {WIDTH_SHEET} is gone")
+        for _lo, _hi, _width, what in BANDS:
+            tally.add(f"the {what}", f"sheet {WIDTH_SHEET} is gone")
+        return tally.result("")
     vp = _vp(sheet_b)
     fpi = vp.feet_per_inch
     d = road.paper_heading(vp, WIDTH_AT)
@@ -898,22 +904,25 @@ def _check_width_dims(baseline, submitted):
                     and abs(w[0] - WIDTH_AT) <= WIDTH_NEAR_FT and lo < w[1] < hi):
                 candidates[i].append(t)
     for i, (lo, hi, width, what) in enumerate(BANDS):
-        if not candidates[i]:
-            note = next((n for n in notes if what in n), None)
-            return Result(False, note or f"the {what} ({width:g}') is not dimensioned across the "
-                                         f"road at {road.text(WIDTH_AT)[:-3]}")
+        note = next((n for n in notes if what in n), None)
+        tally.add(f"the {what}", None if candidates[i] else (
+            note or f"the {what} ({width:g}') is not dimensioned across the road at "
+                    f"{road.text(WIDTH_AT)[:-3]}"))
+    if not tally.clean:
+        return tally.result("")
     pools = [c[:6] for c in candidates]
     for choice in itertools.product(*pools):
         if not any(pl.boxes_overlap(a.corners(), b.corners())
                    for a, b in itertools.combinations(choice, 2) if a is not b):
-            return Result(True, f"the four widths at {road.text(WIDTH_AT)[:-3]} dimensioned across "
+            return tally.result(f"the four widths at {road.text(WIDTH_AT)[:-3]} dimensioned across "
                                 f"the road, 8' 12' 12' 8', each number clear of the others")
     for choice in itertools.product(*pools):
         for a, b in itertools.combinations(choice, 2):
             if a is not b and pl.boxes_overlap(a.corners(), b.corners()):
-                return Result(False, f"the widths are there, but {_q(a.content)} and "
-                                     f"{_q(b.content)} overlap; every number must be readable")
-    return Result(False, "the widths are there, but their numbers overlap")
+                tally.fail(f"the widths are there, but {_q(a.content)} and "
+                           f"{_q(b.content)} overlap; every number must be readable")
+    tally.fail("the widths are there, but their numbers overlap")
+    return tally.result("")
 
 
 def _solve_width_dims(session):
@@ -1086,15 +1095,19 @@ def _arc_row_ok(cells: List[str], keys, p: Piece, centerline: Dict[str, float]) 
 
 def _check_row_data(baseline, submitted):
     sheet_b, sheet_s, view = _views(baseline, submitted, ROW_SHEET)
-    if sheet_s is None:
-        return Result(False, f"sheet {ROW_SHEET} is gone")
     pieces = _row_pieces(baseline, sheet_b)
     rights = [p for p in pieces if p.side == "R"]
+    tally = Tally()
+    if sheet_s is None:
+        for p in rights:
+            tally.add(f"{p.tag}'s tag", f"sheet {ROW_SHEET} is gone")
+            tally.add(f"{p.tag}'s table row", f"sheet {ROW_SHEET} is gone")
+        return tally.result("")
     roadway = _roadway_paper(baseline, sheet_b)
     tags = [(t, TAG_RE.match(t.content)) for t in view.free_texts()]
     tags = [(t, f"{m.group(1).upper()}{int(m.group(2))}") for t, m in tags if m]
     if not tags:
-        return Result(False, f"no L1/C1 tags on {ROW_SHEET}")
+        tally.fail(f"no L1/C1 tags on {ROW_SHEET}")
     tagged: Dict[int, List[str]] = {}
     for t, tag in tags:
         c = t.center()
@@ -1102,41 +1115,40 @@ def _check_row_data(baseline, submitted):
         best_d, best_i = min(dists)
         road_d = _paper_distance(roadway, c) if roadway else math.inf
         if road_d < best_d:
-            return Result(False, f"the tag {tag} sits nearer the roadway than any right of way line")
+            tally.fail(f"the tag {tag} sits nearer the roadway than any right of way line")
+            continue
         if best_d > 0.5:
-            return Result(False, f"the tag {tag} is {best_d:.2f} in from the nearest right of way "
-                                 f"line; set it beside its piece")
+            tally.fail(f"the tag {tag} is {best_d:.2f} in from the nearest right of way "
+                       f"line; set it beside its piece")
+            continue
         p = pieces[best_i]
         if p.side != "R":
-            return Result(False, f"the tag {tag} is on the left right of way line; the task is the "
-                                 f"right-hand one")
+            tally.fail(f"the tag {tag} is on the left right of way line; the task is the "
+                       f"right-hand one")
+            continue
         tagged.setdefault(best_i, []).append(tag)
     order = ", ".join(p.tag for p in rights)
     for p in rights:
-        i = pieces.index(p)
-        got = tagged.get(i, [])
-        if not got:
-            what = "jog" if p.kind == "line" and p.length < 50 else p.kind
-            return Result(False, f"the right of way {what} at {Road(baseline, SR).text(p.station)} "
-                                 f"({p.length:.2f}') has no tag")
-        if len(got) > 1:
-            return Result(False, f"one piece is tagged twice: {', '.join(got)}")
-        if got[0] != p.tag:
-            return Result(False, f"the piece tagged {got[0]} should be {p.tag}: along SR-100 the "
-                                 f"pieces this sheet shows run {order}")
+        got = tagged.get(pieces.index(p), [])
+        what = "jog" if p.kind == "line" and p.length < 50 else p.kind
+        tally.add(f"{p.tag}'s tag",
+                  f"the right of way {what} at {Road(baseline, SR).text(p.station)} "
+                  f"({p.length:.2f}') has no tag" if not got
+                  else f"one piece is tagged twice: {', '.join(got)}" if len(got) > 1
+                  else f"the piece tagged {got[0]} should be {p.tag}: along SR-100 the "
+                       f"pieces this sheet shows run {order}" if got[0] != p.tag
+                  else None)
     rows = _tag_rows(view)
     road = Road(baseline, SR)
     centerline = {c["ref"]: float(c["radius"]) for c in road.curves()}
     for p in rights:
         mine = rows.get(p.tag, [])
-        if not mine:
-            return Result(False, f"{p.tag} has no row in a {'LINE' if p.kind == 'line' else 'CURVE'} "
-                                 f"TABLE")
         problems = [(_line_row_ok(c, k, p) if p.kind == "line" else _arc_row_ok(c, k, p, centerline))
                     for c, k in mine]
-        if all(x is not None for x in problems):
-            return Result(False, problems[0])
-    return Result(True, f"all {len(rights)} pieces of the right of way tagged in order ({order}) "
+        tally.add(f"{p.tag}'s table row",
+                  f"{p.tag} has no row in a {'LINE' if p.kind == 'line' else 'CURVE'} TABLE"
+                  if not mine else problems[0] if all(x is not None for x in problems) else None)
+    return tally.result(f"all {len(rights)} pieces of the right of way tagged in order ({order}) "
                         f"and tabulated with their full bearings, lengths, radii and deltas")
 
 
@@ -1199,11 +1211,17 @@ def _pairs(text: str) -> List[Tuple[float, str]]:
     return out
 
 
+EQ_ITEMS = ("the station equation", "T-2's bearing and length", "the BC of curve 2")
+
+
 def _check_equation(baseline, submitted):
     road = Road(baseline, SR)
     sheet_b, sheet_s, view = _views(baseline, submitted, EQ_SHEET)
+    tally = Tally()
     if sheet_s is None:
-        return Result(False, f"sheet {EQ_SHEET} is gone")
+        for item in EQ_ITEMS:
+            tally.add(item, f"sheet {EQ_SHEET} is gone")
+        return tally.result("")
     vp = _vp(sheet_b)
     eq = _rows(baseline, SR, "equations")[0]
     raw = float(eq["raw_station"])
@@ -1212,15 +1230,15 @@ def _check_equation(baseline, submitted):
     lettered = [t for t in view.free_texts() if _pairs(t.content)
                 and _square_problem(t, point, d, True, None) is None]
     pairs = {p for t in lettered for p in _pairs(t.content)}
+    problem = None
     if (back, "BK") not in pairs or (ahead, "AH") not in pairs:
         truth = f"{eq['back_text']} BK = {eq['ahead_text']} AH"
         near = [t for t in view.free_texts() if _pairs(t.content)]
-        if not near:
-            return Result(False, f"no lettering gives the equation {truth} at its point")
-        problem = _square_problem(near[0], point, d, True, None)
-        if problem:
-            return Result(False, f"the equation: {problem}")
-        return Result(False, f"the equation reads {_q(near[0].content)}; it is {truth}")
+        square = _square_problem(near[0], point, d, True, None) if near else None
+        problem = (f"no lettering gives the equation {truth} at its point" if not near
+                   else f"the equation: {square}" if square
+                   else f"the equation reads {_q(near[0].content)}; it is {truth}")
+    tally.add(EQ_ITEMS[0], problem)
     t2 = next(t for t in road.tangents() if t["ref"] == "T-2")
     span = road.shown(vp, float(t2["start_station"]), float(t2["end_station"]))
     problem = _line_data_problem(view, road, vp, t2, span[0], span[1], side=1)
@@ -1230,7 +1248,7 @@ def _check_equation(baseline, submitted):
                                              for v in nt.feet(t.content)):
             problem = (f"{spread:.2f}' is the difference of its stations across the equation; the "
                        f"tangent is {float(t2['length']):.2f}' long")
-        return Result(False, f"T-2: {problem}")
+    tally.add(EQ_ITEMS[1], _said("T-2", problem))
     c2 = next(c for c in road.curves() if int(c["index"]) == 2)
     raw_bc = float(c2["pc_station"])
     problem = _point_problem(view, "BC", road.display(raw_bc), road.paper(vp, raw_bc),
@@ -1240,9 +1258,9 @@ def _check_equation(baseline, submitted):
             problem = (f"it is lettered {int(raw_bc // 100)}+{raw_bc % 100:05.2f}, its station "
                        f"without the equation; ahead of {eq['back_text']} BK = {eq['ahead_text']} "
                        f"AH it is {c2['pc_station_text']}")
-        return Result(False, f"the BC of curve 2: {problem}")
+    tally.add(EQ_ITEMS[2], _said("the BC of curve 2", problem))
     spread = road.display(float(t2["end_station"])) - road.display(float(t2["start_station"]))
-    return Result(True, f"the equation {eq['back_text']} BK = {eq['ahead_text']} AH lettered at its "
+    return tally.result(f"the equation {eq['back_text']} BK = {eq['ahead_text']} AH lettered at its "
                         f"point, T-2 at {float(t2['length']):.2f}' (not the {spread:.2f}' its "
                         f"stations differ by), and the BC at {c2['pc_station_text']}")
 
@@ -1263,17 +1281,25 @@ def _solve_equation(session):
 
 # 8. QA the alignment data -----------------------------------------------------------------
 
+#: ``items``: what the QA check must find right on the sheet once the plant is
+#: corrected (a plant with ``now`` must also no longer be lettered); these are
+#: the probe's items for scope completion
 QA_PLANTS = [
     {"sheet": "C-101", "was": "24+05.27 BC", "now": "24+50.27 BC",
-     "what": "the BC of curve 1 lettered 24+50.27 (digits transposed)"},
+     "what": "the BC of curve 1 lettered 24+50.27 (digits transposed)",
+     "items": ["the BC at 24+05.27 on C-101"]},
     {"sheet": "C-102", "was": "1240.36'", "now": "1581.14'",
-     "what": "T-2's length lettered 1581.14', the PI-to-PI distance"},
+     "what": "T-2's length lettered 1581.14', the PI-to-PI distance",
+     "items": ["T-2 on C-102"]},
     {"sheet": "C-102", "table": 2, "swap": True,
-     "what": "T and L swapped in curve 2's row of the curve table"},
+     "what": "T and L swapped in curve 2's row of the curve table",
+     "items": ["C-102's CURVE DATA table"]},
     {"sheet": "C-103", "renumber": (2, 1),
-     "what": "curve 2 numbered 1 in the table and its bubble (numbering restarted)"},
+     "what": "curve 2 numbered 1 in the table and its bubble (numbering restarted)",
+     "items": ["C-103's CURVE DATA table", "curve 2's bubble on C-103", "C-103's bubbles"]},
     {"sheet": "C-103", "was": "43+21.30 EC", "now": "43+21.30 BC",
-     "what": "the EC of curve 2 lettered BC"},
+     "what": "the EC of curve 2 lettered BC",
+     "items": ["the EC at 43+21.30 on C-103"]},
 ]
 
 
@@ -1370,37 +1396,38 @@ def _describe(e) -> str:
 
 
 def _check_qa(baseline, submitted):
+    """Every item on the sheets is checked against the design; the probe's
+    items, for scope, are the five planted errors (``QA_PLANTS``)."""
     road = Road(baseline, SR)
     planted = qa_planted(baseline)
     numbering = {int(c["index"]): int(c["index"]) for c in road.curves()}
+    seen = Tally()
     for name in fixture.SHEETS:
         sheet_b, sheet_s, view = _views(baseline, submitted, name, added_only=False)
         if sheet_s is None:
-            return Result(False, f"sheet {name} is gone")
+            seen.fail(f"sheet {name} is gone")
+            continue
         vp = _vp(sheet_b)
         for t, a, b, _vp_ in _tangents_on(road, sheet_b):
-            problem = _line_data_problem(view, road, vp, t, a, b, side=1)
-            if problem:
-                return Result(False, f"{t['ref']} on {name}: {problem}")
+            where = f"{t['ref']} on {name}"
+            seen.add(where, _said(where, _line_data_problem(view, road, vp, t, a, b, side=1)))
         for word, raw, refs in _points_on(road, sheet_b):
-            problem = _point_problem(view, word, road.display(raw), road.paper(vp, raw),
-                                     road.paper_heading(vp, raw))
-            if problem:
-                return Result(False, f"the {word} at {road.text(raw)} on {name}: {problem}")
-        problem = _curve_data_problem(view, road, sheet_b, name, numbering)
-        if problem:
-            return Result(False, problem)
+            where = f"the {word} at {road.text(raw)} on {name}"
+            seen.add(where, _said(where, _point_problem(view, word, road.display(raw), road.paper(vp, raw),
+                                                        road.paper_heading(vp, raw))))
+        for item, problem in _curve_data_items(view, road, sheet_b, name, numbering):
+            seen.add(item, problem)
         for plant in QA_PLANTS:
             if plant["sheet"] == name and "now" in plant:
                 wrong = [t for t in view.free_texts() if plant["now"] in t.content]
-                if wrong:
-                    return Result(False, f"{name} still letters {_q(wrong[0].content)}")
+                seen.add(plant["what"],
+                         f"{name} still letters {_q(wrong[0].content)}" if wrong else None)
         bubbles = _bubbles(view)
         shown = {numbering[i] for i in _curves_on(road, sheet_b)}
         stray = sorted({n for _b, n in bubbles if n is not None and n not in shown})
-        if stray:
-            return Result(False, f"{name} still has a bubble numbered "
-                                 f"{', '.join(map(str, stray))}, a curve it does not show")
+        seen.add(f"{name}'s bubbles", f"{name} still has a bubble numbered "
+                                      f"{', '.join(map(str, stray))}, a curve it does not show"
+                 if stray else None)
         for e in sheet_b.entities.values():
             if e.id in planted.get(name, set()):
                 continue
@@ -1409,18 +1436,23 @@ def _check_qa(baseline, submitted):
                 continue
             if any(_same(e, f) for f in sheet_s.entities.values()):
                 continue
-            return Result(False, f"{_describe(e)} on {name} was changed or removed, and it was right")
+            seen.fail(f"{_describe(e)} on {name} was changed or removed, and it was right")
+            break
         counts: Dict[str, int] = {}
         for t in view.free_texts():
             key = " ".join(t.content.split())
             counts[key] = counts.get(key, 0) + 1
         doubled = [k for k, n in counts.items() if n > 1]
         if doubled:
-            return Result(False, f"{name} letters {_q(doubled[0])} twice")
+            seen.fail(f"{name} letters {_q(doubled[0])} twice")
         if len(view.tables) > 1:
-            return Result(False, f"{name} has {len(view.tables)} curve tables")
-    return Result(True, "all five planted errors corrected (BC station, T-2 length, curve 2's T and "
-                        "L, the restarted curve number, the EC lettered BC) and nothing else touched")
+            seen.fail(f"{name} has {len(view.tables)} curve tables")
+    items = [(plant["what"], all(seen.done.get(k, False)
+                                 for k in plant["items"] + ([plant["what"]] if "now" in plant else [])))
+             for plant in QA_PLANTS]
+    return Result(seen.clean, seen.problem or (
+        "all five planted errors corrected (BC station, T-2 length, curve 2's T and L, the "
+        "restarted curve number, the EC lettered BC) and nothing else touched"), items)
 
 
 def _solve_qa(session):
@@ -1503,14 +1535,13 @@ def _match_problem(view, road: Road, vp, station: float, sheet_tag: str) -> Opti
 def _check_match_lines(baseline, submitted):
     road = Road(baseline, SR70)
     sheet_b, sheet_s, view = _views(baseline, submitted, L2_SHEET)
-    if sheet_s is None:
-        return Result(False, f"sheet {L2_SHEET} is gone")
+    gone = f"sheet {L2_SHEET} is gone" if sheet_s is None else None
     vp = _vp(sheet_b)
+    tally = Tally()
     for station, tag in MATCH:
-        problem = _match_problem(view, road, vp, road.align.stations().parse(station), tag)
-        if problem:
-            return Result(False, problem)
-    return Result(True, "both match lines square to \"SR70\" on the turned sheet at 574+50 and "
+        tally.add(f"MATCH LINE ({tag})", gone or _match_problem(
+            view, road, vp, road.align.stations().parse(station), tag))
+    return tally.result("both match lines square to \"SR70\" on the turned sheet at 574+50 and "
                         "589+50, across the roadway, lettered MATCH LINE (L-1) and (L-3)")
 
 
@@ -1557,33 +1588,48 @@ def _reference_texts(session: Session, sheet) -> List[pl.PText]:
 def _check_l2_data(baseline, submitted):
     road = Road(baseline, SR70)
     sheet_b, sheet_s, view = _views(baseline, submitted, L2_SHEET)
-    if sheet_s is None:
-        return Result(False, f"sheet {L2_SHEET} is gone")
+    gone = f"sheet {L2_SHEET} is gone" if sheet_s is None else None
     vp = _vp(sheet_b)
     numbering = _l2_numbering(road)
+    tally = Tally()
+    tally.fail(gone)
     for t, a, b, _vp_ in _tangents_on(road, sheet_b):
-        problem = _line_data_problem(view, road, vp, t, a, b, side=None, near=0.6, split=True)
+        where = f"the tangent {road.text(a)} to {road.text(b)}"
+        problem = None if gone else _line_data_problem(view, road, vp, t, a, b, side=None, near=0.6,
+                                                       split=True)
         if problem:
             model_dir = geo.upright(road.heading((a + b) / 2.0))
             if any(pl.turn_between(x.rotation, model_dir) <= TURN_DEG for x in view.free_texts()
                    if nt.bearings(x.content) or nt.feet(x.content)):
                 problem += (f" (it is parallel to the line in the model; the viewport is turned "
                             f"{vp.rotation_deg:+.3f}°)")
-            return Result(False, f"the tangent {road.text(a)} to {road.text(b)}: {problem}")
+        tally.add(where, gone or _said(where, problem))
     for word, raw, refs in _l2_shown_points(road, vp):
-        problem = _point_problem(view, word, road.display(raw), road.paper(vp, raw),
-                                 road.paper_heading(vp, raw), reading_up=False, side=None,
-                                 band=0.04)
-        if problem:
-            return Result(False, f"the {word} at {road.text(raw)}: {problem}")
-    problem = _curve_data_problem(view, road, sheet_b, L2_SHEET, numbering)
-    if problem:
+        where = f"the {word} at {road.text(raw)}"
+        tally.add(where, gone or _said(where, _point_problem(
+            view, word, road.display(raw), road.paper(vp, raw), road.paper_heading(vp, raw),
+            reading_up=False, side=None, band=0.04)))
+    data = _curve_data_items(view, road, sheet_b, L2_SHEET, numbering, gone=gone)
+    problem = next((p for _item, p in data if p), None)
+    if problem and not gone:
         rows = _curve_rows(view)
         if rows and {r.number for r in rows} == {i for i in numbering}:
             problem = (f"the table numbers the curves {', '.join(str(i) for i in sorted(numbering))}, "
                        f"the design's own indices; this sheet continues from L-1, whose last curve "
                        f"is 1, so they are {', '.join(str(n) for n in sorted(numbering.values()))}")
-        return Result(False, problem)
+    tally.fail(problem)
+    for item, p in data:
+        tally.add(item, p)
+    if tally.clean:
+        tally.fail(_l2_overlap_problem(baseline, sheet_b, view))
+    return tally.result("L-2's alignment data restored: both tangents with bearing and length "
+                        "parallel to the turned line, five curve points including the PCC, bubbles "
+                        "2 to 5 on their curves, the curve table 2 to 5, and no lettering over "
+                        "lettering")
+
+
+def _l2_overlap_problem(baseline: Session, sheet_b, view) -> Optional[str]:
+    """Lettering added to L-2 that sits over the sheet's own, or over itself."""
     others = _reference_texts(baseline, sheet_b)
     others += pl.plot(baseline, sheet_b, [(sheet_b.id, e) for e in sheet_b.entities.values()]).texts
     mine = view.free_texts() + [d for dim in view.dims for d in dim.texts]
@@ -1593,14 +1639,11 @@ def _check_l2_data(baseline, submitted):
     for quad, what in boxes:
         hit = next((o for o in others if pl.boxes_overlap(quad, o.corners())), None)
         if hit is not None:
-            return Result(False, f"{what} overlaps the sheet's {_q(hit.content)}")
+            return f"{what} overlaps the sheet's {_q(hit.content)}"
     for (qa, wa), (qb, wb) in itertools.combinations(boxes, 2):
         if wa != wb and pl.boxes_overlap(qa, qb):
-            return Result(False, f"{wa} overlaps {wb}")
-    return Result(True, "L-2's alignment data restored: both tangents with bearing and length "
-                        "parallel to the turned line, five curve points including the PCC, bubbles "
-                        "2 to 5 on their curves, the curve table 2 to 5, and no lettering over "
-                        "lettering")
+            return f"{wa} overlaps {wb}"
+    return None
 
 
 def _solve_l2_data(session):

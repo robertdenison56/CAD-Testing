@@ -50,9 +50,9 @@ from roaddraft.document.entities import Arc, Circle, Entity, Line, Polyline, Tex
 from roaddraft.document.locate import resolve_entity
 from roaddraft.document.references import reference_groups
 from roaddraft.probes import drafting, fixture
-from roaddraft.probes.base import Probe, Result
+from roaddraft.probes.base import Probe, Result, Tally
 from roaddraft.probes.drafting import (CL, EOP, NOTE, SHLD, along, between, clear, covered,
-                                        expected_alignment, first, on_layer, run, verdict)
+                                        expected_alignment, on_layer, run)
 from roaddraft.probes.tasks import (TITLE_FIELDS, TOLERANCE_FT, added_by_space, aimed_at,
                                     ensure_layer, targets)
 
@@ -294,27 +294,31 @@ def _title_block(sheet, number: int, total: int) -> Optional[str]:
 
 def _check_sheet_set(baseline, submitted):
     placed = 0
+    tally = Tally()
     for i, name in enumerate(fixture.SHEETS):
         sheet = sheet_named(submitted.doc, name)
-        if sheet is None:
-            return Result(False, f"sheet {name} is gone")
+        gone = f"sheet {name} is gone" if sheet is None else None
         for what, find in ROADWAY:
             wanted = targets(baseline, visible_on=name, **find)
             if not wanted:
                 continue
+            if gone:
+                tally.add(f"{name}: {what}", gone)
+                continue
             r = aimed_at(baseline, submitted, wanted, f"{what} on {name}", on_sheet=name)
-            if not r.passed:
-                return Result(False, f"{name}, {what}: {r.detail}")
-            placed += 1
+            if tally.add(f"{name}: {what}", None if r.passed else f"{name}, {what}: {r.detail}"):
+                placed += 1
+        if gone:
+            tally.add(f"{name}'s title block", gone)
+            continue
         centerline = targets(baseline, visible_on=name, anchor={"kind": "element"})
         named = [c for c, tip in sheet_callouts(baseline, submitted, name)
                  if ALIGN in c.text.content.upper() and lands_on(baseline, centerline, tip)]
-        if not named:
-            return Result(False, f"{name}: no callout on the centerline reads {ALIGN}")
+        tally.add(f"{name}: the centerline",
+                  None if named else f"{name}: no callout on the centerline reads {ALIGN}")
         problem = _title_block(sheet, i + 1, len(fixture.SHEETS))
-        if problem:
-            return Result(False, f"{name}: {problem}")
-    return Result(True, f"{placed} callouts on paper across {len(fixture.SHEETS)} sheets, each "
+        tally.add(f"{name}'s title block", f"{name}: {problem}" if problem else None)
+    return tally.result(f"{placed} callouts on paper across {len(fixture.SHEETS)} sheets, each "
                         f"on its edge, the centerline named, title blocks numbered 1 to "
                         f"{len(fixture.SHEETS)}")
 
@@ -367,12 +371,13 @@ def station_label(st: int) -> str:
 def _check_stations(baseline, submitted):
     required, _optional = sheet_stations(baseline)
     pairs = sheet_callouts(baseline, submitted, STATION_SHEET)
+    items = [(f"station {station_label(st)}", False) for st, _p, _q in required]
     if not pairs:
         if added_by_space(baseline, submitted):
             return Result(False, f"nothing was drawn on sheet {STATION_SHEET} itself -- this "
-                                 f"probe wants the callouts in paper space, not in the model")
-        return Result(False, "nothing was added to the document")
-    missing, misread = [], []
+                                 f"probe wants the callouts in paper space, not in the model", items)
+        return Result(False, "nothing was added to the document", items)
+    missing, misread, items = [], [], []
     for st, p, _q in required:
         label = station_label(st)
         on_it = [c for c, tip in pairs if tip is not None and math.dist(tip, p) <= AIM_FT]
@@ -380,6 +385,7 @@ def _check_stations(baseline, submitted):
             missing.append(label)
         elif not any(label in c.text.content for c in on_it):
             misread.append(f"{label} reads {on_it[0].text.content!r}")
+        items.append((f"station {label}", bool(on_it) and any(label in c.text.content for c in on_it)))
     if missing or misread:
         parts = []
         if missing:
@@ -387,10 +393,10 @@ def _check_stations(baseline, submitted):
                          + ", ".join(missing[:5]) + (" ..." if len(missing) > 5 else ""))
         if misread:
             parts.append("text does not read the station: " + "; ".join(misread[:3]))
-        return Result(False, "; ".join(parts))
+        return Result(False, "; ".join(parts), items)
     return Result(True, f"all {len(required)} stations {station_label(required[0][0])} to "
                         f"{station_label(required[-1][0])} called out on {STATION_SHEET}, each "
-                        f"leader on its station and each text reading it")
+                        f"leader on its station and each text reading it", items)
 
 
 def _solve_stations(session):
@@ -411,50 +417,57 @@ CLEAN_TARGETS = [ROADWAY[0], ROADWAY[3], ROADWAY[4]]      # left edge, right sho
 
 def _check_clean(baseline, submitted):
     name = CLEAN_SHEET
+    tally = Tally()
     for what, find in CLEAN_TARGETS:
         r = aimed_at(baseline, submitted, targets(baseline, visible_on=name, **find),
                      f"{what} on {name}", on_sheet=name)
-        if not r.passed:
-            return Result(False, f"{what}: {r.detail}")
+        tally.add(what, None if r.passed else f"{what}: {r.detail}")
+    pairs = sheet_callouts(baseline, submitted, name) if tally.clean else []
+    if tally.clean:
+        tally.fail(_legibility_problem(baseline, submitted, name, pairs))
+    return tally.result(f"{len(pairs)} callouts on {name}, each on its line, text clear of all "
+                        f"linework by {CLEAR_IN} in, leaders clear of each other, all inside "
+                        f"the drawing area")
+
+
+def _legibility_problem(baseline, submitted, name: str, pairs) -> Optional[str]:
+    """What makes the callouts on ``name`` hard to read, if anything: a text
+    without a leader, anything outside the drawing area, text over linework,
+    texts or leaders over each other."""
     sheet = sheet_named(submitted.doc, name)
-    pairs = sheet_callouts(baseline, submitted, name)
     area = sheet.usable_area()
     for c, _tip in pairs:
         if c.tip is None:
-            return Result(False, f"the text {c.text.content!r} has no leader")
+            return f"the text {c.text.content!r} has no leader"
     added_ids = {e.id for _k, e in added_by_space(baseline, submitted, on_sheet=name)}
     scene = paper_linework(submitted, sheet, exclude=added_ids)
     for c, _tip in pairs:
         label = c.text.content.splitlines()[0]
         box = c.text.bbox(submitted.doc)
         if not geo.bbox_contains(area, box, tol=1e-6):
-            return Result(False, f"the text {label!r} at {_fmt(c.text.position)} in lies outside "
-                                 f"the drawing area {tuple(round(v, 2) for v in area)}")
+            return (f"the text {label!r} at {_fmt(c.text.position)} in lies outside "
+                    f"the drawing area {tuple(round(v, 2) for v in area)}")
         for a, b in c.segments:
             for p in (a, b):
                 if not _inside(area, p):
-                    return Result(False, f"the leader of {label!r} runs outside the drawing area "
-                                         f"at {_fmt(p)} in")
+                    return f"the leader of {label!r} runs outside the drawing area at {_fmt(p)} in"
         clear_box = geo.bbox_expand(box, CLEAR_IN)
         hit = next((p for p in scene if _inside(clear_box, p)), None)
         if hit is not None:
-            return Result(False, f"the text {label!r} sits over linework at {_fmt(hit)} in "
-                                 f"(less than {CLEAR_IN} in of air)")
+            return (f"the text {label!r} sits over linework at {_fmt(hit)} in "
+                    f"(less than {CLEAR_IN} in of air)")
         for other, _t in pairs:
             if other is c:
                 continue
             olabel = other.text.content.splitlines()[0]
             if geo.bbox_intersects(clear_box, other.text.bbox(submitted.doc)):
-                return Result(False, f"the texts {label!r} and {olabel!r} overlap")
+                return f"the texts {label!r} and {olabel!r} overlap"
             for a, b in other.segments:
                 if any(_inside(clear_box, p) for p in between(a, b, STEP_IN)):
-                    return Result(False, f"the leader of {olabel!r} runs through the text "
-                                         f"{label!r}")
+                    return f"the leader of {olabel!r} runs through the text {label!r}"
                 if any(_crosses(a, b, c2, d2) for c2, d2 in c.segments):
-                    return Result(False, f"the leaders of {label!r} and {olabel!r} cross")
-    return Result(True, f"{len(pairs)} callouts on {name}, each on its line, text clear of all "
-                        f"linework by {CLEAR_IN} in, leaders clear of each other, all inside "
-                        f"the drawing area")
+                    return f"the leaders of {label!r} and {olabel!r} cross"
+    return None
 
 
 def _solve_clean(session):
@@ -501,14 +514,16 @@ def _check_corner(baseline, submitted):
     now = [e for e in submitted.doc.model_entities.values() if not isinstance(e, Text)]
     eop = [e for e in now if e.layer == EOP]
     g = _corner()
-    return verdict(first(
-        on_layer(baseline, submitted, EOP, pts["arc"],
-                 f"the {g['radius']:g} ft curb return"),
-        covered(submitted, eop, pts["main_keep"], "MAIN ST's curb beyond the return"),
-        covered(submitted, eop, pts["cross_keep"], "CROSS AVE's curb beyond the return"),
-        clear(submitted, now, pts["main_gone"], "MAIN ST's curb between the return and the corner"),
-        clear(submitted, now, pts["cross_gone"],
-              "CROSS AVE's curb between the return and the corner")),
+    main, cross = "MAIN ST's curb, trimmed to the return", "CROSS AVE's curb, trimmed to the return"
+    return drafting.tallied([
+        ("the curb return", on_layer(baseline, submitted, EOP, pts["arc"],
+                                     f"the {g['radius']:g} ft curb return")),
+        (main, covered(submitted, eop, pts["main_keep"], "MAIN ST's curb beyond the return")),
+        (cross, covered(submitted, eop, pts["cross_keep"], "CROSS AVE's curb beyond the return")),
+        (main, clear(submitted, now, pts["main_gone"],
+                     "MAIN ST's curb between the return and the corner")),
+        (cross, clear(submitted, now, pts["cross_gone"],
+                      "CROSS AVE's curb between the return and the corner"))],
         f"a {g['radius']:g} ft return tangent to both curbs at {_fmt(g['main_tp'])} and "
         f"{_fmt(g['cross_tp'])}, both curb lines trimmed to it")
 
@@ -627,16 +642,20 @@ def _check_fix(baseline, submitted):
     eop = [x for x in now if x.layer == EOP]
     shld = [x for x in now if x.layer == SHLD]
     untouchable = {e.id, P["shoulder"].id} | P["callout"].ids
-    return verdict(first(
-        covered(submitted, eop, along(a, 12.0), "the right edge of pavement at 12 ft"),
-        clear(submitted, now, along(a, fixture.FLAWS["edge_offset"], st0 + 5.0, st1 - 5.0, 20.0),
-              f"the hand-drawn piece at {fixture.FLAWS['edge_offset']:g} ft"),
-        covered(submitted, shld, along(a, -20.0), "the left edge of shoulder on rd_ES"),
-        clear(submitted, eop, along(a, -20.0, st0 + 5.0, st1 - 5.0, 20.0),
-              "shoulder linework on rd_EP"),
-        _callout_fixed(a, submitted, P),
-        _nothing_else_changed(baseline, submitted, untouchable),
-        _no_duplicates(a, submitted)),
+    edge = f"the right edge drawn at {fixture.FLAWS['edge_offset']:g} ft"
+    shoulder = "the shoulder piece on rd_EP"
+    tally = Tally()
+    tally.add(edge, covered(submitted, eop, along(a, 12.0), "the right edge of pavement at 12 ft"))
+    tally.add(edge, clear(submitted, now, along(a, fixture.FLAWS["edge_offset"], st0 + 5.0,
+                                                st1 - 5.0, 20.0),
+                          f"the hand-drawn piece at {fixture.FLAWS['edge_offset']:g} ft"))
+    tally.add(shoulder, covered(submitted, shld, along(a, -20.0), "the left edge of shoulder on rd_ES"))
+    tally.add(shoulder, clear(submitted, eop, along(a, -20.0, st0 + 5.0, st1 - 5.0, 20.0),
+                              "shoulder linework on rd_EP"))
+    tally.add("the callout that calls the shoulder the edge", _callout_fixed(a, submitted, P))
+    tally.fail(_nothing_else_changed(baseline, submitted, untouchable))
+    tally.fail(_no_duplicates(a, submitted))
+    return tally.result(
         "the 11 ft piece replaced at 12 ft, the shoulder back on its layer, the callout no "
         "longer calls the shoulder the edge, and nothing else touched")
 
@@ -667,24 +686,33 @@ RS = {"sheet": "C-101", "size": "ANSI_D", "feet_per_inch": 100.0, "project": "EL
 
 
 def _check_roadway_sheet(baseline, submitted):
-    r = drafting._check_roadway(baseline, submitted)
-    if not r.passed:
-        return r
-    want = expected_alignment(drafting.ELM["name"], drafting._elm_pis(), drafting.ELM["begin"])
+    tally = Tally()
+    tally.take(drafting._check_roadway(baseline, submitted))
     sheet = sheet_named(submitted.doc, RS["sheet"])
     if sheet is None:
-        return Result(False, f"no sheet named {RS['sheet']} (sheets: "
-                             f"{[s.name for s in submitted.doc.sheets.values()]})")
+        gone = (f"no sheet named {RS['sheet']} (sheets: "
+                f"{[s.name for s in submitted.doc.sheets.values()]})")
+        tally.add(f"sheet {RS['sheet']} and its viewport", gone)
+        tally.add(f"{RS['sheet']}'s title block", gone)
+        return tally.result("")
+    tally.add(f"sheet {RS['sheet']} and its viewport", _roadway_viewport_problem(sheet))
+    tally.add(f"{RS['sheet']}'s title block", _roadway_title_problem(sheet))
+    return tally.result(f"ELM-AVE drafted, and {RS['sheet']} shows all of it through a "
+                        f"1\"={RS['feet_per_inch']:g}' viewport inside the border, title block "
+                        f"filled")
+
+
+def _roadway_viewport_problem(sheet) -> Optional[str]:
+    """Does the sheet show all of ELM-AVE at 1" = 100', inside its border?"""
+    want = expected_alignment(drafting.ELM["name"], drafting._elm_pis(), drafting.ELM["begin"])
     if not sheet.viewports:
-        return Result(False, f"{RS['sheet']} has no viewport, so it shows nothing")
+        return f"{RS['sheet']} has no viewport, so it shows nothing"
     vp = min(sheet.viewports, key=lambda v: abs(v.feet_per_inch - RS["feet_per_inch"]))
     if abs(vp.feet_per_inch - RS["feet_per_inch"]) > 0.01:
-        return Result(False, f"the viewport is at 1\"={vp.feet_per_inch:g}', not "
-                             f"1\"={RS['feet_per_inch']:g}'")
+        return f"the viewport is at 1\"={vp.feet_per_inch:g}', not 1\"={RS['feet_per_inch']:g}'"
     if not geo.bbox_contains(sheet.usable_area(), vp.paper_bbox(), tol=0.05):
-        return Result(False, f"the viewport {tuple(round(v, 2) for v in vp.paper_bbox())} in "
-                             f"runs outside the sheet's drawing area "
-                             f"{tuple(round(v, 2) for v in sheet.usable_area())}")
+        return (f"the viewport {tuple(round(v, 2) for v in vp.paper_bbox())} in runs outside the "
+                f"sheet's drawing area {tuple(round(v, 2) for v in sheet.usable_area())}")
     pts = along(want, step=25.0)
     edge = drafting.ELM["shoulder"]
     for st in (want.begin_station, want.end_station):
@@ -693,19 +721,20 @@ def _check_roadway_sheet(baseline, submitted):
     if not all(shown):
         n = len(pts)
         where = ("the start" if not shown[0] else "the end" if not shown[len(pts) - 5] else "part")
-        return Result(False, f"the viewport shows {sum(shown)} of {n} points of ELM-AVE and its "
-                             f"shoulders; it misses {where} of the roadway")
+        return (f"the viewport shows {sum(shown)} of {n} points of ELM-AVE and its "
+                f"shoulders; it misses {where} of the roadway")
+    return None
+
+
+def _roadway_title_problem(sheet) -> Optional[str]:
     fields = {k: str(v).strip() for k, v in (sheet.title_block_fields or {}).items()}
     if fields.get("project", "").upper() != RS["project"]:
-        return Result(False, f"title block: project={fields.get('project', '')!r} "
-                             f"(wanted {RS['project']!r})")
+        return f"title block: project={fields.get('project', '')!r} (wanted {RS['project']!r})"
     if not fields.get("sheet_title"):
-        return Result(False, "title block: sheet_title is empty")
+        return "title block: sheet_title is empty"
     if fields.get("scale", "").upper() != RS["scale"].upper():
-        return Result(False, f"title block: scale={fields.get('scale', '')!r} (wanted {RS['scale']!r})")
-    return Result(True, f"ELM-AVE drafted, and {RS['sheet']} shows all of it through a "
-                        f"1\"={RS['feet_per_inch']:g}' viewport inside the border, title block "
-                        f"filled")
+        return f"title block: scale={fields.get('scale', '')!r} (wanted {RS['scale']!r})"
+    return None
 
 
 def _solve_roadway_sheet(session):

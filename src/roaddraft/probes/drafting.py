@@ -34,7 +34,7 @@ from roaddraft.design.errors import DesignError
 from roaddraft.design.labels import caltrans_station_text
 from roaddraft.document.entities import Text, entity_distance
 from roaddraft.probes import fixture
-from roaddraft.probes.base import Probe, Result
+from roaddraft.probes.base import Probe, Result, Tally
 
 TOLERANCE_FT = 0.5
 SAMPLE_FT = 25.0
@@ -186,6 +186,22 @@ def verdict(problem: Optional[str], good: str) -> Result:
     return Result(False, problem) if problem else Result(True, good)
 
 
+def tallied(named: Sequence[Tuple[str, Optional[str]]], good: str) -> Result:
+    """A check of named items, each ``(item, problem or None)`` in the order
+    it is looked at: the first problem is the verdict, and every item counts."""
+    tally = Tally()
+    for item, problem in named:
+        tally.add(item, problem)
+    return tally.result(good)
+
+
+def drafted(name: str, alignment: Optional[str],
+            centerline: Optional[str]) -> List[Tuple[str, Optional[str]]]:
+    """The two things every alignment probe asks for: the alignment, and its
+    centerline drawn on align_MAIN."""
+    return [(f"the alignment {name}", alignment), (f"its centerline on {CL}", centerline)]
+
+
 def run(session: Session, name: str, params: dict) -> dict:
     r = session.execute(name, params)
     if not r["ok"]:
@@ -202,8 +218,8 @@ NE = {"name": "MAIN-ST", "pis": [[2000.0, 5000.0], [3200.0, 5000.0]], "begin": "
 
 def _check_ne(baseline, submitted):
     want = expected_alignment(NE["name"], NE["pis"], NE["begin"])
-    return verdict(first(alignment_runs(submitted, NE["name"], want),
-                         on_layer(baseline, submitted, CL, along(want), "the centerline")),
+    return tallied(drafted(NE["name"], alignment_runs(submitted, NE["name"], want),
+                           on_layer(baseline, submitted, CL, along(want), "the centerline")),
                    "MAIN-ST runs due east from N 5000, E 2000 and is drawn")
 
 
@@ -221,8 +237,8 @@ PIC = {"name": "SR-9", "begin": "50+00",
 
 def _check_pi_curve(baseline, submitted):
     want = expected_alignment(PIC["name"], PIC["pis"], PIC["begin"])
-    return verdict(first(alignment_runs(submitted, PIC["name"], want),
-                         on_layer(baseline, submitted, CL, along(want), "the centerline")),
+    return tallied(drafted(PIC["name"], alignment_runs(submitted, PIC["name"], want),
+                           on_layer(baseline, submitted, CL, along(want), "the centerline")),
                    "SR-9 runs through its PIs on an 800 ft curve and is drawn")
 
 
@@ -245,8 +261,8 @@ def _bd_pis():
 
 def _check_bearing(baseline, submitted):
     want = expected_alignment(BD["name"], _bd_pis(), BD["begin"])
-    return verdict(first(alignment_runs(submitted, BD["name"], want),
-                         on_layer(baseline, submitted, CL, along(want), "the centerline")),
+    return tallied(drafted(BD["name"], alignment_runs(submitted, BD["name"], want),
+                           on_layer(baseline, submitted, CL, along(want), "the centerline")),
                    "RAMP-B runs N 62°30' E, deflects 35° right on a 600 ft curve, "
                    "and is drawn")
 
@@ -273,8 +289,8 @@ def _check_edges(baseline, submitted):
                                 (EOP, 12.0, "the right edge of pavement"),
                                 (SHLD, -20.0, "the left edge of shoulder"),
                                 (SHLD, 20.0, "the right edge of shoulder")):
-        problems.append(on_layer(baseline, submitted, layer, along(a, offset), what))
-    return verdict(first(*problems),
+        problems.append((what, on_layer(baseline, submitted, layer, along(a, offset), what)))
+    return tallied(problems,
                    "edges of pavement at 12 ft and edges of shoulder at 20 ft, both sides, "
                    "the length of SR-100")
 
@@ -304,12 +320,13 @@ def _turn_lane_points(a):
 def _check_turn_lane(baseline, submitted):
     pts = _turn_lane_points(_sr100(baseline))
     new = added(baseline, submitted)
-    return verdict(first(
-        on_layer(baseline, submitted, EOP, pts["full"], "the full-width edge, 24 ft right"),
-        on_layer(baseline, submitted, EOP, pts["taper"], "the 120 ft taper"),
-        on_layer(baseline, submitted, EOP, pts["end"], "the square end at 36+00"),
-        clear(submitted, new, pts["before"], "24 ft right, back of 31+20"),
-        clear(submitted, new, pts["after"], "24 ft right, ahead of 36+00")),
+    full = "the full-width edge"
+    return tallied([
+        (full, on_layer(baseline, submitted, EOP, pts["full"], "the full-width edge, 24 ft right")),
+        ("the taper", on_layer(baseline, submitted, EOP, pts["taper"], "the 120 ft taper")),
+        ("the square end", on_layer(baseline, submitted, EOP, pts["end"], "the square end at 36+00")),
+        (full, clear(submitted, new, pts["before"], "24 ft right, back of 31+20")),
+        (full, clear(submitted, new, pts["after"], "24 ft right, ahead of 36+00"))],
         "taper 30+00 to 31+20, full width to 36+00, squared off, and nothing beyond")
 
 
@@ -353,15 +370,16 @@ def _check_cul_de_sac(baseline, submitted):
     bulb = [q for q in bulb if not (abs(q[0] - center[0]) < w + 1.0 and q[1] < center[1])]
     throat = _cds_throat()
     new = added(baseline, submitted)
-    problems = [alignment_runs(submitted, CDS["name"], want),
-                on_layer(baseline, submitted, EOP, bulb, "the 45 ft bulb")]
+    problems = [(f"the alignment {CDS['name']}", alignment_runs(submitted, CDS["name"], want)),
+                ("the bulb", on_layer(baseline, submitted, EOP, bulb, "the 45 ft bulb"))]
     for side, offset in (("left", -w), ("right", w)):
-        problems.append(on_layer(baseline, submitted, EOP,
-                                 along(want, offset, 1000.0, throat - 1.0),
-                                 f"the {side} edge of pavement up to the bulb"))
-        problems.append(clear(submitted, new, along(want, offset, throat + 3.0, 1395.0, 4.0),
-                              f"the {side} edge inside the bulb"))
-    return verdict(first(*problems),
+        edge = f"the {side} edge of pavement"
+        problems.append((edge, on_layer(baseline, submitted, EOP,
+                                        along(want, offset, 1000.0, throat - 1.0),
+                                        f"the {side} edge of pavement up to the bulb")))
+        problems.append((edge, clear(submitted, new, along(want, offset, throat + 3.0, 1395.0, 4.0),
+                                     f"the {side} edge inside the bulb")))
+    return tallied(problems,
                    "OAK-CT with its bulb, and edges of pavement that stop where they meet it")
 
 
@@ -424,16 +442,15 @@ def _elm_pis():
 
 def _check_roadway(baseline, submitted):
     want = expected_alignment(ELM["name"], _elm_pis(), ELM["begin"])
-    problems = [alignment_runs(submitted, ELM["name"], want),
-                on_layer(baseline, submitted, CL, along(want), "the centerline")]
+    tally = Tally()
+    for item, problem in drafted(ELM["name"], alignment_runs(submitted, ELM["name"], want),
+                                 on_layer(baseline, submitted, CL, along(want), "the centerline")):
+        tally.add(item, problem)
     for layer, offset, what in ((EOP, -ELM["lane"], "the left edge of pavement"),
                                 (EOP, ELM["lane"], "the right edge of pavement"),
                                 (SHLD, -ELM["shoulder"], "the left edge of shoulder"),
                                 (SHLD, ELM["shoulder"], "the right edge of shoulder")):
-        problems.append(on_layer(baseline, submitted, layer, along(want, offset), what))
-    problem = first(*problems)
-    if problem:
-        return Result(False, problem)
+        tally.add(what, on_layer(baseline, submitted, layer, along(want, offset), what))
     # a station label every 100 ft: text that reads the station, near that station --
     # in full (12+00) or the Caltrans way (the whole number at each 500 ft, the ones
     # digit elsewhere), which is how the engine letters it
@@ -449,10 +466,10 @@ def _check_roadway(baseline, submitted):
         if any((reads in t.content or t.content.strip() == digits)
                and math.dist(t.position, here) <= 60.0 for t in texts):
             labelled += 1
-    if labelled < 0.8 * len(stations):
-        return Result(False, f"only {labelled} of {len(stations)} 100 ft stations carry a "
-                             f"label that reads the station, within 60 ft of it")
-    return Result(True, f"ELM-AVE from its bearings, lanes and shoulders both sides, "
+    tally.add("the station labels",
+              f"only {labelled} of {len(stations)} 100 ft stations carry a label that reads "
+              f"the station, within 60 ft of it" if labelled < 0.8 * len(stations) else None)
+    return tally.result(f"ELM-AVE from its bearings, lanes and shoulders both sides, "
                         f"{labelled} of {len(stations)} stations labelled")
 
 

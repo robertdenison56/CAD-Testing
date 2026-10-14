@@ -7,7 +7,9 @@ invalid-call rate, fault recovery (a fault followed within three calls by a
 successful call of the same tool), the longest run of the same fault, renders
 looked at and whether a change followed, design queries asked before the first
 change, queries against commands. ``run.json`` gives the price of the
-sheet: turns, seconds, tokens, cost.
+sheet: turns, seconds, tokens, cost. The check gives scope completion: the
+items the probe asked for and how many the document has. ``report.txt`` read
+against all of it gives report fidelity (``claims.py``).
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from typing import Dict, List, Optional
 
 from roaddraft.api.session import Session
 from roaddraft.probes import fixture, tasks
+from roaddraft.runners import claims
 
 RECOVERY_WINDOW = 3
 LOOP = 5
@@ -89,18 +92,28 @@ def score_folder(folder: Path, probe, starts: Optional[Dict[str, Path]] = None) 
         meta = json.loads(meta_file.read_text())
         row.update({k: meta.get(k) for k in ("backend", "model", "stop", "turns", "seconds",
                                                "tokens", "cost_usd")})
-    if not calls:
-        row.update({"passed": False, "detail": "no tool calls"})
-        return row
     starts = starts if starts is not None else {}
     if probe.start not in starts:
         starts[probe.start] = Path(tempfile.mkdtemp(prefix="roaddraft-start-"))
         fixture.start_document(starts[probe.start], probe.start)
-    baseline = Session.load(starts[probe.start] / fixture.START[probe.start],
-                            out_dir=starts[probe.start])
-    doc = folder / "project" / fixture.START[probe.start]
-    result = probe.check(baseline, Session.load(doc, out_dir=folder))
-    row.update({"passed": bool(result.passed), "detail": result.detail})
+    start = starts[probe.start] / fixture.START[probe.start]
+    baseline = Session.load(start, out_dir=starts[probe.start])
+    # an episode that made no call left the start document as it was: checking
+    # that still says what was asked of it
+    doc = folder / "project" / fixture.START[probe.start] if calls else start
+    submitted = Session.load(doc, out_dir=folder if calls else starts[probe.start])
+    result = probe.check(baseline, submitted)
+    done, asked = result.scope()
+    row.update({"passed": bool(result.passed) and bool(calls),
+                "detail": result.detail if calls else "no tool calls",
+                "items_done": done, "items_asked": asked,
+                "items_missed": [item for item, ok in result.items if not ok]})
+    report = folder / "report.txt"
+    if report.exists():
+        row["claims"] = claims.read(report.read_text(errors="replace"), calls,
+                                    claims.document_ids(submitted), row["passed"], asked - done)
+    if not calls:
+        return row
     row.update(measures(calls))
     row["fault_messages"] = [(c["tool"], (c.get("error") or {}).get("message", "")[:160])
                              for c in calls if not c.get("ok")]

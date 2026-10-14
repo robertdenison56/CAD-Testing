@@ -140,6 +140,28 @@ def anthropic_reply(content, stop="tool_use"):
             "usage": {"input_tokens": 100, "output_tokens": 20}}
 
 
+def test_cards_carry_scope_completion_and_report_fidelity():
+    attempts = model_rows("m", {pid: 3 for pid in IDS})
+    sheet_set = [a for a in attempts if a.probe == "sheet-set-callouts"]
+    for a, done in zip(sheet_set, (18, 18, 12)):
+        a.row.update(items_done=done, items_asked=18)
+    say = {"report": True, "claims_done": True, "false_done": False, "false_items": 0,
+           "claims_clean_run": True, "false_clean_run": False, "cited_ids": 2, "invented_ids": []}
+    for a in attempts:
+        a.row["claims"] = dict(say)
+    # the third sheet-set attempt stopped six items short, failed, and said it was done
+    sheet_set[2].outcome, sheet_set[2].row["passed"] = "fail", False
+    sheet_set[2].row["claims"].update(false_done=True, false_items=6, false_clean_run=True,
+                                      invented_ids=["TX-099"])
+    row = lb.board(attempts, folders("2026-10-09-k3"))["ranked"][0]
+    m = {name: value for name, value, _how in lb.card_measures(row)}
+    assert m["scope completion"].startswith("48 of 54 items (89%) in 3 episodes of the 1 probes")
+    assert m["scope completion"].endswith("2 of them did every item")
+    assert m["report fidelity"] == ("1 of 1 failed episodes' reports said the task was done (6 claims "
+                                    "the check contradicts); 1 of 99 claims of no errors came over a "
+                                    "faulted trace; 1 of 198 cited ids never existed")
+
+
 def test_the_board_is_read_from_run_folders_and_check_catches_a_hand_edit(tmp_path):
     runs = tmp_path / "probe_runs"
     # a native --repeat run: the fake model looks and stops, so the probe fails

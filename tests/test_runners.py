@@ -960,6 +960,11 @@ def test_score_reads_the_run_folders_back_from_disk(tmp_path):
     assert row["probe"] == BLANK.id and row["passed"] is False and row["calls"] == 1
     assert row["backend"] == "anthropic" and row["stop"] == "answered" and row["turns"] == 2
     assert row["tokens"]["input_tokens"] == 200 and row["cost_usd"] is not None
+    # scope: the alignment and its centerline were asked for, neither is there;
+    # and the report, "done", claims what the check contradicts
+    assert (row["items_done"], row["items_asked"]) == (0, 2)
+    assert row["items_missed"] == ["the alignment MAIN-ST", "its centerline on align_MAIN"]
+    assert row["claims"]["false_done"] and row["claims"]["false_items"] == 2
     assert json.loads((tmp_path / "runs" / "h" / "scores.json").read_text())[0]["probe"] == BLANK.id
     # the CLI: score exits 1 on a failing label, and `backends` lists the three
     assert cli.main(["score", str(tmp_path / "runs" / "h")]) == 1

@@ -30,7 +30,7 @@ from roaddraft.document import viewmap
 from roaddraft.document.entities import Line, Polyline, Text, entity_distance
 from roaddraft.document.locate import resolve_entity
 from roaddraft.probes import fixture
-from roaddraft.probes.base import Probe, Result
+from roaddraft.probes.base import Probe, Result, Tally
 
 TOLERANCE_FT = 1.0
 
@@ -274,12 +274,11 @@ def _check_both_edges(baseline, submitted):
     right = targets(baseline, anchor={"kind": "offset", "offset": 12.0},
                     visible_on="C-101")
     one = aimed_at(baseline, submitted, left, "the left pavement edge on C-101")
-    if not one.passed:
-        return Result(False, "left edge: " + one.detail)
     two = aimed_at(baseline, submitted, right, "the right pavement edge on C-101")
-    if not two.passed:
-        return Result(False, "right edge: " + two.detail)
-    return Result(True, f"both edges: {one.detail}; {two.detail}")
+    tally = Tally()
+    tally.add("the left edge of pavement", None if one.passed else "left edge: " + one.detail)
+    tally.add("the right edge of pavement", None if two.passed else "right edge: " + two.detail)
+    return tally.result(f"both edges: {one.detail}; {two.detail}")
 
 
 def _solve_both_edges(session):
@@ -292,9 +291,10 @@ def _solve_both_edges(session):
 
 
 def _check_title_blocks(baseline, submitted):
-    missing = []
+    missing, items = [], []
     for sheet in submitted.doc.sheets.values():
         fields = sheet.title_block_fields or {}
+        before = len(missing)
         for key, value in TITLE_FIELDS.items():
             actual = str(fields.get(key, "")).strip()
             if key == "sheet_title":
@@ -302,10 +302,11 @@ def _check_title_blocks(baseline, submitted):
                     missing.append(f"{sheet.name}.{key} empty")
             elif actual.upper() != value.upper():
                 missing.append(f"{sheet.name}.{key}={actual!r} (wanted {value!r})")
+        items.append((f"{sheet.name}'s title block", len(missing) == before))
     if missing:
-        return Result(False, "; ".join(missing[:4]))
+        return Result(False, "; ".join(missing[:4]), items)
     return Result(True, f"all {len(submitted.doc.sheets)} title blocks carry the "
-                        f"project, sheet title and scale")
+                        f"project, sheet title and scale", items)
 
 
 def _solve_title_blocks(session):
