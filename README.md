@@ -896,6 +896,38 @@ python -m roaddraft.trajectories record --out benchmarks/trajectories/families/d
     --family draft-alignment --seeds 0-99
 ```
 
+### Score an agent — the eval harness (`roaddraft.eval`)
+
+The probes above say whether an agent *can* do a thing; the harness scores
+how well it drafts a whole task. An episode opens a task's starting document
+in a `Session`, hands the agent the task text and the tool definitions (the
+D1 whitelist, from the manifest), executes its tool calls on the session —
+every call a step against the budgets (150 steps, 8 consecutive faults, 20
+minutes; `run_check` 3 uses in the self-correct mode, none in single) — and
+when it submits, or a budget trips, verifies the document against the ground
+truth at the prompt level and writes one trajectory file: header, turns, the
+replayable journal, the verify report, the audit, the end record.
+
+```
+.venv/bin/python -m roaddraft.eval run --taskset d1-dev --agent oracle        # 50/50 = 100: the harness loses nothing
+.venv/bin/python -m roaddraft.eval run --taskset d1-dev --agent scripted --agent null --level vague
+.venv/bin/python -m roaddraft.eval taskset [--write]                           # the manifests: stale when the spec moved
+.venv/bin/python -m roaddraft.eval verify results/<run>/episodes/<episode>.jsonl   # re-score from the journal block
+.venv/bin/python -m roaddraft.eval human start --task D1-... --out /tmp/play   # a playtest: drawing + PROMPT.md
+.venv/bin/python -m roaddraft.eval human score /tmp/play                       # -> benchmarks/expert/<task_id>/
+```
+
+Four agents ship with E2: `oracle` replays the reference solution through the
+loop and scores 100 (the permanent test); `null` submits at once and scores 0;
+`scripted` drafts only layers, linework, stationing and the sheet (65 on a
+whole plan sheet, 38 over the mixed d1-dev set); `replay` runs any saved
+journal through the loop, which is how a human playtest or an old episode is
+re-scored. Task sets are manifests under `benchmarks/tasksets/`: `d1-dev`
+(seeds 1-50, every dial mixed), `d1-test` (seeds 1000-1099, held out,
+balanced over curves and equations), `d1-variance` (20 of `d1-test` for k = 5).
+Prompt level, mode and dialect are run dimensions. Runs go under `results/`
+(gitignored) and resume by skipping any episode file with an end record.
+
 ### Drive it as a human — GUI (PRD M3 thin viewer)
 
 ```bash
@@ -1169,6 +1201,11 @@ src/roaddraft/
   desktop/     the GUI in a window of its own (pywebview), its log and close guard
   tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
                ground truth, and the reference solution (python -m roaddraft.tasks)
+  verify/      the verifier: a deterministic 0-100 for a drafted task against
+               its ground truth (python -m roaddraft.verify)
+  eval/        the harness: the episode loop, budgets, the tool whitelist,
+               four non-LLM agents, trajectories, task sets, the runner
+               (python -m roaddraft.eval)
   probes/      capability probes (find, drafting, tier 2, tier 3), their fixture
                documents, the plotted-sheet reader and the notation parsers;
                l2/ builds Caltrans sheet L-2 (python -m roaddraft.probes)
@@ -1181,6 +1218,9 @@ examples/      demo_plan_sheet.py — a full sheet drafted from the design model
 benchmarks/    knowledge/ — reference standards behind the drafting spec (Caltrans PPM text + page index; see its README)
                probe_runs/ — real-model probe runs: writeups, rigs, traces and the documents scored (see its README)
                probe_references/ — every probe's scripted solution as a finished project: document, journal, PDF, DXF
+               tasksets/ — the d1-dev / d1-test / d1-variance manifests the harness runs (seed, dials, task id)
+               expert/ — human playtests: the saved drawing, its journal and verify report, the replayed episode
+results/       harness runs (gitignored): one trajectory file per episode, run.json, summary.json
 scripts/       build_knowledge.py — rebuilds the knowledge base from the raw PDFs
 ```
 
@@ -1189,10 +1229,11 @@ scripts/       build_knowledge.py — rebuilds the knowledge base from the raw P
 Phase 1 (the design model, anchored labels, LandXML, and the D1 task
 generator) is in. Still to come, on top of this bus:
 
-- **Verifier + eval harness (M2/M3)**: rubric scoring against the ground truth
-  (`roaddraft.verify`), the harness, and scored agent episodes — see
-  `RoadDraft_Eval_Plan.md`. Parked until an agent can draft and annotate from
-  natural language at all; MCP mode (above) is the front door for that.
+- **LLM agents and the leaderboard (E3, E4)**: the verifier (`roaddraft.verify`,
+  E1) and the harness (`roaddraft.eval`, E2: episode loop, budgets, whitelist,
+  oracle / null / scripted / replay agents, trajectories, task sets, runner) are
+  in; the provider-driven agent, the dialect skins, the report generator and the
+  published leaderboard are next — see `RoadDraft_Eval_Plan.md`.
 - **Spirals** (`"spiral"` is reserved and rejected everywhere), asymmetric
   vertical curves, **profile views** on sheets, station-offset labels, match
   lines and multi-sheet sets (D2/D3).
