@@ -22,10 +22,21 @@ tools are pre-approved (``default_tools_approval_mode = "approve"``);
 otherwise ``approval_policy = "never"`` refuses every call. ``--ephemeral``
 keeps the episodes out of the user's Codex history.
 
-Codex has no turn cap, so the runner counts tool calls as the stream arrives
-and stops the process past ``max_turns``; the budget is a wall clock, as for
-claude-code. Tool results reach the model under Codex's own output limit, not
-the runner's 30,000-character cap.
+Codex has no turn cap, so the runner counts the model's turns as the stream
+arrives and stops the process past ``max_turns``, the cap Claude Code's
+``--max-turns`` sets: a turn is one model response, however many tool calls
+it makes. Codex does not mark where a response ends, so the turns are told
+apart by structure and timing: text or reasoning after a tool result starts a
+new response (the model has to have read the result), and so does a tool call
+that arrives ``TURN_GAP`` seconds or more after the event before it -- the
+calls of one response come back to back, the next response waits on the
+model. A response quicker than that merges with the one before, so turns can
+be undercounted, never overcounted. (Counting tool calls instead cut
+GPT-6-Astra off on stationing on 2026-10-14 after 96 ``station_to_xy`` calls
+made at once: 122 calls, a handful of turns.) The budget is a wall clock, as
+for claude-code. Tool results reach the model under Codex's own output limit,
+not the runner's 30,000-character cap. Codex's own event stream is kept as
+``codex.jsonl``.
 
 The binary: ``--codex-bin``, ``$CODEX_BIN``, the copy inside the ChatGPT app,
 then ``codex`` on PATH. The app's copy comes first because it updates with
@@ -43,6 +54,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -60,6 +72,9 @@ DISABLED = ("shell_tool", "apps", "browser_use", "browser_use_external", "comput
 #: the extra messages Codex adds around the task, off
 QUIET = ("include_environment_context", "include_permissions_instructions",
          "include_apps_instructions", "include_collaboration_mode_instructions")
+
+#: seconds of quiet before a tool call that mark a new model response
+TURN_GAP = 0.2
 
 #: words in a failed turn that mean the account, not the model, stopped it
 LIMIT_WORDS = ("usage limit", "rate limit", "too many requests", "quota")
@@ -169,10 +184,12 @@ class CodexBackend(Backend):
         reader.start()
         stream = Stream(episode)
         try:
-            for line in proc.stdout:
-                stream.feed(line)
-                if stream.calls > self.options.max_turns:
-                    stop("max_turns")
+            with open(episode.folder / "codex.jsonl", "w") as raw:
+                for line in proc.stdout:
+                    raw.write(line)
+                    stream.feed(line)
+                    if stream.turns > self.options.max_turns:
+                        stop("max_turns")
             proc.wait()
         finally:
             if timer:
@@ -192,12 +209,14 @@ class CodexBackend(Backend):
 class Stream:
     """``codex exec --json``, event by event, into the transcript and the
     outcome. The transcript keeps the API backends' shape: an assistant
-    message gathers reasoning, text and the tool calls up to their results;
-    each result goes back as a ``tool_result`` block."""
+    message holds one model response -- reasoning, text and the tool calls it
+    made -- and the user message after it the results, as ``tool_result``
+    blocks. Where one response ends and the next begins is read from the
+    stream as the module docstring says."""
 
     UNFINISHED = "error: codex ended without finishing its turn"
 
-    def __init__(self, episode: Episode):
+    def __init__(self, episode: Episode, clock=time.monotonic):
         self.episode = episode
         self.calls = 0
         self.turns = 0
@@ -205,13 +224,35 @@ class Stream:
         self.stop = self.UNFINISHED
         self.usage: Dict[str, int] = {}
         self.extra: Dict[str, Any] = {}
+        self._clock = clock
+        self._last: Optional[float] = None          # when the previous item event arrived
+        self._started: set = set()                  # item ids seen starting
         self._assistant: Optional[dict] = None
+        self._results: List[dict] = []
+
+    def _flush(self) -> None:
+        if self._assistant is not None:
+            self.episode.log.append(self._assistant)
+            if self._results:
+                self.episode.log.append({"role": "user", "content": self._results})
+        self._assistant, self._results = None, []
+
+    def _open(self, kind: str) -> None:
+        """Model output arrived: a new response if it has to be one."""
+        now = self._clock()
+        gap = now - self._last if self._last is not None else None
+        new = (self._assistant is None
+               or (kind in ("reasoning", "agent_message") and bool(self._results))
+               or (gap is not None and gap >= TURN_GAP))
+        if new:
+            self._flush()
+            self._assistant = {"role": "assistant", "content": []}
+            self.turns += 1
+        self._last = now
 
     def _say(self, block: dict) -> None:
         if self._assistant is None:
-            self._assistant = {"role": "assistant", "content": []}
-            self.episode.log.append(self._assistant)
-            self.turns += 1
+            self._open(block.get("type", ""))
         self._assistant["content"].append(block)
 
     def feed(self, line: str) -> None:
@@ -225,8 +266,18 @@ class Stream:
         kind = event.get("type")
         if kind == "thread.started":
             self.extra["thread_id"] = event.get("thread_id")
+        elif kind == "item.started":
+            item = event.get("item") or {}
+            if item.get("type") not in (None, "error"):
+                self._started.add(item.get("id"))
+                self._open(item.get("type"))
         elif kind == "item.completed":
-            self.item(event.get("item") or {})
+            item = event.get("item") or {}
+            if item.get("type") not in (None, "error") and item.get("id") not in self._started:
+                self._open(item.get("type"))
+            else:
+                self._last = self._clock()
+            self.item(item)
         elif kind == "turn.completed":
             for key, value in (event.get("usage") or {}).items():
                 if isinstance(value, int):
@@ -261,10 +312,8 @@ class Stream:
                        if error else result_text(result))
             is_error = bool(error) or (isinstance(result, dict)
                                        and bool(result.get("is_error") or result.get("isError")))
-            self.episode.log.append({"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": call_id, "content": content,
-                 "is_error": is_error}]})
-            self._assistant = None
+            self._results.append({"type": "tool_result", "tool_use_id": call_id, "content": content,
+                                  "is_error": is_error})
         elif kind == "error":
             # a warning Codex reports as an item (fallback model metadata and the like)
             self.extra.setdefault("codex_warnings", []).append(item.get("message"))
@@ -272,9 +321,9 @@ class Stream:
             # a built-in Codex kept (apply_patch, view_image ...): on the record, not hidden
             self.calls += kind in ("file_change", "command_execution", "web_search")
             self._say({"type": "codex_item", "item": item})
-            self._assistant = None
 
     def outcome(self) -> Outcome:
+        self._flush()
         self.extra["tool_calls"] = self.calls
         return Outcome(stop=self.stop, final=self.final, turns=self.turns, usage=self.usage,
                        cost_usd=None, extra=self.extra)

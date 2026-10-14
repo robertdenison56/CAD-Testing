@@ -334,13 +334,16 @@ def test_claude_code_not_signed_in_is_an_error_not_a_crash(tmp_path):
 # ---------------------------------------------------------------- codex
 
 def fake_codex(tmp_path, lines, rc=0, stderr="", sleep=0.0):
-    """A stand-in ``codex``: prints the given --json lines and exits."""
+    """A stand-in ``codex``: prints the given --json lines and exits; a
+    ``{"__sleep__": s}`` among them pauses, the way a model turn does."""
     script = tmp_path / "codex"
     script.write_text("#!/usr/bin/env python3\nimport sys, json, time\n"
                       "if sys.argv[1:] == ['--version']: print('codex-cli 9.9.9'); sys.exit(0)\n"
                       f"open(sys.argv[0] + '.argv', 'w').write(json.dumps(sys.argv[1:]))\n"
                       f"sys.stderr.write({stderr!r})\n"
-                      f"for line in {[json.dumps(l) for l in lines]!r}: print(line, flush=True)\n"
+                      f"for line in {[json.dumps(l) for l in lines]!r}:\n"
+                      "    pause = json.loads(line).get('__sleep__')\n"
+                      "    time.sleep(pause) if pause else print(line, flush=True)\n"
                       f"time.sleep({sleep})\n"
                       f"sys.exit({rc})\n")
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
@@ -403,8 +406,9 @@ def test_codex_stream_becomes_the_transcript(tmp_path):
     stream = CodexStream(e)
     stream.feed(json.dumps({"type": "item.completed", "item": refused}))
     stream.feed(json.dumps({"type": "turn.failed", "error": {"message": "You've hit your usage limit."}}))
+    limited = stream.outcome()
     assert log[-1]["content"][0]["is_error"] and log[-1]["content"][0]["content"] == "[tool error] requires approval"
-    assert stream.outcome().stop.startswith("error: account limit")
+    assert limited.stop.startswith("error: account limit")
 
 
 def test_codex_runs_the_cli_and_leaves_the_run_folder(tmp_path):
@@ -421,9 +425,16 @@ def test_codex_runs_the_cli_and_leaves_the_run_folder(tmp_path):
 
 
 def test_codex_stops_past_the_turn_cap_and_the_budget(tmp_path):
-    many = [CODEX_STREAM[0]] + [CODEX_CALL] * 5
+    # five responses, a pause before each: past a cap of three turns
+    many = [CODEX_STREAM[0]] + [{"__sleep__": 0.3}, CODEX_CALL] * 5
     capped = CodexBackend(Options(model="m", max_turns=3), codex_bin=str(fake_codex(tmp_path, many, sleep=30)))
     assert run_probe(capped, tmp_path / "a" / BLANK.id, BLANK, SERVER)["stop"] == "max_turns"
+    # fifty calls made at once are one turn, not fifty (GPT-6-Astra, stationing, 2026-10-14)
+    burst = [CODEX_STREAM[0]] + [CODEX_CALL] * 50 + [{"__sleep__": 0.3}] + CODEX_STREAM[-2:]
+    wide = CodexBackend(Options(model="m", max_turns=3), codex_bin=str(fake_codex(tmp_path, burst)))
+    meta = run_probe(wide, tmp_path / "w" / BLANK.id, BLANK, SERVER)
+    assert meta["stop"] == "answered" and meta["tool_calls"] == 50 and meta["turns"] == 2
+    assert (tmp_path / "w" / BLANK.id / "codex.jsonl").read_text().count("mcp_tool_call") == 50
     slow = CodexBackend(Options(model="m", budget=1), codex_bin=str(fake_codex(tmp_path, [], sleep=30)))
     assert run_probe(slow, tmp_path / "b" / BLANK.id, BLANK, SERVER)["stop"] == "budget"
     broken = CodexBackend(Options(model="m"),
