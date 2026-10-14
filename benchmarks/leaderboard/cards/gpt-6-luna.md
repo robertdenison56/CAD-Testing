@@ -9,39 +9,43 @@
 | runner | runners · codex (Codex headless) |
 | run folder | `2026-10-12-k3`, labels `gpt6-luna-r1`, `gpt6-luna-r2`, `gpt6-luna-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
-| standing | not ranked yet: k = 3 on 15 of 33 probes |
-| engine commit | `555bf496a8` (48) |
+| standing | not ranked yet: k = 3 on 32 of 33 probes |
+| engine commit | `555bf496a8` (99) |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**90.2%** pass rate, 95% CI [78.4, 100.0]: 43 of 48 attempts that count, on 17 of 33 probes.
+**66.7%** pass rate, 95% CI [52.5, 80.8]: 66 of 98 attempts that count, on 33 of 33 probes (1 excluded).
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 43/48 (90%) | — | — | 43/48 |
+| passed | 46/51 (90%) | 9/17 (50%) | 11/30 (37%) | 66/98 |
 
-By attempt: gpt6-luna-r1 13/15, gpt6-luna-r2 14/17, gpt6-luna-r3 16/16. Of the 17 probes attempted, 13 pass every time, 0 never pass (hard-fail rate 0%), 4 split.
+By attempt: gpt6-luna-r1 22/33, gpt6-luna-r2 21/33, gpt6-luna-r3 23/32. Of the 33 probes attempted, 16 pass every time, 6 never pass (hard-fail rate 18%), 11 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 4.2% (11 of 265 calls) | faulted calls over calls, from the traces |
-| fault recovery | 10 of 11 faults (91%) | a fault followed within three calls by a successful call of the same tool |
-| repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
-| query before compute | 10 of 48 episodes that changed the drawing asked a design query first; 0.6 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
-| steps | 5.5 calls, 6.6 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 21 s per episode, 0.3 h in all | the runner's clock, episode start to report |
-| tokens | 168k in, 0.7k out per episode | input counts cache reads and writes |
+| invalid-call rate | 4.9% (56 of 1,141 calls) | faulted calls over calls, from the traces |
+| fault recovery | 41 of 56 faults (73%) | a fault followed within three calls by a successful call of the same tool |
+| repeated-fault loops | 0 episodes; longest run 3 | the same fault five or more times in a row |
+| query before compute | 42 of 97 episodes that changed the drawing asked a design query first; 2.3 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| report fidelity | 19 of 32 failed episodes' reports said the task was done (57 claims the check contradicts); 1 of 61 claims of no errors came over a faulted trace; 0 of 125 cited ids never existed; 1 passing episodes' reports conceded a shortfall | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
+| steps | 11.6 calls, 12.7 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 22 s per episode, 0.6 h in all | the runner's clock, episode start to report |
+| tokens | 266k in, 1.0k out per episode | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a local model |
-| render use | 11 renders in 10 episodes; 3 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
+| render use | 48 renders in 37 episodes; 20 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| scope completion | 320 of 447 items (72%) in 74 episodes of the 25 probes that ask for more than one thing; 47 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
-Stops: answered 48.
+Stops: answered 98, error: Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting 1.
+
+Excluded, ended by the infrastructure:
+
+- `gpt6-luna-r3/draft-fix-the-drawing: error: Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting`
 
 ## Every probe
 
@@ -64,21 +68,21 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | draft-edges-shoulders | T1 | P · P | 5.7 | 0 | gpt6-luna-r2: the left edge of pavement: 189 of 189 check points have no linework within 0.5 ft; the worst is [2733.12, 1058.13], 6.00 ft from the nearest |
 | draft-turn-lane | T1 | P · P | 9.7 | 0 | gpt6-luna-r2: the full-width edge, 24 ft right: 25 of 25 check points have no linework within 0.5 ft; the worst is [3521.52, 1281.87], 12.00 ft from the nearest |
 | draft-cul-de-sac | T1 | · P P | 8.3 | 3 | gpt6-luna-r1: the left edge inside the bulb: linework runs through [2986.00, 2360.23] (10 of 10 check points), where there should be none |
-| draft-building | T1 | P P | 3.5 | 1 |  |
-| draft-roadway | T1 | P | 9.0 | 0 |  |
-| sheet-set-callouts | T2 | — | | | |
-| station-callouts | T2 | — | | | |
-| clean-callouts | T2 | — | | | |
-| draft-intersection-corner | T2 | — | | | |
-| draft-fix-the-drawing | T2 | — | | | |
-| draft-roadway-sheets | T2 | — | | | |
-| line-data | T3 | — | | | |
-| curve-points | T3 | — | | | |
-| curve-data | T3 | — | | | |
-| stationing | T3 | — | | | |
-| width-dims | T3 | — | | | |
-| row-data | T3 | — | | | |
-| equation-data | T3 | — | | | |
-| qa-alignment-data | T3 | — | | | |
-| l2-match-lines | T3 | — | | | |
-| l2-alignment-data | T3 | — | | | |
+| draft-building | T1 | P P P | 4.0 | 1 |  |
+| draft-roadway | T1 | P P P | 8.3 | 0 |  |
+| sheet-set-callouts | T2 | P P · | 30.7 | 0 | gpt6-luna-r3: C-101: title block: sheet_number='C-101' (wanted 1 or '1 of 3') |
+| station-callouts | T2 | · P P | 46.0 | 1 | gpt6-luna-r1: 5 of 15 stations have no leader on them: 21+00, 22+00, 23+00, 24+00, 25+00 |
+| clean-callouts | T2 | · · · | 12.3 | 1 | gpt6-luna-r1: the leaders of 'EDGE OF PAVEMENT' and 'SR-100' cross |
+| draft-intersection-corner | T2 | P P P | 6.3 | 0 |  |
+| draft-fix-the-drawing | T2 | · · X | 6.5 | 0 | gpt6-luna-r1: the right edge of pavement at 12 ft: 49 of 189 check points have no linework within 0.5 ft; the worst is [3707.83, 1356.63], 1.00 ft from the nearest |
+| draft-roadway-sheets | T2 | P P · | 10.3 | 0 | gpt6-luna-r3: the viewport (1.5, 1.5, 32.5, 20.5) in runs outside the sheet's drawing area (0.5, 1.75, 33.5, 21.5) |
+| line-data | T3 | · · · | 10.0 | 0 | gpt6-luna-r1: T-1 on C-101: no lettering gives N 90°00'00" E 1405.27'; nearest lettering: 'N 90°00\'00" E' |
+| curve-points | T3 | P P P | 15.0 | 16 |  |
+| curve-data | T3 | P · · | 22.3 | 2 | gpt6-luna-r2: C-101 has no bubble numbered 1 on its curve |
+| stationing | T3 | · · P | 28.3 | 3 | gpt6-luna-r1: no tick at 26+00 |
+| width-dims | T3 | P P · | 20.7 | 1 | gpt6-luna-r3: the right shoulder (8') is not dimensioned across the road at 17+00 |
+| row-data | T3 | · · P | 13.7 | 0 | gpt6-luna-r1: no L1/C1 tags on C-102 |
+| equation-data | T3 | P P P | 13.0 | 3 |  |
+| qa-alignment-data | T3 | · · · | 11.7 | 2 | gpt6-luna-r1: the BC at 24+05.27 on C-101: no lettering reads 24+05.27 BC |
+| l2-match-lines | T3 | · · · | 10.3 | 1 | gpt6-luna-r1: the match line at 574+50.00 reaches -40 ft to 40 ft from the centerline; it should run at least 40 ft past it on both sides |
+| l2-alignment-data | T3 | · · · | 30.0 | 15 | gpt6-luna-r1: the PCC at 588+34.95: '588+34.95 EC' letters 588+34.95 as EC; it is the PCC |

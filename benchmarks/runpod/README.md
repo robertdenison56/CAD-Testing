@@ -93,6 +93,31 @@ and write the block size into this file next to the run. The worker's `VLLM_EXTR
 `vllm serve` if a flag ever has to be forced. A bf16 recurrent-state cache (`--mamba-ssm-cache-dtype bfloat16`)
 would halve the block but is a precision change and is not needed for this workload; leave it.
 
+## Run record: 2026-10-14, the k = 3 campaign row
+
+Robert's go on Oct 13 ("run Qwen 3.5 9B"). Smoke probe `edge-c102` first, as label `qwen3.5-9b-bf16-vllm-r1` in
+`benchmarks/probe_runs/2026-10-12-k3`, then the three repeats as three parallel processes (r1 skipping the probe it
+had). Worker `1rfpvxo1y90v5d`, one A40 in CA-MTL-1, image `b7212acc6`, vLLM v0.31.0.
+
+| checked on the first probe | measured |
+|---|---|
+| cold start | container start 04:23:34 UTC, `Application startup complete` 04:28:44: **5 min 7 s** (weights 3.3 s to load from cache, model load 28 s and 17.65 GiB, engine init 188 s of which 21 s compilation) |
+| prefix caching on this hybrid | `Mamba cache mode is set to 'align' for Qwen3_5ForConditionalGeneration by default when prefix caching is enabled` |
+| block size | `Setting attention block size to 528 tokens to ensure that attention page size is >= mamba page size` (mamba page padded 0.76%); `kv lcm block sizes 528` |
+| KV cache | 677,872 tokens on the A40: maximum concurrency 10.34x at 65,536 tokens per request, so the three repeats share one worker |
+| throughput | prompt 4,023 tokens/s on the first (cold-cache) turn; generation 20 to 28 tokens/s; prefix-cache hit rate 49% -> 73% -> 79% across the first probe's turns |
+| the smoke probe | PASS: 5 calls, 0 faults, 6 turns, 367 s wall clock including the cold start; 247k input tokens counted (the schema resent each turn; cached server-side), 1,130 output of which 588 reasoning |
+| streaming | tool-call deltas and the usage chunk came through the OpenAI route as the runner expects; no retries, no truncated results |
+
+A note in the vLLM log worth knowing: the chat template is system-first, so vLLM merges any inline system
+messages into the leading system prompt; the runner sends one system message, so nothing is merged.
+
+**The campaign's bill.** 99 episodes plus the smoke probe and two reruns, 21:29 to 01:45 PDT on one A40 worker
+(the three repeats shared it): 1,689 turns served, 14 failed on the proxy side (two of them ended episodes: a
+connection reset and the 570-second limit on one streamed turn; rerun). `list-serverless-billing` for the week:
+GPU $4.19, disk $0.03, **$4.22**; the balance read $94.65 at the end, $5.35 down, the difference the billing
+bucket's lag. The estimate was $6 to $10.
+
 ## Cost and teardown
 
 Nothing bills while no worker runs (min workers 0). A worker bills per second from start until it stops,

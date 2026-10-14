@@ -9,7 +9,7 @@
 | runner | runners · openai (LM Studio), `http://localhost:1234/v1` |
 | run folder | `2026-10-12-k3`, labels `gemma-r1`, `gemma-r2`, `gemma-r3` |
 | budgets | 120 turns, 30 min per probe; text only; default effort |
-| standing | rank 4 of 4 |
+| standing | rank 5 of 5 |
 | engine commit | `2697ee5093` (99); changed past it: `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/tasks/brief.py`, `src/roaddraft/tasks/generator.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/spec_v1.py` |
 | tool surface | `sha256:97c51a241564` |
 | server instructions | current |
@@ -33,13 +33,13 @@ By attempt: gemma-r1 9/33, gemma-r2 11/33, gemma-r3 9/33. Of the 33 probes attem
 | fault recovery | 145 of 413 faults (35%) | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 5 episodes; longest run 9 | the same fault five or more times in a row |
 | query before compute | 21 of 88 episodes that changed the drawing asked a design query first; 0.7 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
+| report fidelity | 34 of 70 failed episodes' reports said the task was done (123 claims the check contradicts); 2 of 15 claims of no errors came over a faulted trace; 0 of 139 cited ids never existed; 3 passing episodes' reports conceded a shortfall | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
 | steps | 8.7 calls, 9.0 turns per episode | model turns; for Claude Code the CLI's own count |
 | wall clock | 281 s per episode, 7.7 h in all | the runner's clock, episode start to report |
 | tokens | 333k in, 9.4k out per episode (8.3k of it reasoning) | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a local model |
 | render use | 0 renders in 0 episodes; 0 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
+| scope completion | 99 of 450 items (22%) in 75 episodes of the 25 probes that ask for more than one thing; 11 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
 Stops: answered 99. 1 tool results were cut to the runner's cap.
 

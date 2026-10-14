@@ -1,11 +1,11 @@
-# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B, Fable 5.1
+# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B, Fable 5.1, Qwen3.5-9B
 
 The probe set changed on 2026-10-12 (commit `2697ee5`: the engine's labelers default to the Plans Preparation
 Manual's lettering, the probe fixtures sit on Caltrans named levels, the checks read the Caltrans station digit;
 probe set `sha256:2fce3b5c1c75`), so every row on the board had to be rerun. This folder holds the reruns; each
 model's repeats go under `runs/<model>-r1..r3`. Haiku 4.5 ran first, Sonnet 5.5 next, Gemma 4 E4B overnight
 through LM Studio; Fable 5.1 waited for the account's weekly Fable window to reset and ran its three repeats one per
-5-hour window on Oct 13.
+5-hour window on Oct 13. Qwen3.5-9B ran overnight Oct 13 to 14 on the Runpod serverless endpoint (bf16 on vLLM).
 
 **Rig.** The same as `2026-10-08-k3`: `python -m roaddraft.runners run --backend claude-code` on the standalone
 CLI (2.1.296) signed in to claude.ai, so a subscription, no API key. One `roaddraft-mcp` per probe, started by
@@ -178,13 +178,75 @@ cap is part of the rig (keep $3, and the board stands as generated) or a spend g
 and record the reruns here). The 15-minute budget and 120 turns are the capability limits and stay as they
 are either way. Recommended: the spend guard. The cap measures the account's price list, not the model.
 
+## Qwen3.5-9B (bf16, vLLM on Runpod): 17, 14, 16 of 33
+
+Robert's go on Oct 13 ("run Qwen 3.5 9B"). The endpoint set up on Oct 9 (`benchmarks/runpod/README.md`:
+`Qwen/Qwen3.5-9B` at bf16 on vLLM v0.31.0, context 65,536, prefix caching on, the model card's sampling sent with
+every request) on one A40 in Montreal; `--backend openai --budget 30`, 120 turns, renders replaced by a note.
+A smoke probe first (`edge-c102`, passed, 367 s including a 5 min 7 s cold start), then the three repeats as three
+parallel processes sharing the one worker, 21:29 to 01:45 PDT (190, 235 and 222 minutes of episode time). The
+label carries `bf16-vllm` so the row cannot be read as the deleted Q4_K_M LM Studio rows.
+
+| set | r1 | r2 | r3 | Qwen3.5-9B Q4_K_M, local, earlier rigs |
+|---|---|---|---|---|
+| the 17 (9 find, 8 draft) | 13 | 14 | 13 | 11 of 17 on Sep 29 (shell bridge) |
+| Tier 2 (6) | 2 | 0 | 1 | 0 of 6 on Oct 4 |
+| Tier 3 batch A (4) | 1 | 0 | 1 | not run |
+| Tier 3 batches B and C (6) | 1 | 0 | 1 | 0 of 6 on Oct 7 |
+| **all 33** | **17** | **14** | **16** | 14 of 33 on the Oct 9 r1 (deleted) |
+
+Twelve probes pass every time, twelve fail every time, nine split. The twelve that always pass are the nine
+find probes less `pc-by-station`, plus `title-blocks`, four of the drafting probes (tangent, PI curve,
+bearing-distance, roadway) and nothing above Tier 1 except what the splits give.
+
+| probe | r1 r2 r3 | what a failing repeat left on disk (the first one) |
+|---|---|---|
+| pc-by-station | . P P | no leader, so nothing points at the PC |
+| draft-edges-shoulders | . P . | nothing drawn for the left edge of pavement (3 turns) |
+| draft-turn-lane | . . . | the 120 ft taper has no linework on 23 of 26 check points |
+| draft-cul-de-sac | . B B | the left edge up to the bulb not drawn; r2 and r3 ran out the 30 minutes |
+| draft-building | P B . | r2: nothing drawn in 33 minutes; r3: the footprint wrong |
+| sheet-set-callouts | . . . | the title block's sheet number reads `C-101`, not `1` (the same miss Haiku made on Oct 8) |
+| station-callouts | P B . | 7 of 15 stations have no leader; r2 filled the context at 55 turns |
+| clean-callouts | P . . | the right-edge-of-shoulder leader lands on nothing |
+| draft-intersection-corner | B . . | the curb return not drawn; r1 ran out the budget at 21 turns |
+| draft-fix-the-drawing, draft-roadway-sheets | . . . / . . P | the 12 ft edge not redrawn; the left edge of pavement 5 ft off |
+| line-data | B . . | T-1's lettering at 90° where the line runs at 0°: the azimuth typed as the rotation; r1 filled the context at 72 turns |
+| curve-points, curve-data, qa-alignment-data | . . P / . B . / . . . | no `24+05.27 BC` lettering; no bubble numbered 1 |
+| stationing | P . . | nothing added to C-102 |
+| width-dims, row-data, equation-data | . . . / B . . / P . P | the left shoulder not dimensioned; no L1/C1 tags (context full at 17 turns); the equation not lettered |
+| l2-match-lines, l2-alignment-data | . B . / . . . | no match line at 574+50; no tangent data |
+
+**Measures (99 episodes).** 90 answered, 4 stopped by the 30-minute budget, 5 by a full 65k context
+(`stop: length`). 1,668 tool calls (16.8 per episode), 112 faulted: **6.7% invalid**, between Haiku and Gemma;
+three results cut at the 30,000-character cap. 79.0M input tokens counted (the schema resent every turn, served
+from the prefix cache), 900k output of which 766k reasoning: the model thinks about five times as much as it
+says. Its commonest faults are a guessed NCS layer (`V-ANNO-TEXT` does not exist, six times: the fixtures sit on
+Caltrans levels now), callouts and labels asked to anchor on an alignment the sheet file does not own (eight
+times), stationing asked to draw on a sheet (five), and creating an alignment that already exists (four).
+
+**Infrastructure.** Two r3 episodes ended on the client side rather than the model's: `draft-turn-lane` on a
+connection reset at 11 minutes and `draft-intersection-corner` on Runpod's 570-second limit for one streamed
+turn at 20 minutes. Both were rerun with `--force` after the repeats finished (both answered, both fail on the
+drawing; the errored attempts' metadata is in `run-qwen-r3.log`). The endpoint served 1,689 turns with 14
+failed on the proxy side across the night. Cost: **$4.22 billed to the endpoint** (GPU $4.19 at $1.22/h on the
+A40, disk $0.03), $5.35 off the balance at the time of reading, against the $6 to $10 estimate; nothing bills
+once the worker scales to zero.
+
+Against the local Q4_K_M rows this is the same model told the same things with a 65k context it could use:
+the Tier 1 score rises from 11 to 13-14 of 17, and Tier 2 and 3 move off zero only on the splits. Not
+comparable row to row (precision, engine, probe set all differ); the direction is the point.
+
 ## Still to run in this folder
 
-- The seven `--force` reruns above, if the cap is raised: `sheet-set-callouts` in r1, r2, r3; `line-data` and
+- The seven Fable `--force` reruns, if the cap is raised: `sheet-set-callouts` in r1, r2, r3; `line-data` and
   `curve-data` in r1 and r2. About $30 at list price, one 5-hour window.
 
     python -m roaddraft.runners run --backend claude-code --model claude-haiku-4-5 --claude-bin ~/.local/bin/claude \
         --out benchmarks/probe_runs/2026-10-12-k3 --label haiku-r1 --budget 15 --max-budget-usd 3   # and r2, r3; sonnet-r1..r3 with --model claude-sonnet-5-5; fable-r1..r3 with --model claude-fable-5-1
+    python -m roaddraft.runners run --backend openai --model Qwen/Qwen3.5-9B --base-url https://api.runpod.ai/v2/zee0sos76mivwk/openai/v1 \
+        --api-key-env RUNPOD_API_KEY --extra-body '{"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}' \
+        --out benchmarks/probe_runs/2026-10-12-k3 --label qwen3.5-9b-bf16-vllm-r1 --budget 30   # and r2, r3
     python -m roaddraft.runners run --backend openai --model google/gemma-4-e4b --base-url http://localhost:1234/v1 \
         --lms-context 65536 --out benchmarks/probe_runs/2026-10-12-k3 --label gemma --repeat 3 --budget 30
     python -m roaddraft.runners score benchmarks/probe_runs/2026-10-12-k3/runs/haiku-r1          # scores.json beside it

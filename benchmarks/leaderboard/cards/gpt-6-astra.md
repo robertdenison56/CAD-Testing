@@ -9,39 +9,39 @@
 | runner | runners · codex (Codex headless) |
 | run folder | `2026-10-12-k3`, labels `gpt6-astra-med-r1`, `gpt6-astra-med-r2`, `gpt6-astra-med-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
-| standing | not ranked yet: k = 3 on 10 of 33 probes |
-| engine commit | `555bf496a8` (31) |
+| standing | not ranked yet: k = 3 on 11 of 33 probes |
+| engine commit | `555bf496a8` (45) |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**100.0%** pass rate, 95% CI [100.0, 100.0]: 31 of 31 attempts that count, on 11 of 33 probes.
+**100.0%** pass rate, 95% CI [100.0, 100.0]: 45 of 45 attempts that count, on 21 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 31/31 (100%) | — | — | 31/31 |
+| passed | 41/41 (100%) | 4/4 (100%) | — | 45/45 |
 
-By attempt: gpt6-astra-med-r1 10/10, gpt6-astra-med-r2 11/11, gpt6-astra-med-r3 10/10. Of the 11 probes attempted, 11 pass every time, 0 never pass (hard-fail rate 0%), 0 split.
+By attempt: gpt6-astra-med-r1 21/21, gpt6-astra-med-r2 13/13, gpt6-astra-med-r3 11/11. Of the 21 probes attempted, 21 pass every time, 0 never pass (hard-fail rate 0%), 0 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 0.0% (0 of 209 calls) | faulted calls over calls, from the traces |
+| invalid-call rate | 0.0% (0 of 403 calls) | faulted calls over calls, from the traces |
 | fault recovery | 0 of 0 faults | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 0 episodes; longest run 0 | the same fault five or more times in a row |
-| query before compute | 6 of 31 episodes that changed the drawing asked a design query first; 0.2 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
-| steps | 6.7 calls, 7.7 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 32 s per episode, 0.3 h in all | the runner's clock, episode start to report |
-| tokens | 135k in, 0.6k out per episode | input counts cache reads and writes |
+| query before compute | 8 of 45 episodes that changed the drawing asked a design query first; 1.3 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| report fidelity | no failed episode to contradict a report; 0 of 45 claims of no errors came over a faulted trace; 0 of 38 cited ids never existed | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
+| steps | 9.0 calls, 10.0 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 32 s per episode, 0.4 h in all | the runner's clock, episode start to report |
+| tokens | 140k in, 0.6k out per episode | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a local model |
-| render use | 61 renders in 31 episodes; 24 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
+| render use | 80 renders in 45 episodes; 27 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| scope completion | 92 of 92 items (100%) in 23 episodes of the 13 probes that ask for more than one thing; 23 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
-Stops: answered 31.
+Stops: answered 45.
 
 ## Every probe
 
@@ -59,17 +59,17 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | edge-c102-paper | T1 | P P P | 6.0 | 0 |  |
 | sta-offset-c101-paper | T1 | P P P | 7.0 | 0 |  |
 | draft-tangent-ne | T1 | P P P | 6.0 | 0 |  |
-| draft-pi-curve | T1 | P | 5.0 | 0 |  |
-| draft-bearing-distance | T1 | — | | | |
-| draft-edges-shoulders | T1 | — | | | |
-| draft-turn-lane | T1 | — | | | |
-| draft-cul-de-sac | T1 | — | | | |
-| draft-building | T1 | — | | | |
-| draft-roadway | T1 | — | | | |
-| sheet-set-callouts | T2 | — | | | |
-| station-callouts | T2 | — | | | |
-| clean-callouts | T2 | — | | | |
-| draft-intersection-corner | T2 | — | | | |
+| draft-pi-curve | T1 | P P P | 5.0 | 0 |  |
+| draft-bearing-distance | T1 | P P | 6.0 | 0 |  |
+| draft-edges-shoulders | T1 | P P | 11.0 | 0 |  |
+| draft-turn-lane | T1 | P | 7.0 | 0 |  |
+| draft-cul-de-sac | T1 | P | 11.0 | 0 |  |
+| draft-building | T1 | P | 6.0 | 0 |  |
+| draft-roadway | T1 | P | 9.0 | 0 |  |
+| sheet-set-callouts | T2 | P | 31.0 | 0 |  |
+| station-callouts | T2 | P | 69.0 | 0 |  |
+| clean-callouts | T2 | P | 9.0 | 0 |  |
+| draft-intersection-corner | T2 | P | 8.0 | 0 |  |
 | draft-fix-the-drawing | T2 | — | | | |
 | draft-roadway-sheets | T2 | — | | | |
 | line-data | T3 | — | | | |

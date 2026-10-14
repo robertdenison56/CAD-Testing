@@ -9,7 +9,7 @@
 | runner | runners · claude-code (Claude Code headless) |
 | run folder | `2026-10-12-k3`, labels `sonnet-r1`, `sonnet-r2`, `sonnet-r3` |
 | budgets | 120 turns, 15 min per probe; text only; default effort |
-| standing | rank 1 of 4 |
+| standing | rank 1 of 5 |
 | engine commit | `2697ee5093` (99); changed past it: `src/roaddraft/tasks/brief.py`, `src/roaddraft/tasks/generator.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/spec_v1.py` |
 | tool surface | `sha256:97c51a241564` |
 | server instructions | current |
@@ -33,13 +33,13 @@ By attempt: sonnet-r1 32/33, sonnet-r2 32/33, sonnet-r3 31/33. Of the 33 probes 
 | fault recovery | 12 of 18 faults (67%) | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
 | query before compute | 37 of 99 episodes that changed the drawing asked a design query first; 1.4 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
+| report fidelity | 0 of 4 failed episodes' reports said the task was done; 0 of 66 claims of no errors came over a faulted trace; 0 of 528 cited ids never existed; 16 passing episodes' reports conceded a shortfall | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
 | steps | 9.1 calls, 10.2 turns per episode | model turns; for Claude Code the CLI's own count |
 | wall clock | 22 s per episode, 0.6 h in all | the runner's clock, episode start to report |
 | tokens | 291k in, 2.2k out per episode | input counts cache reads and writes |
 | cost | $0.10 per episode, $9.60 in all | the CLI's own figure at list price, billed to a subscription |
 | render use | 39 renders in 30 episodes; 11 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
+| scope completion | 441 of 450 items (98%) in 75 episodes of the 25 probes that ask for more than one thing; 72 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
 Stops: answered 99.
 

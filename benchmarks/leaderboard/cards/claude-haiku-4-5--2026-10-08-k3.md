@@ -33,13 +33,13 @@ By attempt: haiku-r1 13/21, haiku-r2 12/21, haiku-r3 10/21. Of the 21 probes att
 | fault recovery | 20 of 107 faults (19%) | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 4 episodes; longest run 16 | the same fault five or more times in a row |
 | query before compute | 37 of 63 episodes that changed the drawing asked a design query first; 3.3 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | not computed | needs a claim extractor; each episode's `report.txt` is kept beside its document |
+| report fidelity | 24 of 28 failed episodes' reports said the task was done (138 claims the check contradicts); 5 of 43 claims of no errors came over a faulted trace; 0 of 219 cited ids never existed | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
 | steps | 20.8 calls, 21.8 turns per episode | model turns; for Claude Code the CLI's own count |
 | wall clock | 70 s per episode, 1.2 h in all | the runner's clock, episode start to report |
 | tokens | 374k in, 6.4k out per episode | input counts cache reads and writes |
 | cost | $0.11 per episode, $6.97 in all | the CLI's own figure at list price, billed to a subscription |
 | render use | 142 renders in 63 episodes; 23 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | not computed | the probe checks report pass or fail, not items done of items asked |
+| scope completion | 137 of 291 items (47%) in 42 episodes of the 14 probes that ask for more than one thing; 17 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
 Stops: answered 99.
 
