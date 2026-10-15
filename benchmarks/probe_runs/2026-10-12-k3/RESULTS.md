@@ -305,6 +305,15 @@ separated. 31 probes pass every time. `draft-roadway-sheets` r1 lettered none of
 `l2-alignment-data` failed all three, setting the tangent data level on the sheet where the line runs at 5.03°
 (the turned viewport every model has missed); nothing else failed.
 
+**`view_rotation`, read from the traces.** The surface these rows ran on (`sha256:20fe0603`) gives `place_label`
+and `annotate_stationing` a `view_rotation`: the twist of the viewport the labels are read through, so they letter
+upright on that sheet. Sonnet's and Haiku's surface (`97c51a`) has no such argument, but the difference did not
+carry Astra: it never passed `view_rotation` in any of its 1,942 calls, and neither did Fable. Luna passed it 35
+times in three episodes, 15 `place_label` calls at −6.457° in r1 `l2-alignment-data` and 0° (no turn) in r2
+`curve-points` and r3 `stationing`. It was not the deciding step either way: Luna lettered both turned tangents
+in r1 (with it) and in r2 (without it) and still failed on the PCC, the CURVE DATA table and the bubbles, while
+Astra's three `l2-alignment-data` failures all missed the two tangents and, in r2 and r3, nothing else.
+
 **Measures, Luna (99 episodes).** 99 answered. 1,149 tool calls (11.6 per episode), 57 faulted: **5.0%
 invalid**, between Haiku and Qwen; 74% of faults recovered within three calls. 22 seconds per episode, 0.6 h in
 all, as quick as Haiku. 266k input tokens per episode (cache reads included), 1k output. Report
