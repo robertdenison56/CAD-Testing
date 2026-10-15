@@ -29,7 +29,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from PIL import Image as PILImage, ImageFilter
 from openpyxl.utils import get_column_letter
 
 from roaddraft.probes import prompting
@@ -49,6 +51,13 @@ REAL_CATALOG = Path("benchmarks/real_tasks/catalog.json")
 DIALS = [(curves, eq) for curves in (1, 2, 3) for eq in (False, True)]
 WEIGHTS = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
 RENDER_DPI = 100
+#: the pictures pasted into the workbook: each sheet's render with its lines thickened
+#: (a 1-px line vanishes when a plot is shrunk), THUMB_PX wide per sheet, shown
+#: THUMB_SHOW_PX high in the cell (the full renders stay linked beside them)
+THUMB_PX = 640
+THUMB_LINE = 3
+THUMB_QUALITY = 80
+THUMB_SHOW_PX = 240
 
 FONT = "Arial"
 HEAD_FILL = PatternFill("solid", start_color="1F3864")
@@ -81,6 +90,49 @@ class Link:
         self.text, self.target = text, target
 
 
+class Img:
+    """A cell that shows a picture (a JPEG beside the task's files)."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        with PILImage.open(path) as im:
+            w, h = im.size
+        self.height = THUMB_SHOW_PX
+        self.width = int(round(THUMB_SHOW_PX * w / h))
+
+
+def thumbnail(folder: Path, prefix: str) -> Optional[Path]:
+    """``thumb-<prefix>.jpg`` in ``folder``: every ``<prefix>-*.png`` there (one per
+    sheet, or the model), side by side, lines thickened and shrunk to THUMB_PX
+    wide each; None when there is no render."""
+    pngs = sorted(folder.glob(f"{prefix}-*.png"))
+    if not pngs:
+        return None
+    parts = []
+    for png in pngs:
+        im = PILImage.open(png).convert("L").filter(ImageFilter.MinFilter(THUMB_LINE))
+        im.thumbnail((THUMB_PX, THUMB_PX), PILImage.LANCZOS)
+        parts.append(im)
+    h = max(im.height for im in parts)
+    sheet = PILImage.new("L", (sum(im.width for im in parts) + 8 * (len(parts) - 1), h), 255)
+    x = 0
+    for im in parts:
+        sheet.paste(im, (x, 0))
+        x += im.width + 8
+    out = folder / f"thumb-{prefix}.jpg"
+    sheet.save(out, "JPEG", quality=THUMB_QUALITY, optimize=True)
+    return out
+
+
+def _pictures(folder: Path, pngs: Dict[str, Optional[str]]) -> List[object]:
+    """The start and finished pictures for a task's row (text when there is none)."""
+    out = []
+    for prefix, missing in (("start", "(nothing drawn yet)"), ("finished", "")):
+        thumb = thumbnail(folder, prefix) if pngs.get(prefix) else None
+        out.append(Img(thumb) if thumb else missing)
+    return out
+
+
 def _table(ws, headers, widths, rows, wrap_cols=()):
     for j, (h, w) in enumerate(zip(headers, widths), start=1):
         c = ws.cell(row=1, column=j, value=h)
@@ -93,6 +145,17 @@ def _table(ws, headers, widths, rows, wrap_cols=()):
         height = 1
         for j, value in enumerate(row, start=1):
             c = ws.cell(row=i, column=j)
+            if isinstance(value, Img):
+                pic = XLImage(str(value.path))
+                pic.width, pic.height = value.width, value.height
+                ws.add_image(pic, c.coordinate)
+                # the column and row grow to hold it (Excel: ~7 px per width unit,
+                # 0.75 pt per px)
+                col = ws.column_dimensions[get_column_letter(j)]
+                col.width = max(col.width or 0, value.width / 7.0 + 2)
+                height = max(height, (value.height * 0.75 + 2) / 13.5)
+                c.border = BORDER
+                continue
             if isinstance(value, Link):
                 c.value = value.text
                 c.hyperlink = value.target
@@ -143,7 +206,7 @@ def _render(session, folder: Path, prefix: str, sheets: List[dict]) -> Optional[
         if result["ok"]:
             first = first or name
             done = True
-    if not done and session.doc.model_entities:
+    if not done and (session.doc.model_entities or session.doc.references):
         name = f"{prefix}-model.png"
         result = session.query("render_model", {"dpi": RENDER_DPI, "path": str(folder / name)})
         if result["ok"]:
@@ -151,9 +214,34 @@ def _render(session, folder: Path, prefix: str, sheets: List[dict]) -> Optional[
     return first
 
 
+def _existing(task: Task, folder: Path) -> Optional[Dict[str, Optional[str]]]:
+    """The PNG names of a task folder already written for this very task, or None."""
+    try:
+        if json.loads((folder / "brief.json").read_text())["task_id"] != task.task_id:
+            return None
+    except (OSError, ValueError, KeyError):
+        return None
+    if not (folder / "finished.rdoc.json").exists():
+        return None
+    first = lambda prefix: next((p.name for p in sorted(folder.glob(f"{prefix}-*.png"))), None)
+    return {"start": first("start"), "finished": first("finished")}
+
+
+#: reuse task folders already written for the same task id (``--reuse-files``)
+REUSE = False
+
+
 def write_task_files(task: Task, folder: Path) -> Dict[str, Optional[str]]:
     """Write a task's files into ``folder``; returns the PNG names for the
-    starting and finished states (None when there is nothing to plot)."""
+    starting and finished states (None when there is nothing to plot).  With
+    ``REUSE``, a folder already holding this task's files is kept as it is."""
+    if REUSE:
+        done = _existing(task, folder)
+        if done is not None:
+            if done["start"] is None:  # a start with no sheet: its model and references
+                start = session_for_task(task, out_dir=folder)
+                done["start"] = _render(start, folder, "start", task.brief.deliverable["sheets"])
+            return done
     if folder.exists():
         shutil.rmtree(folder)
     folder.mkdir(parents=True)
@@ -189,10 +277,10 @@ def d1_rows(seeds, tasks_dir: Optional[Path], workbook_dir: Path):
                                          sheets=sheets)
                 except ValueError as why:  # a seed this type cannot be made from
                     rows.append([ttype.name, sheets, seed, "", ttype.summary, _given(ttype), "",
-                                 "", "", "", "", f"(no task: {why})", "", "", "", ""])
+                                 "", "", "", "", f"(no task: {why})", "", "", "", "", "", ""])
                     continue
                 b, t = task.brief, task.truth
-                links = ["", "", ""]
+                links = ["", "", "", "", ""]
                 if tasks_dir is not None:
                     folder = tasks_dir / ttype.name / f"{sheets}-sheet" / f"seed-{seed}"
                     pngs = write_task_files(task, folder)
@@ -202,7 +290,7 @@ def d1_rows(seeds, tasks_dir: Optional[Path], workbook_dir: Path):
                              Link("start", f"{uri}/{pngs['start']}") if pngs["start"]
                              else "(nothing drawn yet)",
                              Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"]
-                             else ""]
+                             else "", *_pictures(folder, pngs)]
                 rows.append([
                     ttype.name, sheets, seed, b.task_id, ttype.summary, _given(ttype),
                     ", ".join(t.scope), ", ".join(graded), sum(WEIGHTS[c] for c in graded),
@@ -263,7 +351,7 @@ def real_rows(catalog: dict, tasks_dir: Optional[Path], workbook_dir: Path):
         graded = checks_in_scope(ttype.asks, list(WEIGHTS))
         D = task.brief.deliverable
         src = D["source"]
-        links = ["", "", ""]
+        links = ["", "", "", "", ""]
         if tasks_dir is not None:
             folder = (tasks_dir / "real" / t["agency"] / t["sheet_id"]
                       / ("whole-sheet" if t.get("per_sheet") else t["alignment"].replace(" ", "-"))
@@ -273,7 +361,8 @@ def real_rows(catalog: dict, tasks_dir: Optional[Path], workbook_dir: Path):
             uri = folder.resolve().as_uri()
             links = [Link(rel + "/", uri + "/"),
                      Link("start", f"{uri}/{pngs['start']}") if pngs["start"] else "",
-                     Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"] else ""]
+                     Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"] else "",
+                     *_pictures(folder, pngs)]
         rows.append([
             src["agency_name"], t["sheet_id"], t["sheet"], src["family"],
             f"1\" = {D['feet_per_inch']:g}'", t["twist_deg"],
@@ -299,7 +388,12 @@ def main(argv=None) -> int:
     ap.add_argument("--seeds", default="1-6", help="D1 seeds per task type and sheet count")
     ap.add_argument("--no-files", action="store_true",
                     help="prompts only; do not write the task files or link to them")
+    ap.add_argument("--reuse-files", action="store_true",
+                    help="keep task folders already written for the same task id (renders "
+                         "and all), only re-making the pictures")
     ns = ap.parse_args(argv)
+    global REUSE
+    REUSE = ns.reuse_files
     seeds = list(_seeds(ns.seeds))
     out = Path(ns.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -324,9 +418,11 @@ def main(argv=None) -> int:
                      f"{seeds[0]}-{seeds[-1]}. Each task has an EXPLICIT prompt (the standards it "
                      "touches spelled out, graded exactly) and a VAGUE prompt (the request in a "
                      "sentence; unstated conventions graded leniently). The gap between the two "
-                     "scores, paired by task, is the prompt-gap metric. The last three columns "
-                     "link to the task's files: its folder, a PNG of what the drafter starts with, "
-                     "and a PNG of the reference solution's finished sheet."),
+                     "scores, paired by task, is the prompt-gap metric. Files, Start and "
+                     "Finished link to the task's folder and full-size renders of what the "
+                     "drafter starts with and of the reference solution's finished sheet; the "
+                     "last two columns show those two renders as pictures (both sheets side by "
+                     "side on a two-sheet task). Click a picture and enlarge it to read it."),
         ("Task files", f"{TASKS_ROOT}/<type>/<n>-sheet/seed-<n>/: brief.json, "
                        "truth.json, start.rdoc.json (the starting document; any base drawing "
                        "beside it), finished.rdoc.json and reference.journal.jsonl (the reference "
@@ -382,16 +478,17 @@ def main(argv=None) -> int:
     ws = wb.create_sheet("D1 tasks")
     _table(ws, ["Type", "Sheets", "Seed", "Task ID", "What it asks", "Starts with",
                 "Graded groups", "Checks graded", "Points", "Curves", "Station equation",
-                "EXPLICIT prompt", "VAGUE prompt", "Files", "Start", "Finished"],
-           [15, 7, 6, 24, 30, 36, 28, 30, 7, 7, 12, 95, 40, 8, 8, 9],
+                "EXPLICIT prompt", "VAGUE prompt", "Files", "Start", "Finished",
+                "Start (picture)", "Finished (picture)"],
+           [15, 7, 6, 24, 30, 36, 28, 30, 7, 7, 12, 95, 40, 8, 8, 9, 12, 12],
            d1_rows(seeds, tasks_dir, out.parent), wrap_cols=(5, 6, 7, 8, 12, 13))
 
     ws = wb.create_sheet("Real-sheet tasks")
     _table(ws, ["Agency", "Sample sheet", "Sheet", "Kind", "Scale", "Twist °", "Alignment",
                 "Other alignments", "Type", "Task ID", "Graded groups", "Checks graded",
                 "Points", "Tangents", "Curves", "Labels", "EXPLICIT prompt", "VAGUE prompt",
-                "Files", "Start", "Finished"],
-           [16, 22, 9, 12, 9, 8, 10, 18, 18, 24, 28, 30, 7, 8, 7, 7, 95, 40, 8, 8, 9],
+                "Files", "Start", "Finished", "Start (picture)", "Finished (picture)"],
+           [16, 22, 9, 12, 9, 8, 10, 18, 18, 24, 28, 30, 7, 8, 7, 7, 95, 40, 8, 8, 9, 12, 12],
            real_rows(real, tasks_dir, out.parent), wrap_cols=(8, 11, 12, 17, 18))
 
     ws = wb.create_sheet("D1 rules")
