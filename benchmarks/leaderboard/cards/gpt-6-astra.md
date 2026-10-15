@@ -9,39 +9,39 @@
 | runner | runners · codex (Codex headless) |
 | run folder | `2026-10-12-k3`, labels `gpt6-astra-med-r1`, `gpt6-astra-med-r2`, `gpt6-astra-med-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
-| standing | not ranked yet: k = 3 on 26 of 33 probes |
-| engine commit | `442800d133` (25), `555bf496a8` (67) |
+| standing | rank 1 of 7 |
+| engine commit | `442800d133` (32), `555bf496a8` (67) |
 | tool surface | `sha256:20fe06035283` |
-| server instructions | 92 of 92 episodes differ from the current server's |
+| server instructions | 99 of 99 episodes differ from the current server's |
 | task prompts | current |
 
 ## Score
 
-**96.0%** pass rate, 95% CI [87.9, 100.0]: 89 of 92 attempts that count, on 33 of 33 probes.
+**96.0%** pass rate, 95% CI [87.9, 100.0]: 95 of 99 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 51/51 (100%) | 17/18 (94%) | 21/23 (90%) | 89/92 |
+| passed | 51/51 (100%) | 17/18 (94%) | 27/30 (90%) | 95/99 |
 
-By attempt: gpt6-astra-med-r1 31/33, gpt6-astra-med-r2 32/33, gpt6-astra-med-r3 26/26. Of the 33 probes attempted, 31 pass every time, 1 never pass (hard-fail rate 3%), 1 split.
+By attempt: gpt6-astra-med-r1 31/33, gpt6-astra-med-r2 32/33, gpt6-astra-med-r3 32/33. Of the 33 probes attempted, 31 pass every time, 1 never pass (hard-fail rate 3%), 1 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 0.4% (6 of 1,675 calls) | faulted calls over calls, from the traces |
-| fault recovery | 2 of 6 faults (33%) | a fault followed within three calls by a successful call of the same tool |
+| invalid-call rate | 0.4% (8 of 1,942 calls) | faulted calls over calls, from the traces |
+| fault recovery | 3 of 8 faults (38%) | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
-| query before compute | 38 of 92 episodes that changed the drawing asked a design query first; 5.8 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | 3 of 3 failed episodes' reports said the task was done (10 claims the check contradicts); 0 of 84 claims of no errors came over a faulted trace; 0 of 120 cited ids never existed; 1 passing episodes' reports conceded a shortfall | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
-| steps | 18.2 calls, 12.2 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 38 s per episode, 1.0 h in all | the runner's clock, episode start to report |
-| tokens | 197k in, 0.9k out per episode | input counts cache reads and writes |
+| query before compute | 45 of 99 episodes that changed the drawing asked a design query first; 6.8 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| report fidelity | 4 of 4 failed episodes' reports said the task was done (12 claims the check contradicts); 0 of 89 claims of no errors came over a faulted trace; 0 of 131 cited ids never existed; 2 passing episodes' reports conceded a shortfall | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
+| steps | 19.6 calls, 11.8 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 39 s per episode, 1.1 h in all | the runner's clock, episode start to report |
+| tokens | 201k in, 0.9k out per episode | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a ChatGPT subscription, which reports none |
-| render use | 196 renders in 92 episodes; 63 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | 384 of 394 items (97%) in 68 episodes of the 25 probes that ask for more than one thing; 65 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
+| render use | 215 renders in 99 episodes; 71 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| scope completion | 438 of 450 items (97%) in 75 episodes of the 25 probes that ask for more than one thing; 71 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
-Stops: answered 92.
+Stops: answered 99.
 
 ## Every probe
 
@@ -75,10 +75,10 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | line-data | T3 | P P P | 23.0 | 0 |  |
 | curve-points | T3 | P P P | 29.0 | 0 |  |
 | curve-data | T3 | P P P | 35.3 | 0 |  |
-| stationing | T3 | P P | 135.5 | 2 |  |
-| width-dims | T3 | P P | 22.0 | 0 |  |
-| row-data | T3 | P P | 13.5 | 0 |  |
-| equation-data | T3 | P P | 17.0 | 0 |  |
-| qa-alignment-data | T3 | P P | 21.5 | 0 |  |
-| l2-match-lines | T3 | P P | 13.0 | 0 |  |
-| l2-alignment-data | T3 | · · | 50.0 | 1 | gpt6-astra-med-r1: the tangent 576+16.93 to 578+47.69: 'N 78°30\'50" E / 230.76\'' runs at 0.00° on the sheet; the line runs at 5.03° there |
+| stationing | T3 | P P P | 135.3 | 3 |  |
+| width-dims | T3 | P P P | 22.0 | 0 |  |
+| row-data | T3 | P P P | 12.0 | 0 |  |
+| equation-data | T3 | P P P | 17.7 | 0 |  |
+| qa-alignment-data | T3 | P P P | 22.0 | 0 |  |
+| l2-match-lines | T3 | P P P | 14.0 | 0 |  |
+| l2-alignment-data | T3 | · · · | 47.7 | 2 | gpt6-astra-med-r1: the tangent 576+16.93 to 578+47.69: 'N 78°30\'50" E / 230.76\'' runs at 0.00° on the sheet; the line runs at 5.03° there |

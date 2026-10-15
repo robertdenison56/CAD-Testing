@@ -9,7 +9,7 @@
 | runner | runners · codex (Codex headless) |
 | run folder | `2026-10-12-k3`, labels `gpt6-luna-r1`, `gpt6-luna-r2`, `gpt6-luna-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
-| standing | rank 4 of 6 |
+| standing | rank 5 of 7 |
 | engine commit | `442800d133` (1), `555bf496a8` (98) |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | 99 of 99 episodes differ from the current server's |
