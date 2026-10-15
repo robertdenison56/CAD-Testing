@@ -369,7 +369,8 @@ def _order_key(doc: Document, name: str):
         if found is None:
             raise CommandFault(f"no alignment {name!r} to order the segments along",
                                hint=f"alignments: {list(doc.design.alignments) or 'none'}; a "
-                                    f"referenced one is 'DESIGN:SR-100'")
+                                    f"referenced one goes as list_alignments with include_references=true "
+                                    f"names it, e.g. 'BASE:RTE-7'")
         align, placement = found
         to_base = placement.to_base
 

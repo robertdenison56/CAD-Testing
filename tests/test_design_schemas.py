@@ -85,8 +85,10 @@ def test_label_kinds_literal_13_values():
 # --- fragment shapes pinned by the spec preamble ----------------------------
 
 def test_fragments_match_spec_preamble():
+    # the spec's example stations and offsets were the probe fixture's; since
+    # 2026-10-14 the help text uses its own (tests/test_help_text.py)
     assert ds.STATION == {"type": ["number", "string"],
-                          "description": "display station: feet (1600) or '16+00.00'"}
+                          "description": "display station: feet (8400) or '84+00.00'"}
     assert ds.PI_ITEM == {"type": "array", "items": ds.NUM, "minItems": 2, "maxItems": 3,
                           "description": "[x, y] or [x, y, radius]"}
     assert ds.PVI_ITEM == {"type": "array", "items": ds.NUM, "minItems": 2, "maxItems": 3,
@@ -100,7 +102,7 @@ def test_fragments_match_spec_preamble():
     assert set(ds.ELEMENT["properties"]) == {"kind", "start", "end", "pc", "pt", "center",
                                              "radius", "direction"}
     assert ds.ANCHOR["type"] == ["string", "number", "object"]
-    assert "PC-1@16" in ds.ANCHOR["description"]
+    assert "PC-2@18" in ds.ANCHOR["description"]
     assert ds.ROTATION == {"enum": ["along", "perpendicular", "horizontal"]}
     assert ds.SIDE["enum"] == ["left", "right", "above", "below"]
 

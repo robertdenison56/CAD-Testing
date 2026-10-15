@@ -117,13 +117,13 @@ def _alignment(doc: Document, p: dict, key: str = "alignment",
 
 def _display_station(value, what: str = "begin_station") -> float:
     if isinstance(value, bool):
-        raise CommandFault(f"{what} must be a number or '12+34.56'")
+        raise CommandFault(f"{what} must be a number or '84+27.93'")
     if isinstance(value, str):
         try:
             return float(parse_station(value))
         except ValueError:
             raise CommandFault(f"cannot parse {what} {value!r}",
-                               hint="use feet (1600) or station notation '16+00.00'")
+                               hint="use feet (8400) or station notation '84+00.00'")
     return float(value)
 
 

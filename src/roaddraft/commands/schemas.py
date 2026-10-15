@@ -22,7 +22,7 @@ STR = {"type": "string"}
 NSTR = {"type": "string", "minLength": 1}
 SPACE = {"type": "string", "minLength": 1,
          "description": "'model' (design space, US survey feet) or a sheet id/name "
-                        "(paper space, inches), e.g. 'SH-001' or 'C-101'"}
+                        "(paper space, inches), e.g. 'SH-004' or 'P-201'"}
 IDS = {"type": "array", "items": NSTR, "minItems": 1, "description": "entity ids"}
 SCALAR = {"type": ["string", "number", "boolean"]}
 LINETYPE = {"type": "string", "enum": list(LINETYPES)}
@@ -49,12 +49,12 @@ ANGLE_TEXT = {"type": ["number", "string"],
               "description": "degrees as a number, or DMS text: 40°30'15\", 40-30-15"}
 DIRECTION_PROPS = {
     "bearing": {"type": "string",
-                "description": "quadrant bearing: N 45°30'15\" E, S45-30-15W, N45E"},
+                "description": "quadrant bearing: N 47°30'15\" E, S47-30-15W, N47E"},
     "azimuth": {**ANGLE_TEXT, "description": "degrees clockwise from north, 0-360 (a "
                                              "number or DMS text)"},
     "deflection": {**ANGLE_TEXT,
                    "description": "the angle turned from the previous course, with its side: "
-                                  "'40 L', '25°00'00\" RT', or a number with right "
+                                  "'33 L', '18°30'00\" RT', or a number with right "
                                   "(clockwise) positive; or its size with turn"},
     "turn": {"type": "string", "enum": ["left", "right", "L", "R"],
              "description": "which way a deflection or a curve turns"},
@@ -68,8 +68,8 @@ COURSE = {
                    "deflection, angle_right) and distance. Curve: radius, turn and one of "
                    "delta, length or chord; it continues the previous course's direction "
                    "unless chord_bearing places it (a non-tangent curve). Or the course as "
-                   "text: \"N 45°30'15\\\" E 250\", \"AZ 75.5 250\", \"40 L 700\", "
-                   "\"CURVE R=500 LEFT DELTA=40\"",
+                   "text: \"N 47°30'15\\\" E 250\", \"AZ 75.5 250\", \"33 L 820\", "
+                   "\"CURVE R=450 LEFT DELTA=33\"",
     "properties": {
         **DIRECTION_PROPS,
         "distance": {**POS, "description": "length of a straight course (feet in model)"},
@@ -175,7 +175,7 @@ SCHEMAS = {
          "target_entity": {**NSTR,
                            "description": "what to point at, by id (find_entities and "
                                           "hit_test return them; reference elements are "
-                                          "'DESIGN:LN-004'). The engine computes a point "
+                                          "'BASE:LN-017'). The engine computes a point "
                                           "on it, so a curve is aimed at correctly. On a "
                                           "sheet it may be a model or referenced entity: "
                                           "the tip lands where the viewport shows it. "
@@ -188,13 +188,13 @@ SCHEMAS = {
                                "so mid is always a point the reader can see"},
          "target_anchor": {**ANCHOR,
                            "description": "a station, offset or named point of an "
-                                          "alignment to point at: '586+57.73@20.83L', "
-                                          "'PC-1', {station, offset}. There is no "
+                                          "alignment to point at: '87+41.62@19.75L', "
+                                          "'PC-2', {station, offset}. There is no "
                                           "entity at a station, so this is how a "
                                           "station-and-offset callout is aimed"},
          "alignment": {**NSTR,
                        "description": "the alignment target_anchor is on; a referenced "
-                                      "one is 'DESIGN:SR-100' (read, not owned -- the "
+                                      "one is 'BASE:RTE-7' (read, not owned -- the "
                                       "callout carries no anchor). Defaults to the "
                                       "document's only alignment"},
          "viewport": {**NSTR,
@@ -312,7 +312,7 @@ SCHEMAS = {
         {"ids": {**IDS,
                  "description": "what to copy parallel: one line, polyline, arc or circle, or "
                                 "several that join end to end (in order along them), offset "
-                                "together as one path. Reference elements ('DESIGN:LN-004') "
+                                "together as one path. Reference elements ('BASE:LN-017') "
                                 "may be copied into this document"},
          "distance": {**POS, "description": "how far, with side or toward"},
          "side": {"type": "string", "enum": ["left", "right"],
@@ -325,8 +325,8 @@ SCHEMAS = {
                                              "distance is measured square to the path"},
          "offsets": {"type": "array", "minItems": 1, "items": {"type": ["number", "string"]},
                      "description": "several parallels at once, right of the path's "
-                                    "direction positive ('12L', '12R' say the side): "
-                                    "[-12, 12] is both edges of a 24 ft pavement"},
+                                    "direction positive ('15L', '15R' say the side): "
+                                    "[-15, 15] is both edges of a 30 ft pavement"},
          "join": {"type": "string", "enum": ["sharp", "round"],
                   "description": "outside corners: sharp extends the pieces to meet (default), "
                                  "round swings an arc about the corner"},
@@ -374,7 +374,7 @@ SCHEMAS = {
         ["id", "changes"]),
     "delete_entities": obj({"ids": IDS}, ["ids"]),
     "create_sheet": obj(
-        {"name": {**NSTR, "description": "sheet name, e.g. 'C-101'"},
+        {"name": {**NSTR, "description": "sheet name, e.g. 'P-201'"},
          "size": {"type": "string", "enum": sorted(SHEET_SIZES)},
          "width_in": POS, "height_in": POS,
          "title_block_template": {
@@ -437,8 +437,8 @@ SCHEMAS = {
          "lettering": {"enum": ["caltrans", "full"],
                        "description": "alignment mode: 'caltrans' (default) letters the "
                                       "whole station number at each 500 ft and the ones "
-                                      "digit elsewhere (30, 1, 2, ... 35); 'full' letters "
-                                      "every station 26+00.00"},
+                                      "digit elsewhere (85, 6, 7, ... 90); 'full' letters "
+                                      "every station 86+00.00"},
          "station_side": {"enum": ["below", "above", "left", "right"],
                           "description": "alignment mode: where the station numbers go; "
                                          "default below the line"},
@@ -577,7 +577,7 @@ SCHEMAS = {
 }
 
 EXAMPLES = {
-    "set_meta": {"updates": {"project_name": "SR 100 Resurfacing",
+    "set_meta": {"updates": {"project_name": "RTE 7 Resurfacing",
                              "description": "Demo project"}},
     "create_layer": {"name": "align_MAIN", "color": "black", "linetype": "continuous",
                      "lineweight_mm": 0.35, "description": "Roadway centerline"},
@@ -588,60 +588,60 @@ EXAMPLES = {
     "define_block": {"name": "MONUMENT", "base_point": [0, 0], "entities": [
         {"type": "circle", "center": [0, 0], "radius": 0.5},
         {"type": "line", "start": [-0.5, 0], "end": [0.5, 0]}]},
-    "draw_line": {"space": "model", "start": [1000.0, 1000.0], "end": [1600.0, 1000.0],
+    "draw_line": {"space": "model", "start": [4100.0, 7300.0], "end": [4700.0, 7300.0],
                   "layer": "V-ALIGN-CNTR"},
     "draw_polyline": {"space": "model",
                       "vertices": [[0, 0], [100, 0], [100, 50]], "closed": False},
-    "draw_arc": {"space": "model", "center": [1600.0, 1800.0], "radius": 800.0,
+    "draw_arc": {"space": "model", "center": [4700.0, 8100.0], "radius": 800.0,
                  "start_angle_deg": -90.0, "end_angle_deg": -60.0},
-    "draw_circle": {"space": "model", "center": [1250.0, 980.0], "radius": 24.0},
-    "place_callout": {"space": "model", "target_entity": "DESIGN:LN-004", "at": "mid",
-                      "position": [1200.0, 900.0], "content": "EP 12' RT",
+    "draw_circle": {"space": "model", "center": [4350.0, 7280.0], "radius": 24.0},
+    "place_callout": {"space": "model", "target_entity": "BASE:LN-017", "at": "mid",
+                      "position": [4300.0, 7200.0], "content": "EP 15' RT",
                       "layer": "V-ANNO-TEXT"},
-    "place_text": {"space": "SH-001", "position": [17.0, 20.5],
+    "place_text": {"space": "SH-004", "position": [17.0, 20.5],
                    "content": "ROADWAY PLAN", "height": 0.25, "halign": "center"},
     "place_dimension": {"space": "model", "kind": "linear", "from_entity": "LN-002",
-                        "to_entity": "LN-003", "line_point": [1250.0, 880.0],
+                        "to_entity": "LN-003", "line_point": [4350.0, 7180.0],
                         "layer": "V-ANNO-DIMS"},
-    "draw_traverse": {"space": "model", "start": [1000.0, 3000.0],
-                      "legs": [{"bearing": "S 80°00'00\" E", "distance": 800.0},
-                               {"deflection": "40 L", "distance": 700.0},
-                               "N 85°00'00\" E 600"],
+    "draw_traverse": {"space": "model", "start": [4100.0, 7300.0],
+                      "legs": [{"bearing": "S 76°15'00\" E", "distance": 650.0},
+                               {"deflection": "33 L", "distance": 820.0},
+                               "N 71°45'00\" E 540"],
                       "layer": "V-SURV-LINE"},
-    "offset_entity": {"ids": ["LN-001"], "distance": 12.0, "side": "right",
+    "offset_entity": {"ids": ["LN-001"], "distance": 15.0, "side": "right",
                       "layer": "V-ROAD-EOP"},
     "fillet": {"ids": ["LN-001", "LN-002"], "radius": 50.0},
-    "insert_block": {"space": "SH-001", "block_name": "NORTH_ARROW",
+    "insert_block": {"space": "SH-004", "block_name": "NORTH_ARROW",
                      "position": [31.5, 19.0], "scale": 1.0},
-    "place_table": {"space": "SH-001", "position": [26.0, 8.0], "title": "CURVE DATA",
+    "place_table": {"space": "SH-004", "position": [26.0, 8.0], "title": "CURVE DATA",
                     "columns": [{"header": "CURVE", "width": 1.0},
                                 {"header": "R", "width": 1.2}],
-                    "rows": [["C-1", "800.00'"]], "text_height": 0.12},
+                    "rows": [["C-1", "450.00'"]], "text_height": 0.12},
     "move_entities": {"ids": ["TX-001"], "delta": [0.5, 0.0]},
-    "modify_entity": {"id": "TX-001", "changes": {"content": "STA 12+00",
+    "modify_entity": {"id": "TX-001", "changes": {"content": "STA 84+00",
                                                   "height": 0.15}},
     "delete_entities": {"ids": ["LN-004", "TX-002"]},
-    "create_sheet": {"name": "C-101", "size": "ANSI_D",
+    "create_sheet": {"name": "P-201", "size": "ANSI_D",
                      "title_block_fields": {"sheet_title": "ROADWAY PLAN"}},
-    "delete_sheet": {"sheet": "C-101"},
-    "create_viewport": {"sheet": "C-101", "center_paper": [17.0, 12.0],
+    "delete_sheet": {"sheet": "P-201"},
+    "create_viewport": {"sheet": "P-201", "center_paper": [17.0, 12.0],
                         "width_in": 31.0, "height_in": 18.0,
-                        "model_center": [1700.0, 1150.0], "feet_per_inch": 50.0,
+                        "model_center": [4800.0, 7450.0], "feet_per_inch": 50.0,
                         "rotation_deg": 0.0},
-    "modify_viewport": {"sheet": "C-101", "viewport_id": "VP-001",
+    "modify_viewport": {"sheet": "P-201", "viewport_id": "VP-001",
                         "changes": {"feet_per_inch": 40.0}},
-    "delete_viewport": {"sheet": "C-101", "viewport_id": "VP-001"},
-    "fill_title_block": {"sheet": "C-101", "fields": {
-        "project": "SR 100 RESURFACING", "sheet_title": "ROADWAY PLAN",
-        "sheet_number": "C-101", "scale": "1\" = 50'"}},
+    "delete_viewport": {"sheet": "P-201", "viewport_id": "VP-001"},
+    "fill_title_block": {"sheet": "P-201", "fields": {
+        "project": "RTE 7 RESURFACING", "sheet_title": "ROADWAY PLAN",
+        "sheet_number": "P-201", "scale": "1\" = 50'"}},
     "annotate_stationing": {"space": "model", "path_ids": ["LN-001", "AR-001"],
-                            "begin_station": 1000.0, "interval": 100},
+                            "begin_station": 8000.0, "interval": 100},
     "attach_reference": {"name": "SURVEY", "path": "survey_base.rdraft",
                          "space": "model"},
     "detach_reference": {"name": "SURVEY"},
     "modify_reference": {"name": "SURVEY", "changes": {
         "levels_off": ["V-SURV-TOPO"], "symbology": {"gray": True},
-        "clip": [[900, 800], [2600, 800], [2600, 1100], [900, 1100]]}},
+        "clip": [[4000, 7100], [5700, 7100], [5700, 7400], [4000, 7400]]}},
     "reload_references": {},
     "set_annotation_scale": {"scale": "1\"=50'"},
     "add_annotation_scale": {"scale": 25, "name": "1\"=25'"},

@@ -256,7 +256,7 @@ REGISTRY: List[CommandSpec] = [
     CommandSpec("rotate_entities",
                 "Rotate entities about a base point by an angle (degrees counter-clockwise), or "
                 "turn one direction onto another -- 'turn the building so this side runs "
-                "N 30°00'00\" E' (AutoCAD ROTATE Reference, MicroStation Rotate). copy=true "
+                "N 34°15'00\" E' (AutoCAD ROTATE Reference, MicroStation Rotate). copy=true "
                 "rotates a copy.",
                 mh.rotate_entities, {"c3d": ["ROTATE", "RO"], "ord": ["rotate element"]}),
     CommandSpec("mirror_entities",
@@ -303,7 +303,7 @@ REGISTRY: List[CommandSpec] = [
                 "begin_station): walk connected line/polyline/arc entities. "
                 "Design mode (alignment=NAME): use the alignment's true stations "
                 "and equations and anchor every tick and label. Either way it "
-                "draws perpendicular ticks at the interval, '12+34.56' labels "
+                "draws perpendicular ticks at the interval, '84+27.93' labels "
                 "rotated along the path, and BC/EC/PCC/PRC labels at the curve "
                 "points.",
                 h.annotate_stationing,
@@ -322,9 +322,9 @@ REGISTRY: List[CommandSpec] = [
                 "([x, y] at BEGIN/END, [x, y, R] interior), from bearings and distances "
                 "(start + legs: each leg a bearing, azimuth or deflection and the distance "
                 "to the next PI, with the radius of the curve at the PI it starts from), "
-                "or from CoordGeom elements; optional begin station (display, '10+00') and "
-                "station equations. x is the easting and y the northing, so N 5000, E 2000 "
-                "is [2000, 5000]. Given legs, the engine computes the PIs -- no "
+                "or from CoordGeom elements; optional begin station (display, '80+00') and "
+                "station equations. x is the easting and y the northing, so N 7300, E 4100 "
+                "is [4100, 7300]. Given legs, the engine computes the PIs -- no "
                 "trigonometry by hand -- and get_design_data kind=tangents reads the "
                 "bearings and lengths back. Alignments are pure design data: "
                 "draw_alignment puts linework in model space, annotate_stationing/"
@@ -357,8 +357,8 @@ REGISTRY: List[CommandSpec] = [
     CommandSpec("draw_offset",
                 "Draw constant offsets of an alignment as anchored lines and arcs: "
                 "pavement edges, shoulders, right of way. Offsets are feet, right of "
-                "the direction of stationing positive ('12L' says the side out loud), "
-                "so a 24 ft pavement is offsets [-12, 12]. Tangents shift sideways; "
+                "the direction of stationing positive ('15L' says the side out loud), "
+                "so a 30 ft pavement is offsets [-15, 15]. Tangents shift sideways; "
                 "curves keep their center and change radius, so the chain meets end to "
                 "end exactly. station_range draws only part of the chain, which is how "
                 "an edge or a curb line stops short of an intersection and picks up "
@@ -368,16 +368,16 @@ REGISTRY: List[CommandSpec] = [
                  "ord": ["single offset entire element", "offset element"]}),
     CommandSpec("draw_station_offset",
                 "Draw linework through station-and-offset points of an alignment "
-                "('30+00@12R', 'PC-1@12L', 'END@14R') -- Civil 3D's transparent station-offset "
+                "('82+00@15R', 'PC-2@15L', 'END@18R') -- Civil 3D's transparent station-offset "
                 "('SO) with no coordinates worked out by hand. Where consecutive points share "
                 "an offset the run follows the alignment exactly (arcs on its curves, anchored "
                 "like draw_offset); where the offset changes it is a straight taper. A turn "
-                "lane is one call: ['30+00@12R', '31+20@24R', '36+00@24R', '36+00@12R'].",
+                "lane is one call: ['82+00@15R', '82+90@26R', '86+50@26R', '86+50@15R'].",
                 ch.draw_station_offset, {"c3d": ["SO", "LINEBYSTATIONOFFSET"],
                                          "ord": ["place line by station offset"]}),
     CommandSpec("place_label",
                 "Place a design-anchored label: name a point on an alignment "
-                "(PC-1, T-2, '18+00@25L', ...) and a kind (station, pc, pt, pi, "
+                "(PC-2, T-3, '86+50@25L', ...) and a kind (station, pc, pt, pi, "
                 "mc, bearing, equation, curve_data, custom...); content, side, "
                 "offset, and rotation follow drafting convention unless "
                 "overridden. Works in model space or on a sheet through a "

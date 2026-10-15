@@ -12,7 +12,7 @@
 | standing | rank 1 of 6 |
 | engine commit | `2697ee5093` (99); changed past it: `src/roaddraft/tasks/brief.py`, `src/roaddraft/tasks/generator.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/spec_v1.py` |
 | tool surface | `sha256:97c51a241564` |
-| server instructions | current |
+| server instructions | 99 of 99 episodes differ from the current server's |
 | task prompts | current |
 
 ## Score

@@ -36,7 +36,7 @@ def test_quadrant_bearings_read_as_azimuths(text, azimuth):
 def test_a_bearing_past_90_degrees_or_out_of_order_is_refused_with_a_hint():
     with pytest.raises(CogoError) as e:
         cogo.parse_quadrant_bearing("N 100 E")
-    assert "at most 90" in str(e.value) and "S 80 E" in e.value.hint
+    assert "at most 90" in str(e.value) and "other quadrant" in e.value.hint
     with pytest.raises(CogoError):
         cogo.parse_quadrant_bearing("E 45 N")
     with pytest.raises(CogoError) as e:

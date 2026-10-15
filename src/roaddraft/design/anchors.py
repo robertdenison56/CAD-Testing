@@ -31,8 +31,8 @@ from roaddraft.design.angles import right_normal
 from roaddraft.design.errors import DesignError
 from roaddraft.design.horizontal import Alignment, CurveElement, TangentElement
 
-GRAMMAR_HINT = ("anchor = BEGIN | END | PI-n | PC-n | PT-n | MC-n | T-n | EQ-n | '18+00.00' | 1800, "
-                "optionally '@offset' (ft, right +; '25L' = 25 ft left), e.g. 'PC-1@16', '18+00@25L'; "
+GRAMMAR_HINT = ("anchor = BEGIN | END | PI-n | PC-n | PT-n | MC-n | T-n | EQ-n | '86+50.00' | 8650, "
+                "optionally '@offset' (ft, right +; '25L' = 25 ft left), e.g. 'PC-2@18', '86+50@25L'; "
                 "BC-n / EC-n are the same points as PC-n / PT-n; "
                 "or {ref|station, offset, region}")
 
@@ -113,7 +113,7 @@ def parse_offset(value) -> float:
     ``"12L"``; a bare number is already signed.
     """
     if isinstance(value, bool):
-        raise _cannot(value, "an offset is a number or a string like '12L'")
+        raise _cannot(value, "an offset is a number or a string like '15L'")
     if isinstance(value, (int, float)):
         return float(value)
     return _parse_offset(value, value)
@@ -171,10 +171,10 @@ def parse_anchor(value) -> AnchorRef:
         else:
             sta = value["station"]
             if isinstance(sta, bool) or not isinstance(sta, (int, float, str)):
-                raise _cannot(value, "station must be a number or '12+34.56'")
+                raise _cannot(value, "station must be a number or '84+27.93'")
             ref = _parse_ref_text(str(sta), value)
             if ref.kind_hint != "station":
-                raise _cannot(value, "station must be a number or '12+34.56'")
+                raise _cannot(value, "station must be a number or '84+27.93'")
         off = value.get("offset", 0.0)
         if off is None:
             off = 0.0

@@ -30,7 +30,7 @@ STR = {"type": "string"}
 NSTR = {"type": "string", "minLength": 1}
 SPACE = {"type": "string", "minLength": 1,
          "description": "'model' (design space, US survey feet) or a sheet id/name "
-                        "(paper space, inches), e.g. 'SH-001' or 'C-101'"}
+                        "(paper space, inches), e.g. 'SH-004' or 'P-201'"}
 LINETYPE = {"type": "string", "enum": list(LINETYPES)}
 HALIGN = {"type": "string", "enum": ["left", "center", "right"]}
 VALIGN = {"type": "string", "enum": ["bottom", "middle", "top"]}
@@ -57,7 +57,7 @@ LABEL_KINDS = ["station", "pc", "pt", "pi", "mc", "pcc", "prc", "bearing", "begi
 # --- design schema fragments (spec section 4 preamble) ----------------------
 
 STATION = {"type": ["number", "string"],
-           "description": "display station: feet (1600) or '16+00.00'"}
+           "description": "display station: feet (8400) or '84+00.00'"}
 PI_ITEM = {"type": "array", "items": NUM, "minItems": 2, "maxItems": 3,
            "description": "[x, y] or [x, y, radius]"}
 ANGLE_POINTS = {"type": "boolean",
@@ -73,8 +73,8 @@ ELEMENT = obj({"kind": {"enum": ["tangent", "curve"]}, "start": POINT, "end": PO
                "direction": {"enum": ["L", "R"]}}, ["kind"])
 ANCHOR = {"type": ["string", "number", "object"],
           "description": "BEGIN | END | PI-n | PC-n | PT-n | MC-n | T-n | EQ-n | "
-                         "'18+00.00' | 1800, optionally '@offset' (ft, right +, e.g. "
-                         "'PC-1@16', '18+00@25L'); or {ref|station, offset, region}. "
+                         "'86+50.00' | 8650, optionally '@offset' (ft, right +, e.g. "
+                         "'PC-2@18', '86+50@25L'); or {ref|station, offset, region}. "
                          "BC-n and EC-n, as a Caltrans plan letters them, are PC-n and "
                          "PT-n"}
 KIND = {"enum": list(LABEL_KINDS)}
@@ -94,14 +94,14 @@ ALIGNMENT_LEG = {
     "description": "one tangent, from one PI to the next: a direction (exactly one of "
                    "bearing, azimuth, deflection, angle_right) and the distance to the next "
                    "PI; radius is the curve at the PI where this leg starts (a leg after the "
-                   "first). Or as text: \"S 80°00'00\\\" E 800\", \"40 L 700 R=500\"",
+                   "first). Or as text: \"S 76°15'00\\\" E 650\", \"33 L 820 R=450\"",
     "properties": {
         "bearing": {"type": "string",
-                    "description": "quadrant bearing: N 45°30'15\" E, S45-30-15W, N45E"},
+                    "description": "quadrant bearing: N 47°30'15\" E, S47-30-15W, N47E"},
         "azimuth": {**ANGLE_TEXT, "description": "degrees clockwise from north, 0-360"},
         "deflection": {**ANGLE_TEXT,
                        "description": "the angle the alignment turns at the PI where this "
-                                      "leg starts: '40 L', '25°00'00\" RT', or a number with "
+                                      "leg starts: '33 L', '18°30'00\" RT', or a number with "
                                       "right positive; or its size with turn"},
         "turn": {"type": "string", "enum": ["left", "right", "L", "R"],
                  "description": "which way a deflection turns"},
@@ -125,10 +125,10 @@ DESIGN_SCHEMAS = {
                                            "northing]"},
          "legs": {"type": "array", "items": ALIGNMENT_LEG, "minItems": 1,
                   "description": "the layout as bearings and distances, PI to PI from "
-                                 "start -- as a report describes it: 'S 80° E 800 ft to PI-2, "
-                                 "where it deflects 40° left on a 500 ft curve; then 700 "
-                                 "ft...' is [{bearing: 'S 80 E', distance: 800}, "
-                                 "{deflection: '40 L', radius: 500, distance: 700}, ...]"},
+                                 "start -- as a report describes it: 'S 76° E 650 ft to PI-2, "
+                                 "where it deflects 33° left on a 450 ft curve; then 820 "
+                                 "ft...' is [{bearing: 'S 76 E', distance: 650}, "
+                                 "{deflection: '33 L', radius: 450, distance: 820}, ...]"},
          "begin_station": STATION,
          "equations": {"type": "array", "items": EQUATION},
          "description": STR,
@@ -167,8 +167,8 @@ DESIGN_SCHEMAS = {
                      "items": {"type": ["number", "string"]},
                      "description": "offset distances from the alignment, feet, right of "
                                     "the direction of stationing positive; a string may "
-                                    "name the side ('12L', '12R'). A 24 ft pavement is "
-                                    "[-12, 12]; add [-14, 14] for 2 ft shoulders."},
+                                    "name the side ('15L', '15R'). A 30 ft pavement is "
+                                    "[-15, 15]; add [-21, 21] for 6 ft shoulders."},
          "station_range": {"type": "array", "items": STATION, "minItems": 2,
                            "maxItems": 2,
                            "description": "draw only between these display stations: "
@@ -188,7 +188,7 @@ DESIGN_SCHEMAS = {
          "anchor": ANCHOR, "kind": KIND,
          "content": {**STR, "description": "explicit text; omit to auto-generate from "
                                            "design data the Caltrans way (recorded either "
-                                           "way): '24+05.27 BC', 'N 71°33\'54\" E 1240.36\'', "
+                                           "way): '84+62.18 BC', 'N 63°12\'40\" E 911.47\'', "
                                            "the curve number '1' in a bubble with a leader"},
          "side": SIDE,
          "label_offset": {"type": "number", "minimum": 0,
@@ -247,17 +247,17 @@ DESIGN_SCHEMAS = {
 }
 
 DESIGN_EXAMPLES = {
-    "create_alignment": {"name": "ALIGN-1", "begin_station": "10+00",
-                         "pis": [[1000, 1000], [1814.359354, 1000, 800],
-                                 [2433.012702, 1357.179677]]},
-    "modify_alignment": {"name": "ALIGN-1", "changes": {"begin_station": "20+00"}},
+    "create_alignment": {"name": "ALIGN-1", "begin_station": "80+00",
+                         "pis": [[4100, 7300], [4914.359354, 7300, 800],
+                                 [5533.012702, 7657.179677]]},
+    "modify_alignment": {"name": "ALIGN-1", "changes": {"begin_station": "90+00"}},
     "delete_alignment": {"name": "ALIGN-1"},
     "create_profile": {"name": "PROF-1", "alignment": "ALIGN-1",
-                       "pvis": [[1000, 100], [2000, 120, 400], [3000, 90]]},
+                       "pvis": [[8000, 100], [8800, 120, 400], [9400, 90]]},
     "delete_profile": {"name": "PROF-1"},
     "draw_alignment": {"alignment": "ALIGN-1", "layer": "align_MAIN"},
-    "draw_offset": {"alignment": "ALIGN-1", "offsets": [-12, 12], "layer": "rd_EP"},
+    "draw_offset": {"alignment": "ALIGN-1", "offsets": [-15, 15], "layer": "rd_EP"},
     "place_label": {"space": "model", "alignment": "ALIGN-1", "anchor": "PC-1"},
-    "place_curve_table": {"space": "C-101", "alignment": "ALIGN-1", "position": [24.0, 8.5]},
+    "place_curve_table": {"space": "P-201", "alignment": "ALIGN-1", "position": [24.0, 8.5]},
     "import_landxml": {"path": "survey/alignments.xml"},
 }

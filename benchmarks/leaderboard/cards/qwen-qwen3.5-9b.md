@@ -12,7 +12,7 @@
 | standing | rank 5 of 6 |
 | engine commit | `36dcca41d5` (99); changed past it: `src/roaddraft/probes/base.py`, `src/roaddraft/probes/drafting.py`, `src/roaddraft/probes/tasks.py`, `src/roaddraft/probes/tier2.py`, `src/roaddraft/probes/tier3.py`, `src/roaddraft/runners/claims.py`, `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/runners/score.py`, `src/roaddraft/tasks/ground_truth.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/real.py`, `src/roaddraft/tasks/reference.py`, `src/roaddraft/tasks/spec_v1.py`, `src/roaddraft/tasks/types.py`, `src/roaddraft/verify/checks.py`, `src/roaddraft/verify/geometry.py`, `src/roaddraft/verify/semantic.py` |
 | tool surface | `sha256:20fe06035283` |
-| server instructions | current |
+| server instructions | 99 of 99 episodes differ from the current server's |
 | task prompts | current |
 
 ## Score

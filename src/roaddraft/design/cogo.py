@@ -100,7 +100,7 @@ def parse_quadrant_bearing(text) -> float:
     except ValueError:
         raise CogoError(f"cannot read bearing {text!r}",
                         hint="a quadrant bearing starts with N or S and ends with E or W: "
-                             "N 45°30'15\" E, S45-30-15W, N45E")
+                             "N 47°30'15\" E, S47-30-15W, N47E")
     body = re.sub(r"^\s*[NnSs]|[EeWw]\s*$", "", text)
     if body.strip():
         try:
@@ -110,7 +110,7 @@ def parse_quadrant_bearing(text) -> float:
         if quadrant > 90.0 + 1e-9:
             raise CogoError(f"bearing {text!r} turns {quadrant:g}° from north or south; a "
                             f"quadrant bearing is at most 90°",
-                            hint="past 90° it is the other quadrant (N 100 E is S 80 E), "
+                            hint="past 90° it is the other quadrant (N 104 E is S 76 E), "
                                  "or give an azimuth (clockwise from north, 0-360)")
     return azimuth
 
@@ -183,8 +183,8 @@ def direction_of_leg(leg: dict, previous_azimuth: Optional[float], where: str) -
         raise CogoError(
             f"{where}: give exactly one of bearing, azimuth, deflection or angle_right"
             + (f" (got {', '.join(given)})" if given else ""),
-            hint="bearing: \"N 45°30'15\\\" E\"; azimuth: 45.5 (clockwise from north); "
-                 "deflection: \"40 L\" (turned from the previous course)")
+            hint="bearing: \"N 47°30'15\\\" E\"; azimuth: 47.5 (clockwise from north); "
+                 "deflection: \"33 L\" (turned from the previous course)")
     key = given[0]
     if key == "bearing":
         return parse_quadrant_bearing(leg["bearing"])
@@ -506,8 +506,8 @@ def parse_leg_text(text: str) -> dict:
                 leg["turn"] = describe_turn(TURNS[token.lower()])
             else:
                 raise CogoError(f"cannot read {token!r} in curve course {raw!r}",
-                                hint="CURVE R=500 LEFT DELTA=40°00'00\" (or L=300, "
-                                     "CHORD=280, CB=N80E for a non-tangent curve)")
+                                hint="CURVE R=450 LEFT DELTA=33°00'00\" (or L=260, "
+                                     "CHORD=255, CB=N76E for a non-tangent curve)")
         return leg
     radius = None
     if len(tokens) >= 2 and _KV.match(tokens[-1]) and _KV.match(tokens[-1]).group(1).lower() \
@@ -516,8 +516,8 @@ def parse_leg_text(text: str) -> dict:
         tokens = tokens[:-1]
     if len(tokens) < 2:
         raise CogoError(f"cannot read course {raw!r}",
-                        hint="a direction then a distance: N45°30'E 250, AZ 75.5 250, "
-                             "40 L 700")
+                        hint="a direction then a distance: N47°30'E 250, AZ 75.5 250, "
+                             "33 L 820")
     dist_text, body = tokens[-1], " ".join(tokens[:-1])
     distance = _number(dist_text.rstrip("'"), raw)
     if body.lower().startswith("az"):
@@ -528,8 +528,8 @@ def parse_leg_text(text: str) -> dict:
         leg = {"deflection": body}
     else:
         raise CogoError(f"cannot read the direction {body!r} in course {raw!r}",
-                        hint="a bearing (N45°30'E), AZ and an azimuth (AZ 75.5) or a "
-                             "deflection with its side (40 L, 25°00'00\" RT)")
+                        hint="a bearing (N47°30'E), AZ and an azimuth (AZ 75.5) or a "
+                             "deflection with its side (33 L, 18°30'00\" RT)")
     leg["distance"] = distance
     if radius is not None:
         leg["radius"] = radius

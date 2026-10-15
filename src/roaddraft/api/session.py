@@ -165,7 +165,7 @@ QUERIES = {
                        "description": "match the design anchor: any of alignment, "
                                       "kind (element|offset|station|tick|pc|pt|...), "
                                       "ref, offset. Each takes one value or a list, "
-                                      "so {kind: 'offset', offset: [-12, 12]} finds "
+                                      "so {kind: 'offset', offset: [-15, 15]} finds "
                                       "both pavement edges."},
             "content_contains": {**NSTR,
                                  "description": "text entities whose content contains "
@@ -188,15 +188,15 @@ QUERIES = {
             "start": {"type": "integer", "minimum": 0,
                       "description": "skip this many matches (paging)"},
         }),
-        "example": {"anchor": {"kind": "offset", "offset": [-12, 12]},
-                    "visible_on": "C-102"},
+        "example": {"anchor": {"kind": "offset", "offset": [-15, 15]},
+                    "visible_on": "P-202"},
     },
     "point_on_entity": {
         "description": "A point that is genuinely ON an entity, and the direction it "
                        "runs there: where='start'|'mid'|'end' or a fraction from 0 to 1. "
                        "Use it instead of computing a point from an arc's center and "
                        "angles -- the midpoint of a curve's endpoints is not on the "
-                       "curve. Works on reference elements ('DESIGN:AR-003'). With "
+                       "curve. Works on reference elements ('BASE:AR-009'). With "
                        "sheet, 'where' runs along the part of the entity that sheet "
                        "shows and the answer adds where it falls on the paper -- the "
                        "same point place_callout aims at from that sheet.",
@@ -206,7 +206,7 @@ QUERIES = {
                                                         "entity through a viewport"},
                        "viewport": NSTR},
                       ["id"]),
-        "example": {"id": "DESIGN:AR-003", "where": "mid"},
+        "example": {"id": "BASE:AR-009", "where": "mid"},
     },
     "model_to_sheet": {
         "description": "Where a model point falls on a sheet, in paper inches, seen "
@@ -218,7 +218,7 @@ QUERIES = {
                        "target_entity or target_anchor.",
         "schema": obj({"sheet": NSTR, "point": POINT, "viewport": NSTR},
                       ["sheet", "point"]),
-        "example": {"sheet": "C-102", "point": [2450.0, 1180.0]},
+        "example": {"sheet": "P-202", "point": [8450.0, 6180.0]},
     },
     "sheet_to_model": {
         "description": "What a point on a sheet's paper is looking at: the model point "
@@ -227,7 +227,7 @@ QUERIES = {
                        "inside=false means the point is outside every viewport window.",
         "schema": obj({"sheet": NSTR, "point": POINT, "viewport": NSTR},
                       ["sheet", "point"]),
-        "example": {"sheet": "C-102", "point": [17.0, 11.5]},
+        "example": {"sheet": "P-202", "point": [17.0, 11.5]},
     },
     "measure": {
         "description": "Measure without drawing (AutoCAD DIST / MEASUREGEOM): the "
@@ -247,9 +247,9 @@ QUERIES = {
             "from": {"description": "a point [x, y] or an entity id"},
             "to": {"description": "a point [x, y] or an entity id"},
             "along": {"description": "measure relative to this: an entity id (line, polyline, "
-                                     "arc, circle; reference elements 'DESIGN:LN-004'), a "
+                                     "arc, circle; reference elements 'BASE:LN-017'), a "
                                      "list of ids that join end to end, or an alignment name "
-                                     "('SR-100', 'DESIGN:SR-100'). Each point is projected "
+                                     "('RTE-7', 'BASE:RTE-7'). Each point is projected "
                                      "square onto it: along = distance from its start (the "
                                      "station, on an alignment), offset = perpendicular "
                                      "distance, right of its direction positive"},
@@ -274,8 +274,8 @@ QUERIES = {
                        "misclosure of a boundary and its precision (1:N). draw_traverse draws "
                        "the same courses; create_alignment takes start + legs directly.",
         "schema": obj(TRAVERSE_PROPS, ["start", "legs"]),
-        "example": {"start": [1000.0, 3000.0],
-                    "legs": [{"bearing": "S 80°00'00\" E", "distance": 800.0}, "40 L 700"]},
+        "example": {"start": [4100.0, 7300.0],
+                    "legs": [{"bearing": "S 76°15'00\" E", "distance": 650.0}, "33 L 820"]},
     },
     "key_points": {
         "description": "The exact points a drafter snaps to, listed: endpoints and vertices, "
@@ -287,11 +287,11 @@ QUERIES = {
                        "space and bounds. Use the points directly instead of computing a "
                        "corner or a curve's end by hand.",
         "schema": obj({
-            "id": {**NSTR, "description": "one entity (reference elements 'DESIGN:LN-004')"},
+            "id": {**NSTR, "description": "one entity (reference elements 'BASE:LN-017')"},
             "ids": {**IDS, "description": "several entities; their intersections with each "
                                           "other are listed too"},
-            "alignment": {**NSTR, "description": "an alignment's design points ('SR-100', or "
-                                                 "a referenced 'DESIGN:SR-100')"},
+            "alignment": {**NSTR, "description": "an alignment's design points ('RTE-7', or "
+                                                 "a referenced 'BASE:RTE-7')"},
             "space": {**NSTR, "description": "with no ids: every entity in this space "
                                              "(default model)"},
             "bounds": BOUNDS,
@@ -337,7 +337,7 @@ QUERIES = {
         "description": "One sheet: size, usable area, title block fields, "
                        "viewports (with the model region each shows), entities.",
         "schema": obj({"sheet": NSTR}, ["sheet"]),
-        "example": {"sheet": "C-101"},
+        "example": {"sheet": "P-201"},
     },
     "get_entity": {
         "description": "One entity by id, with its space, bounding box and properties -- "
@@ -439,7 +439,7 @@ QUERIES = {
         "schema": obj({"sheet": NSTR, "dpi": DPI, "path": STR,
                        "include_base64": BOOL, "show_viewport_frames": BOOL},
                       ["sheet"]),
-        "example": {"sheet": "C-101", "dpi": 150},
+        "example": {"sheet": "P-201", "dpi": 150},
     },
     "render_model": {
         "description": "Render model space to PNG (design geometry only, no "
@@ -527,7 +527,7 @@ QUERIES = {
                        "region": {"type": "integer", "minimum": 1},
                        "sheet": {**NSTR, "description": "also say where this falls on that sheet: adds on_sheet {viewport, sheet_point in paper inches, visible}"}},
                       ["station"]),
-        "example": {"alignment": "ALIGN-1", "station": "16+00", "offset": 12},
+        "example": {"alignment": "ALIGN-1", "station": "84+00", "offset": 15},
     },
     "xy_to_station": {
         "description": "Perpendicular projection of a model-space point onto an "
@@ -540,7 +540,7 @@ QUERIES = {
         "description": "Dry run of place_label: where a label of this kind at this "
                        "anchor would land (content, position, rotation, viewport) "
                        "without placing it. Same faults as the command. For a "
-                       "referenced alignment ('DESIGN:SR-100') it answers where the "
+                       "referenced alignment ('BASE:RTE-7') it answers where the "
                        "anchor is and what a label there would read, but not a label "
                        "plan -- nothing can be anchored to an alignment this document "
                        "does not own.",
@@ -1470,8 +1470,8 @@ class Session:
         if "space" in p and "sheets" in p:
             raise _QueryFault(
                 "print one space or a list of sheets, not both",
-                hint="space='model' or space='C-101' prints one; "
-                     "sheets=['C-101', 'C-102'] prints a set; omit both to "
+                hint="space='model' or space='P-201' prints one; "
+                     "sheets=['P-201', 'P-202'] prints a set; omit both to "
                      "print every sheet")
         space = p.get("space")
         if space == "model":

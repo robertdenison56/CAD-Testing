@@ -24,6 +24,7 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 - Qwen3.5-9B (bf16, vLLM) (rank 5) and Gemma 4 E4B (rank 6): the 95% intervals overlap, so this ordering is not separated.
 - Budgets differ between ranked rows: Claude Sonnet 5.5 120 turns, 15 min; Claude Fable 5.1 120 turns, 15 min; Claude Haiku 4.5 120 turns, 15 min; GPT-6-Luna 120 turns, 15 min; Qwen3.5-9B (bf16, vLLM) 120 turns, 30 min; Gemma 4 E4B 120 turns, 30 min.
 - Ranked rows ran on 2 different tool surfaces; see the cards.
+- Ran on server instructions or task prompts that differ from the current ones: Claude Sonnet 5.5, Claude Fable 5.1, Claude Haiku 4.5, GPT-6-Luna, Qwen3.5-9B (bf16, vLLM), Gemma 4 E4B.
 
 ## Not ranked yet
 

@@ -990,7 +990,7 @@ def _direction(value, what: str) -> float:
             return 90.0 - cogo.parse_quadrant_bearing(text)
         except cogo.CogoError as e:
             raise CommandFault(f"{what}: {e}", hint=e.hint)
-    raise CommandFault(f"{what} must be a bearing ('N 30°00'00\" E'), an azimuth ('AZ 30') or "
+    raise CommandFault(f"{what} must be a bearing ('N 34°15'00\" E'), an azimuth ('AZ 30') or "
                        f"two points [[x1, y1], [x2, y2]]")
 
 

@@ -12,7 +12,7 @@
 | standing | rank 2 of 6 |
 | engine commit | `3213be3b60` (33), `555bf496a8` (33), `6bf396e527` (33); changed past it: `src/roaddraft/runners/__init__.py`, `src/roaddraft/runners/__main__.py`, `src/roaddraft/runners/codex_cli.py`, `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/tasks/spec_v1.py` |
 | tool surface | `sha256:20fe06035283` |
-| server instructions | current |
+| server instructions | 99 of 99 episodes differ from the current server's |
 | task prompts | current |
 
 ## Score

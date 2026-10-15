@@ -174,9 +174,9 @@ def _offset_distances(path: paths.Path, p: dict) -> List[float]:
         raise CommandFault(
             "say how far with exactly one of distance (with side or toward), through, or "
             "offsets",
-            hint="distance: 12 with side: 'left' (of the direction it runs) or toward: a "
+            hint="distance: 15 with side: 'left' (of the direction it runs) or toward: a "
                  "point on the side to offset to; through: a point the parallel passes "
-                 "through; offsets: [-12, 12] or ['12L', '12R'] for several at once")
+                 "through; offsets: [-15, 15] or ['15L', '15R'] for several at once")
     if ways[0] != "distance":
         for key in ("side", "toward"):
             if key in p:
@@ -190,8 +190,8 @@ def _offset_distances(path: paths.Path, p: dict) -> List[float]:
                 raise CommandFault(str(e), hint=e.hint)
             if d == 0:
                 raise CommandFault("an offset of 0 is the entity itself",
-                                   hint="right of the direction it runs is positive: 12 or "
-                                        "'12R'; left is -12 or '12L'")
+                                   hint="right of the direction it runs is positive: 15 or "
+                                        "'15R'; left is -15 or '15L'")
             out.append(d)
         return out
     if ways[0] == "through":

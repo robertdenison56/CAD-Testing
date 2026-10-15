@@ -22,7 +22,7 @@ _STYLE = {"layer": LAYER, "color": {**COLOR, "description": "override color; omi
 
 _EDGES = {
     "boundaries": {**IDS, "description": "the edges to cut or extend to (lines, polylines, arcs, "
-                                         "circles; reference elements 'DESIGN:LN-004' count "
+                                         "circles; reference elements 'BASE:LN-017' count "
                                          "too). Omit to use every one in the space, as "
                                          "AutoCAD's quick trim does"},
     "extend_boundaries": {"type": "boolean",
@@ -41,17 +41,17 @@ DIRECTION = {"type": ["string", "array"],
 PATH = {"type": ["string", "array"], "items": NSTR,
         "description": "what to run along: an entity id (line, polyline, arc, circle; reference "
                        "elements too), a list of ids that join end to end, or an alignment of "
-                       "this document ('SR-100')"}
+                       "this document ('ALIGN-1')"}
 _ALONG = {
     "path": PATH,
     "every": {**POS, "description": "spacing along the path, feet in model. On an alignment "
                                     "with no from, positions fall on round stations "
-                                    "(every 100 -> 11+00, 12+00, ...)"},
+                                    "(every 100 -> 81+00, 82+00, ...)"},
     "count": {**INT1, "description": "how many, evenly spaced from from to to, both ends "
                                      "included (AutoCAD DIVIDE)"},
     "from": {"type": ["number", "string"],
              "description": "where to start: distance along the path, or on an alignment a "
-                            "station ('12+00'); default its start"},
+                            "station ('82+00'); default its start"},
     "to": {"type": ["number", "string"],
            "description": "where to stop (distance or station); default its end"},
     "offset": {"type": ["number", "string"],
@@ -270,8 +270,8 @@ MODIFY_SCHEMAS = {
                                          "the text height)"},
         "precision": {"type": "integer", "minimum": 0, "maximum": 6},
         "order_along": {**NSTR, "description": "number and letter the segments in order of "
-                                               "station along this alignment ('SR-100', or a "
-                                               "referenced 'DESIGN:SR-100') instead of the order "
+                                               "station along this alignment ('RTE-7', or a "
+                                               "referenced 'BASE:RTE-7') instead of the order "
                                                "of ids"},
         "line_start": {**INT1, "description": "first line tag number (default 1)"},
         "curve_start": {**INT1, "description": "first curve tag number (default 1)"},
@@ -282,8 +282,8 @@ MODIFY_SCHEMAS = {
         "alignment": {**NSTR, "description": "the alignment the stations are on (default the "
                                              "only one)"},
         "points": {"type": "array", "items": ANCHOR, "minItems": 2,
-                   "description": "station-and-offset points in order: '30+00@12R', "
-                                  "'31+20@24R', 'PC-1@12L', 'END@14R', {station, offset}"},
+                   "description": "station-and-offset points in order: '82+00@15R', "
+                                  "'82+90@26R', 'PC-2@15L', 'END@18R', {station, offset}"},
         "follow": {"type": "boolean",
                    "description": "between two points at the same offset, follow the "
                                   "alignment (arcs on its curves, exactly as draw_offset) "
@@ -341,34 +341,34 @@ MODIFY_SCHEMAS = {
 }
 
 MODIFY_EXAMPLES = {
-    "trim": {"targets": [{"id": "LN-010", "at": [3000.0, 2392.0]},
-                         {"id": "LN-011", "at": [3000.0, 2392.0]}],
+    "trim": {"targets": [{"id": "LN-010", "at": [6100.0, 8692.0]},
+                         {"id": "LN-011", "at": [6100.0, 8692.0]}],
              "boundaries": ["CI-001"]},
     "extend": {"targets": [{"id": "LN-012", "end": "end"}], "boundaries": ["LN-003"]},
-    "break_entity": {"id": "LN-004", "at": [1500.0, 1012.0], "to": [1560.0, 1012.0]},
+    "break_entity": {"id": "LN-004", "at": [4600.0, 7315.0], "to": [4660.0, 7315.0]},
     "join_entities": {"ids": ["LN-001", "AR-001", "LN-002"]},
     "explode_entities": {"ids": ["PL-003"]},
     "chamfer": {"ids": ["LN-001", "LN-002"], "distance": 10.0, "distance2": 25.0},
     "lengthen": {"id": "LN-005", "end": "end", "delta": 12.5},
     "copy_entities": {"ids": ["BR-001"], "delta": [100.0, 0.0], "count": 3},
-    "rotate_entities": {"ids": ["PL-001"], "base": [1500.0, 1200.0],
-                        "from_direction": [[1500.0, 1200.0], [1560.0, 1200.0]],
-                        "to_direction": "N 30°00'00\" E"},
+    "rotate_entities": {"ids": ["PL-001"], "base": [4600.0, 7500.0],
+                        "from_direction": [[4600.0, 7500.0], [4660.0, 7500.0]],
+                        "to_direction": "N 34°15'00\" E"},
     "mirror_entities": {"ids": ["LN-020", "AR-005"],
-                        "line": [[1000.0, 1000.0], [1600.0, 1000.0]]},
+                        "line": [[4100.0, 7300.0], [4700.0, 7300.0]]},
     "scale_entities": {"ids": ["BR-002"], "base": [31.5, 19.0], "factor": 0.5},
     "array_entities": {"ids": ["BR-003"], "kind": "path", "path": "LN-010", "every": 50.0,
                        "offset": "2R"},
-    "create_points": {"text": "1,2000.00,1500.00,101.25,MON FD\n2,2059.81,1534.40,,IP SET",
+    "create_points": {"text": "1,7300.00,4600.00,101.25,MON FD\n2,7359.81,4634.40,,IP SET",
                       "format": "PNEZD", "layer": "V-SURV-PNTS"},
-    "place_point_table": {"space": "C-101", "position": [26.0, 20.0], "points": "1-12"},
+    "place_point_table": {"space": "P-201", "position": [26.0, 20.0], "points": "1-12"},
     "label_segments": {"ids": ["PL-004"], "style": "tags",
-                       "table": {"position": [2500.0, 1400.0]}, "layer": "V-ANNO-ROW"},
-    "draw_station_offset": {"alignment": "SR-100",
-                            "points": ["30+00@12R", "31+20@24R", "36+00@24R", "36+00@12R"],
+                       "table": {"position": [5600.0, 7700.0]}, "layer": "V-ANNO-ROW"},
+    "draw_station_offset": {"alignment": "ALIGN-1",
+                            "points": ["82+00@15R", "82+90@26R", "86+50@26R", "86+50@15R"],
                             "layer": "V-ROAD-EOP"},
-    "place_along": {"path": "SR-100", "every": 200.0, "offset": "14R", "block": "DELINEATOR"},
-    "hatch": {"space": "model", "at": [1250.0, 1006.0], "pattern": "ANSI31",
+    "place_along": {"path": "ALIGN-1", "every": 200.0, "offset": "18R", "block": "DELINEATOR"},
+    "hatch": {"space": "model", "at": [4350.0, 7306.0], "pattern": "ANSI31",
               "layer": "V-ROAD-HTCH"},
 }
 

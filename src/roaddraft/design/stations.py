@@ -62,7 +62,7 @@ def _display_text(value: Union[float, str], decimals: int = 2) -> str:
 def _parse_display(value: Union[float, int, str]) -> float:
     """Display-station input: a number (feet) or ``'12+34.56'``."""
     if isinstance(value, bool):
-        raise DesignError(f"station must be a number or '12+34.56', not {value!r}")
+        raise DesignError(f"station must be a number or '84+27.93', not {value!r}")
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
@@ -70,8 +70,8 @@ def _parse_display(value: Union[float, int, str]) -> float:
             return float(parse_station(value))
         except ValueError:
             raise DesignError(f"cannot parse station {value!r}",
-                              hint="use feet (1600) or station notation '16+00.00'")
-    raise DesignError(f"station must be a number or '12+34.56', not {value!r}")
+                              hint="use feet (8400) or station notation '84+00.00'")
+    raise DesignError(f"station must be a number or '84+27.93', not {value!r}")
 
 
 class StationSystem:
@@ -234,7 +234,7 @@ def build_equations(begin_station: float, length: float, items: List[dict]) -> L
             raise DesignError(f"equation {n}: expected an object with back and ahead")
         if "back" not in item or "ahead" not in item:
             raise DesignError(f"equation {n}: back and ahead are required",
-                              hint="{'back': '20+00', 'ahead': '25+00'}")
+                              hint="{'back': '90+00', 'ahead': '90+50'}")
         back = _parse_display(item["back"])
         ahead = _parse_display(item["ahead"])
         if item.get("raw_station") is not None:

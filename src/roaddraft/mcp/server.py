@@ -100,11 +100,12 @@ def tool_definitions(session: Session, only: Optional[Sequence[str]] = None,
 
 #: What the server tells a client at initialize: the one piece of guidance
 #: every agent gets. The recorded trajectories use it as their system message.
+#: Its examples are a drawing of their own, never a probe's (tests/test_help_text.py).
 INSTRUCTIONS = (
     "RoadDraft is a headless 2D CAD engine for roadway plans. Model "
     "space is US survey feet, and a point is [x, y] = [easting, "
     "northing] -- the other way round from how coordinates are usually "
-    "spoken, so N 5000, E 2000 is [2000, 5000]. Sheets are paper inches "
+    "spoken, so N 7300, E 4100 is [4100, 7300]. Sheets are paper inches "
     "seen through viewports at a feet-per-inch scale. Work through the commands: "
     "each one validates its params and explains what was wrong, every "
     "change is journaled and undoable. Start with get_document_state "
@@ -116,8 +117,8 @@ INSTRUCTIONS = (
     "document owns no geometry of its own; find_entities searches the "
     "attachments too. Filter by what a thing IS -- layer, type, or its "
     "design anchor -- rather than dumping the document: "
-    "find_entities {anchor: {kind: 'offset', offset: [-12, 12]}, "
-    "visible_on: 'C-102'} is the pavement edges that sheet shows. Then "
+    "find_entities {anchor: {kind: 'offset', offset: [-15, 15]}, "
+    "visible_on: 'P-202'} is the pavement edges that sheet shows. Then "
     "pass the id straight to place_callout as target_entity, and the "
     "engine puts the leader tip on the geometry. Do not compute the "
     "point yourself: the midpoint of a curve's endpoints is not on the "
@@ -129,10 +130,10 @@ INSTRUCTIONS = (
     "Some things are not entities at all -- a station, a PC, a point at "
     "an offset. Ask the design for those: list_alignments with "
     "include_references=true names a referenced alignment "
-    "'DESIGN:SR-100', and station_to_xy, xy_to_station, resolve_anchor "
+    "'BASE:RTE-7', and station_to_xy, xy_to_station, resolve_anchor "
     "and get_design_data all accept that name and answer in host "
     "coordinates. To call one out, give place_callout a target_anchor "
-    "('18+00@12R', 'PC-1'; BC-1 and EC-1 name the PC and PT too) and that "
+    "('86+50@15R', 'PC-2'; BC-2 and EC-2 name the PC and PT too) and that "
     "alignment name. Otherwise commands "
     "do not take it: nothing can be drawn, labelled or anchored to an "
     "alignment this document does not own."
@@ -163,7 +164,7 @@ INSTRUCTIONS = (
     "and square off it. key_points and snap give the exact endpoints, "
     "intersections, centers and alignment design points (PI, BC, EC) to "
     "build on. Station-and-offset drafting is draw_station_offset with the "
-    "stations and offsets given ('30+00@12R'). Linework drawn through "
+    "stations and offsets given ('82+00@15R'). Linework drawn through "
     "something is cut back with trim (a point on the part to cut away) or "
     "run on with extend, not redrawn from computed points; break, join, "
     "lengthen, chamfer, copy, rotate, mirror, scale and array edit what is "

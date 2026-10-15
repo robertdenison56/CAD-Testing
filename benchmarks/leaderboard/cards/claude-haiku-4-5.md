@@ -12,7 +12,7 @@
 | standing | rank 3 of 6 |
 | engine commit | `2697ee5093` (99) |
 | tool surface | `sha256:97c51a241564` |
-| server instructions | current |
+| server instructions | 99 of 99 episodes differ from the current server's |
 | task prompts | current |
 
 ## Score

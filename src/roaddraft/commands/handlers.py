@@ -361,7 +361,7 @@ def place_callout(doc: Document, p: dict):
             "target_anchor (a station, offset or named point of an alignment)",
             hint="name the thing rather than the point: target_entity takes an id from "
                  "find_entities or hit_test and the engine computes a point on it, "
-                 "curves included; target_anchor takes '18+00@12R' or 'PC-1'. Both "
+                 "curves included; target_anchor takes '86+50@15R' or 'PC-2'. Both "
                  "work from a sheet, through its viewport.")
     for key, needs in (("at", "target_entity"), ("alignment", "target_anchor")):
         if key in p and needs not in p:

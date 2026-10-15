@@ -12,7 +12,7 @@
 | standing | not ranked yet: k = 3 on 26 of 33 probes |
 | engine commit | `442800d133` (25), `555bf496a8` (67) |
 | tool surface | `sha256:20fe06035283` |
-| server instructions | current |
+| server instructions | 92 of 92 episodes differ from the current server's |
 | task prompts | current |
 
 ## Score
