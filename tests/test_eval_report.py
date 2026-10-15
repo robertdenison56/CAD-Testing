@@ -1,0 +1,243 @@
+"""The run report and the D1 leaderboard (eval plan section 4.9, E4)."""
+import json
+import shutil
+
+import pytest
+
+from roaddraft.eval import report as R
+from roaddraft.eval.__main__ import main as eval_main
+from roaddraft.eval.agents import OracleAgent, ToolCall
+from roaddraft.eval.runner import RunSpec, make_agent, run
+from roaddraft.verify.report import FINDING_CODES
+
+
+class Fumbler(OracleAgent):
+    """A clumsy model: an unknown tool and a malformed call first, then half
+    the reference solution, a run_check, and the rest."""
+    name = "fumbler"
+
+    def reset(self, task, level, mode):
+        super().reset(task, level, mode)
+        sol = self.queue
+        half = len(sol) // 2
+        self.queue = [ToolCall("no_such_tool", {}), ToolCall("create_layer", {"bogus": 1}),
+                      *sol[:half], ToolCall("run_check", {}), *sol[half:]]
+
+    def describe(self):
+        return {"model": "fumbler-1", "provider": "fake", "effort": "low"}
+
+
+def _factory(name, spec):
+    return Fumbler() if name == "fumbler" else make_agent(name, spec)
+
+
+@pytest.fixture(scope="module")
+def run_dir(tmp_path_factory):
+    root = tmp_path_factory.mktemp("results")
+    base = dict(taskset="d1-dev", limit=3, results_root=str(root), run_id="e4-test",
+                concurrency=2)
+    run(RunSpec(agents=("oracle", "null"), levels=("explicit", "vague"), modes=("single",), **base))
+    run(RunSpec(agents=("oracle", "fumbler"), levels=("explicit",), modes=("self_correct",), **base),
+        agent_factory=_factory)
+    return root / "e4-test"
+
+
+@pytest.fixture(scope="module")
+def summary(run_dir):
+    return R.build(run_dir)
+
+
+def _row(s, label):
+    return next(g for g in s["rows"] if g["label"] == label)
+
+
+def test_taxonomy_covers_every_finding_code_once():
+    codes = [c for _, cs in R.TAXONOMY for c in cs]
+    assert sorted(codes) == sorted(FINDING_CODES)
+    assert len(codes) == len(set(codes))
+    assert R.CATEGORIES == ("completeness", "value", "anchoring", "placement", "legibility",
+                            "standards", "sheet_setup")
+
+
+def test_bootstrap_is_seeded_and_stratified():
+    vals = [0, 10, 50, 60, 90, 100]
+    assert R.bootstrap(vals) == R.bootstrap(vals)
+    lo, hi = R.bootstrap(vals)
+    assert lo < 52 < hi
+    # the spread is all between the types: within each it is nil
+    assert R.bootstrap([0, 0, 100, 100], ["a", "a", "b", "b"]) == (50.0, 50.0)
+    assert R.bootstrap([42.0]) == (42.0, 42.0)
+    assert R.bootstrap([]) == (None, None)
+
+
+def _turn(calls):
+    return {"assistant": {"tool_calls": [{"name": n, "params": {}} for n, _ in calls]},
+            "results": [r for _, r in calls]}
+
+
+def test_tool_use_counts_invalid_faults_recovery_and_check_prefix():
+    ok = lambda cid=None: {"ok": True, **({"command_id": cid} if cid else {})}  # noqa: E731
+    err = lambda t: {"ok": False, "error": {"type": t, "message": "x"}}  # noqa: E731
+    turns = [_turn([("no_such", err("unknown_command")), ("place_label", err("invalid_params")),
+                    ("place_label", ok(1)), ("draw_line", err("command_failed"))]),
+             _turn([("get_extents", ok()), ("draw_line", ok(2)), ("run_check", ok()),
+                    ("place_text", ok(3)), ("run_check", ok())])]
+    u = R.tool_use(turns)
+    assert u["tool_calls"] == 9
+    assert u["invalid_calls"] == 2 and u["failed_calls"] == 1 and u["faults"] == 3
+    # place_label and draw_line came back within three calls; the unknown tool never did
+    assert u["recovered"] == 2
+    assert u["coordinate_calls"] == 2 and u["semantic_calls"] == 1
+    assert u["check_prefixes"] == [2, 3]
+    assert u["errors"] == {"unknown_command": 1, "invalid_params": 1, "command_failed": 1}
+
+
+def test_rows_rank_and_score(summary):
+    labels = [g["label"] for g in summary["rows"]]
+    assert labels[-2:] == ["null · single · explicit", "null · single · vague"] or \
+        labels[-2:] == ["null · single · vague", "null · single · explicit"]
+    for label in ("oracle · single · explicit", "oracle · single · vague",
+                  "oracle · self_correct · explicit", "fumbler-1 (low) · self_correct · explicit"):
+        g = _row(summary, label)
+        assert g["effective_mean"] == 100.0 and g["n_tasks"] == 3 and g["hard_fail_rate"] == 0
+        assert (g["ci_low"], g["ci_high"]) == (100.0, 100.0)
+    null = _row(summary, "null · single · explicit")
+    assert null["effective_mean"] == 0.0 and null["submit_rate"] == 1.0
+    assert null["taxonomy"]["completeness"]["episodes"] > 0
+    assert [g["rank"] for g in summary["rows"]] == list(range(1, len(summary["rows"]) + 1))
+
+
+def test_fumbler_row_records_tool_use_and_the_check_delta(summary):
+    g = _row(summary, "fumbler-1 (low) · self_correct · explicit")
+    assert g["key"]["provider"] == "fake" and g["key"]["effort"] == "low"
+    assert g["tool_errors"].get("unknown_command") == 3
+    assert g["invalid_call_rate"] > 0
+    assert g["run_check_mean"] == 1.0
+    assert g["check_delta_n"] == 3 and g["check_delta_mean"] >= 0
+    eps = [e for e in summary["_episodes"] if e["row"]["model"] == "fumbler-1"]
+    assert all(e["row"]["effective_at_last_check"] <= e["row"]["effective_score"] for e in eps)
+    assert any(e["row"]["effective_at_last_check"] < 100 for e in eps)
+
+
+def test_gaps_pair_by_task(summary):
+    names = {(p["gap_name"], p["row"]) for p in summary["gaps"]}
+    assert ("prompt gap", "oracle · single") in names
+    assert ("prompt gap", "null · single") in names
+    assert ("self-correct gain", "oracle · explicit") in names
+    for p in summary["gaps"]:
+        assert p["gap"] == 0.0 and p["n_tasks"] == 3 and not p["separated"]
+
+
+def test_versions_and_publish_problems(summary):
+    assert summary["taskset"] == "d1-dev"
+    assert len(summary["versions"]["verifier_version"]) == 1
+    assert any("development set" in p for p in summary["publish_problems"])
+    if summary["versions"]["spec_version"][0].startswith("draft"):
+        assert any("draft" in p for p in summary["publish_problems"])
+
+
+def test_reverify_gives_the_same_scores(run_dir, summary):
+    again = R.build(run_dir, reverify=True, check_delta=False)
+    assert again["reverified"]
+    assert {g["label"]: g["effective_mean"] for g in again["rows"]} == \
+        {g["label"]: g["effective_mean"] for g in summary["rows"]}
+
+
+def test_files_and_cli(run_dir, tmp_path):
+    out = tmp_path / "rep"
+    assert eval_main(["report", str(run_dir), "--out", str(out)]) == 0
+    names = {p.name for p in out.iterdir()}
+    assert {"summary.json", "leaderboard.md", "per_check.csv", "taxonomy.csv",
+            "episodes.csv", "per_check.svg"} <= names
+    import xml.etree.ElementTree as ET
+    svg = ET.parse(out / "per_check.svg").getroot()
+    assert svg.tag.endswith("svg")
+    cells = [t for t in svg.iter() if t.tag.endswith("title") and "mean credit" in (t.text or "")]
+    # every row's in-scope checks are cells with a tooltip (6 rows here)
+    assert len(cells) % 6 == 0 and cells
+    s = json.loads((out / "summary.json").read_text())
+    assert "_episodes" not in s and s["report_version"] == R.REPORT_VERSION
+    md = (out / "leaderboard.md").read_text()
+    assert "fumbler-1 (low) · self_correct · explicit" in md and "## Failure taxonomy" in md
+    assert "Not rankable" in md
+    assert len((out / "episodes.csv").read_text().strip().splitlines()) == 1 + 3 * 6
+    # publishing a dev-set run is refused unless asked, and then it is listed, not ranked
+    runs = tmp_path / "runs"
+    assert eval_main(["report", str(run_dir), "--out", str(out), "--publish",
+                      "--runs", str(runs)]) == 1
+    assert not runs.exists()
+    assert eval_main(["report", str(run_dir), "--out", str(out), "--publish", "--allow-unrankable",
+                      "--runs", str(runs)]) == 0
+    assert {p.name for p in (runs / "e4-test").iterdir()} == {"summary.json", "leaderboard.md",
+                                                             "per_check.svg"}
+    b = R.board(R.published(runs))
+    assert b["headline"] is None and not b["ranked"]
+    assert b["others"][0]["run_id"] == "e4-test" and b["others"][0]["reasons"]
+
+
+def _fake_summary(run_id, rows, taskset="d1-test", problems=()):
+    return {"run_id": run_id, "taskset": taskset, "episodes": 10,
+            "versions": {"spec_version": ["v1"]}, "publish_problems": list(problems),
+            "rows": rows}
+
+
+def _fake_row(model, provider, eff, hf=0.1):
+    return {"label": f"{model} · single · explicit",
+            "key": {"model": model, "provider": provider, "effort": None, "dialect": "neutral",
+                    "mode": "single", "level": "explicit"},
+            "effective_mean": eff, "ci_low": eff - 3, "ci_high": eff + 3, "half_width": 3.0,
+            "rubric_mean": eff + 5, "hard_fail_rate": hf, "clean_sheet_rate": 0.2,
+            "invalid_call_rate": 0.01, "cost_per_sheet": 0.5, "n_tasks": 100, "k_min": 3,
+            "k_max": 3}
+
+
+def test_board_ranks_only_rankable_model_rows():
+    good = _fake_summary("2026-11-01-d1-test", [_fake_row("claude-a", "anthropic", 61.0),
+                                                _fake_row("claude-b", "anthropic", 72.5),
+                                                _fake_row("oracle", "harness", 100.0)])
+    draft = _fake_summary("draft-run", [_fake_row("claude-c", "anthropic", 90.0)],
+                          problems=["spec draft-v4 is a draft"])
+    variance = _fake_summary("var", [_fake_row("claude-a", "anthropic", 60.0)],
+                             taskset="d1-variance")
+    b = R.board([good, draft, variance])
+    assert [r["label"].split(" ")[0] for r in b["ranked"]] == ["claude-b", "claude-a"]
+    assert b["ranked"][0]["rank"] == 1
+    assert b["headline"].startswith("best model 72.5/100 on d1-test")
+    assert [r["label"].split(" ")[0] for r in b["reference"]] == ["oracle"]
+    others = {o["run_id"]: o["reasons"] for o in b["others"]}
+    assert others["draft-run"] == ["spec draft-v4 is a draft"]
+    assert others["var"] == ["run on d1-variance, not d1-test"]
+    md = R.render_board(b)
+    assert "**Best model 72.5/100" in md and "Published runs that are not ranked" in md
+    block = R.render_board(b, readme=True)
+    text = f"intro\n{R.README_BEGIN}\nold\n{R.README_END}\nafter\n"
+    new = R.replace_block(text, block)
+    assert "old" not in new and new.startswith("intro\n") and new.endswith(f"{R.README_END}\nafter\n")
+    with pytest.raises(ValueError):
+        R.replace_block("no markers", block)
+
+
+def test_readme_board_is_current():
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(R.REPO) / "scripts" / "make_leaderboard.py"
+    res = subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True)
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_cost_is_priced_turn_by_turn_at_report_time():
+    prices = pytest.importorskip("roaddraft.eval.prices")
+    model = next(iter(prices.load()["models"]))
+    turns = [{"usage": {"input_tokens": 2000, "output_tokens": 300,
+                        "cache_read_input_tokens": 15000}},
+             {"usage": {"input_tokens": 500, "output_tokens": 900,
+                        "cache_read_input_tokens": 18000}}]
+    end = {"usage_total": {"input_tokens": 2500, "output_tokens": 1200,
+                           "cache_read_input_tokens": 33000}, "cost_usd": 99.0}
+    cost, checked = R._cost({"model": model}, end, turns)
+    assert cost == pytest.approx(sum(prices.cost_usd(model, t["usage"]) for t in turns))
+    assert checked == prices.load()["checked"]
+    # an unpriced model keeps the episode's own figure; no usage at all, nothing
+    assert R._cost({"model": "no-such-model"}, end, turns) == (99.0, None)
+    assert R._cost({"model": model}, {"usage_total": {}}, []) == (None, None)

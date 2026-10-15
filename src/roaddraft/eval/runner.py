@@ -1,9 +1,18 @@
 """The runner (eval plan section 4.7): a matrix of episodes -- task set x
-agents x prompt levels x modes x samples -- run through a thread pool and
-written under ``results/<run_id>/``.  A cell whose episode file already has
-an ``end`` record is skipped, so a stopped run resumes.  ``summary.json``
-and ``run.json`` (the configuration and the engine pins) are written at the
-end; the leaderboard report over many runs is E4.
+agents and models x prompt levels x modes x dialects x samples -- run
+through a thread pool and written under ``results/<run_id>/``.  A cell whose
+episode file already has an ``end`` record is skipped, so a stopped run
+resumes.  ``summary.json`` and ``run.json`` (the configuration and the
+engine pins) are written at the end; the leaderboard report over many runs
+is E4.
+
+A model is an agent too: ``models`` names model ids, each run as an
+``LLMAgent`` over its provider (``provider``, or the one the id implies),
+with ``provider_options`` (effort, max_tokens, base_url ...).  The cost cap
+stops the runner, not an episode: once the episodes finished so far (the
+resumed ones included) have cost ``cost_cap`` dollars, no new episode starts
+and the running ones finish.  Episodes of an unpriced model cost nothing
+against the cap, so a cap on a local model never trips.
 """
 from __future__ import annotations
 
@@ -11,16 +20,17 @@ import json
 import statistics
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
+from roaddraft.eval import providers
 from roaddraft.eval import taskset as tasksets
-from roaddraft.eval.agents import AGENTS, Agent, ReplayAgent
+from roaddraft.eval.agents import AGENTS, Agent, LLMAgent, ReplayAgent
 from roaddraft.eval.budget import Budgets
 from roaddraft.eval.episode import HARNESS_VERSION, Episode, EpisodeConfig, EpisodeResult
-from roaddraft.eval.trajectory import episode_path, is_complete
+from roaddraft.eval.trajectory import episode_path, is_complete, read_episode
 
 DEFAULT_RESULTS = "results"
 
@@ -33,6 +43,7 @@ class Cell:
     level: str
     mode: str
     sample: int
+    dialect: str = "neutral"
 
     @property
     def task_id(self) -> str:
@@ -54,12 +65,22 @@ class RunSpec:
     budgets: Budgets = Budgets()
     journal: Optional[str] = None      # for the replay agent
     tasksets_root: Optional[str] = None
+    models: Sequence[str] = ()         # model ids, each an LLMAgent
+    provider: Optional[str] = None     # None: the provider each model id implies
+    provider_options: Dict[str, Any] = field(default_factory=dict)
+    dialects: Sequence[str] = ("neutral",)
+    cost_cap: Optional[float] = None   # dollars; stops the runner, not an episode
+
+    @property
+    def all_agents(self) -> List[str]:
+        return list(self.agents) + [m for m in self.models if m not in self.agents]
 
     def resolved_run_id(self) -> str:
         if self.run_id:
             return self.run_id
         stamp = time.strftime("%Y-%m-%d")
-        return f"{stamp}-{self.taskset}-{'+'.join(self.agents)}"
+        names = "+".join(a.replace("/", "-") for a in self.all_agents)
+        return f"{stamp}-{self.taskset}-{names}"
 
     @property
     def out_root(self) -> Path:
@@ -74,18 +95,22 @@ class RunSpec:
 
 def matrix(spec: RunSpec) -> List[Cell]:
     rows = tasksets.entries(spec.taskset, spec.limit, spec.task_ids, spec.tasksets_root)
-    return [Cell(entry, agent, level, mode, sample)
-            for entry in rows for agent in spec.agents for level in spec.levels
-            for mode in spec.modes for sample in range(spec.samples)]
+    return [Cell(entry, agent, level, mode, sample, dialect)
+            for entry in rows for agent in spec.all_agents for level in spec.levels
+            for mode in spec.modes for dialect in spec.dialects
+            for sample in range(spec.samples)]
 
 
 def make_agent(name: str, spec: RunSpec) -> Agent:
+    if name in spec.models:
+        return LLMAgent(providers.make(name, spec.provider, **spec.provider_options))
     if name == "replay":
         if not spec.journal:
             raise ValueError("the replay agent needs --journal")
         return ReplayAgent(spec.journal)
     if name not in AGENTS:
-        raise ValueError(f"unknown agent {name!r}; agents: {', '.join(sorted(AGENTS))}, replay")
+        raise ValueError(f"unknown agent {name!r}; agents: {', '.join(sorted(AGENTS))}, "
+                         "replay, or a model (--model)")
     return AGENTS[name]()
 
 
@@ -93,9 +118,31 @@ def run_cell(cell: Cell, spec: RunSpec, pins: Optional[dict] = None,
              agent_factory: Optional[Callable[[str, RunSpec], Agent]] = None) -> EpisodeResult:
     task = tasksets.task_from_entry(cell.entry)
     agent = (agent_factory or make_agent)(cell.agent, spec)
-    config = EpisodeConfig(level=cell.level, mode=cell.mode, budgets=spec.budgets,
-                           sample=cell.sample, run_id=spec.resolved_run_id())
+    config = EpisodeConfig(level=cell.level, mode=cell.mode, dialect=cell.dialect,
+                           budgets=spec.budgets, sample=cell.sample, run_id=spec.resolved_run_id())
     return Episode(task, agent, config, out_root=spec.out_root, pins=pins).run()
+
+
+def cell_path(spec: RunSpec, cell: Cell):
+    return episode_path(spec.out_root, cell.task_id, cell.agent, cell.dialect, cell.mode,
+                        cell.level, cell.sample)
+
+
+def measured_cost(agent: str, results_root: str = DEFAULT_RESULTS) -> Optional[dict]:
+    """What the finished episodes of ``agent`` under ``results_root`` cost:
+    ``{"n", "mean_cost_usd"}`` over those with a cost, or None."""
+    safe = agent.replace("/", "-").replace(" ", "_")
+    costs = []
+    for path in Path(results_root).glob(f"*/episodes/*.{safe}.*.jsonl"):
+        try:
+            end = read_episode(path)["end"]
+        except (OSError, ValueError):
+            continue
+        if end and end.get("cost_usd") is not None:
+            costs.append(float(end["cost_usd"]))
+    if not costs:
+        return None
+    return {"n": len(costs), "mean_cost_usd": round(statistics.fmean(costs), 4)}
 
 
 def _pins() -> dict:
@@ -106,19 +153,29 @@ def _pins() -> dict:
         return {}
 
 
+def _key(r: dict) -> str:
+    key = f"{r['agent']}|{r['level']}|{r['mode']}"
+    dialect = r.get("dialect", "neutral")
+    return key if dialect == "neutral" else f"{key}|{dialect}"
+
+
 def summarize(results: Iterable[dict]) -> dict:
-    """Per agent (and level, mode): n, mean effective and rubric score, hard-fail,
-    submit and clean-sheet rates, median steps."""
+    """Per agent (and level, mode, dialect when not neutral): n, mean effective
+    and rubric score, hard-fail, submit and clean-sheet rates, median steps,
+    the invalid-call rate, and the cost where the model is priced."""
     rows = list(results)
     groups: Dict[str, List[dict]] = {}
     for r in rows:
-        groups.setdefault(f"{r['agent']}|{r['level']}|{r['mode']}", []).append(r)
+        groups.setdefault(_key(r), []).append(r)
     out = {}
     for key, rs in sorted(groups.items()):
-        agent, level, mode = key.split("|")
+        agent, level, mode = key.split("|")[:3]
         n = len(rs)
         eff = [r["effective_score"] for r in rs]
-        out[key] = {"agent": agent, "level": level, "mode": mode, "n": n,
+        steps = sum(r.get("steps", 0) for r in rs)
+        costs = [r["cost_usd"] for r in rs if r.get("cost_usd") is not None]
+        out[key] = {"agent": agent, "level": level, "mode": mode,
+                    "dialect": rs[0].get("dialect", "neutral"), "n": n,
                     "mean_effective": round(statistics.fmean(eff), 2) if n else None,
                     "mean_rubric": round(statistics.fmean(r["rubric_score"] for r in rs), 2) if n else None,
                     "hard_fail_rate": round(sum(r["hard_failed"] for r in rs) / n, 3) if n else None,
@@ -126,7 +183,11 @@ def summarize(results: Iterable[dict]) -> dict:
                     "clean_sheet_rate": round(sum(e == 100.0 for e in eff) / n, 3) if n else None,
                     "median_steps": statistics.median(r["steps"] for r in rs) if n else None,
                     "errors": sum(r["termination"] == "error" for r in rs),
-                    "min_effective": min(eff) if n else None, "max_effective": max(eff) if n else None}
+                    "min_effective": min(eff) if n else None, "max_effective": max(eff) if n else None,
+                    "invalid_call_rate": (round(sum(r.get("invalid_calls", 0) for r in rs) / steps, 4)
+                                          if steps else None),
+                    "mean_cost_usd": round(statistics.fmean(costs), 4) if costs else None,
+                    "total_cost_usd": round(sum(costs), 4) if costs else None}
     return {"groups": out, "episodes": len(rows)}
 
 
@@ -142,50 +203,79 @@ def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] 
          "cells": len(cells), "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=1))
     todo, skipped = [], []
     for cell in cells:
-        path = episode_path(out_root, cell.task_id, cell.agent, "neutral", cell.mode, cell.level,
-                            cell.sample)
-        (skipped if is_complete(path) else todo).append(cell)
+        (skipped if is_complete(cell_path(spec, cell)) else todo).append(cell)
     say = progress or (lambda s: None)
     say(f"{len(cells)} cells: {len(todo)} to run, {len(skipped)} already complete")
     results: List[dict] = []
     failures: List[dict] = []
+    # the episodes already on disk count in the summary and against the cost cap
+    for cell in skipped:
+        end = read_episode(cell_path(spec, cell))["end"]
+        results.append({"task_id": cell.task_id, "agent": cell.agent, "level": cell.level,
+                        "mode": cell.mode, "dialect": cell.dialect, "sample": cell.sample,
+                        "termination": end["termination"], "effective_score": end["effective_score"],
+                        "rubric_score": end["rubric_score"], "hard_failed": end["hard_failed"],
+                        "steps": end["steps"], "invalid_calls": end.get("invalid_calls", 0),
+                        "cost_usd": end.get("cost_usd"), "resumed": True})
+    spent = sum(r["cost_usd"] or 0.0 for r in results if r.get("cost_usd") is not None)
+    stopped: Optional[str] = None
+    not_run = 0
 
     def one(cell: Cell) -> dict:
         r = run_cell(cell, spec, pins, agent_factory)
-        return {**r.summary(), "level": cell.level, "mode": cell.mode, "sample": cell.sample}
+        return {**r.summary(), "level": cell.level, "mode": cell.mode, "dialect": cell.dialect,
+                "sample": cell.sample}
 
-    with ThreadPoolExecutor(max_workers=max(1, spec.concurrency)) as pool:
-        futures = {pool.submit(one, cell): cell for cell in todo}
-        for fut in as_completed(futures):
-            cell = futures[fut]
-            try:
-                row = fut.result()
-            except Exception as exc:  # a cell that could not even start (bad entry, agent)
-                failures.append({"task_id": cell.task_id, "agent": cell.agent,
-                                 "error": "".join(traceback.format_exception_only(type(exc), exc)).strip()})
-                say(f"ERROR {cell.task_id} {cell.agent}: {exc}")
-                continue
-            results.append(row)
-            say(f"{row['task_id']} {cell.agent} {cell.level} {cell.mode} s{cell.sample}: "
-                f"{row['effective_score']:.1f} ({row['termination']}, {row['steps']} steps)")
-    # fold in the episodes already on disk, so the summary covers the whole run
-    for cell in skipped:
-        from roaddraft.eval.trajectory import read_episode
-        rec = read_episode(episode_path(out_root, cell.task_id, cell.agent, "neutral", cell.mode,
-                                        cell.level, cell.sample))
-        end = rec["end"]
-        results.append({"task_id": cell.task_id, "agent": cell.agent, "level": cell.level,
-                        "mode": cell.mode, "sample": cell.sample,
-                        "termination": end["termination"], "effective_score": end["effective_score"],
-                        "rubric_score": end["rubric_score"], "hard_failed": end["hard_failed"],
-                        "steps": end["steps"], "resumed": True})
+    def capped() -> bool:
+        return spec.cost_cap is not None and spent >= spec.cost_cap
+
+    workers = max(1, spec.concurrency)
+    queue = list(todo)
+    if capped():
+        say(f"cost cap ${spec.cost_cap:.2f} already reached (${spent:.2f}); nothing started")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        running: Dict[Any, Cell] = {}
+        # episodes start only as workers free up, so none starts past the cap
+        while queue and len(running) < workers and not capped():
+            cell = queue.pop(0)
+            running[pool.submit(one, cell)] = cell
+        while running:
+            done, _ = wait(list(running), return_when=FIRST_COMPLETED)
+            for fut in done:
+                cell = running.pop(fut)
+                try:
+                    row = fut.result()
+                except Exception as exc:  # a cell that could not even start (bad entry, agent)
+                    failures.append({"task_id": cell.task_id, "agent": cell.agent,
+                                     "error": "".join(traceback.format_exception_only(type(exc), exc)).strip()})
+                    say(f"ERROR {cell.task_id} {cell.agent}: {exc}")
+                    continue
+                results.append(row)
+                cost = row.get("cost_usd")
+                spent += cost or 0.0
+                say(f"{row['task_id']} {cell.agent} {cell.level} {cell.mode}"
+                    + (f" {cell.dialect}" if cell.dialect != "neutral" else "")
+                    + f" s{cell.sample}: {row['effective_score']:.1f} ({row['termination']}, "
+                    f"{row['steps']} steps" + (f", ${cost:.3f}" if cost is not None else "") + ")")
+            if capped() and queue and stopped is None:
+                say(f"cost cap ${spec.cost_cap:.2f} reached (${spent:.2f}): {len(queue)} episodes "
+                    "not started; the running ones finish")
+            while queue and len(running) < workers and not capped():
+                cell = queue.pop(0)
+                running[pool.submit(one, cell)] = cell
+            if capped() and queue:
+                stopped = "cost_cap"
+    if capped() and queue:
+        stopped, not_run = "cost_cap", len(queue)
     summary = summarize(results)
     summary.update({"run_id": spec.resolved_run_id(), "taskset": spec.taskset,
-                    "failures": failures, "skipped": len(skipped)})
+                    "failures": failures, "skipped": len(skipped), "stopped": stopped,
+                    "not_run": not_run, "spent_usd": round(spent, 4),
+                    "cost_cap": spec.cost_cap})
     (out_root / "summary.json").write_text(json.dumps(summary, indent=1))
     (out_root / "episodes.json").write_text(json.dumps(results, indent=1))
     return summary
 
 
-__all__ = ["DEFAULT_RESULTS", "Cell", "RunSpec", "matrix", "make_agent", "run_cell", "summarize",
-           "run"]
+__all__ = ["DEFAULT_RESULTS", "Cell", "RunSpec", "matrix", "make_agent", "run_cell", "cell_path",
+           "measured_cost", "summarize", "run"]

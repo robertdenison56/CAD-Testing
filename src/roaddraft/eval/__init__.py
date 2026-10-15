@@ -15,16 +15,21 @@ E2 ships four non-LLM agents (``oracle``, ``null``, ``scripted``, ``replay``)
 and the CLI ``python -m roaddraft.eval run | taskset | verify | human``.  The
 oracle replays the task's reference solution *through the loop* and must
 score 100: that is the harness's own acceptance test, kept permanent in
-``tests/test_eval_episode.py``.  LLM agents, providers and dialects are E3.
+``tests/test_eval_episode.py``.
+
+E3 adds the model under test: ``LLMAgent`` over a provider
+(``eval.providers``: ``anthropic``, ``openai``-compatible, ``fake``), the
+system prompts (``eval.prompts``), the dialect skins (``eval.dialects``) and
+the dated price table (``eval.prices``); ``run --model ID`` runs one.
 """
 from roaddraft.eval.agents import (
-    AGENTS, Agent, NullAgent, OracleAgent, ReplayAgent, ScriptedAgent, Submit, ToolCall,
+    AGENTS, Agent, LLMAgent, NullAgent, OracleAgent, ReplayAgent, ScriptedAgent, Submit, ToolCall,
 )
 from roaddraft.eval.budget import Budgets, BudgetState
 from roaddraft.eval.episode import HARNESS_VERSION, Episode, EpisodeConfig, EpisodeResult, run_episode
 from roaddraft.eval.tools import DIALECTS, MODES, tool_definitions
 
-__all__ = ["HARNESS_VERSION", "AGENTS", "Agent", "NullAgent", "OracleAgent", "ReplayAgent",
-           "ScriptedAgent", "Submit", "ToolCall", "Budgets", "BudgetState", "Episode",
-           "EpisodeConfig", "EpisodeResult", "run_episode", "DIALECTS", "MODES",
+__all__ = ["HARNESS_VERSION", "AGENTS", "Agent", "LLMAgent", "NullAgent", "OracleAgent",
+           "ReplayAgent", "ScriptedAgent", "Submit", "ToolCall", "Budgets", "BudgetState",
+           "Episode", "EpisodeConfig", "EpisodeResult", "run_episode", "DIALECTS", "MODES",
            "tool_definitions"]

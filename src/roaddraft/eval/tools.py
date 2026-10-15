@@ -20,8 +20,9 @@ from __future__ import annotations
 import json
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+from roaddraft.eval.dialects import DIALECTS  # tool-name skins (dialects.py)
+
 MODES = ("single", "self_correct", "vision")
-DIALECTS = ("neutral",)  # c3d and ord are tool-name skins, E3
 
 #: commands every task may call
 COMMANDS = frozenset({

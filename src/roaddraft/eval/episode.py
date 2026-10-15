@@ -11,6 +11,11 @@
     verify   the document against the task's truth at the prompt level;
              the audit over the bus journal
     record   the trajectory: header, turns, journal, verify, audit, end
+
+The dialect is the harness's: the agent is shown the skin's tool names and
+task text, and every call is resolved back to the canonical command before
+the whitelist sees it.  In the vision mode a render's PNG goes to the agent
+as an image beside the results and never into the trajectory.
 """
 from __future__ import annotations
 
@@ -19,11 +24,13 @@ import json
 import time
 import traceback
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from roaddraft.api.session import Session
+from roaddraft.eval import dialects, prices
 from roaddraft.eval.agents import Agent, AgentRefusal, Submit, ToolCall
 from roaddraft.eval.budget import Budgets, BudgetState
+from roaddraft.eval.providers.base import LimitReached
 from roaddraft.eval.tools import (
     DIALECTS, HARNESS_TOOLS, MODES, RENDER_QUERIES, allowed_names, shape_params,
     tool_definitions,
@@ -36,7 +43,9 @@ from roaddraft.verify import VERIFIER_VERSION, verify
 from roaddraft.verify.audit import audit_journal
 from roaddraft.verify.report import VerifyReport
 
-HARNESS_VERSION = "e2-v1"  # (2026-10-14) episode loop, four non-LLM agents, trajectories
+HARNESS_VERSION = "e3-v1"  # (2026-10-14) + LLM agents, dialect skins, vision images, cost
+#: bus error types that count as invalid calls (a fault of the call, not of the drawing)
+INVALID = ("invalid_params", "unknown_command")
 #: a tool result longer than this (as JSON) is cut, with a hint to filter
 RESULT_CAP = 30000
 #: ``get_document_state`` summary keys the per-turn state keeps
@@ -81,6 +90,9 @@ class EpisodeResult:
     budget_tripped: Optional[str] = None
     error: Optional[str] = None
     turns: int = 0
+    invalid_calls: int = 0
+    cost_usd: Optional[float] = None
+    implicit_submit: bool = False
 
     @property
     def effective_score(self) -> float:
@@ -91,7 +103,9 @@ class EpisodeResult:
                 "budget_tripped": self.budget_tripped, "effective_score": self.effective_score,
                 "rubric_score": self.report.rubric_score, "hard_failed": self.report.hard_failed,
                 "steps": self.steps, "turns": self.turns, "faults": self.faults,
-                "run_check_uses": self.run_check_uses, "elapsed_ms": self.elapsed_ms,
+                "invalid_calls": self.invalid_calls, "run_check_uses": self.run_check_uses,
+                "usage_total": self.usage_total, "cost_usd": self.cost_usd,
+                "implicit_submit": self.implicit_submit, "elapsed_ms": self.elapsed_ms,
                 "path": self.path, "error": self.error}
 
 
@@ -119,15 +133,20 @@ class Episode:
         self.pins = pins
         self.session: Optional[Session] = None
         self.state = BudgetState()
-        self.brief_text = task_text(task.brief, config.level)
         self.scope = list(task.truth.scope)
         self.allowed = allowed_names(config.mode, self.scope)
+        self.dialect = dialects.get(config.dialect, self.allowed)
+        self.brief_text = self.dialect.text(task_text(task.brief, config.level))
         self.tools: List[dict] = []
         self.turns: List[dict] = []
         self.termination: Optional[str] = None
         self.budget_tripped: Optional[str] = None
         self.error: Optional[str] = None
         self.submit_note: str = ""
+        self.implicit_submit = False
+        self.invalid_calls = 0
+        self.cost_usd: Optional[float] = None
+        self._turn_images: List[Optional[list]] = []
 
     # ------------------------------------------------------------ pieces
 
@@ -140,11 +159,16 @@ class Episode:
 
     def reset(self) -> dict:
         self.session = session_for_task(self.task)
-        self.tools = tool_definitions(self.session.manifest(), self.config.mode, self.scope)
+        self.tools = self.dialect.tools(
+            tool_definitions(self.session.manifest(), self.config.mode, self.scope))
         self.state = BudgetState()
         self.agent.reset(self.task, self.config.level, self.config.mode)
+        self.agent.begin({"mode": self.config.mode, "level": self.config.level,
+                          "dialect": self.config.dialect, "skin": self.dialect,
+                          "budgets": self.budgets, "scope": self.scope})
         return {"turn": 0, "brief": self.brief_text, "tools": self.tools,
-                "state": self.state_summary(), "budget": self.state.remaining(self.budgets)}
+                "state": self.state_summary(), "budget": self.state.remaining(self.budgets),
+                "mode": self.config.mode, "dialect": self.config.dialect}
 
     def state_summary(self) -> dict:
         result = self.session.query("get_document_state", {"detail": "summary"})
@@ -170,16 +194,22 @@ class Episode:
     # ------------------------------------------------------------ execute
 
     def execute(self, call: ToolCall) -> dict:
-        """One tool call on the session: a step, whatever it returns."""
-        name, params = call.name, call.params or {}
+        """One tool call on the session: a step, whatever it returns.  The
+        call's name is resolved through the dialect first; a render's image
+        in the vision mode is kept for the agent in ``_turn_images``."""
+        name, params = self.dialect.canonical(call.name), call.params or {}
+        images = None
         if name not in self.allowed:
-            hint = ("tools in this episode: " + ", ".join(sorted(self.allowed)))
-            result = _error(name, "unknown_command",
-                            f"{name!r} is not a tool of this episode", hint)
+            hint = ("tools in this episode: "
+                    + ", ".join(sorted(self.dialect.present(n) for n in self.allowed)))
+            result = _error(call.name, "unknown_command",
+                            f"{call.name!r} is not a tool of this episode", hint)
         elif name in HARNESS_TOOLS:
             result = self._harness_tool(name, params)
         else:
             shaped, notes = shape_params(name, params)
+            if name in RENDER_QUERIES and self.config.mode == "vision":
+                shaped = dict(shaped, include_base64=True)
             if name in RENDER_QUERIES or name in self.session_queries():
                 result = self.session.query(name, shaped)
             else:
@@ -187,8 +217,12 @@ class Episode:
             if notes and isinstance(result, dict):
                 result = dict(result)
                 result["warnings"] = list(result.get("warnings") or []) + notes
-            result = self._shape_result(name, result)
-        self.state.note_call(bool(result.get("ok")))
+            result, images = self._shape_result(name, result)
+        ok = bool(result.get("ok"))
+        if not ok and (result.get("error") or {}).get("type") in INVALID:
+            self.invalid_calls += 1
+        self.state.note_call(ok)
+        self._turn_images.append(images)
         return result
 
     _query_names: Optional[set] = None
@@ -217,20 +251,28 @@ class Episode:
             return {"ok": True, "name": name, "message": "submitted"}
         return _error(name, "unknown_command", f"unknown harness tool {name!r}")
 
-    def _shape_result(self, name: str, result: dict) -> dict:
+    def _shape_result(self, name: str, result: dict) -> Tuple[dict, Optional[list]]:
+        """The result as the agent and the trajectory see it, and the images
+        that go to the agent alone (vision mode)."""
         if not isinstance(result, dict):
-            return {"ok": True, "name": name, "result": result}
+            return {"ok": True, "name": name, "result": result}, None
+        images = None
         if name in RENDER_QUERIES and "base64" in result:
+            data = result["base64"]
             result = {k: v for k, v in result.items() if k != "base64"}
-            result["note"] = "the image is on disk at 'path'; it is not returned inline in this mode"
+            if self.config.mode == "vision":
+                images = [("image/png", data)]
+                result["note"] = "the image is returned with this result"
+            else:
+                result["note"] = "the image is on disk at 'path'; it is not returned inline in this mode"
         text = json.dumps(result, ensure_ascii=False)
         if len(text) > self.config.result_cap:
             return {"ok": bool(result.get("ok")), "name": name, "truncated": True,
                     "text": text[:self.config.result_cap],
                     "hint": (f"the result was {len(text):,} characters and was cut at "
                              f"{self.config.result_cap:,}; ask for less (a sheet, a layer, "
-                             "find_entities with a filter, get_entity by id)")}
-        return result
+                             "find_entities with a filter, get_entity by id)")}, images
+        return result, images
 
     # ----------------------------------------------------------------- run
 
@@ -241,60 +283,94 @@ class Episode:
         if writer:
             writer.write(self.header())
         usage_total: Dict[str, int] = {}
+        model = self.agent.describe().get("model") or self.agent.name
         n = 0
-        while self.termination is None:
-            tripped = self.state.tripped(self.budgets)
-            if tripped:
-                self.termination, self.budget_tripped = "budget", tripped
-                break
-            t0 = time.monotonic()
-            try:
-                action = self.agent.act(observation)
-            except AgentRefusal as refusal:
-                self.termination, self.error = "refusal", str(refusal) or "refused"
-                break
-            except Exception as exc:  # the agent's failure is the episode's outcome
-                self.termination = "error"
-                self.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-                break
-            n += 1
+
+        def take_usage() -> Dict[str, int]:
             usage = self.agent.usage() or {}
             self.state.note_usage(usage)
             for k, v in usage.items():
                 usage_total[k] = usage_total.get(k, 0) + int(v or 0)
-            calls: List[ToolCall]
-            if isinstance(action, Submit):
-                calls, submitted = [], True
-                self.submit_note = action.note
-            else:
-                calls = list(action)
-                submitted = False
-            results = []
-            for call in calls:
-                if call.name == "submit":
-                    results.append(self.execute(call))
-                    submitted = True
-                    break
-                tripped = self.state.tripped(self.budgets)
-                if tripped:
-                    results.append(_error(call.name, "budget_exhausted",
-                                          f"the {tripped} budget is spent; the episode ends"))
-                    break
-                results.append(self.execute(call))
-            turn = {"type": "turn", "n": n,
-                    "assistant": {"text": self.submit_note if submitted else "",
-                                  "tool_calls": [c.to_dict() for c in calls],
-                                  "submit": submitted},
-                    "results": results, "usage": usage,
-                    "elapsed_ms": int(round((time.monotonic() - t0) * 1000))}
+            cost = prices.cost_usd(model, usage) if usage else None
+            if cost is not None:
+                self.cost_usd = round((self.cost_usd or 0.0) + cost, 6)
+            return usage
+
+        def record(turn: dict) -> None:
             self.turns.append(turn)
             if writer:
                 writer.write(turn)
-            if submitted:
-                self.termination = "submit"
-                break
-            observation = {"turn": n, "results": results, "state": self.state_summary(),
-                           "budget": self.state.remaining(self.budgets)}
+
+        try:
+            while self.termination is None:
+                tripped = self.state.tripped(self.budgets)
+                if tripped:
+                    self.termination, self.budget_tripped = "budget", tripped
+                    break
+                t0 = time.monotonic()
+                try:
+                    action = self.agent.act(observation)
+                except (AgentRefusal, LimitReached) as stop:
+                    # the model's outcome: its last turn is kept, and what it cost
+                    n += 1
+                    if isinstance(stop, AgentRefusal):
+                        self.termination, self.error = "refusal", str(stop) or "refused"
+                    else:
+                        self.termination, self.budget_tripped = "budget", stop.limit
+                        self.error = str(stop)
+                    usage = take_usage()
+                    record({"type": "turn", "n": n,
+                            "assistant": {"text": "", "tool_calls": [], "submit": False,
+                                          **self.agent.turn_record()},
+                            "results": [], "usage": usage,
+                            "elapsed_ms": int(round((time.monotonic() - t0) * 1000))})
+                    break
+                except Exception as exc:  # the agent's failure is the episode's outcome
+                    self.termination = "error"
+                    self.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+                    take_usage()
+                    break
+                n += 1
+                usage = take_usage()
+                calls: List[ToolCall]
+                if isinstance(action, Submit):
+                    calls, submitted = [], True
+                    self.submit_note = action.note
+                    self.implicit_submit = action.implicit
+                else:
+                    calls = list(action)
+                    submitted = False
+                results = []
+                self._turn_images = []
+                for call in calls:
+                    if self.dialect.canonical(call.name) == "submit":
+                        results.append(self.execute(call))
+                        submitted = True
+                        break
+                    tripped = self.state.tripped(self.budgets)
+                    if tripped:
+                        results.append(_error(call.name, "budget_exhausted",
+                                              f"the {tripped} budget is spent; the episode ends"))
+                        self._turn_images.append(None)
+                        break
+                    results.append(self.execute(call))
+                assistant = {"text": "", "tool_calls": [self._call_record(c) for c in calls],
+                             "submit": submitted, **self.agent.turn_record()}
+                if submitted and self.submit_note and not assistant.get("text"):
+                    assistant["text"] = self.submit_note
+                if self.implicit_submit:
+                    assistant["implicit_submit"] = True
+                record({"type": "turn", "n": n, "assistant": assistant, "results": results,
+                        "usage": usage, "elapsed_ms": int(round((time.monotonic() - t0) * 1000))})
+                if submitted:
+                    self.termination = "submit"
+                    break
+                observation = {"turn": n, "results": results, "state": self.state_summary(),
+                               "budget": self.state.remaining(self.budgets)}
+                if any(self._turn_images):
+                    observation["images"] = list(self._turn_images)
+        finally:
+            self.agent.close()
         report = verify(self.session.doc, self.task.truth, journal=self.session.bus.journal,
                         prompt_level=self.config.level)
         audit = audit_journal(self.session.bus.journal, self.session.doc)
@@ -311,10 +387,13 @@ class Episode:
             writer.write({"type": "audit", **audit})
             writer.write({"type": "end", "termination": self.termination,
                           "budget_tripped": self.budget_tripped, "error": self.error,
-                          "steps": self.state.steps, "turns": n,
+                          "steps": self.state.steps, "turns": n, "tool_calls": self.state.steps,
+                          "invalid_calls": self.invalid_calls,
                           "run_check_uses": self.state.run_check_uses,
                           "faults": self.state.faults, "usage_total": usage_total,
-                          "cost_usd": None, "elapsed_ms": elapsed_ms,
+                          "cost_usd": self.cost_usd,
+                          "prices_checked": prices.load()["checked"] if self.cost_usd is not None else None,
+                          "implicit_submit": self.implicit_submit, "elapsed_ms": elapsed_ms,
                           "effective_score": report.effective_score,
                           "rubric_score": report.rubric_score,
                           "hard_failed": report.hard_failed})
@@ -324,7 +403,16 @@ class Episode:
                              steps=self.state.steps, run_check_uses=self.state.run_check_uses,
                              faults=self.state.faults, usage_total=usage_total,
                              elapsed_ms=elapsed_ms, path=str(self.path) if self.path else None,
-                             budget_tripped=self.budget_tripped, error=self.error, turns=n)
+                             budget_tripped=self.budget_tripped, error=self.error, turns=n,
+                             invalid_calls=self.invalid_calls, cost_usd=self.cost_usd,
+                             implicit_submit=self.implicit_submit)
+
+    def _call_record(self, call: ToolCall) -> dict:
+        d = call.to_dict()
+        canonical = self.dialect.canonical(call.name)
+        if canonical != call.name:
+            d["tool"] = canonical
+        return d
 
 
 def run_episode(task: Task, agent: Agent, config: EpisodeConfig = EpisodeConfig(),

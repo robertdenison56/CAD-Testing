@@ -4,11 +4,17 @@
         [--level explicit --level vague] [--mode single] [--samples 1] [--limit N]
         [--task ID ...] [--out results] [--run-id ID] [--concurrency 4] [--dry-run]
         [--journal FILE]                              # for --agent replay
+    python -m roaddraft.eval run --taskset d1-dev --model claude-sonnet-5-5 [--model ...]
+        [--provider anthropic|openai|fake] [--effort high] [--max-tokens N] [--strict]
+        [--base-url URL] [--api-key-env VAR] [--extra-body JSON] [--lms-context N]
+        [--dialect neutral|c3d|ord ...] [--cost-cap USD] [--output-tokens N] ...
     python -m roaddraft.eval taskset [NAME ...] [--write | --check]
     python -m roaddraft.eval verify EPISODE.jsonl [--level L] [--json]
     python -m roaddraft.eval verify DOCUMENT --task ID [--taskset d1-dev] [--journal J] [--level L]
     python -m roaddraft.eval human start --task ID [--taskset d1-dev] --out DIR [--level L]
     python -m roaddraft.eval human score DIR [--journal J] [--level L] [--expert benchmarks/expert]
+    python -m roaddraft.eval report results/RUN [--out DIR] [--reverify] [--no-check-delta]
+        [--publish [--allow-unrankable]] [--runs benchmarks/runs]
 """
 from __future__ import annotations
 
@@ -23,7 +29,9 @@ from roaddraft.eval import taskset as tasksets
 from roaddraft.eval.agents import AGENTS, ReplayAgent
 from roaddraft.eval.budget import Budgets
 from roaddraft.eval.episode import Episode, EpisodeConfig
-from roaddraft.eval.runner import RunSpec, matrix, run
+from roaddraft.eval.dialects import DIALECTS
+from roaddraft.eval.providers import PROVIDERS
+from roaddraft.eval.runner import RunSpec, make_agent, matrix, measured_cost, run
 from roaddraft.eval.tools import MODES
 from roaddraft.eval.trajectory import read_episode, reverify
 from roaddraft.tasks.prompts import LEVELS, task_text
@@ -46,30 +54,69 @@ def _print_report(report, as_json: bool) -> None:
         print(line)
 
 
+def _models(values: Optional[List[str]]) -> List[str]:
+    """``--model a,b --model c`` as ``[a, b, c]``."""
+    return [m.strip() for v in values or [] for m in v.split(",") if m.strip()]
+
+
 def cmd_run(args) -> int:
-    spec = RunSpec(taskset=args.taskset, agents=tuple(args.agent or ["oracle"]),
+    models = _models(args.model)
+    options = {"effort": args.effort, "max_tokens": args.max_tokens, "base_url": args.base_url,
+               "api_key_env": args.api_key_env, "lms_context": args.lms_context,
+               "extra_body": json.loads(args.extra_body) if args.extra_body else None}
+    if args.strict:
+        options["strict"] = True
+    spec = RunSpec(taskset=args.taskset,
+                   agents=tuple(args.agent or ([] if models else ["oracle"])),
                    levels=tuple(args.level or ["explicit"]), modes=tuple(args.mode or ["single"]),
                    samples=args.samples, limit=args.limit, task_ids=args.task or None,
                    results_root=args.out, run_id=args.run_id, concurrency=args.concurrency,
-                   budgets=Budgets(steps=args.steps, wall_clock_s=args.wall_clock * 60),
-                   journal=args.journal)
+                   budgets=Budgets(steps=args.steps, wall_clock_s=args.wall_clock * 60,
+                                   output_tokens=args.output_tokens),
+                   journal=args.journal, models=tuple(models), provider=args.provider,
+                   provider_options={k: v for k, v in options.items() if v is not None},
+                   dialects=tuple(args.dialect or ["neutral"]), cost_cap=args.cost_cap)
     cells = matrix(spec)
     if args.dry_run:
         print(f"run {spec.resolved_run_id()}: {len(cells)} episodes -> {spec.out_root}")
         for c in cells[:20]:
             print(f"  {c.task_id} {c.entry['task_type']} {c.entry['sheets']}sh {c.agent} "
-                  f"{c.level} {c.mode} s{c.sample}")
+                  f"{c.level} {c.mode}" + (f" {c.dialect}" if c.dialect != "neutral" else "")
+                  + f" s{c.sample}")
         if len(cells) > 20:
             print(f"  ... {len(cells) - 20} more")
+        for model in models:
+            n = sum(c.agent == model for c in cells)
+            seen = measured_cost(model, spec.results_root)
+            if seen:
+                print(f"  {model}: {n} episodes x ${seen['mean_cost_usd']:.3f} measured over "
+                      f"{seen['n']} = ${n * seen['mean_cost_usd']:.2f} projected")
+            else:
+                print(f"  {model}: {n} episodes, no measured cost yet")
+        if spec.cost_cap is not None:
+            print(f"  cost cap ${spec.cost_cap:.2f}")
         return 0
+    for model in models:   # fail before the matrix, not once per cell
+        try:
+            make_agent(model, spec)
+        except (RuntimeError, ValueError) as exc:
+            print(f"run: {model}: {exc}", file=sys.stderr)
+            return 2
     summary = run(spec, progress=lambda s: print(s, flush=True))
     print(f"\nrun {summary['run_id']}: {summary['episodes']} episodes, {summary['skipped']} resumed, "
-          f"{len(summary['failures'])} failed to start")
+          f"{len(summary['failures'])} failed to start"
+          + (f", ${summary['spent_usd']:.2f} spent" if summary.get("spent_usd") else "")
+          + (f", stopped at the cost cap with {summary['not_run']} not run"
+             if summary.get("stopped") == "cost_cap" else ""))
     for key, g in summary["groups"].items():
-        print(f"  {g['agent']:9s} {g['level']:8s} {g['mode']:12s} n={g['n']:3d} "
+        print(f"  {g['agent']:9s} {g['level']:8s} {g['mode']:12s}"
+              + (f" {g['dialect']}" if g.get("dialect", "neutral") != "neutral" else "")
+              + f" n={g['n']:3d} "
               f"effective {g['mean_effective']:6.2f} rubric {g['mean_rubric']:6.2f} "
               f"hard-fail {g['hard_fail_rate']:.0%} clean {g['clean_sheet_rate']:.0%} "
               f"submit {g['submit_rate']:.0%} steps {g['median_steps']}"
+              + (f" invalid {g['invalid_call_rate']:.1%}" if g.get("invalid_call_rate") else "")
+              + (f" ${g['mean_cost_usd']:.3f}/ep" if g.get("mean_cost_usd") is not None else "")
               + (f" errors {g['errors']}" if g['errors'] else ""))
     return 1 if summary["failures"] else 0
 
@@ -199,6 +246,34 @@ def cmd_human(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    from roaddraft.eval import report as reports
+    run_dir = Path(args.run_dir)
+    summary = reports.build(run_dir, reverify=args.reverify, check_delta=not args.no_check_delta)
+    out = Path(args.out) if args.out else run_dir / "report"
+    reports.write(summary, out)
+    print(f"run {summary['run_id']} ({summary.get('taskset')}): {summary['episodes']} episodes"
+          + (f", {len(summary['incomplete'])} without an end record" if summary["incomplete"] else "")
+          + (", re-scored with the current verifier" if summary["reverified"] else ""))
+    for g in summary["rows"]:
+        ci = (f"{g['ci_low']:.1f}-{g['ci_high']:.1f}" if g["ci_low"] is not None else "-")
+        print(f"  {g['rank']:2d} {g['label']:40s} effective {g['effective_mean']:6.2f} [{ci}] "
+              f"rubric {g['rubric_mean']:6.2f} hard-fail {g['hard_fail_rate']:.0%} "
+              f"n={g['n_tasks']}x{g['k_max']}" + (f" errors {g['errors']}" if g["errors"] else ""))
+    for p in summary["publish_problems"]:
+        print(f"  not rankable: {p}")
+    print(f"-> {out}")
+    if args.publish:
+        try:
+            dest = reports.publish(summary, out, runs_root=args.runs or reports.RUNS_DIR,
+                                   allow_unrankable=args.allow_unrankable)
+        except ValueError as exc:
+            print(f"publish: {exc}", file=sys.stderr)
+            return 1
+        print(f"published -> {dest}  (then: python scripts/make_leaderboard.py)")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m roaddraft.eval",
                                      description="the RoadDraft evaluation harness")
@@ -219,6 +294,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--wall-clock", type=float, default=Budgets.wall_clock_s / 60,
                    help="minutes per episode")
     p.add_argument("--journal", help="replay agent: the journal to replay")
+    p.add_argument("--model", action="append",
+                   help="model id(s) to run as LLM agents (comma-separated or repeated)")
+    p.add_argument("--provider", choices=sorted(PROVIDERS),
+                   help="default: anthropic for claude-*, fake for fake*, else openai")
+    p.add_argument("--effort", help="low | medium | high | xhigh | max (anthropic default high)")
+    p.add_argument("--max-tokens", type=int, help="output tokens per model turn")
+    p.add_argument("--strict", action="store_true",
+                   help="anthropic: strict: true on the tools whose schemas are closed")
+    p.add_argument("--base-url", help="openai: the endpoint (default LM Studio, localhost:1234/v1)")
+    p.add_argument("--api-key-env", help="openai: the variable holding the key (OPENAI_API_KEY)")
+    p.add_argument("--extra-body", help="openai: JSON merged into every request")
+    p.add_argument("--lms-context", type=int, help="openai: LM Studio reload guard at this context")
+    p.add_argument("--dialect", action="append", choices=list(DIALECTS))
+    p.add_argument("--output-tokens", type=int, default=Budgets.output_tokens,
+                   help="output-token budget per episode")
+    p.add_argument("--cost-cap", type=float, help="dollars: no new episode starts past it")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_run)
 
@@ -248,6 +339,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--expert", default=str(EXPERT_DIR), help="score: where the record goes")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_human)
+
+    p = subs.add_parser("report", help="the run report: rows ranked with CIs, per-check credit, "
+                                       "failure taxonomy, gaps")
+    p.add_argument("run_dir", help="a run folder, results/<run_id>")
+    p.add_argument("--out", help="where the report goes (default <run_dir>/report)")
+    p.add_argument("--reverify", action="store_true",
+                   help="re-score every episode from its journal with the current verifier")
+    p.add_argument("--no-check-delta", action="store_true",
+                   help="skip replaying to the last run_check (the delta column)")
+    p.add_argument("--publish", action="store_true",
+                   help="copy summary.json, leaderboard.md and the heatmap to benchmarks/runs/<run_id>/")
+    p.add_argument("--allow-unrankable", action="store_true",
+                   help="publish a draft-spec or d1-dev run anyway, marked as not ranked")
+    p.add_argument("--runs", default=None, help="the published runs folder (default benchmarks/runs)")
+    p.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
     if not args.command:

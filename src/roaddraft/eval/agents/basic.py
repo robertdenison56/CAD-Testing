@@ -23,6 +23,7 @@ class ToolCall:
 @dataclass
 class Submit:
     note: str = ""
+    implicit: bool = False   # the model stopped talking without calling submit
 
 
 Action = Union[List[ToolCall], Submit]
@@ -40,12 +41,25 @@ class Agent:
     def reset(self, task: Task, level: str, mode: str) -> None:
         """Called once per episode before the first observation."""
 
+    def begin(self, context: dict) -> None:
+        """Called after ``reset`` with the episode's ``mode``, ``level``,
+        ``dialect``, ``budgets`` (the mode's) and ``scope``, before the
+        header is written: an LLM agent builds its system prompt here."""
+
     def act(self, observation: dict) -> Action:  # pragma: no cover - abstract
         raise NotImplementedError
 
     def usage(self) -> Dict[str, int]:
         """Tokens the last ``act`` cost, for the budget; nothing for a scripted agent."""
         return {}
+
+    def turn_record(self) -> dict:
+        """What the trajectory keeps of the last ``act`` beside the calls: an
+        LLM agent's text, thinking and stop reason."""
+        return {}
+
+    def close(self) -> None:
+        """Called once when the episode ends, however it ends."""
 
     def describe(self) -> dict:
         """What the trajectory header records about the agent."""

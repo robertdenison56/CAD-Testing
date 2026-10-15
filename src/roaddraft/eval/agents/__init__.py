@@ -9,12 +9,15 @@ list[ToolCall] | Submit``, and the four non-LLM implementations E2 ships.
 - ``ReplayAgent`` replays any saved journal (a human GUI session, an earlier
   episode) for regression and curation.
 
-An LLM agent (E3) implements the same interface over a provider.
+``LLMAgent`` (E3) implements the same interface over a provider
+(``eval.providers``): the model being measured.
 """
 from roaddraft.eval.agents.basic import (
     AGENTS, Agent, AgentRefusal, NullAgent, OracleAgent, ReplayAgent, ScriptedAgent, Submit,
     ToolCall, calls_from_commands, journal_entries,
 )
+from roaddraft.eval.agents.llm import LLMAgent
 
-__all__ = ["AGENTS", "Agent", "AgentRefusal", "NullAgent", "OracleAgent", "ReplayAgent",
-           "ScriptedAgent", "Submit", "ToolCall", "calls_from_commands", "journal_entries"]
+__all__ = ["AGENTS", "Agent", "AgentRefusal", "LLMAgent", "NullAgent", "OracleAgent",
+           "ReplayAgent", "ScriptedAgent", "Submit", "ToolCall", "calls_from_commands",
+           "journal_entries"]

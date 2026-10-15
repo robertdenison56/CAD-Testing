@@ -1,0 +1,1039 @@
+"""The run report (eval plan section 4.9).
+
+    python -m roaddraft.eval report results/<run_id> [--reverify] [--publish]
+
+reads every episode under ``results/<run_id>/episodes/`` and writes, under
+``results/<run_id>/report/`` (beside, not over, the runner's own
+``summary.json``):
+
+    summary.json      every number below, for publishing and the tracker
+    leaderboard.md    the rows ranked, per-check credit, the failure taxonomy,
+                      tool use and termination, the paired gaps, the split by
+                      task type and sheet count, and the CI sizing
+    per_check.svg     the per-check credit as a heatmap, a tooltip on each cell
+    per_check.csv     mean credit per check per row
+    taxonomy.csv      finding codes per row, rolled up to the seven categories
+    episodes.csv      one line per episode
+
+A row is one (model, provider, effort, dialect, mode, level).  The rules:
+
+- The headline is the effective score (0 on a hard fail, else the rubric
+  score), averaged per task over its samples and then over tasks; the 95%
+  interval is a bootstrap over tasks, stratified by task type (the d1 sets
+  cycle the types by design, so the mix is fixed and only the spread within
+  a type is sampling error; the plain bootstrap is kept beside it as
+  ``ci_plain``), with a fixed seed.  Rubric score,
+  hard-fail rate and clean-sheet rate always sit beside it.
+- Rows rank on the effective mean; ties break on hard-fail rate, then
+  invalid-call rate, then cost per sheet.  Neighbouring rows are compared
+  paired by task, and an ordering is called separated only where that
+  paired interval excludes zero.
+- Episodes ended by ``error`` (the harness or the provider's infrastructure
+  failed: HTTP, credentials) are counted and left out of the scores;
+  ``budget`` (with the limit it hit: steps, faults, output_tokens,
+  wall_clock, output_limit, context, turn_time) and ``refusal`` are the
+  model's outcomes and count.  A submit the model never called (it stopped
+  talking) is a submit, and its rate is reported.
+- Gaps are paired by task: the prompt gap (explicit - vague), the transfer
+  gap (neutral - a skin), the self-correct gain (self_correct - single) and
+  the vision gain (vision - self_correct), each wherever both rows ran.
+- Every episode carries the spec, generator and verifier it was scored
+  under.  A mix, or a verifier older than the current one, is flagged;
+  ``--reverify`` re-scores every episode from its journal block with the
+  current verifier, which is how a verifier fix re-scores old runs.
+- Cost is computed now from ``roaddraft.eval.prices`` (the dated price
+  table) for a priced model, else taken from the episode's own figure.
+
+Publishing copies ``summary.json``, ``leaderboard.md`` and the heatmap to
+``benchmarks/runs/<run_id>/``.  A run on a draft spec or on ``d1-dev`` is
+not rankable (the plan publishes only on frozen ids and never reports the
+dev set); it is published only on request, marked with why.
+``scripts/make_leaderboard.py`` builds the README board from the published
+summaries.
+"""
+from __future__ import annotations
+
+import csv
+import io
+import json
+import math
+import random
+import shutil
+import statistics
+from collections import Counter
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+from roaddraft.eval.trajectory import read_episode, replay_journal
+from roaddraft.verify.report import FINDING_CODES
+
+REPORT_VERSION = "e4-v1"  # (2026-10-14) leaderboard v0.1 report
+BOOTSTRAP, SEED = 4000, 0
+REPO = Path(__file__).resolve().parents[3]
+RUNS_DIR = REPO / "benchmarks" / "runs"
+#: the task set the leaderboard ranks on; d1-variance sizes the interval first
+LEADERBOARD_SET = "d1-test"
+NEVER_REPORTED = ("d1-dev",)
+#: the CI half-width the v0.1 acceptance asks for, in points
+TARGET_HALF_WIDTH = 5.0
+
+#: finding codes rolled up to the writeup's categories (section 4.9)
+TAXONOMY: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("completeness", ("missing", "missing_field")),
+    ("value", ("wrong_value", "wrong_field", "geometry_mismatch", "extra_linework",
+               "design_tampered")),
+    ("anchoring", ("unanchored", "anchor_inconsistent", "duplicate")),
+    ("placement", ("misplaced", "not_visible")),
+    ("legibility", ("overlap", "off_sheet", "clipped", "upside_down")),
+    ("standards", ("wrong_layer", "wrong_height", "wrong_layer_props")),
+    ("sheet_setup", ("sheet_missing", "viewport_scale", "not_fitted")),
+)
+CATEGORIES = tuple(c for c, _ in TAXONOMY)
+CATEGORY_OF = {code: cat for cat, codes in TAXONOMY for code in codes}
+assert set(CATEGORY_OF) == set(FINDING_CODES), "every finding code needs a category"
+
+#: tool errors that are the call's fault rather than the drawing's
+INVALID_ERRORS = frozenset({"invalid_params", "unknown_command", "unknown_query", "invalid_call"})
+#: the coordinate path: text and linework placed by hand
+COORDINATE_TOOLS = frozenset({"place_text", "draw_line", "draw_arc", "draw_polyline"})
+HARNESS_TOOL_NAMES = frozenset({"get_task_brief", "run_check", "submit"})
+#: a fault is recovered when the same tool succeeds within this many calls
+RECOVERY_WINDOW = 3
+
+GROUP_DIMS = ("model", "provider", "effort", "dialect", "mode", "level")
+#: (name, dimension, a, b): gap = effective(a) - effective(b), paired by task;
+#: b None means every other value of the dimension
+GAPS: Tuple[Tuple[str, str, str, Optional[str]], ...] = (
+    ("prompt gap", "level", "explicit", "vague"),
+    ("transfer gap", "dialect", "neutral", None),
+    ("self-correct gain", "mode", "self_correct", "single"),
+    ("vision gain", "mode", "vision", "self_correct"),
+)
+
+
+def _anchor_producers() -> frozenset:
+    try:
+        from roaddraft.commands.bus import ANCHOR_PRODUCERS
+        return frozenset(ANCHOR_PRODUCERS)
+    except ImportError:  # pragma: no cover
+        return frozenset({"place_label", "annotate_stationing", "place_curve_table",
+                          "draw_alignment"})
+
+
+SEMANTIC_TOOLS = _anchor_producers()
+
+
+# --------------------------------------------------------------- statistics
+
+def mean(values: Iterable[Optional[float]]) -> Optional[float]:
+    vals = [float(v) for v in values if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def bootstrap(values: Sequence[float], strata: Optional[Sequence[str]] = None,
+              n: int = BOOTSTRAP, seed: int = SEED) -> Tuple[Optional[float], Optional[float]]:
+    """A 95% percentile interval on the mean of ``values`` (one per task),
+    resampled ``n`` times with a fixed seed.  With ``strata`` (each task's
+    type) the tasks are resampled within their stratum, so the designed mix
+    of task types stays fixed and only the spread within a type counts."""
+    vals = [float(v) for v in values]
+    if not vals:
+        return None, None
+    if len(vals) == 1:
+        return vals[0], vals[0]
+    groups: Dict[str, List[float]] = {}
+    for i, v in enumerate(vals):
+        groups.setdefault(strata[i] if strata else "", []).append(v)
+    pools = list(groups.values())
+    rng = random.Random(seed)
+    k = len(vals)
+    stats = sorted(sum(sum(rng.choices(p, k=len(p))) for p in pools) / k for _ in range(n))
+    return stats[round(0.025 * (n - 1))], stats[round(0.975 * (n - 1))]
+
+
+def _pctl(values: Sequence[float], q: float) -> Optional[float]:
+    vals = sorted(values)
+    if not vals:
+        return None
+    i = (len(vals) - 1) * q
+    lo, hi = math.floor(i), math.ceil(i)
+    return vals[lo] + (vals[hi] - vals[lo]) * (i - lo)
+
+
+def _r(x: Optional[float], digits: int = 2) -> Optional[float]:
+    return None if x is None else round(float(x), digits)
+
+
+# ------------------------------------------------------------ one episode
+
+def _flat_calls(turns: Sequence[dict]) -> List[dict]:
+    """Every tool call in order with its result: name, ok, error type and
+    the bus's command id (the journal length after a command)."""
+    out = []
+    for t in turns:
+        calls = (t.get("assistant") or {}).get("tool_calls") or []
+        for call, res in zip(calls, t.get("results") or []):
+            res = res if isinstance(res, dict) else {}
+            err = res.get("error") or {}
+            out.append({"name": call.get("name"), "ok": bool(res.get("ok")),
+                        "error": err.get("type") if not res.get("ok") else None,
+                        "command_id": res.get("command_id")})
+    return out
+
+
+def tool_use(turns: Sequence[dict]) -> dict:
+    """Call counts from the turns: invalid calls, other faults, recoveries,
+    the coordinate path against the anchored one, and where each successful
+    ``run_check`` fell in the journal."""
+    calls = _flat_calls(turns)
+    errors = Counter(c["error"] for c in calls if not c["ok"])
+    invalid = sum(v for k, v in errors.items() if k in INVALID_ERRORS)
+    faults = [i for i, c in enumerate(calls) if not c["ok"]]
+    recovered = sum(
+        any(calls[j]["ok"] and calls[j]["name"] == calls[i]["name"]
+            for j in range(i + 1, min(len(calls), i + 1 + RECOVERY_WINDOW)))
+        for i in faults)
+    ok_names = [c["name"] for c in calls if c["ok"]]
+    checks, journal_len = [], 0
+    for c in calls:
+        if c["ok"] and c["command_id"] is not None and c["name"] not in HARNESS_TOOL_NAMES:
+            journal_len = max(journal_len, int(c["command_id"]))
+        if c["ok"] and c["name"] == "run_check":
+            checks.append(journal_len)
+    return {"tool_calls": len(calls), "invalid_calls": invalid,
+            "failed_calls": len(faults) - invalid, "faults": len(faults),
+            "recovered": recovered, "errors": dict(errors),
+            "coordinate_calls": sum(n in COORDINATE_TOOLS for n in ok_names),
+            "semantic_calls": sum(n in SEMANTIC_TOOLS for n in ok_names),
+            "check_prefixes": checks}
+
+
+def score_prefix(journal: dict, prefix: int, level: str) -> float:
+    """The effective score of the document the first ``prefix`` journal
+    entries make: what the drawing scored when the agent last ran
+    ``run_check``."""
+    from roaddraft.tasks.brief import GroundTruth
+    from roaddraft.verify import verify
+    block = dict(journal)
+    block["entries"] = list(journal.get("entries") or [])[:prefix]
+    session = replay_journal(block)
+    report = verify(session.doc, GroundTruth.from_dict(journal["truth"]),
+                    journal=session.bus.journal, prompt_level=level)
+    return report.effective_score
+
+
+def _cost(header: dict, end: dict, turns: Sequence[dict] = ()
+          ) -> Tuple[Optional[float], Optional[str]]:
+    """Dollars for the episode at today's table, priced turn by turn (the
+    table's rates step with each request's prompt size), else the episode's
+    own figure."""
+    usage = end.get("usage_total") or {}
+    try:
+        from roaddraft.eval import prices
+    except ImportError:
+        prices = None
+    if prices is not None and usage:
+        try:
+            per_turn = [t.get("usage") for t in turns if t.get("usage")]
+            cost = (prices.episode_cost(header.get("model"), per_turn) if per_turn
+                    else prices.cost_usd(header.get("model"), usage))
+            checked = (prices.load() or {}).get("checked")
+        except Exception:  # a malformed or missing table: fall back to the episode's figure
+            cost, checked = None, None
+        if cost is not None:
+            return float(cost), checked
+    if end.get("cost_usd") is not None:
+        return float(end["cost_usd"]), end.get("prices_checked")
+    return None, None
+
+
+def load_episode(path, reverify: bool = False, check_delta: bool = True) -> Optional[dict]:
+    """One episode file as a flat row (plus its per-check credits and
+    findings), or None when the episode has no end record yet."""
+    rec = read_episode(path)
+    header, end, verify_rec = rec["header"], rec["end"], rec["verify"]
+    if header is None or end is None:
+        return None
+    level = header.get("level", "explicit")
+    scored_by = "episode"
+    if reverify and rec["journal"] is not None and (rec["journal"].get("truth") is not None):
+        from roaddraft.eval.trajectory import reverify as _reverify
+        verify_rec = _reverify(path, level=level).to_dict()
+        scored_by = "reverify"
+    verify_rec = verify_rec or {}
+    checks = {}
+    findings: List[str] = [f["code"] for f in verify_rec.get("findings") or []]
+    hard_fail_checks = []
+    for c in verify_rec.get("checks") or []:
+        if not c.get("in_scope", True):
+            continue
+        checks[c["id"]] = {"name": c.get("name"), "weight": c.get("weight"),
+                           "credit": float(c.get("credit") or 0.0)}
+        findings.extend(f["code"] for f in c.get("findings") or [])
+        if c.get("hard_fail_triggered"):
+            hard_fail_checks.append(c["id"])
+    use = tool_use(rec["turns"])
+    effective = float(verify_rec.get("effective_score", end.get("effective_score") or 0.0))
+    rubric = float(verify_rec.get("rubric_score", end.get("rubric_score") or 0.0))
+    hard_failed = bool(verify_rec.get("hard_failed", end.get("hard_failed")))
+    at_check = None
+    if check_delta and use["check_prefixes"] and rec["journal"] is not None \
+            and rec["journal"].get("truth") is not None:
+        try:
+            at_check = score_prefix(rec["journal"], use["check_prefixes"][-1], level)
+        except Exception:  # a journal that does not replay: no delta, not a crash
+            at_check = None
+    cost, prices_checked = _cost(header, end, rec["turns"])
+    usage = end.get("usage_total") or {}
+    termination = end.get("termination") or "unknown"
+    row = {
+        "file": Path(path).name, "run_id": header.get("run_id"), "task_id": header.get("task_id"),
+        "task_type": header.get("task_type"), "sheets": header.get("sheets"),
+        "seed": header.get("seed"), "agent": header.get("agent"),
+        "model": header.get("model") or header.get("agent"),
+        "provider": header.get("provider") or "unknown", "effort": header.get("effort"),
+        "dialect": header.get("dialect", "neutral"), "mode": header.get("mode", "single"),
+        "level": level, "sample": header.get("sample", 0),
+        "spec_version": verify_rec.get("spec_version", header.get("spec_version")),
+        "spec_hash": verify_rec.get("spec_hash", header.get("spec_hash")),
+        "generator_version": header.get("generator_version"),
+        "verifier_version": verify_rec.get("verifier_version", header.get("verifier_version")),
+        "harness_version": header.get("harness_version"), "git_commit": header.get("git_commit"),
+        "scored_by": scored_by, "termination": termination,
+        "budget_tripped": end.get("budget_tripped"), "error": end.get("error"),
+        "implicit_submit": bool(end.get("implicit_submit")),
+        "effective_score": round(effective, 4), "rubric_score": round(rubric, 4),
+        "hard_failed": hard_failed, "clean": effective >= 100.0 - 1e-9,
+        "hard_fail_checks": ";".join(hard_fail_checks),
+        "steps": int(end.get("steps") or 0), "turns": int(end.get("turns") or len(rec["turns"])),
+        "run_check_uses": int(end.get("run_check_uses") or 0),
+        "effective_at_last_check": None if at_check is None else round(at_check, 4),
+        "tool_calls": use["tool_calls"], "invalid_calls": use["invalid_calls"],
+        "failed_calls": use["failed_calls"], "faults": use["faults"],
+        "recovered": use["recovered"], "coordinate_calls": use["coordinate_calls"],
+        "semantic_calls": use["semantic_calls"],
+        "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
+        "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+        "cost_usd": None if cost is None else round(cost, 6), "prices_checked": prices_checked,
+        "elapsed_ms": end.get("elapsed_ms"),
+        "findings": len(findings),
+    }
+    return {"row": row, "checks": checks, "findings": findings, "errors": use["errors"]}
+
+
+# --------------------------------------------------------------- aggregate
+
+def group_key(row: dict) -> Tuple:
+    return tuple(row.get(d) for d in GROUP_DIMS)
+
+
+def group_label(dims: dict) -> str:
+    model = dims["model"] + (f" ({dims['effort']})" if dims.get("effort") else "")
+    parts = [model, dims["mode"], dims["level"]]
+    if dims.get("dialect") and dims["dialect"] != "neutral":
+        parts.append(dims["dialect"])
+    return " · ".join(parts)
+
+
+def task_means(eps: Sequence[dict], field: str = "effective_score") -> Dict[str, float]:
+    by: Dict[str, List[float]] = {}
+    for e in eps:
+        by.setdefault(e["row"]["task_id"], []).append(e["row"][field])
+    return {t: sum(v) / len(v) for t, v in by.items()}
+
+
+def task_types(eps: Sequence[dict]) -> Dict[str, str]:
+    return {e["row"]["task_id"]: str(e["row"]["task_type"]) for e in eps}
+
+
+def _rate(eps: Sequence[dict], pred) -> Optional[float]:
+    return _r(sum(1 for e in eps if pred(e["row"])) / len(eps), 4) if eps else None
+
+
+def summarize_group(dims: dict, eps: Sequence[dict]) -> dict:
+    """Every number of one row (section 5)."""
+    errored = [e for e in eps if e["row"]["termination"] == "error"]
+    scored = [e for e in eps if e["row"]["termination"] != "error"]
+    rows = [e["row"] for e in scored]
+    tm = task_means(scored)
+    types = task_types(scored)
+    tasks = sorted(tm)
+    lo, hi = bootstrap([tm[t] for t in tasks], [types[t] for t in tasks])
+    plain_lo, plain_hi = bootstrap([tm[t] for t in tasks])
+    eff = mean(tm.values())
+    half = None if lo is None else (hi - lo) / 2
+    per_task: Dict[str, int] = Counter(r["task_id"] for r in rows)
+    sds = []
+    by_task: Dict[str, List[float]] = {}
+    for r in rows:
+        by_task.setdefault(r["task_id"], []).append(r["effective_score"])
+    for vals in by_task.values():
+        if len(vals) >= 2:
+            sds.append(statistics.stdev(vals))
+    calls = sum(r["tool_calls"] for r in rows)
+    faults = sum(r["faults"] for r in rows)
+    coord = sum(r["coordinate_calls"] for r in rows)
+    sem = sum(r["semantic_calls"] for r in rows)
+    costs = [r["cost_usd"] for r in rows if r["cost_usd"] is not None]
+    checked = [r for r in rows if r["run_check_uses"] and r["effective_at_last_check"] is not None]
+    terminations = Counter((r["termination"] + (f":{r['budget_tripped']}" if r["budget_tripped"] else ""))
+                           for r in (e["row"] for e in eps))
+    out = {
+        "key": dims, "label": group_label(dims),
+        "n_episodes": len(eps), "n_scored": len(scored), "n_tasks": len(tm),
+        "errors": len(errored),
+        "k_min": min(per_task.values()) if per_task else 0,
+        "k_max": max(per_task.values()) if per_task else 0,
+        "effective_mean": _r(eff), "ci_low": _r(lo), "ci_high": _r(hi), "half_width": _r(half),
+        "ci_plain": [_r(plain_lo), _r(plain_hi)],
+        "tasks_for_target": (math.ceil(len(tm) * (half / TARGET_HALF_WIDTH) ** 2)
+                             if half else None),
+        "sample_sd": _r(mean(sds)),
+        "rubric_mean": _r(mean(task_means(scored, "rubric_score").values())),
+        "hard_fail_rate": _rate(scored, lambda r: r["hard_failed"]),
+        "clean_sheet_rate": _rate(scored, lambda r: r["clean"]),
+        "submit_rate": _rate(scored, lambda r: r["termination"] == "submit"),
+        "implicit_submit_rate": _rate(scored, lambda r: r["implicit_submit"]),
+        "terminations": dict(sorted(terminations.items())),
+        "steps_median": _r(_pctl([r["steps"] for r in rows], 0.5), 1),
+        "steps_p90": _r(_pctl([r["steps"] for r in rows], 0.9), 1),
+        "tool_calls": calls,
+        "invalid_call_rate": _r(sum(r["invalid_calls"] for r in rows) / calls, 4) if calls else None,
+        "fault_rate": _r(sum(r["failed_calls"] for r in rows) / calls, 4) if calls else None,
+        "recovery_rate": _r(sum(r["recovered"] for r in rows) / faults, 4) if faults else None,
+        "coordinate_share": _r(coord / (coord + sem), 4) if coord + sem else None,
+        "run_check_mean": _r(mean(r["run_check_uses"] for r in rows)),
+        "check_delta_mean": _r(mean(r["effective_score"] - r["effective_at_last_check"]
+                                    for r in checked)),
+        "check_delta_n": len(checked),
+        "cost_per_sheet": _r(mean(costs), 4), "cost_total": _r(sum(costs), 4) if costs else None,
+        "priced": len(costs),
+        "output_tokens_mean": _r(mean(r["output_tokens"] for r in rows), 0),
+        "input_tokens_mean": _r(mean(r["input_tokens"] for r in rows), 0),
+        "elapsed_median_s": _r((_pctl([r["elapsed_ms"] or 0 for r in rows], 0.5) or 0) / 1000, 1),
+    }
+    out["per_check"] = per_check(scored)
+    out["taxonomy"] = taxonomy(scored)
+    out["tool_errors"] = dict(sorted(sum((Counter(e["errors"]) for e in scored), Counter()).items()))
+    out["by_task_type"] = split(scored, "task_type")
+    out["by_sheets"] = split(scored, "sheets")
+    return out
+
+
+def per_check(eps: Sequence[dict]) -> Dict[str, dict]:
+    acc: Dict[str, dict] = {}
+    for e in eps:
+        for cid, c in e["checks"].items():
+            a = acc.setdefault(cid, {"name": c["name"], "weight": c["weight"], "credits": []})
+            a["credits"].append(c["credit"])
+    return {cid: {"name": a["name"], "weight": a["weight"], "n": len(a["credits"]),
+                  "mean_credit": _r(mean(a["credits"]), 4),
+                  "pass_rate": _r(sum(v >= 1.0 for v in a["credits"]) / len(a["credits"]), 4)}
+            for cid, a in sorted(acc.items())}
+
+
+def taxonomy(eps: Sequence[dict]) -> Dict[str, dict]:
+    """Per category: the share of episodes with at least one such finding,
+    findings per episode, and the codes behind them."""
+    n = len(eps)
+    out = {}
+    for cat, codes in TAXONOMY:
+        counts = Counter()
+        hit = 0
+        for e in eps:
+            mine = [c for c in e["findings"] if CATEGORY_OF.get(c) == cat]
+            counts.update(mine)
+            hit += bool(mine)
+        out[cat] = {"episodes": _r(hit / n, 4) if n else None,
+                    "per_episode": _r(sum(counts.values()) / n, 3) if n else None,
+                    "codes": {c: counts[c] for c in codes if counts[c]}}
+    return out
+
+
+def split(eps: Sequence[dict], field: str) -> Dict[str, dict]:
+    by: Dict[str, List[dict]] = {}
+    for e in eps:
+        by.setdefault(str(e["row"][field]), []).append(e)
+    return {k: {"n": len(v), "effective_mean": _r(mean(task_means(v).values())),
+                "hard_fail_rate": _rate(v, lambda r: r["hard_failed"])}
+            for k, v in sorted(by.items())}
+
+
+def paired(a: Sequence[dict], b: Sequence[dict]) -> Optional[dict]:
+    """effective(a) - effective(b) over the tasks both ran, with a bootstrap
+    interval; None when they share no task."""
+    sa = [e for e in a if e["row"]["termination"] != "error"]
+    ma = task_means(sa)
+    mb = task_means([e for e in b if e["row"]["termination"] != "error"])
+    shared = sorted(set(ma) & set(mb))
+    if not shared:
+        return None
+    diffs = [ma[t] - mb[t] for t in shared]
+    types = task_types(sa)
+    lo, hi = bootstrap(diffs, [types[t] for t in shared])
+    return {"gap": _r(mean(diffs)), "ci_low": _r(lo), "ci_high": _r(hi), "n_tasks": len(shared),
+            "separated": bool(lo is not None and (lo > 0 or hi < 0))}
+
+
+def rank_key(g: dict) -> Tuple:
+    inf = float("inf")
+    return (-(g["effective_mean"] if g["effective_mean"] is not None else -inf),
+            g["hard_fail_rate"] if g["hard_fail_rate"] is not None else inf,
+            g["invalid_call_rate"] if g["invalid_call_rate"] is not None else inf,
+            g["cost_per_sheet"] if g["cost_per_sheet"] is not None else inf, g["label"])
+
+
+# ------------------------------------------------------------------- report
+
+def current_versions() -> dict:
+    from roaddraft.tasks.brief import GENERATOR_VERSION
+    from roaddraft.tasks.spec_v1 import SPEC_VERSION, spec_hash
+    from roaddraft.verify import VERIFIER_VERSION
+    return {"spec_version": SPEC_VERSION, "spec_hash": spec_hash(),
+            "generator_version": GENERATOR_VERSION, "verifier_version": VERIFIER_VERSION}
+
+
+def _run_meta(run_dir: Path) -> dict:
+    p = run_dir / "run.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except ValueError:
+            return {}
+    return {}
+
+
+def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
+    """The whole report for one run folder, as the dict ``summary.json`` holds."""
+    run_dir = Path(run_dir)
+    files = sorted((run_dir / "episodes").glob("*.jsonl"))
+    if not files:
+        raise FileNotFoundError(f"{run_dir}: no episodes under {run_dir / 'episodes'}")
+    eps, incomplete = [], []
+    for f in files:
+        e = load_episode(f, reverify=reverify, check_delta=check_delta)
+        (eps.append(e) if e else incomplete.append(f.name))
+    meta = _run_meta(run_dir)
+    taskset = (meta.get("spec") or {}).get("taskset")
+    groups: Dict[Tuple, List[dict]] = {}
+    for e in eps:
+        groups.setdefault(group_key(e["row"]), []).append(e)
+    rows = [summarize_group(dict(zip(GROUP_DIMS, k)), v) for k, v in groups.items()]
+    order = sorted(range(len(rows)), key=lambda i: rank_key(rows[i]))
+    keys = list(groups)
+    rows = [rows[i] for i in order]
+    keys = [keys[i] for i in order]
+    for i, g in enumerate(rows):
+        g["rank"] = i + 1
+        g["vs_next"] = paired(groups[keys[i]], groups[keys[i + 1]]) if i + 1 < len(rows) else None
+    gaps = []
+    for name, dim, a, b in GAPS:
+        idx = GROUP_DIMS.index(dim)
+        for ka in keys:
+            if ka[idx] != a:
+                continue
+            for kb in keys:
+                if kb == ka or (b is not None and kb[idx] != b) or kb[idx] == a:
+                    continue
+                if any(ka[j] != kb[j] for j in range(len(GROUP_DIMS)) if j != idx):
+                    continue
+                p = paired(groups[ka], groups[kb])
+                if p:
+                    other = dict(zip(GROUP_DIMS, ka))
+                    gaps.append({"gap_name": name, "dimension": dim, "a": a, "b": kb[idx],
+                                 "row": group_label(other).replace(f" · {a}", ""), **p})
+    versions = {f: sorted({str(e["row"][f]) for e in eps})
+                for f in ("spec_version", "spec_hash", "generator_version", "verifier_version",
+                          "harness_version")}
+    now = current_versions()
+    stale = [f"{f} {', '.join(versions[f])} (current {now[f]})"
+             for f in ("spec_hash", "generator_version", "verifier_version")
+             if versions[f] != [str(now[f])]]
+    summary = {
+        "report_version": REPORT_VERSION, "run_id": run_dir.name, "taskset": taskset,
+        "episodes": len(eps), "incomplete": incomplete,
+        "reverified": bool(reverify), "versions": versions, "current_versions": now,
+        "stale": stale, "pins": meta.get("pins"), "harness_version": meta.get("harness_version"),
+        "prices_checked": sorted({e["row"]["prices_checked"] for e in eps
+                                  if e["row"]["prices_checked"]}),
+        "bootstrap": {"resamples": BOOTSTRAP, "seed": SEED, "over": "tasks within task type"},
+        "target_half_width": TARGET_HALF_WIDTH,
+        "rows": rows, "gaps": gaps,
+    }
+    summary["publish_problems"] = publish_problems(summary)
+    summary["_episodes"] = eps  # dropped before writing; the CSVs read it
+    return summary
+
+
+def publish_problems(summary: dict) -> List[str]:
+    """Why a run may not be ranked: the plan publishes only on a frozen spec,
+    never reports the dev set, and wants one verifier per run."""
+    out = []
+    drafts = [v for v in summary["versions"]["spec_version"] if v.startswith("draft")]
+    if drafts:
+        out.append(f"spec {', '.join(drafts)} is a draft; the leaderboard ranks only a frozen spec")
+    if summary.get("taskset") in NEVER_REPORTED:
+        out.append(f"{summary['taskset']} is the development set and is never reported")
+    elif summary.get("taskset") is None:
+        out.append("the run has no run.json naming its task set")
+    if len(summary["versions"]["verifier_version"]) > 1 or len(summary["versions"]["spec_hash"]) > 1:
+        out.append("episodes were scored under more than one verifier or spec; report with --reverify")
+    elif summary["stale"]:
+        out.append("scored under an older spec or verifier: " + "; ".join(summary["stale"]))
+    if summary["incomplete"]:
+        out.append(f"{len(summary['incomplete'])} episodes have no end record; resume the run")
+    return out
+
+
+# ----------------------------------------------------------------- render
+
+def _f(x: Optional[float], digits: int = 1) -> str:
+    return "–" if x is None else f"{x:.{digits}f}"
+
+
+def _p(x: Optional[float]) -> str:
+    return "–" if x is None else f"{100 * x:.0f}%"
+
+
+def _usd(x: Optional[float]) -> str:
+    return "–" if x is None else (f"${x:.3f}" if x < 1 else f"${x:.2f}")
+
+
+def _short(name: Optional[str], width: int = 40) -> str:
+    """A check's name cut at a word boundary for a table cell."""
+    text = (name or "").split(":")[0].strip()
+    if len(text) <= width:
+        return text
+    return text[:width].rsplit(" ", 1)[0].rstrip(",;(") + "…"
+
+
+def _ci(g: dict) -> str:
+    if g["ci_low"] is None:
+        return "–"
+    return f"{g['ci_low']:.1f}–{g['ci_high']:.1f}"
+
+
+def render_markdown(s: dict) -> str:
+    rows = s["rows"]
+    L = [f"# Run `{s['run_id']}`", ""]
+    v = s["versions"]
+    L.append(f"Task set **{s.get('taskset') or '?'}** · {s['episodes']} episodes · spec "
+             f"{', '.join(v['spec_version'])} ({', '.join(h[:19] for h in v['spec_hash'])}) · "
+             f"generator {', '.join(v['generator_version'])} · verifier "
+             f"{', '.join(v['verifier_version'])} · harness {', '.join(v['harness_version'])}"
+             + (" · **re-scored with the current verifier**" if s["reverified"] else ""))
+    L.append("")
+    if s["publish_problems"]:
+        L.append("> **Not rankable as it stands:** " + " ".join(
+            f"{p[0].upper()}{p[1:]}." for p in s["publish_problems"]))
+        L.append("")
+    L += ["## Rows", "",
+          "Effective score: 0 on a hard fail, else the rubric score; per task over its samples, "
+          f"then over tasks. 95% CI: bootstrap over tasks within task type "
+          f"({s['bootstrap']['resamples']:,} resamples, seed {s['bootstrap']['seed']}).", "",
+          "| # | Row | Effective | 95% CI | Rubric | Hard-fail | Clean | Submit | Steps (med / p90) "
+          "| Invalid calls | Recovery | run_check | Cost / sheet | Tasks × k |",
+          "|---:|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|"]
+    for g in rows:
+        k = f"{g['k_min']}" if g["k_min"] == g["k_max"] else f"{g['k_min']}–{g['k_max']}"
+        L.append(f"| {g['rank']} | {g['label']} | **{_f(g['effective_mean'])}** | {_ci(g)} | "
+                 f"{_f(g['rubric_mean'])} | {_p(g['hard_fail_rate'])} | {_p(g['clean_sheet_rate'])} | "
+                 f"{_p(g['submit_rate'])} | {_f(g['steps_median'], 0)} / {_f(g['steps_p90'], 0)} | "
+                 f"{_p(g['invalid_call_rate'])} | {_p(g['recovery_rate'])} | "
+                 f"{_f(g['run_check_mean'])} | {_usd(g['cost_per_sheet'])} | {g['n_tasks']} × {k}"
+                 + (f" ({g['errors']} errored)" if g["errors"] else "") + " |")
+    seps = [(g, g["vs_next"]) for g in rows if g.get("vs_next")]
+    if seps:
+        L += ["", "Each row against the next, paired by task: "
+              + "; ".join(f"#{g['rank']} − #{g['rank'] + 1} = {p['gap']:+.1f} "
+                          f"({p['ci_low']:+.1f} to {p['ci_high']:+.1f}, "
+                          f"{'separated' if p['separated'] else 'not separated'})"
+                          for g, p in seps) + "."]
+    # per check
+    ids = sorted({cid for g in rows for cid in g["per_check"]})
+    if ids:
+        names = {}
+        for g in rows:
+            for cid, c in g["per_check"].items():
+                names.setdefault(cid, (c["name"], c["weight"]))
+        L += ["", "## Per-check credit", "",
+              "Mean credit (0–1) over the episodes whose task has the check in scope; – where none did.",
+              "", "![Per-check credit](per_check.svg)", "",
+              "| Check | Weight | " + " | ".join(f"#{g['rank']}" for g in rows) + " |",
+              "|---|---:|" + "---:|" * len(rows)]
+        for cid in ids:
+            name, weight = names[cid]
+            short = _short(name)
+            L.append(f"| {cid} {short} | {weight} | " + " | ".join(
+                _f((g["per_check"].get(cid) or {}).get("mean_credit"), 2) for g in rows) + " |")
+    # taxonomy
+    L += ["", "## Failure taxonomy", "",
+          "Share of episodes with at least one finding in the category (findings per episode).", "",
+          "| Category | " + " | ".join(f"#{g['rank']}" for g in rows) + " | Codes |",
+          "|---|" + "---:|" * len(rows) + "---|"]
+    for cat in CATEGORIES:
+        codes = Counter()
+        for g in rows:
+            codes.update(g["taxonomy"][cat]["codes"])
+        L.append(f"| {cat} | " + " | ".join(
+            f"{_p(g['taxonomy'][cat]['episodes'])} ({_f(g['taxonomy'][cat]['per_episode'], 1)})"
+            for g in rows) + " | " + ", ".join(f"{c} {n}" for c, n in codes.most_common()) + " |")
+    L += ["", "### Tool use and termination", "",
+          "| | " + " | ".join(f"#{g['rank']}" for g in rows) + " |",
+          "|---|" + "---:|" * len(rows)]
+    L.append("| tool calls | " + " | ".join(str(g["tool_calls"]) for g in rows) + " |")
+    L.append("| invalid-call rate | " + " | ".join(_p(g["invalid_call_rate"]) for g in rows) + " |")
+    L.append("| other fault rate | " + " | ".join(_p(g["fault_rate"]) for g in rows) + " |")
+    L.append("| recovery rate | " + " | ".join(_p(g["recovery_rate"]) for g in rows) + " |")
+    L.append("| coordinate path share | " + " | ".join(_p(g["coordinate_share"]) for g in rows) + " |")
+    L.append("| stopped without calling submit | " + " | ".join(
+        _p(g.get("implicit_submit_rate")) for g in rows) + " |")
+    L.append("| Δ effective after last run_check | " + " | ".join(
+        (f"{g['check_delta_mean']:+.1f} (n {g['check_delta_n']})"
+         if g["check_delta_mean"] is not None else "–") for g in rows) + " |")
+    terms = sorted({t for g in rows for t in g["terminations"]})
+    for t in terms:
+        L.append(f"| ended {t} | " + " | ".join(str(g["terminations"].get(t, 0)) for g in rows) + " |")
+    errs = sorted({t for g in rows for t in g["tool_errors"]})
+    for t in errs:
+        L.append(f"| error {t} | " + " | ".join(str(g["tool_errors"].get(t, 0)) for g in rows) + " |")
+    if s["gaps"]:
+        L += ["", "## Paired gaps", "", "| Gap | Row | a − b | Gap | 95% CI | Tasks | Separated |",
+              "|---|---|---|---:|---|---:|---|"]
+        for p in s["gaps"]:
+            L.append(f"| {p['gap_name']} | {p['row']} | {p['a']} − {p['b']} | {p['gap']:+.1f} | "
+                     f"{p['ci_low']:+.1f} to {p['ci_high']:+.1f} | {p['n_tasks']} | "
+                     f"{'yes' if p['separated'] else 'no'} |")
+    types = sorted({t for g in rows for t in g["by_task_type"]})
+    if types:
+        L += ["", "## By task type and sheet count", "",
+              "| Task type | " + " | ".join(f"#{g['rank']}" for g in rows) + " |",
+              "|---|" + "---:|" * len(rows)]
+        sheets = sorted({n for g in rows for n in g["by_sheets"]})
+        for t in types + [f"{n} sheet{'s' if n != '1' else ''}" for n in sheets]:
+            if t.split()[-1] in ("sheet", "sheets"):
+                cells = [g["by_sheets"].get(t.split()[0]) for g in rows]
+            else:
+                cells = [g["by_task_type"].get(t) for g in rows]
+            L.append(f"| {t} | " + " | ".join(
+                f"{_f(c['effective_mean'])} (n {c['n']})" if c else "–" for c in cells) + " |")
+    L += ["", "## Interval sizing", "",
+          f"The v0.1 target is a 95% half-width under {TARGET_HALF_WIDTH:g} points. Tasks needed "
+          "assumes the half-width shrinks as 1/√tasks at this row's spread.", "",
+          "| Row | Tasks | Half-width | Unstratified | Within-task SD | Tasks for the target |",
+          "|---|---:|---:|---:|---:|---:|"]
+    for g in rows:
+        plain = g.get("ci_plain") or [None, None]
+        ph = None if plain[0] is None else (plain[1] - plain[0]) / 2
+        L.append(f"| {g['label']} | {g['n_tasks']} | {_f(g['half_width'])} | {_f(ph)} | "
+                 f"{_f(g['sample_sd'])} | "
+                 f"{g['tasks_for_target'] if g['tasks_for_target'] is not None else '–'} |")
+    if s["prices_checked"]:
+        L += ["", f"Prices from the table checked {', '.join(s['prices_checked'])}."]
+    if s["incomplete"]:
+        L += ["", f"{len(s['incomplete'])} episode files have no end record and are left out."]
+    L += ["", f"_Generated by `python -m roaddraft.eval report` ({REPORT_VERSION}); do not edit._", ""]
+    return "\n".join(L)
+
+
+#: the sequential ramp (one hue, light to dark) the heatmap shades credit on
+RAMP = ("#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6",
+        "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b")
+INK = {"light": ("#fcfcfb", "#0b0b0b", "#52514e"), "dark": ("#1a1a19", "#ffffff", "#c3c2b7")}
+
+
+def _luminance(hex_color: str) -> float:
+    def ch(c: int) -> float:
+        c = c / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def _ink_on(fill: str) -> str:
+    """Whichever of white and near-black reads better on ``fill``."""
+    return "#ffffff" if _contrast(fill, "#ffffff") >= _contrast(fill, "#0b0b0b") else "#0b0b0b"
+
+
+def _x(text: Any) -> str:
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def render_svg(s: dict) -> str:
+    """The per-check heatmap: one line per row, one column per check, mean
+    credit shaded light (0) to dark (1) on a one-hue ramp, the value in the
+    cell, a tooltip on each; dark mode runs the ramp the other way so low
+    credit recedes into the dark surface."""
+    rows = s["rows"]
+    ids = sorted({cid for g in rows for cid in g["per_check"]})
+    names: Dict[str, Tuple[str, Any]] = {}
+    for g in rows:
+        for cid, c in g["per_check"].items():
+            names.setdefault(cid, (c["name"], c["weight"]))
+    labels = [f"#{g['rank']}  {g['label']}" for g in rows]
+    cw, ch, gap = 46, 26, 2
+    left = min(380, 24 + 7 * max((len(t) for t in labels), default=10))
+    top = 84
+    width = max(left + len(ids) * (cw + gap) + 24, 640)
+    grid_bottom = top + len(rows) * (ch + gap)
+    key_cols = 3
+    key_rows = math.ceil(len(ids) / key_cols)
+    height = grid_bottom + 64 + key_rows * 18 + 24
+    n = len(RAMP) - 1
+    css = [".t{font:600 15px system-ui,-apple-system,sans-serif;fill:#0b0b0b}",
+           ".s,.k{font:12px system-ui,-apple-system,sans-serif;fill:#52514e}",
+           ".l{font:12px system-ui,-apple-system,sans-serif;fill:#0b0b0b}",
+           ".h{font:600 11px system-ui,-apple-system,sans-serif;fill:#52514e}",
+           ".v{font:600 11px system-ui,-apple-system,sans-serif}",
+           ".bg{fill:#fcfcfb}.na{fill:#fcfcfb;stroke:#d9d8d4;stroke-dasharray:3 2}"]
+    dark = [".t,.l{fill:#ffffff}", ".s,.k,.h{fill:#c3c2b7}", ".bg{fill:#1a1a19}",
+            ".na{fill:#1a1a19;stroke:#4a4a46}"]
+    for i, color in enumerate(RAMP):
+        css.append(f".q{i}{{fill:{color}}}.w{i}{{fill:{_ink_on(color)}}}")
+        dc = RAMP[n - i]
+        dark.append(f".q{i}{{fill:{dc}}}.w{i}{{fill:{_ink_on(dc)}}}")
+    L = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+         f'viewBox="0 0 {width} {height}" role="img" aria-labelledby="ttl dsc">',
+         f'<title id="ttl">Per-check credit, run {_x(s["run_id"])}</title>',
+         f'<desc id="dsc">Mean credit from 0 to 1 per check for each row of the run; the same '
+         f'numbers are in per_check.csv.</desc>',
+         "<style>" + "".join(css) + "@media (prefers-color-scheme: dark){"
+         + "".join(dark) + "}</style>",
+         f'<rect class="bg" width="{width}" height="{height}" rx="8"/>',
+         f'<text class="t" x="16" y="28">Per-check credit · {_x(s["run_id"])}</text>',
+         f'<text class="s" x="16" y="48">Mean credit (0–1) over the episodes whose task has the '
+         f'check in scope · {_x(s.get("taskset") or "")} · {s["episodes"]} episodes</text>']
+    for j, cid in enumerate(ids):
+        x = left + j * (cw + gap) + cw / 2
+        L.append(f'<text class="h" x="{x:.0f}" y="{top - 10}" text-anchor="middle">'
+                 f'{_x(cid.replace("D1-", ""))}<title>{_x(cid)} {_x(names[cid][0])}</title></text>')
+    for i, (g, label) in enumerate(zip(rows, labels)):
+        y = top + i * (ch + gap)
+        L.append(f'<text class="l" x="16" y="{y + ch / 2 + 4:.0f}">{_x(label)}</text>')
+        for j, cid in enumerate(ids):
+            x = left + j * (cw + gap)
+            c = g["per_check"].get(cid)
+            if not c or c["mean_credit"] is None:
+                L.append(f'<g><rect class="na" x="{x}" y="{y}" width="{cw}" height="{ch}" rx="4"/>'
+                         f'<text class="h" x="{x + cw / 2:.0f}" y="{y + ch / 2 + 4:.0f}" '
+                         f'text-anchor="middle">–</text><title>{_x(label)} · {_x(cid)}: '
+                         f'not in scope for any task of this row</title></g>')
+                continue
+            q = max(0, min(n, round(c["mean_credit"] * n)))
+            tip = (f'{label} · {cid} {names[cid][0]}: mean credit {c["mean_credit"]:.2f}, '
+                   f'full credit in {100 * (c["pass_rate"] or 0):.0f}% of {c["n"]} episodes')
+            L.append(f'<g><rect class="q{q}" x="{x}" y="{y}" width="{cw}" height="{ch}" rx="4"/>'
+                     f'<text class="v w{q}" x="{x + cw / 2:.0f}" y="{y + ch / 2 + 4:.0f}" '
+                     f'text-anchor="middle">{c["mean_credit"]:.2f}</text>'
+                     f'<title>{_x(tip)}</title></g>')
+    # legend: the ramp, then the key to the check numbers
+    ly = grid_bottom + 18
+    L.append(f'<text class="k" x="16" y="{ly + 10}">0</text>')
+    sw = 14
+    for i in range(len(RAMP)):
+        L.append(f'<rect class="q{i}" x="{32 + i * sw}" y="{ly}" width="{sw}" height="12"/>')
+    lx = 32 + len(RAMP) * sw + 6
+    L.append(f'<text class="k" x="{lx}" y="{ly + 10}">1 mean credit</text>')
+    L.append(f'<rect class="na" x="{lx + 110}" y="{ly}" width="22" height="12" rx="3"/>'
+             f'<text class="k" x="{lx + 138}" y="{ly + 10}">not in scope</text>')
+    ky = ly + 34
+    colw = (width - 32) / key_cols
+    for idx, cid in enumerate(ids):
+        col, r = divmod(idx, key_rows)
+        L.append(f'<text class="k" x="{16 + col * colw:.0f}" y="{ky + r * 18}">'
+                 f'{_x(cid.replace("D1-", ""))}  {_x(_short(names[cid][0], 38))} '
+                 f'(weight {_x(names[cid][1])})</text>')
+    L.append("</svg>")
+    return "\n".join(L) + "\n"
+
+
+def _csv(header: Sequence[str], rows: Iterable[Sequence[Any]]) -> str:
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(header)
+    for r in rows:
+        w.writerow(["" if v is None else v for v in r])
+    return buf.getvalue()
+
+
+def files(s: dict) -> Dict[str, str]:
+    """The report's files by name."""
+    rows = s["rows"]
+    eps = s.get("_episodes") or []
+    dims = list(GROUP_DIMS)
+    per_check_rows = [[g["rank"], *[g["key"][d] for d in dims], cid, c["name"], c["weight"], c["n"],
+                       c["mean_credit"], c["pass_rate"]]
+                      for g in rows for cid, c in g["per_check"].items()]
+    tax_rows = []
+    for g in rows:
+        for cat, codes in TAXONOMY:
+            t = g["taxonomy"][cat]
+            for code in codes:
+                tax_rows.append([g["rank"], *[g["key"][d] for d in dims], cat, code,
+                                 t["codes"].get(code, 0), t["episodes"], t["per_episode"]])
+        for err, n in g["tool_errors"].items():
+            tax_rows.append([g["rank"], *[g["key"][d] for d in dims], "tool_use", err, n, None, None])
+        for term, n in g["terminations"].items():
+            tax_rows.append([g["rank"], *[g["key"][d] for d in dims], "termination", term, n,
+                             None, None])
+    ep_fields = list(eps[0]["row"]) if eps else []
+    out = {
+        "summary.json": json.dumps({k: v for k, v in s.items() if not k.startswith("_")},
+                                   indent=1, ensure_ascii=False) + "\n",
+        "leaderboard.md": render_markdown(s),
+        "per_check.svg": render_svg(s),
+        "per_check.csv": _csv(["rank", *dims, "check", "name", "weight", "n", "mean_credit",
+                               "pass_rate"], per_check_rows),
+        "taxonomy.csv": _csv(["rank", *dims, "category", "code", "count", "episodes_share",
+                              "per_episode"], tax_rows),
+        "episodes.csv": _csv(ep_fields, ([e["row"][f] for f in ep_fields]
+                                         for e in sorted(eps, key=lambda e: e["row"]["file"]))),
+    }
+    return out
+
+
+def write(s: dict, out_dir) -> List[Path]:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, text in files(s).items():
+        p = out_dir / name
+        p.write_text(text, encoding="utf-8")
+        written.append(p)
+    return written
+
+
+def publish(s: dict, report_dir, runs_root=RUNS_DIR, allow_unrankable: bool = False) -> Path:
+    """Copy ``summary.json``, ``leaderboard.md`` and ``per_check.svg`` to
+    ``benchmarks/runs/<run_id>/``; refuses a run that cannot be ranked unless
+    asked, and then the copied summary still names the problems."""
+    if s["publish_problems"] and not allow_unrankable:
+        raise ValueError("not publishable: " + "; ".join(s["publish_problems"])
+                         + " (pass --allow-unrankable to publish it marked as such)")
+    dest = Path(runs_root) / s["run_id"]
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in ("summary.json", "leaderboard.md", "per_check.svg"):
+        shutil.copy(Path(report_dir) / name, dest / name)
+    return dest
+
+
+# ------------------------------------------------------- the README board
+
+README_BEGIN = "<!-- d1-leaderboard:begin -->"
+README_END = "<!-- d1-leaderboard:end -->"
+
+
+def published(runs_root=RUNS_DIR) -> List[dict]:
+    out = []
+    for p in sorted(Path(runs_root).glob("*/summary.json")):
+        try:
+            out.append(json.loads(p.read_text()))
+        except ValueError:
+            continue
+    return out
+
+
+def board(summaries: Sequence[dict]) -> dict:
+    """Ranked rows across published runs: model rows from rankable runs on
+    the leaderboard set; harness agents (oracle, scripted, null) are kept as
+    reference rows; every other published run is listed with its reasons."""
+    ranked, reference, others = [], [], []
+    for s in summaries:
+        rankable = not s.get("publish_problems") and s.get("taskset") == LEADERBOARD_SET
+        if not rankable:
+            reasons = list(s.get("publish_problems") or [])
+            if s.get("taskset") != LEADERBOARD_SET and not any("development" in r for r in reasons):
+                reasons.append(f"run on {s.get('taskset')}, not {LEADERBOARD_SET}")
+            others.append({"run_id": s["run_id"], "taskset": s.get("taskset"),
+                           "episodes": s.get("episodes"), "reasons": reasons,
+                           "rows": [{"label": g["label"], "effective_mean": g["effective_mean"],
+                                     "half_width": g["half_width"], "n_tasks": g["n_tasks"],
+                                     "k_max": g["k_max"]} for g in s.get("rows") or []]})
+            continue
+        for g in s.get("rows") or []:
+            row = {**{k: g[k] for k in ("label", "key", "effective_mean", "ci_low", "ci_high",
+                                         "half_width", "rubric_mean", "hard_fail_rate",
+                                         "clean_sheet_rate", "invalid_call_rate", "cost_per_sheet",
+                                         "n_tasks", "k_min", "k_max")},
+                   "run_id": s["run_id"], "spec_version": ", ".join(s["versions"]["spec_version"])}
+            (reference if g["key"].get("provider") == "harness" else ranked).append(row)
+    ranked.sort(key=rank_key)
+    for i, r in enumerate(ranked):
+        r["rank"] = i + 1
+    headline = None
+    if ranked:
+        b = ranked[0]
+        headline = (f"best model {b['effective_mean']:.1f}/100 on {LEADERBOARD_SET} "
+                    f"({b['label']}, 95% CI {b['ci_low']:.1f}–{b['ci_high']:.1f}, "
+                    f"hard-fail {_p(b['hard_fail_rate'])})")
+    return {"report_version": REPORT_VERSION, "leaderboard_set": LEADERBOARD_SET,
+            "headline": headline, "ranked": ranked, "reference": reference, "others": others}
+
+
+def _board_table(rows: Sequence[dict], numbered: bool = True) -> List[str]:
+    L = ["| # | Model · mode · prompt | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls "
+         "| Cost / sheet | Tasks × k | Run |",
+         "|---:|---|---:|---|---:|---:|---:|---:|---:|---|---|"]
+    for i, r in enumerate(rows):
+        k = f"{r['k_min']}" if r["k_min"] == r["k_max"] else f"{r['k_min']}–{r['k_max']}"
+        L.append(f"| {r.get('rank', '') if numbered else ''} | {r['label']} | **{_f(r['effective_mean'])}** "
+                 f"| {_ci(r)} | {_f(r['rubric_mean'])} | {_p(r['hard_fail_rate'])} | "
+                 f"{_p(r['clean_sheet_rate'])} | {_p(r['invalid_call_rate'])} | "
+                 f"{_usd(r['cost_per_sheet'])} | {r['n_tasks']} × {k} | `{r['run_id']}` |")
+    return L
+
+
+def render_board(b: dict, readme: bool = False) -> str:
+    L: List[str] = []
+    if not readme:
+        L += ["# Track D leaderboard (D1)", ""]
+    if b["headline"]:
+        L += [f"**{b['headline'][0].upper()}{b['headline'][1:]}.**", ""]
+        L += _board_table(b["ranked"])
+    else:
+        L += [f"No ranked run yet. A row needs a published run on `{LEADERBOARD_SET}` under a "
+              "frozen spec (v0.1: spec v1, then `d1-variance` × 5 samples to size the interval, "
+              f"then `{LEADERBOARD_SET}` × at least three models)."]
+    if b["reference"]:
+        L += ["", "Reference agents on the same tasks (the harness's own checks, not ranked):", ""]
+        L += _board_table(b["reference"], numbered=False)
+    if not readme and b["others"]:
+        L += ["", "## Published runs that are not ranked", ""]
+        for o in b["others"]:
+            rows = "; ".join(f"{r['label']} {_f(r['effective_mean'])} ± {_f(r['half_width'])} "
+                             f"({r['n_tasks']} tasks × {r['k_max']})" for r in o["rows"])
+            L.append(f"- `{o['run_id']}` ({o['taskset']}, {o['episodes']} episodes): {rows}. "
+                     f"Not ranked: {'; '.join(o['reasons'])}.")
+    if readme:
+        L += ["", "The full board, with the runs not ranked and why: "
+              "[benchmarks/runs/LEADERBOARD.md](benchmarks/runs/LEADERBOARD.md). "
+              "Generated by `scripts/make_leaderboard.py`; do not edit by hand."]
+    else:
+        L += ["", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
+              "samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank "
+              "on the effective mean, then hard-fail rate, invalid-call rate and cost.",
+              "", "_Generated by `scripts/make_leaderboard.py` from `benchmarks/runs/*/summary.json`; "
+              "do not edit._"]
+    return "\n".join(L) + "\n"
+
+
+def replace_block(text: str, block: str) -> str:
+    """``text`` with the README board between its markers replaced."""
+    start, end = text.find(README_BEGIN), text.find(README_END)
+    if start < 0 or end < start:
+        raise ValueError(f"the README has no {README_BEGIN} ... {README_END} block")
+    return text[:start + len(README_BEGIN)] + "\n" + block + text[end:]
+
+
+__all__ = ["REPORT_VERSION", "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
+           "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
+           "summarize_group", "paired", "build", "publish_problems", "render_markdown", "files",
+           "write", "publish", "published", "board", "render_board", "replace_block",
+           "README_BEGIN", "README_END"]
