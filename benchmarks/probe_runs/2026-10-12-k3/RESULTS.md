@@ -1,4 +1,4 @@
-# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B, Fable 5.1, Qwen3.5-9B, GPT-6-Luna, GPT-6-Astra (running)
+# 2026-10-12 — all 33 probes at k = 3 on the one-convention-set engine: Haiku 4.5, Sonnet 5.5, Gemma 4 E4B, Fable 5.1, Qwen3.5-9B, GPT-6-Luna, GPT-6-Astra (r3 at 26 of 33)
 
 The probe set changed on 2026-10-12 (commit `2697ee5`: the engine's labelers default to the Plans Preparation
 Manual's lettering, the probe fixtures sit on Caltrans named levels, the checks read the Caltrans station digit;
@@ -237,7 +237,7 @@ Against the local Q4_K_M rows this is the same model told the same things with a
 the Tier 1 score rises from 11 to 13-14 of 17, and Tier 2 and 3 move off zero only on the splits. Not
 comparable row to row (precision, engine, probe set all differ); the direction is the point.
 
-## GPT-6-Luna and GPT-6-Astra (medium effort) through Codex: Luna 22, 21, 23 of 33; Astra running
+## GPT-6-Luna and GPT-6-Astra (medium effort) through Codex: Luna 22, 21, 23 of 33 (66.7%, fourth); Astra 31, 32, 26 of 26 so far
 
 Robert's go on Oct 12 ("run probes through codex GPT-6 Asta Med and GPT-6 Luna"): `gpt-6-astra` at reasoning
 effort medium and `gpt-6-luna` at its default, medium, on Robert's ChatGPT Plus account.
@@ -261,7 +261,8 @@ Robert bought at 21:36 carried Luna to the end and Astra r1 to 20 of 33 before t
 Run in parallel, Astra drew `429 Too Many Requests` within a second of each start while one process at a time
 ran clean, so its repeats run one after another (a scratchpad chain that resumes after each limit). A Plus
 window holds roughly 40 find probes or 10-15 drafting and Tier 3 ones. On a limit the runner deletes the probe
-it was on and stops (exit 3), so the same command resumes it.
+it was on and stops (exit 3), so the same command resumes it. On Oct 14 the chain finished Astra r1 and r2 and
+ran r3 to 26 of 33 before the limit stopped it at `stationing` at 18:02 ("try again at 10:44 PM").
 
 **Two episodes set aside, in `runs/_superseded/`.** Astra r1 `stationing` hit the turn cap after 122 calls in
 40 seconds: the backend counted tool calls, and Astra had made 96 `station_to_xy` calls in one response, so
@@ -273,13 +274,13 @@ infrastructure stop the board excludes; it reruns so Luna's row can rank.
 
 | set | Luna r1 | r2 | r3 | Astra r1 | r2 | r3 |
 |---|---|---|---|---|---|---|
-| the 17 (9 find, 8 draft) | 15 | 14 | 17 | 17 | 17 | 11 of 11 run |
-| Tier 2 (6) | 3 | 4 | 2 of 5 run | 5 | 6 | not yet |
-| Tier 3 batch A and batches B and C (10) | 4 | 3 | 4 | 8 of 9 run | 1 of 1 run | not yet |
-| **all 33** | **22** | **21** | **23 of 32 run** | **30 of 32 run** | **24 of 24 run** | **11 of 11 run** |
+| the 17 (9 find, 8 draft) | 15 | 14 | 17 | 17 | 17 | 17 |
+| Tier 2 (6) | 3 | 4 | 2 | 5 | 6 | 6 |
+| Tier 3 batch A and batches B and C (10) | 4 | 3 | 4 | 9 | 9 | 3 of 3 run |
+| **all 33** | **22** | **21** | **23** | **31** | **32** | **26 of 26 run** |
 
-Luna: 16 probes pass every time, 5 fail every time, 11 split, and `draft-fix-the-drawing` failed both of the
-repeats it has so far.
+Luna: 16 probes pass every time, 6 fail every time (`draft-fix-the-drawing` failed its r3 rerun too), 11 split.
+On the board: **66.7% [52.5, 80.8], fourth**, below Haiku and above Qwen, the intervals overlapping on both sides.
 
 | probe | Luna r1 r2 r3 | what a failing repeat left on disk (the first one) |
 |---|---|---|
@@ -289,7 +290,7 @@ repeats it has so far.
 | sheet-set-callouts | P P . | the title block's sheet number reads `C-101`, not `1` (the miss Haiku and Qwen made) |
 | station-callouts | . P P | 5 of 15 stations have no leader |
 | clean-callouts | . . . | two leaders cross ('EDGE OF PAVEMENT' and 'SR-100') |
-| draft-fix-the-drawing | . . (rerun) | the 12 ft edge only partly redrawn (49 of 189 check points bare) |
+| draft-fix-the-drawing | . . . | the 12 ft edge only partly redrawn (49 of 189 check points bare) |
 | draft-roadway-sheets | P P . | the viewport runs outside the sheet's drawing area |
 | line-data | . . . | the bearing lettered without the length (`N 90°00'00" E`) |
 | curve-data, qa-alignment-data | P . . / . . . | no bubble numbered 1 on the curve; no `24+05.27 BC` |
@@ -297,21 +298,23 @@ repeats it has so far.
 | width-dims, row-data | P P . / . . P | the right shoulder not dimensioned; no L1/C1 tags |
 | l2-match-lines, l2-alignment-data | . . . / . . . | the match line stops at ±40 ft, not 40 ft past the edges; the PCC lettered EC |
 
-Astra so far (67 episodes): 65 pass. `draft-roadway-sheets` r1 lettered none of the 21 stations, and
-`l2-alignment-data` r1 set the tangent data level on the sheet where the line runs at 5.03° (the turned viewport
-every model has missed); nothing else has failed.
+Astra so far (92 episodes): 89 pass, 96.0% [87.9, 100.0], the same rate as Sonnet; not ranked until r3's last
+seven run. `draft-roadway-sheets` r1 lettered none of the 21 stations, and `l2-alignment-data` failed r1 and r2,
+setting the tangent data level on the sheet where the line runs at 5.03° (the turned viewport every model has
+missed); nothing else has failed.
 
-**Measures, Luna (98 counted episodes).** 98 answered. 1,141 tool calls (11.6 per episode), 56 faulted: **4.9%
-invalid**, between Haiku and Qwen; 73% of faults recovered within three calls. 22 seconds per episode, 0.6 h in
+**Measures, Luna (99 episodes).** 99 answered. 1,149 tool calls (11.6 per episode), 57 faulted: **5.0%
+invalid**, between Haiku and Qwen; 74% of faults recovered within three calls. 22 seconds per episode, 0.6 h in
 all, as quick as Haiku. 266k input tokens per episode (cache reads included), 1k output. Report
-fidelity is the weak point: 19 of its 32 failed episodes' reports said the task was done (57 claims the check
-contradicts), though none cited an id that never existed. Astra so far: 904 calls, 2 faulted (0.2%), 38 s per
-episode. Cost: none recorded, both on the subscription.
+fidelity is the weak point: 20 of its 33 failed episodes' reports said the task was done (60 claims the check
+contradicts), though none cited an id that never existed. Astra so far (92 episodes): 1,675 calls, 6 faulted
+(0.4%), 38 s per episode, 1.0 h in all; 97% of the items asked done; all 3 of its failed episodes' reports said
+the task was done. Cost: none recorded, both on the subscription.
 
 ## Still to run in this folder
 
-- GPT-6-Astra: the r1 `stationing` rerun, 9 probes of r2 and 22 of r3; and the GPT-6-Luna r3
-  `draft-fix-the-drawing` rerun. Each ChatGPT Plus window holds 10-15 of these; one process at a time.
+- GPT-6-Astra r3: the last 7 probes (`stationing`, `width-dims`, `row-data`, `equation-data`,
+  `qa-alignment-data`, `l2-match-lines`, `l2-alignment-data`), about one ChatGPT Plus window; one process at a time.
 
         python -m roaddraft.runners run --backend codex --model gpt-6-astra --effort medium \
             --out benchmarks/probe_runs/2026-10-12-k3 --label gpt6-astra-med-r2 --budget 15   # r1, r3 the same; gpt-6-luna as gpt6-luna-rN

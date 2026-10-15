@@ -9,39 +9,39 @@
 | runner | runners · codex (Codex headless) |
 | run folder | `2026-10-12-k3`, labels `gpt6-astra-med-r1`, `gpt6-astra-med-r2`, `gpt6-astra-med-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
-| standing | not ranked yet: k = 3 on 11 of 33 probes |
-| engine commit | `555bf496a8` (67) |
+| standing | not ranked yet: k = 3 on 26 of 33 probes |
+| engine commit | `442800d133` (25), `555bf496a8` (67) |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**95.3%** pass rate, 95% CI [87.5, 100.0]: 65 of 67 attempts that count, on 32 of 33 probes.
+**96.0%** pass rate, 95% CI [87.9, 100.0]: 89 of 92 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 45/45 (100%) | 11/12 (92%) | 9/10 (89%) | 65/67 |
+| passed | 51/51 (100%) | 17/18 (94%) | 21/23 (90%) | 89/92 |
 
-By attempt: gpt6-astra-med-r1 30/32, gpt6-astra-med-r2 24/24, gpt6-astra-med-r3 11/11. Of the 32 probes attempted, 30 pass every time, 1 never pass (hard-fail rate 3%), 1 split.
+By attempt: gpt6-astra-med-r1 31/33, gpt6-astra-med-r2 32/33, gpt6-astra-med-r3 26/26. Of the 33 probes attempted, 31 pass every time, 1 never pass (hard-fail rate 3%), 1 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 0.2% (2 of 904 calls) | faulted calls over calls, from the traces |
-| fault recovery | 1 of 2 faults (50%) | a fault followed within three calls by a successful call of the same tool |
+| invalid-call rate | 0.4% (6 of 1,675 calls) | faulted calls over calls, from the traces |
+| fault recovery | 2 of 6 faults (33%) | a fault followed within three calls by a successful call of the same tool |
 | repeated-fault loops | 0 episodes; longest run 1 | the same fault five or more times in a row |
-| query before compute | 22 of 67 episodes that changed the drawing asked a design query first; 3.0 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | 2 of 2 failed episodes' reports said the task was done (8 claims the check contradicts); 0 of 64 claims of no errors came over a faulted trace; 0 of 84 cited ids never existed; 1 passing episodes' reports conceded a shortfall | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
-| steps | 13.5 calls, 14.5 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 38 s per episode, 0.7 h in all | the runner's clock, episode start to report |
-| tokens | 176k in, 0.8k out per episode | input counts cache reads and writes |
+| query before compute | 38 of 92 episodes that changed the drawing asked a design query first; 5.8 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| report fidelity | 3 of 3 failed episodes' reports said the task was done (10 claims the check contradicts); 0 of 84 claims of no errors came over a faulted trace; 0 of 120 cited ids never existed; 1 passing episodes' reports conceded a shortfall | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
+| steps | 18.2 calls, 12.2 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 38 s per episode, 1.0 h in all | the runner's clock, episode start to report |
+| tokens | 197k in, 0.9k out per episode | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a ChatGPT subscription, which reports none |
-| render use | 136 renders in 67 episodes; 45 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | 218 of 226 items (96%) in 44 episodes of the 24 probes that ask for more than one thing; 42 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
+| render use | 196 renders in 92 episodes; 63 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| scope completion | 384 of 394 items (97%) in 68 episodes of the 25 probes that ask for more than one thing; 65 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
-Stops: answered 67.
+Stops: answered 92.
 
 ## Every probe
 
@@ -60,25 +60,25 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 | sta-offset-c101-paper | T1 | P P P | 7.0 | 0 |  |
 | draft-tangent-ne | T1 | P P P | 6.0 | 0 |  |
 | draft-pi-curve | T1 | P P P | 5.0 | 0 |  |
-| draft-bearing-distance | T1 | P P | 6.0 | 0 |  |
-| draft-edges-shoulders | T1 | P P | 11.0 | 0 |  |
-| draft-turn-lane | T1 | P P | 6.5 | 0 |  |
-| draft-cul-de-sac | T1 | P P | 12.0 | 0 |  |
-| draft-building | T1 | P P | 6.0 | 0 |  |
-| draft-roadway | T1 | P P | 9.0 | 0 |  |
-| sheet-set-callouts | T2 | P P | 38.0 | 0 |  |
-| station-callouts | T2 | P P | 69.5 | 0 |  |
-| clean-callouts | T2 | P P | 9.0 | 0 |  |
-| draft-intersection-corner | T2 | P P | 9.5 | 0 |  |
-| draft-fix-the-drawing | T2 | P P | 16.5 | 0 |  |
-| draft-roadway-sheets | T2 | · P | 27.0 | 2 | gpt6-astra-med-r1: only 0 of 21 100 ft stations carry a label that reads the station, within 60 ft of it |
-| line-data | T3 | P P | 24.5 | 0 |  |
-| curve-points | T3 | P | 27.0 | 0 |  |
-| curve-data | T3 | P | 32.0 | 0 |  |
-| stationing | T3 | — | | | |
-| width-dims | T3 | P | 22.0 | 0 |  |
-| row-data | T3 | P | 15.0 | 0 |  |
-| equation-data | T3 | P | 15.0 | 0 |  |
-| qa-alignment-data | T3 | P | 22.0 | 0 |  |
-| l2-match-lines | T3 | P | 13.0 | 0 |  |
-| l2-alignment-data | T3 | · | 50.0 | 0 | gpt6-astra-med-r1: the tangent 576+16.93 to 578+47.69: 'N 78°30\'50" E / 230.76\'' runs at 0.00° on the sheet; the line runs at 5.03° there |
+| draft-bearing-distance | T1 | P P P | 6.0 | 0 |  |
+| draft-edges-shoulders | T1 | P P P | 9.7 | 0 |  |
+| draft-turn-lane | T1 | P P P | 6.0 | 0 |  |
+| draft-cul-de-sac | T1 | P P P | 11.7 | 0 |  |
+| draft-building | T1 | P P P | 6.0 | 0 |  |
+| draft-roadway | T1 | P P P | 9.3 | 0 |  |
+| sheet-set-callouts | T2 | P P P | 39.7 | 0 |  |
+| station-callouts | T2 | P P P | 69.3 | 0 |  |
+| clean-callouts | T2 | P P P | 9.3 | 0 |  |
+| draft-intersection-corner | T2 | P P P | 9.0 | 0 |  |
+| draft-fix-the-drawing | T2 | P P P | 16.3 | 0 |  |
+| draft-roadway-sheets | T2 | · P P | 24.0 | 3 | gpt6-astra-med-r1: only 0 of 21 100 ft stations carry a label that reads the station, within 60 ft of it |
+| line-data | T3 | P P P | 23.0 | 0 |  |
+| curve-points | T3 | P P P | 29.0 | 0 |  |
+| curve-data | T3 | P P P | 35.3 | 0 |  |
+| stationing | T3 | P P | 135.5 | 2 |  |
+| width-dims | T3 | P P | 22.0 | 0 |  |
+| row-data | T3 | P P | 13.5 | 0 |  |
+| equation-data | T3 | P P | 17.0 | 0 |  |
+| qa-alignment-data | T3 | P P | 21.5 | 0 |  |
+| l2-match-lines | T3 | P P | 13.0 | 0 |  |
+| l2-alignment-data | T3 | · · | 50.0 | 1 | gpt6-astra-med-r1: the tangent 576+16.93 to 578+47.69: 'N 78°30\'50" E / 230.76\'' runs at 0.00° on the sheet; the line runs at 5.03° there |
