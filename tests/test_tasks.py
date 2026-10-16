@@ -7,15 +7,20 @@ from pathlib import Path
 import pytest
 
 from roaddraft.commands.bus import ANCHOR_PRODUCERS
+from roaddraft.core import geometry as geo
 from roaddraft.design.horizontal import Alignment
 from roaddraft.design.vertical import Profile
+from roaddraft.document import dimgeom
 from roaddraft.document.document import Document
+from roaddraft.document.entities import Dimension, Line, Text
 from roaddraft.tasks.brief import GENERATOR_VERSION, GroundTruth, Task, TaskBrief, compute_task_id
 from roaddraft.tasks.generator import PAD_FT, generate_task
 from roaddraft.tasks.ground_truth import compute_ground_truth, match_truth
 from roaddraft.tasks.reference import check_replay, reference_solution, session_for_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
 from roaddraft.tasks.standards import max_grade, min_k, min_radius
+from roaddraft.tasks.types import TASK_TYPES
+from roaddraft.verify.legibility import OVERLAP_EPS_IN, overlap_depth, text_quad
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
 _L = _SPEC["layers"]
 
@@ -155,6 +160,56 @@ def test_reference_matches_truth_missing_empty_content_empty_position_empty(tmp_
     session.execute("delete_entities", {"ids": [tid]})
     m = match_truth(session.doc, task.truth)
     assert len(m["missing"]) == 1 and m["missing"][0].startswith("pc @ PC-")
+
+
+def test_width_dimension_lines_clear_the_bearing_lettering_seeds_1_40(tmp_path):
+    """2026-10-16: on every pavement seed the width dimension line ran through the
+    bearing and distance lettered above the tangent's midpoint, at both plan
+    scales, on one and two sheets (D1-08 judges text footprints, not a line
+    through one, so the oracle still scored 100).  Now no line of a width
+    dimension the reference draws -- dimension line, extension lines, stubs --
+    crosses or ends inside a bearing text box, and its text clears the bearing;
+    a tangent with no room for that is left undimensioned."""
+    pavement = sorted(n for n, t in TASK_TYPES.items() if "widths" in t.shown())
+    assert pavement == ["pavement", "pavement-widths"]
+    scales, dimensioned, undimensioned, skipped = set(), 0, 0, 0
+    for ttype in pavement:
+        for sheets in (1, 2):
+            for seed in range(1, 41):
+                try:
+                    task = generate_task(seed, task_type=ttype, sheets=sheets)
+                except ValueError:  # no tangent of this layout has room for a dimension
+                    skipped += 1
+                    continue
+                scales.add(task.brief.deliverable["feet_per_inch"])
+                session = session_for_task(task, out_dir=tmp_path)
+                reference_solution(task, session)
+                doc = session.doc
+                boxes = {e.id: text_quad(e.position, e.content, e.height, e.rotation_deg,
+                                         e.halign, e.valign)
+                         for e in doc.model_entities.values()
+                         if isinstance(e, Text) and e.anchor and e.anchor.get("kind") == "bearing"}
+                assert len(boxes) == task.truth.counts["tangents"], (ttype, sheets, seed)
+                dims = [e for e in doc.model_entities.values() if isinstance(e, Dimension)]
+                assert dims and len(dims) == len(task.brief.deliverable["width_dimensions"])
+                dimensioned += len(dims)
+                undimensioned += task.truth.counts["tangents"] - len(dims)
+                for dm in dims:
+                    for prim in dimgeom.primitives(dm, doc):
+                        for tid, box in boxes.items():
+                            where = (ttype, sheets, seed, dm.id, prim.id, tid)
+                            if isinstance(prim, Line):
+                                assert not geo.segment_polygon_params(prim.start, prim.end, box), where
+                                assert not geo.point_in_polygon(prim.start, box), where
+                                assert not geo.point_in_polygon(prim.end, box), where
+                            elif isinstance(prim, Text) and prim.content:
+                                quad = text_quad(prim.position, prim.content, prim.height,
+                                                 prim.rotation_deg, prim.halign, prim.valign)
+                                fpi = task.brief.deliverable["feet_per_inch"]
+                                assert overlap_depth(quad, box) <= OVERLAP_EPS_IN * fpi, where
+    assert scales == {40.0, 50.0}  # both plan scales of the spec were exercised
+    assert dimensioned > 2 * undimensioned  # most tangents still carry their dimension
+    assert skipped <= 4
 
 
 def test_check_replay_true(tmp_path):

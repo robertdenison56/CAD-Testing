@@ -22,7 +22,7 @@ from typing import Dict, List
 # d1-v2 (2026-10-10): tangent floor 120 ft, C-n callouts at 2x the label offset, so
 # every reference sheet is legible (verifier D1-08 = 1); d1-v3 (2026-10-10): task types
 # (a starting document with some phases done) and two-sheet layouts with match lines
-GENERATOR_VERSION = "d1-v5"  # (2026-10-12) plan scales 1" = 10', 20', 40', 50' (PE decision); layouts fit at the largest that shows them
+GENERATOR_VERSION = "d1-v6"  # (2026-10-16) width dimensions clear of the bearing lettering; d1-v5 (2026-10-12) plan scales per the PE decision, layouts fit at the largest that shows them
 
 
 def round_floats(obj, ndigits: int = 6):

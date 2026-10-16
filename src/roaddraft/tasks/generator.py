@@ -97,13 +97,26 @@ SAMPLE_STEP_FT = 10.0
 # pavement width dimensions: the dimension line sits 0.1 in ahead of its station on
 # paper, and a wide text gap sets the text (which cannot fit between the edges at plan
 # scale) past 0.5 in right of the centerline, outside the band the BC/EC labels use;
-# the station keeps the extension lines on the tangent and the text clear of an
-# equation label
+# the station keeps the extension lines on the tangent (they reach 0.2 in ahead of it;
+# nothing reaches behind), the text clear of an equation label, and the dimension line
+# clear of the bearing lettered above the tangent's midpoint (2026-10-16: a bearing and
+# distance letters about 1.5 in along a tangent 3 to 4 in long, so the half station
+# nearest the midpoint ran the line through it on nearly every seed) and of the station
+# numbers under the line
 WIDTH_DIM_LINE_IN = 0.1
 WIDTH_TEXT_GAP_FACTOR = 1.5  # x text height; the engine's default is 0.5
-WIDTH_AHEAD_IN = 0.25
-WIDTH_BEHIND_IN = 0.15
+WIDTH_AHEAD_IN = 0.22
+WIDTH_BEHIND_IN = 0.05
 WIDTH_CLEAR_IN = 1.6
+#: paper the dimension line keeps from the bearing lettering, and from a whole station
+#: (its number, 1 to 3 digits, sits under the line there); the stations tried after the
+#: half stations step along the tangent by ``WIDTH_STEP_FT``, nearest the midpoint first.
+#: A tangent shorter than about 110 ft has no room beside a 1.5 in bearing and is left
+#: undimensioned (1,026 of 10,732 tangents over seeds 1-200 and 1000-1099 at every dial,
+#: against 520 under the old rule; 72 three-curve one-sheet layouts have none)
+WIDTH_LETTER_CLEAR_IN = 0.05
+WIDTH_STATION_CLEAR_IN = 0.15
+WIDTH_STEP_FT = 5.0
 ALIGNMENT_NAME = "ALIGN-1"
 PROFILE_NAME = "PROF-1"
 SHEET_NAMES = ["C-101", "C-102", "C-103", "C-104"]
@@ -565,7 +578,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     width_dims = []
     for n, t in enumerate(align.tangents(), start=1):
         raw = _width_station(begin_station + t.start_dist, begin_station + t.end_dist,
-                             eq_raws, fpi)
+                             eq_raws, fpi, lettering=[_bearing_extent(align, n, fpi)])
         if raw is not None:  # a tangent too short to dimension cleanly is left alone
             width_dims.append({"ref": f"T-{n}", "station": raw, "station_text": st.format(raw),
                                "line_offset_ft": _round2(WIDTH_DIM_LINE_IN * fpi),
@@ -702,21 +715,56 @@ def _draft(task: Task, phases: List[str], seed: int) -> Document:
     return session.doc
 
 
-def _width_station(lo: float, hi: float, avoid: List[float], fpi: float) -> Optional[float]:
+def _bearing_extent(align: Alignment, n: int, fpi: float) -> Tuple[float, float]:
+    """The raw stations tangent ``n``'s bearing and distance letters over: the
+    label is centred on the tangent's midpoint and reads along it, so it
+    covers half its width each way, at this scale's text height."""
+    spec = DRAFTING_SPEC_V1
+    height = _round2(spec["text"]["label_height_in"] * fpi)
+    label = compile_label(align, resolve_anchor(align, parse_anchor(f"T-{n}")), "bearing",
+                          label_offset=_round2(spec["labels"]["bearing"]["label_offset_in"] * fpi))
+    w, _ = geo.text_size(label.content, height)
+    return float(label.station) - w / 2.0, float(label.station) + w / 2.0
+
+
+def _width_station(lo: float, hi: float, avoid: List[float], fpi: float,
+                   lettering: Sequence[Tuple[float, float]] = ()) -> Optional[float]:
     """Where a tangent's pavement width is dimensioned: the half station
-    (xx+50) nearest its midpoint, ``WIDTH_AHEAD_IN`` short of the tangent's end
-    and ``WIDTH_BEHIND_IN`` past its start (so the extension lines stay on
-    the tangent) and ``WIDTH_CLEAR_IN`` from an equation label in ``avoid``
-    (whose band the dimension's text shares).  Half stations sit between the
-    station labels.  The midpoint itself when no half station will do; None
-    when nothing will."""
+    (xx+50) nearest its midpoint, else the station on the ``WIDTH_STEP_FT``
+    grid nearest the midpoint, such that the dimension line
+    (``WIDTH_DIM_LINE_IN`` ahead of the station) is ``WIDTH_LETTER_CLEAR_IN``
+    clear of the bearing lettering (``lettering``: the raw-station ranges the
+    text covers) and ``WIDTH_STATION_CLEAR_IN`` from every whole station (its
+    number sits under the line there); the station itself ``WIDTH_AHEAD_IN``
+    short of the tangent's end and ``WIDTH_BEHIND_IN`` past its start (so the
+    extension lines stay on the tangent) and ``WIDTH_CLEAR_IN`` from an
+    equation label in ``avoid`` (whose band the dimension's text shares).
+    None when nothing will do."""
     mid = (lo + hi) / 2.0
     half_sta = math.floor(mid / 100.0) * 100.0 + 50.0
     ahead, behind, clear = WIDTH_AHEAD_IN * fpi, WIDTH_BEHIND_IN * fpi, WIDTH_CLEAR_IN * fpi
-    for raw in (half_sta, half_sta - 100.0, half_sta + 100.0, half_sta - 200.0,
-                half_sta + 200.0, mid):
-        if lo + behind <= raw <= hi - ahead and all(abs(raw - a) >= clear for a in avoid):
-            return float(raw)
+    line_ahead = WIDTH_DIM_LINE_IN * fpi
+    letter_clear, station_clear = WIDTH_LETTER_CLEAR_IN * fpi, WIDTH_STATION_CLEAR_IN * fpi
+    first = math.ceil((lo + behind) / WIDTH_STEP_FT) * WIDTH_STEP_FT
+    grid = [first + k * WIDTH_STEP_FT
+            for k in range(int(math.floor((hi - ahead - first) / WIDTH_STEP_FT)) + 1)]
+    candidates = [half_sta, half_sta - 100.0, half_sta + 100.0, half_sta - 200.0,
+                  half_sta + 200.0] + sorted(grid, key=lambda s: (abs(s - mid), s))
+    tried = set()
+    for raw in candidates:
+        if raw in tried:
+            continue
+        tried.add(raw)
+        if not (lo + behind <= raw <= hi - ahead):
+            continue
+        if any(abs(raw - a) < clear for a in avoid):
+            continue
+        at = raw + line_ahead  # where the dimension line crosses the centerline
+        if any(a - letter_clear < at < b + letter_clear for a, b in lettering):
+            continue
+        if abs(at - round(at / 100.0) * 100.0) < station_clear:
+            continue
+        return float(raw)
     return None
 
 

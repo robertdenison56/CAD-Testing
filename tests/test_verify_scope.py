@@ -86,8 +86,16 @@ def test_checks_in_scope_follow_the_groups():
 @pytest.mark.parametrize("sheets", [1, 2])
 @pytest.mark.parametrize("ttype", TYPES)
 def test_reference_scores_100_and_the_starting_document_0(ttype, sheets):
+    refused = []
     for seed in (1, 2, 3, 4, 5, 6):
-        task, session = _drafted(seed, ttype, sheets)
+        try:
+            task, session = _drafted(seed, ttype, sheets)
+        except ValueError:
+            # a widths type on a layout with no tangent that has room for a dimension
+            # beside its bearing (seed 5: three curves and an equation on one sheet);
+            # the task-set builder takes the next type there
+            refused.append(seed)
+            continue
         assert task.truth.scope == sorted(task_type(ttype).asks, key=GROUPS.index)
         assert task.brief.task_type == ttype and task.brief.sheets == sheets
         assert len(task.truth.sheets) == sheets
@@ -102,6 +110,8 @@ def test_reference_scores_100_and_the_starting_document_0(ttype, sheets):
             assert r.scope_weight == sum(WEIGHTS[c.id] for c in r.in_scope())
             r0 = verify(base, task.truth, prompt_level=level)
             assert r0.effective_score == 0.0 and not r0.hard_failed, (seed, ttype, sheets, level)
+    assert refused == ([5] if "widths" in task_type(ttype).asks and sheets == 1 else []), (
+        ttype, sheets, refused)
 
 
 def test_starting_documents_carry_exactly_the_given_phases():
