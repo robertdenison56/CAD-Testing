@@ -8,7 +8,10 @@ Sheets: a read-me, the D1 task catalog, one row per D1 task (every task type on
 one and two sheets, explicit and vague prompt per task, links to its files),
 one row per real-sheet task (benchmarks/real_tasks/catalog.json, which
 scripts/real_tasks.py writes first), the rules every D1 prompt is prefixed
-with, and the Track P probe prompts.
+with, the Track P probe prompts with every ranked model's k = 3 marks beside
+each, and the Track P leaderboard (benchmarks/leaderboard/track_p.json, which
+``python -m roaddraft.runners leaderboard`` writes) with the Track D (D1)
+board's state (benchmarks/runs/leaderboard.json).
 
 The task files go under ``benchmarks/prompts/tasks/<type>/<n>-sheet/seed-<n>/``
 (gitignored; regenerate with this script): the brief and truth, the starting
@@ -46,6 +49,10 @@ from roaddraft.tasks.types import PHASE_ORDER, REAL_TASK_TYPES, TASK_TYPES, chec
 
 #: the validated real-sheet tasks (scripts/real_tasks.py writes it)
 REAL_CATALOG = Path("benchmarks/real_tasks/catalog.json")
+#: the Track P probe leaderboard (python -m roaddraft.runners leaderboard writes it)
+TRACK_P = Path("benchmarks/leaderboard/track_p.json")
+#: the Track D (D1) leaderboard (scripts/make_leaderboard.py writes it)
+D1_BOARD = Path("benchmarks/runs/leaderboard.json")
 
 #: the dev-set dial cycle: every curve count with and without a station equation
 DIALS = [(curves, eq) for curves in (1, 2, 3) for eq in (False, True)]
@@ -382,6 +389,58 @@ def probe_set(probe) -> str:
     return "other"
 
 
+# ------------------------------------------------------------- leaderboard
+
+
+def _pct(x: float) -> str:
+    return f"{100 * x:.1f}%"
+
+
+def _board_row(r: dict, tiers: dict, status: str) -> list:
+    """One leaderboard row (ranked or not) as the workbook shows it."""
+    t = r["tiers"]
+    pins = r.get("pins") or {}
+    per_tier = [f"{t[k]['passes']}/{t[k]['attempts']} ({_pct(t[k]['rate'])})"
+                if k in t else "" for k in tiers]
+    cost = r.get("cost_per_task")
+    return [r.get("rank", ""), r["name"], r["class"], r["runner"], r["run"],
+            r["model"], r.get("backend", ""), r.get("effort") or "",
+            _pct(r["score"]), f"[{_pct(r['ci'][0])}, {_pct(r['ci'][1])}]", *per_tier,
+            f"{r['passes']}/{r['valid']}", r["probes_attempted"], r["always"], r["never"],
+            _pct(r["hard_fail"]), _pct(r["invalid_rate"]),
+            f"${cost:.2f}" if cost is not None else "—", r.get("cost_source") or "",
+            ", ".join(f"{label}: {v['passes']}/{v['valid']}" for label, v in r["per_label"].items()),
+            r.get("stale", 0), pins.get("instructions_differ", ""), status]
+
+
+def board_rows(board: dict):
+    """The Track P board: the ranked rows, then those not ranked yet and why."""
+    tiers = board["tiers"]
+    rows = [_board_row(r, tiers, "ranked") for r in board["ranked"]]
+    rows += [_board_row(r, tiers, f"not ranked: {r['why']}") for r in board["unranked"]]
+    return rows
+
+
+def board_headers(board: dict):
+    tiers = board["tiers"]
+    return (["Rank", "Model", "Class", "Runner", "Run folder", "Model ID", "Backend", "Effort",
+             "Pass rate", "95% CI"]
+            + [f"{k} ({len(v['probes'])}): {v['name']}" for k, v in tiers.items()]
+            + ["Passes / attempts", "Probes attempted", "Always pass", "Never pass",
+               "Hard-fail", "Invalid calls", "Cost / task", "Cost source", "Per repeat",
+               "Episodes on an earlier task text", "Episodes on earlier server instructions",
+               "Status"])
+
+
+def probe_marks(board: dict):
+    """Column header and per-probe marks for every ranked row of the board."""
+    cols = []
+    for r in board["ranked"]:
+        marks = {pid: p["marks"] for pid, p in r["probes"].items()}
+        cols.append((f"{r['name']}\n{r['run']} (rank {r['rank']})", marks))
+    return cols
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default="benchmarks/prompts/roaddraft_prompts.xlsx")
@@ -402,6 +461,8 @@ def main(argv=None) -> int:
     if not REAL_CATALOG.exists():
         raise SystemExit(f"{REAL_CATALOG} is missing: run scripts/real_tasks.py first")
     real = json.loads(REAL_CATALOG.read_text())
+    board = json.loads(TRACK_P.read_text()) if TRACK_P.exists() else None
+    d1_board = json.loads(D1_BOARD.read_text()) if D1_BOARD.exists() else None
 
     wb = Workbook()
     ws = wb.active
@@ -444,8 +505,19 @@ def main(argv=None) -> int:
                             "D1 tasks, plus the real base files beside start.rdoc.json."),
         ("D1 rules", "The benchmark rules sent ahead of every D1 prompt, at both levels."),
         ("Probes", f"The {len(PROBES)} Track P capability probes (the current leaderboard), "
-                   "each a single natural-language request."),
+                   "each a single natural-language request. One column per ranked model "
+                   "shows its k = 3 attempts on that probe, in order: P = passed, · = failed, "
+                   "B = ended by budget (counts as a failure), X = excluded (infrastructure)."),
         ("Probe rules", "The rules and report request wrapped around each probe prompt."),
+        ("Leaderboard", ("The Track P leaderboard as of "
+                         f"{board['as_of']} (k = {board['k']}, {board['probes']} probes, probe "
+                         f"set {board['probe_set_sha256'][:19]}): the ranked rows, then those "
+                         "not ranked yet and why. Pass rate is the mean over probes of each "
+                         "probe's passes over attempts; the CI is a bootstrap over probes then "
+                         "attempts. Ties break on hard-fail rate, then invalid-call rate, then "
+                         "cost. Overlapping intervals are not separated. The Track D (D1) "
+                         "board's state is below the table.") if board else
+                        f"{TRACK_P} was missing; run python -m roaddraft.runners leaderboard"),
         ("", None),
         ("Spec", f"{SPEC_VERSION} ({spec_hash()}), DRAFT for PE review"),
         ("Generator", f"{GENERATOR_VERSION} (seeded); {REAL_GENERATOR_VERSION} (real sheets)"),
@@ -501,9 +573,49 @@ def main(argv=None) -> int:
            wrap_cols=(1,))
 
     ws = wb.create_sheet("Probes")
-    rows = [[p.id, probe_set(p), ", ".join(p.tags), p.start, p.prompt] for p in PROBES]
-    _table(ws, ["Probe ID", "Set", "Tags", "Starts from", "Prompt"],
-           [26, 10, 28, 12, 100], rows, wrap_cols=(5,))
+    marks = probe_marks(board) if board else []
+    rows = [[p.id, probe_set(p), ", ".join(p.tags), p.start, p.prompt,
+             *[m.get(p.id, "") for _, m in marks]] for p in PROBES]
+    _table(ws, ["Probe ID", "Set", "Tags", "Starts from", "Prompt", *[h for h, _ in marks]],
+           [26, 10, 28, 12, 100, *[14] * len(marks)], rows, wrap_cols=(5,))
+    ws.row_dimensions[1].height = 42
+
+    if board:
+        ws = wb.create_sheet("Leaderboard")
+        rows = board_rows(board)
+        _table(ws, board_headers(board),
+               [6, 22, 16, 30, 16, 20, 12, 8, 10, 16, *[14] * len(board["tiers"]),
+                11, 9, 8, 8, 9, 9, 9, 30, 36, 12, 12, 44],
+               rows, wrap_cols=(4, 19, 20, 23))
+        ws.row_dimensions[1].height = 56
+        notes = [("Ranked from", ", ".join(board["ranked_from"])),
+                 ("Generated by", board["generated_by"]),
+                 ("Full board", "benchmarks/leaderboard/TRACK_P.md (one card per row under "
+                                "cards/ with the section 3.2 measures, the pins and every "
+                                "probe's attempts)")]
+        if d1_board is not None:
+            state = (f"{len(d1_board['ranked'])} ranked row(s) on {d1_board['leaderboard_set']}"
+                     if d1_board.get("ranked") else
+                     f"no ranked run yet on {d1_board['leaderboard_set']}: a row needs a "
+                     "published run under a frozen spec (v0.1: spec v1, then d1-variance x 5 "
+                     "samples, then d1-test x at least three models)")
+            notes.append(("Track D (D1) board", f"{state}; report {d1_board['report_version']}, "
+                                                "benchmarks/runs/LEADERBOARD.md"))
+        base = len(rows) + 3
+        for i, (a, b) in enumerate(notes):
+            ca = ws.cell(row=base + i, column=1, value=a)
+            cb = ws.cell(row=base + i, column=2, value=b)
+            ca.font = Font(name=FONT, bold=True, size=10)
+            cb.font = Font(name=FONT, size=10)
+            ws.merge_cells(start_row=base + i, start_column=2, end_row=base + i, end_column=12)
+            cb.alignment = TOP_WRAP
+            ws.row_dimensions[base + i].height = 13.5 * _lines(b, 150) + 4
+        if d1_board and d1_board.get("ranked"):  # whatever shape make_leaderboard.py gives it
+            ws = wb.create_sheet("D1 leaderboard")
+            keys = list(d1_board["ranked"][0].keys())
+            _table(ws, keys, [16] * len(keys),
+                   [[json.dumps(r.get(k)) if isinstance(r.get(k), (dict, list)) else r.get(k)
+                     for k in keys] for r in d1_board["ranked"]])
 
     ws = wb.create_sheet("Probe rules")
     sample = prompting.RULES.format(extra="[draft probes add:" + prompting.NO_CALCULATOR + "]",
@@ -516,6 +628,8 @@ def main(argv=None) -> int:
     wb.save(out)
     print(f"wrote {out}: {len(TASK_TYPES)} types x 2 sheet counts x {len(seeds)} seeds x 2 "
           f"levels, {len(real['tasks'])} real-sheet tasks, {len(PROBES)} probes"
+          + (f", {len(board['ranked'])} ranked + {len(board['unranked'])} unranked board rows"
+             if board else "")
           + ("" if tasks_dir is None else f"; task files under {tasks_dir}"))
     return 0
 
