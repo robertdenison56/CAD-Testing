@@ -45,7 +45,8 @@ from roaddraft.verify.geometry import (
     same_piece,
 )
 from roaddraft.verify.legibility import (
-    clipped, outside, overlapping_pairs, reference_items, sheet_items, upside_down,
+    clipped, crossing_pairs, outside, overlapping_pairs, reference_items, sheet_items,
+    sheet_strokes, upside_down,
 )
 from roaddraft.verify.match import LabelIndex, index_labels
 from roaddraft.verify.normalize import normalize
@@ -227,7 +228,10 @@ class DimMatch:
 
     @property
     def anchor(self) -> dict:
-        return {"ref": self.truth["ref"], "kind": "width", "station": self.truth["station_text"]}
+        # the tangent, never the station: the explicit prompt states it, the vague one
+        # leaves it to the drafter, and the agent view must not show it either way
+        # (d1-verify-v4; it is the ``expected`` of a misplaced finding, which is stripped)
+        return {"ref": self.truth["ref"], "kind": "width"}
 
 
 def _dimension_points(dim: Dimension):
@@ -627,13 +631,27 @@ def check_legibility(a: Analysis) -> Result:  # D1-08
             items = items + context
             given |= {it.entity_id for it in context}
         sv_pairs = [p for p in overlapping_pairs(items) if not (p[0] in given and p[1] in given)]
+        # a dimension's lines or a callout's leader through another item's text is the
+        # same offence (d1-verify-v4); a pair already charged for its text counts once
+        seen = set(sv_pairs)
+        sv_through = []
+        for line_owner, text_owner in crossing_pairs(items, sheet_strokes(ctx, sv)):
+            key = tuple(sorted((line_owner, text_owner)))
+            if key in seen or (line_owner in given and text_owner in given):
+                continue
+            seen.add(key)
+            sv_through.append((line_owner, text_owner))
         sv_off = [i for i in outside(items, sv.usable) if i not in given]
         cut = [i for i in clipped(ctx, sv) if i not in given]  # cut by its viewport's edge
         flipped = [i for i in upside_down(ctx, sv) if i not in given]  # as plotted
-        pairs += sv_pairs
+        pairs += sv_pairs + sv_through
         off += sv_off + cut + flipped
         findings += [Finding("overlap", entity_ids=list(p), note=f"on sheet {sv.name}")
                      for p in sv_pairs]
+        findings += [Finding("overlap", entity_ids=[line_owner, text_owner],
+                             note=f"a line of {line_owner} runs through the text of "
+                                  f"{text_owner} on sheet {sv.name}")
+                     for line_owner, text_owner in sv_through]
         findings += [Finding("off_sheet", entity_ids=[i],
                              note=f"outside the usable area of sheet {sv.name}")
                      for i in sv_off]

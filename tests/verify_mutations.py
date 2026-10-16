@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Union
 
-from roaddraft.document.entities import BlockRef, Line, Table, Text
+from roaddraft.document.entities import BlockRef, Dimension, Line, Table, Text
 from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.reference import reference_solution, session_for_task
 from roaddraft.verify import verify
@@ -28,8 +28,10 @@ BASE = {"seed": 1, "curves": 3, "equations": True}
 class Base:
     """A reference-drafted task and helpers to find and change what is on it."""
 
-    def __init__(self, seed: int, curves: Optional[int] = None, equations: bool = False):
-        self.task = generate_task(seed, curves=curves, equations=equations)
+    def __init__(self, seed: int, curves: Optional[int] = None, equations: bool = False,
+                 task_type: Optional[str] = None):
+        extra = {} if task_type is None else {"task_type": task_type}
+        self.task = generate_task(seed, curves=curves, equations=equations, **extra)
         self.session = session_for_task(self.task)
         reference_solution(self.task, self.session)
         self.truth = self.task.truth
@@ -80,6 +82,15 @@ class Base:
 
     def north_arrow(self) -> BlockRef:
         return next(e for e in self.sheet.entities.values() if isinstance(e, BlockRef))
+
+    def width_dimension(self, ref: str) -> Dimension:
+        """The reference's width dimension on tangent ``ref`` (model space)."""
+        want = next(d for d in self.truth.dimensions if d["ref"] == ref)
+        align = self.doc.design.alignments[self.A]
+        found = [e for e in self.doc.model_entities.values() if isinstance(e, Dimension)
+                 and abs(align.xy_to_station(e.p1)["station"] - float(want["station"])) < 0.01]
+        assert len(found) == 1, (ref, found)
+        return found[0]
 
     @property
     def viewport(self):
@@ -293,6 +304,26 @@ def _modify_radius(b: Base):
     _set(b, arc.id, radius=arc.radius + 1.0)
 
 
+def _dimension_through_the_bearing(b: Base):
+    """The T-1 width dimension re-placed at the tangent's midpoint, where the
+    bearing is lettered above the line: its dimension line runs through the
+    bearing's text (the generator's own flaw until d1-v6, which D1-08 never
+    saw until d1-verify-v4)."""
+    want = next(d for d in b.truth.dimensions if d["ref"] == "T-1")
+    old = b.width_dimension("T-1")
+    align = b.doc.design.alignments[b.A]
+    lo, hi = want["tangent_range"]
+    mid = (lo + hi) / 2.0
+    half = float(b.D["pavement"]["half_width_ft"])
+    wd = next(w for w in b.D["width_dimensions"] if w["ref"] == "T-1")
+    _delete(b, [old.id])
+    b.ex("place_dimension", {
+        "space": "model", "kind": "aligned",
+        "p1": align.station_to_xy(mid, -half)[0], "p2": align.station_to_xy(mid, half)[0],
+        "line_point": align.station_to_xy(mid + float(wd["line_offset_ft"]), 0.0)[0],
+        "text_height": old.text_height, "text_gap": wd["text_gap_ft"], "layer": old.layer})
+
+
 def _tampered(b: Base):
     align = b.doc.design.alignments[b.A]
     b.ex("modify_alignment", {"name": b.A, "changes": {"begin_station": align.begin_station
@@ -313,6 +344,14 @@ def table_rows(lost: int) -> Callable[[Base], float]:
 
 def d107(minus: int = 1) -> Callable[[Base], float]:
     return lambda b: (b.n_labels - minus) / b.n_labels
+
+
+def d113(minus: int = 1) -> Callable[[Base], float]:
+    return lambda b: (len(b.truth.dimensions) - minus) / len(b.truth.dimensions)
+
+
+#: the pavement base: the layout sheet with its edges drawn, the widths asked for
+PAVEMENT = {"seed": 1, "curves": 3, "equations": True, "task_type": "pavement-widths"}
 
 
 MUTATIONS: List[Mutation] = [
@@ -409,6 +448,9 @@ MUTATIONS: List[Mutation] = [
     Mutation("curve C-2 drawn 1 ft too wide", _modify_radius,
              {"D1-01": lambda b: (b.n_elements - 1) / b.n_elements},
              {"D1-01": {"missing", "geometry_mismatch"}}, hard_fail=True),
+    Mutation("the T-1 width dimensioned through the bearing", _dimension_through_the_bearing,
+             {"D1-08": 0.75, "D1-13": d113()},
+             {"D1-08": {"overlap"}, "D1-13": {"misplaced"}}, base=dict(PAVEMENT)),
 ]
 
-__all__ = ["Base", "Mutation", "MUTATIONS", "BASE", "SHEET"]
+__all__ = ["Base", "Mutation", "MUTATIONS", "BASE", "PAVEMENT", "SHEET"]

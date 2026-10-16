@@ -9,14 +9,28 @@ the axis-aligned blow-up a rotated label would otherwise get), tables and
 block references their boxes.  Overlap is tested with separating axes and
 must be deeper than ``OVERLAP_EPS_IN`` to count, so labels that merely touch
 are fine.
+
+A line through a text box is the same offence (d1-verify-v4, 2026-10-16: the
+generator's own width dimension line ran through the bearing on nearly every
+pavement seed and D1-08 never saw it).  ``sheet_strokes`` gathers the lines
+that annotation draws across a sheet -- a dimension's dimension line,
+extension lines, stubs and radial leader (``dimgeom.primitives``, never the
+arrowheads) and a callout's leader (the line chain that ends at a text's
+insertion point, which is what ``place_callout`` draws) -- in paper space
+through the viewport like the text, clipped to it, and ``crossing_pairs``
+charges a stroke that crosses another owner's footprint drawn in by
+``OVERLAP_EPS_IN`` or ends inside it.  Ordinary linework (the centerline, the
+edges of pavement, a real sheet's pipes) is not a stroke: text touching an
+edge of pavement on a narrow road is ordinary practice (Robert, 2026-10-12).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from roaddraft.core import geometry as geo
-from roaddraft.document.entities import BlockRef, Dimension, Table, Text
+from roaddraft.document.entities import BlockRef, Dimension, Line, Table, Text
 from roaddraft.verify.context import Context, Rect, SheetView
 
 OVERLAP_EPS_IN = 0.005
@@ -28,6 +42,22 @@ class Item:
     entity_id: str
     quad: Quad  # paper corners, counter-clockwise
     box: Rect   # paper axis-aligned bounds of the quad
+
+
+@dataclass
+class Stroke:
+    """A line annotation draws across the sheet, in paper space: owned by the
+    dimension it belongs to, or by the callout text its leader runs to."""
+    entity_id: str
+    a: List[float]
+    b: List[float]
+    box: Rect   # paper axis-aligned bounds of the segment
+
+
+#: the parts of a dimension that are lines across the sheet: the dimension line,
+#: the extension lines, the stubs past them when text and arrows flip outside, and
+#: a radial dimension's leader and landing (``dimgeom``); the arrowheads are not
+DIMENSION_LINE_PARTS = ("line", "ext1", "ext2", "stub1", "stub2", "landing")
 
 
 def text_quad(position: Sequence[float], content: str, height: float, rotation_deg: float,
@@ -120,6 +150,142 @@ def reference_items(ctx: Context, sv: Optional[SheetView] = None) -> List[Item]:
                                              e.halign, e.valign,
                                              style.width_factor if style else 1.0)))
     return items
+
+
+def _stroke(entity_id: str, a: Sequence[float], b: Sequence[float]) -> Stroke:
+    a, b = [float(a[0]), float(a[1])], [float(b[0]), float(b[1])]
+    return Stroke(entity_id, a, b, (min(a[0], b[0]), min(a[1], b[1]),
+                                    max(a[0], b[0]), max(a[1], b[1])))
+
+
+def _dimension_lines(doc, dim: Dimension) -> Iterator[Tuple[list, list]]:
+    for prim in dim.primitives(doc):
+        if isinstance(prim, Line) and prim.id.rpartition(":")[2] in DIMENSION_LINE_PARTS:
+            yield prim.start, prim.end
+
+
+def _key(p: Sequence[float]) -> Tuple[float, float]:
+    return (round(float(p[0]), 6), round(float(p[1]), 6))
+
+
+def _leaders(entities: Sequence) -> Iterator[Tuple[str, Tuple[list, list]]]:
+    """``(text id, (start, end))`` for every callout leader among ``entities``:
+    the line with an end at a text's insertion point and, when that line is
+    the level shoulder ``place_callout`` draws from the elbow to the text, the
+    line that meets its far end (the leader from the target).  Nothing the
+    engine draws ends at a label's insertion point otherwise: ticks sit on the
+    centerline, a curve bubble's leader starts on the bubble."""
+    at = {}
+    for e in entities:
+        if isinstance(e, Line):
+            at.setdefault(_key(e.start), []).append(e)
+            at.setdefault(_key(e.end), []).append(e)
+    if not at:
+        return
+    for e in entities:
+        if not isinstance(e, Text):
+            continue
+        here = _key(e.position)
+        for first in at.get(here, ()):
+            yield e.id, (first.start, first.end)
+            if abs(float(first.end[1]) - float(first.start[1])) > 1e-9:
+                continue  # not a level shoulder: the leader itself, with no landing
+            far = _key(first.end) if _key(first.start) == here else _key(first.start)
+            for second in at.get(far, ()):
+                if second is not first:
+                    yield e.id, (second.start, second.end)
+
+
+def _lines(doc, entities: Sequence) -> Iterator[Tuple[str, Tuple[list, list]]]:
+    for e in entities:
+        if isinstance(e, Dimension):
+            for a, b in _dimension_lines(doc, e):
+                yield e.id, (a, b)
+    yield from _leaders(entities)
+
+
+def clip_segment(a: Sequence[float], b: Sequence[float], rect: Rect):
+    """The part of segment ab inside ``rect`` (Liang-Barsky), or None."""
+    dx, dy = float(b[0]) - float(a[0]), float(b[1]) - float(a[1])
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, float(a[0]) - rect[0]), (dx, rect[2] - float(a[0])),
+                 (-dy, float(a[1]) - rect[1]), (dy, rect[3] - float(a[1]))):
+        if abs(p) < 1e-15:
+            if q < 0.0:
+                return None
+            continue
+        r = q / p
+        if p < 0.0:
+            if r > t1:
+                return None
+            t0 = max(t0, r)
+        else:
+            if r < t0:
+                return None
+            t1 = min(t1, r)
+    if t0 > t1:
+        return None
+    return ([float(a[0]) + dx * t0, float(a[1]) + dy * t0],
+            [float(a[0]) + dx * t1, float(a[1]) + dy * t1])
+
+
+def sheet_strokes(ctx: Context, sv: Optional[SheetView] = None) -> List[Stroke]:
+    """The lines on one deliverable sheet (the first by default) that may run
+    through text: every dimension's lines and every callout's leader, the
+    model's through each viewport that shows them (clipped to it, since the
+    plot shows no more), the sheet's own as drawn."""
+    sv = ctx.first if sv is None else sv
+    doc, out = ctx.doc, []
+    if sv is None or sv.sheet is None:
+        return out
+    model = list(doc.model_entities.values())
+    for view in sv.views:
+        for owner, (a, b) in _lines(doc, model):
+            seg = clip_segment(view.transform.to_paper(a), view.transform.to_paper(b), view.rect)
+            if seg is not None:
+                out.append(_stroke(owner, *seg))
+    for owner, (a, b) in _lines(doc, list(sv.sheet.entities.values())):
+        out.append(_stroke(owner, a, b))
+    return out
+
+
+def inset(quad: Quad, eps: float) -> Optional[Quad]:
+    """A rectangular quad drawn in by ``eps`` on every side; None when nothing
+    would be left of it."""
+    c0, c1, c3 = quad[0], quad[1], quad[3]
+    ux, uy, vx, vy = c1[0] - c0[0], c1[1] - c0[1], c3[0] - c0[0], c3[1] - c0[1]
+    w, h = math.hypot(ux, uy), math.hypot(vx, vy)
+    if w <= 2.0 * eps or h <= 2.0 * eps:
+        return None
+    ux, uy, vx, vy = ux / w * eps, uy / w * eps, vx / h * eps, vy / h * eps
+    return [[q[0] + su * ux + sv * vx, q[1] + su * uy + sv * vy]
+            for q, (su, sv) in zip(quad, ((1, 1), (-1, 1), (-1, -1), (1, -1)))]
+
+
+def crosses(a: Sequence[float], b: Sequence[float], quad: Quad,
+            eps: float = OVERLAP_EPS_IN) -> bool:
+    """Whether segment ab runs through ``quad`` deeper than ``eps``: it crosses
+    an edge of the quad drawn in by ``eps``, or ends inside it.  A line along
+    a text's edge, or one that stops at it, does not."""
+    core = inset(quad, eps)
+    if core is None:
+        return False
+    return (bool(geo.segment_polygon_params(a, b, core))
+            or geo.point_in_polygon(a, core) or geo.point_in_polygon(b, core))
+
+
+def crossing_pairs(items: Sequence[Item], strokes: Sequence[Stroke]) -> List[Tuple[str, str]]:
+    """``(line owner, text owner)`` for every stroke that runs through another
+    owner's item, each pair once; a dimension's lines never cross its own
+    text, nor a leader the text it runs to."""
+    pairs = set()
+    for s in strokes:
+        for it in items:
+            if it.entity_id == s.entity_id or not geo.bbox_intersects(s.box, it.box):
+                continue
+            if crosses(s.a, s.b, it.quad):
+                pairs.add((s.entity_id, it.entity_id))
+    return sorted(pairs)
 
 
 def _axes(quad: Quad):
@@ -231,6 +397,7 @@ def outside(items: Sequence[Item], usable: Optional[Rect]) -> List[str]:
                               and usable[1] - eps <= v[1] <= usable[3] + eps for v in it.quad)})
 
 
-__all__ = ["OVERLAP_EPS_IN", "READING_TOL_DEG", "Item", "text_quad", "sheet_items",
-           "reference_items", "overlap_depth", "overlapping_pairs", "outside", "clipped",
-           "reads_upside_down", "upside_down"]
+__all__ = ["OVERLAP_EPS_IN", "READING_TOL_DEG", "DIMENSION_LINE_PARTS", "Item", "Stroke",
+           "text_quad", "sheet_items", "reference_items", "sheet_strokes", "clip_segment",
+           "inset", "crosses", "crossing_pairs", "overlap_depth", "overlapping_pairs",
+           "outside", "clipped", "reads_upside_down", "upside_down"]
