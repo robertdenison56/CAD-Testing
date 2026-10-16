@@ -240,7 +240,7 @@ Reward-hack probes: (a) all labels via `place_text` with correct strings → ≤
 
 ### 3.7 Spec changes the verifier needs (PE decisions, all pre-freeze)
 
-Each of these changes `spec_hash` and therefore every task id. Batch them, decide once, then freeze `draft-v1` → `v1`.
+Each of these changes `spec_hash` and therefore every task id. Batch them, decide once, then freeze `draft-v1` → `v1`. *Frozen 2026-10-16 as `v1`, `spec_hash` `sha256:0e07d5e83c0b1cb8` (`draft-v4` was `sha256:379c247bd02b2190`); the task-set manifests, the real-task catalog and the pinned ids carry it.*
 
 1. Add **D1-00 sheet setup** (weight 5, taken from D1-02 → 10 and D1-11 → 2, or as the PE prefers). Without it, a sheet with no viewport scores 0 on nine checks with no finding that says why. *Decided 2026-10-09 (Robert): added at weight 5. Those two cuts free only 3 points, so the weights are D1-02 12 → 9 and D1-11 3 → 1 (sum 100).*
 2. ~~Add `placed_by` to the anchor record (§2.7) and the bus stamp (§3.5 item 3).~~ **Done 2026-09-10** — no decision left, but note it is a key on every anchor record and so is visible to agents through `get_entity`.
@@ -307,7 +307,7 @@ What must be on the sheet is graded identically at both levels. A convention the
 
 `RULES` (anchor your labels, leave the design alone, keep what is drawn) go with every level: they belong to the benchmark, not to drafting. **New metric: prompt gap** = effective(explicit) − effective(vague), paired by task (§5). Wrong values hard-fail at both levels. The full catalog of prompts is exported by `scripts/export_prompts.py` to `benchmarks/prompts/roaddraft_prompts.xlsx`.
 
-**Validation as built:** every task type × 1 and 2 sheets × both levels: reference = 100 with no findings, starting document = 0 (40 seeds, 1,440 verifications; `tests/test_verify_scope.py` keeps 6 seeds of it); the whole-sheet suite of §3.6 (200-seed oracle, 50-seed null, determinism, 34 mutations, 11 hack probes, p95 < 50 ms) still passes; two-sheet mutations (match line deleted, label wrong or missing, second sheet deleted) move D1-00 and the per-sheet checks by the expected amounts.
+**Validation as built:** every task type × 1 and 2 sheets × both levels: reference = 100 with no findings, starting document = 0 (40 seeds, 1,440 verifications; `tests/test_verify_scope.py` keeps 6 seeds of it; repeated 2026-10-16 on `d1-v6`, 5,120 verifications over the 16 seeded types); the whole-sheet suite of §3.6 (200-seed oracle, 50-seed null, determinism, 34 mutations, 11 hack probes, p95 < 50 ms) still passes; two-sheet mutations (match line deleted, label wrong or missing, second sheet deleted) move D1-00 and the per-sheet checks by the expected amounts.
 
 **Departures from §3.2–3.6:**
 
@@ -513,9 +513,9 @@ Plan on the order of $500–1,000 for a four-model v0.1 with `d1-variance` at k 
 
 ## 10. Immediate next actions
 
-E0, E1 and E2 are done. E0 landed 2026-09-10 (6df5252, 029658e) and was re-verified 2026-10-13. E1 is `roaddraft.verify` at `d1-verify-v3` on spec `draft-v4` (§3.8; 295e6ea to d4cee1f, 2026-10-10 to 14; 16 seeded and 11 real-sheet task types, 584 real tasks). E2 is `roaddraft.eval` (70e4280, 2026-10-14: oracle through the loop 50/50 = 100, scripted 37.75 on the mixed set, null 0; the three manifests under `benchmarks/tasksets/`); its one open acceptance item is the human playtest. E3 and E4 are built and committed (a4e6a0e, 2026-10-15; §4.10, the fake oracle at 100 in all three dialects; the report, `--publish` and `scripts/make_leaderboard.py`, no ranked run) and have not run against a model. What remains:
+E0, E1 and E2 are done. E0 landed 2026-09-10 (6df5252, 029658e) and was re-verified 2026-10-13. E1 is `roaddraft.verify` at `d1-verify-v3` on spec `v1` (§3.8; 295e6ea to d4cee1f, 2026-10-10 to 14; 16 seeded and 11 real-sheet task types, 584 real tasks; frozen 2026-10-16). E2 is `roaddraft.eval` (70e4280, 2026-10-14: oracle through the loop 50/50 = 100, scripted 37.75 on the mixed set, null 0; the three manifests under `benchmarks/tasksets/`); its one open acceptance item is the human playtest. E3 and E4 are built and committed (a4e6a0e, 2026-10-15; §4.10, the fake oracle at 100 in all three dialects; the report, `--publish` and `scripts/make_leaderboard.py`, no ranked run) and have not run against a model. What remains:
 
-1. The one generator fix (the width dimension line through the bearing text on pavement sheets), then freeze `DRAFTING_SPEC_V1` `draft-v4` → `v1` (every §3.7 decision is in) and regenerate the fixtures, the prompt workbook, the real-task catalog and the three task-set manifests.
+1. ~~The one generator fix, then freeze `DRAFTING_SPEC_V1` `draft-v4` → `v1`~~ **Done 2026-10-16:** the width dimension clears the bearing lettering (`d1-v6`, 4f10ecb) and the spec is `v1`, `sha256:0e07d5e83c0b1cb8` (§3.8), with the pinned ids, the three manifests, the real-task catalog and the prompt workbook regenerated on it. Every §3.7 decision is in; the freeze is the version and status lines and the two level readings marked decided, nothing else in the dictionary moved.
 2. The E3 smoke run, `d1-dev[:5]` × one model × single: pick the model and the route (this machine has no `ANTHROPIC_API_KEY`; the `openai` provider reaches LM Studio or Runpod); replace the §8 numbers with measured cost, steps and invalid-call rate per sheet.
 3. The human playtest on seed 42 (`python -m roaddraft.eval human start`, then `human score`); commit the expert journal under `benchmarks/expert/`.
 4. E4: `d1-variance` × 5 samples to size the interval, then `d1-test` × three or more models × neutral × {single, self-correct}; `report --publish`; `scripts/make_leaderboard.py`; write *"Why frontier models can't draft a plan sheet (yet)"* from the taxonomy table.

@@ -519,7 +519,7 @@ def main(argv=None) -> int:
                          "board's state is below the table.") if board else
                         f"{TRACK_P} was missing; run python -m roaddraft.runners leaderboard"),
         ("", None),
-        ("Spec", f"{SPEC_VERSION} ({spec_hash()}), DRAFT for PE review"),
+        ("Spec", f"{SPEC_VERSION} ({spec_hash()}), frozen 2026-10-16"),
         ("Generator", f"{GENERATOR_VERSION} (seeded); {REAL_GENERATOR_VERSION} (real sheets)"),
         ("Two sheets", "A longer alignment laid out on C-101 and C-102, breaking at a match line "
                        "on a tangent; each sheet shows its own part, carries its own curve table, "

@@ -256,7 +256,7 @@ These decisions stand and are not repeated here. v1 section numbers are listed f
 | Contamination | held-out seeds and tiers never enter a training set; task ids carry the spec hash, so a changed spec mints new ids |
 | Tool memorisation masquerading as skill | Track X on every checkpoint |
 | Cost | lean runner agents, cached prefixes, `--budget` on local models, a cost cap per run; the Sep 20 draft run's $27 in 20 minutes came mostly from orchestrator overhead, not the models |
-| The spec is DRAFT | PE review and freeze before Track D publishes; the knowledge base cites every value to a PPM page |
+| The spec was DRAFT until 2026-10-16 | PE review done and `v1` frozen (`sha256:0e07d5e83c0b1cb8`) before Track D publishes; the knowledge base cites every value to a PPM page |
 | Fabricated completion | report fidelity as a published column; the disk is the only scorer |
 | Time | each phase ships on its own; Phase A alone is a publishable benchmark |
 
@@ -265,7 +265,7 @@ These decisions stand and are not repeated here. v1 section numbers are listed f
 ## 8. Immediate next actions
 
 1. The E3 smoke run, `d1-dev[:5]` × one model × single. It needs a model and a route (this machine has no `ANTHROPIC_API_KEY`; the `openai` provider reaches LM Studio or the Runpod endpoint); it replaces the eval plan's §8 estimate with measured cost, steps and invalid-call rate per sheet.
-2. The generator fix, then the spec v1 freeze: the width dimension line through the bearing text on pavement sheets is the one flaw that would move frozen ids again; then `draft-v4` → `v1` (the DRAFT status and its two tests, the standards table's own status), regenerate the fixtures, the prompt workbook, the real-task catalog and the three manifests. Every PE decision is in.
+2. ~~The generator fix, then the spec v1 freeze~~ **Done 2026-10-16.** The width dimension now sits clear of the bearing lettering (generator `d1-v6`, 4f10ecb; a tangent shorter than about 110 ft is left undimensioned), and `DRAFTING_SPEC_V1` is frozen as `v1`, hash `sha256:0e07d5e83c0b1cb8` (status FROZEN, the standards tables with it, the two level readings recorded as decided); the pinned ids, the three manifests, the real-task catalog and the prompt workbook are regenerated on it. `report --publish` no longer refuses on draft-spec grounds; it still refuses `d1-dev` and any run scored on the old hash.
 3. Track P decisions, Robert's: (a) rerun the seven rows on the scrubbed help text (fe26ce2), or publish v0.1 with the caveat; (b) Fable's $3 CLI cap: raise it (say `--max-budget-usd 6`) and `--force` the seven capped episodes (about $30, one 5-hour window), or keep the cap as part of the rig; (c) gpt-oss:120b on Ollama cloud ($0 to $20), the one Oct 6 model without a k = 3 row. Regenerate the board after each.
 4. Track D: `d1-variance` × 5 samples to size the interval, then `d1-test` × three or more models × {single, self-correct}; `report --publish`, `make_leaderboard.py`, and the writeup draft from the taxonomy table. The human playtest (`python -m roaddraft.eval human start`, record under `benchmarks/expert/`) is E2's last acceptance item and does not block the runs.
 5. Training data: re-record the 33 probe solves and the family instances on the current tool surface (`60eeeb21` / `4dff2849`), make the 12 unfaithful solves faithful, grow the families, and rehydrate the passing episodes of the k = 3 runs as verified rollouts.

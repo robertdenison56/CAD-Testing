@@ -300,11 +300,11 @@ s.query("xy_to_station", {"point": [1300, 1012]})  # -> 13+00.00, 12.00' LT
   with a teaching error.
 - **Tasks**: `python -m roaddraft.tasks SEED [--equations] [--curves N]`
   generates a deterministic D1 plan-sheet task — a brief (design pre-seeded,
-  deliverable, DRAFT drafting spec), the verifier ground truth computed by
+  deliverable, the frozen v1 drafting spec), the verifier ground truth computed by
   the same label functions, and the reference solution (15 commands) whose
   document matches the truth exactly and whose journal replays. Task ids
   pin the generator version and the spec hash. The AASHTO-derived standards
-  tables and the drafting spec are DRAFT, for PE review.
+  tables and the drafting spec were frozen as v1 on 2026-10-16 after PE review.
 - **Annotation scales** (AutoCAD annotation scale / Civil 3D drawing scale):
   the document carries a scale list (`1"=10'` … `1"=500'`, editable with
   `add_annotation_scale` / `delete_annotation_scale`), a current scale, and
@@ -1261,7 +1261,7 @@ src/roaddraft/
   cli/         the terminal REPL
   web/         the GUI: stdlib HTTP/SSE server + single-file browser UI
   desktop/     the GUI in a window of its own (pywebview), its log and close guard
-  tasks/       DRAFT standards + drafting spec, the seeded D1 task generator,
+  tasks/       standards + drafting spec (frozen v1), the seeded D1 task generator,
                ground truth, and the reference solution (python -m roaddraft.tasks)
   verify/      the verifier: a deterministic 0-100 for a drafted task against
                its ground truth (python -m roaddraft.verify)
@@ -1299,6 +1299,6 @@ generator) is in. Still to come, on top of this bus:
 - **Spirals** (`"spiral"` is reserved and rejected everywhere), asymmetric
   vertical curves, **profile views** on sheets, station-offset labels, match
   lines and multi-sheet sets (D2/D3).
-- **PE review** of the DRAFT standards tables and drafting spec before any
-  published task set; task ids carry the spec hash so corrections mint new
-  ids.
+- ~~**PE review** of the DRAFT standards tables and drafting spec before any
+  published task set~~ — done: spec v1 frozen 2026-10-16; task ids carry the
+  spec hash so any correction mints new ids under a new version.

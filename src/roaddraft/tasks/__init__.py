@@ -2,10 +2,10 @@
 
 Phase 1 contents (see the Phase 1 build spec, section 7):
 
-- ``standards``  -- DRAFT AASHTO-derived lookup tables (minimum radius,
-  maximum grade, minimum K) used by the task generator to draw plausible
-  designs.  Every value is marked for PE review.
-- ``spec_v1``    -- ``DRAFTING_SPEC_V1``, the DRAFT drafting specification a
+- ``standards``  -- AASHTO-derived lookup tables (minimum radius, maximum
+  grade, minimum K) used by the task generator to draw plausible designs,
+  frozen with spec v1 (2026-10-16).
+- ``spec_v1``    -- ``DRAFTING_SPEC_V1``, the frozen v1 drafting specification a
   D1 plan-sheet task is graded against, plus ``spec_hash`` / ``spec_subset``.
 - ``brief``, ``generator``, ``ground_truth``, ``reference``, ``__main__`` --
   task briefs, the seeded D1 generator, verifier ground truth and the

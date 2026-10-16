@@ -1,11 +1,14 @@
-"""``DRAFTING_SPEC_V1`` -- the DRAFT drafting specification for D1 plan-sheet tasks.
+"""``DRAFTING_SPEC_V1`` -- the frozen v1 drafting specification for D1 plan-sheet tasks.
 
 The dictionary below is the contract an agent's drawing is graded against:
 sheet size and viewport, layer names and properties, text heights, stationing
 conventions, which labels are required and how they are worded, the curve
-table layout, verifier tolerances, and the weighted check list.  It is DRAFT
-and must be reviewed by a licensed professional engineer before any task set
-built on it is published.
+table layout, verifier tolerances, and the weighted check list.  It was
+reviewed decision by decision by a licensed professional engineer (Robert,
+2026-10-05 to 2026-10-13; each decision is noted beside its value) and frozen
+as ``v1`` on 2026-10-16 (eval plan section 3.7): every task set published on
+it carries its hash, and any later edit mints new task ids under a new
+version rather than re-scoring old ones.
 
 ``spec_hash()`` folds the canonical JSON of the spec into every task id, so
 that any edit to this dictionary (including a PE correction) mints new task
@@ -22,7 +25,12 @@ import json
 from typing import Dict, Optional, Sequence
 
 DRAFTING_SPEC_V1 = {
-  "spec_id": "roaddraft-drafting-spec", "version": "draft-v4", "status": "DRAFT — for PE review",
+  "spec_id": "roaddraft-drafting-spec", "version": "v1",
+  "status": "FROZEN — v1, 2026-10-16, on the PE decisions of 2026-10-05 to 2026-10-13 (Robert)",
+  # v1 (2026-10-16): draft-v4 frozen as is, after the generator fix that would otherwise have
+  # moved frozen ids again (the width dimension line through the bearing, d1-v6). Nothing in
+  # this dictionary changed but the version and status lines and the two level readings
+  # below, now recorded as decided.
   # draft-v3 (2026-10-12, PE decision, Robert): plan scales are the common ones; the
   # generator fits each layout at the largest of them that shows it (1" = 50' for most).
   # Station numbers and bearings keep the PPM placement whatever the pavement width: text
@@ -50,7 +58,7 @@ DRAFTING_SPEC_V1 = {
   # layout-sheet checklist (ppm-text p. 2-89 (pdf 118)). Roles name the level each kind of
   # work goes on; ``layer_set`` is the whole set a layout sheet file carries; ``caltrans_levels``
   # records the source row behind each one. Two roles are this spec's own reading of the
-  # library and are flagged for PE review: width dimensions on rd_LAYOUT-NOTE-anno and match
+  # library, decided 2026-10-13 (Robert): width dimensions on rd_LAYOUT-NOTE-anno and match
   # lines on border_INSIDE-BORDER-anno (the level the PPM gives the scale text).
   "layers": {"alignment": "align_MAIN", "ticks": "align_MAIN-anno", "labels": "align_MAIN-anno",
              "tables": "align_CURVE-DATA", "edges": "rd_EP", "dims": "rd_LAYOUT-NOTE-anno",
@@ -89,14 +97,14 @@ DRAFTING_SPEC_V1 = {
       "rd_EP": {"number": 9112, "library": "Ct_Roadway", "color_index": 0, "weight": 2, "source": "cadd-appx-a10 p. A10-18; ppm-text p. 2-90 (pdf 119) EP as a thicker weight line, usually WT=2 (cadd-ch2-sect7 p. 2.7-2 lists EP at WT 1)"},
       "rd_ETW": {"number": 9114, "library": "Ct_Roadway", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-18; cadd-ch2-sect7 p. 2.7-2"},
       "rd_ES": {"number": 9113, "library": "Ct_Roadway", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-18; cadd-ch2-sect7 p. 2.7-2"},
-      "rd_LAYOUT-NOTE-anno": {"number": 9129, "library": "Ct_Roadway", "color_index": 0, "weight": 0, "source": "cadd-appx-a10 p. A10-18; weight cadd-ch2-sect7 p. 2.7-1 (dimension lines). PE review: this spec's choice of level for width dimensions"},
+      "rd_LAYOUT-NOTE-anno": {"number": 9129, "library": "Ct_Roadway", "color_index": 0, "weight": 0, "source": "cadd-appx-a10 p. A10-18; weight cadd-ch2-sect7 p. 2.7-1 (dimension lines). this spec's choice of level for width dimensions, decided 2026-10-13 (Robert)"},
       "rd_RIGHT-OF-WAY": {"number": 9143, "library": "Ct_Roadway", "color_index": 6, "weight": 1, "source": "cadd-appx-a10 p. A10-18; cadd-ch2-sect7 p. 2.7-1 (right of way)"},
       "rd_RIGHT-OF-WAY-anno": {"number": 9144, "library": "Ct_Roadway", "color_index": 6, "weight": 1, "source": "cadd-appx-a10 p. A10-18"},
       "pp_PRESENTATION": {"number": 10232, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-16; ppm-text p. 2-89 (pdf 118) north arrow AC=NARR LV=pp_PRESENTATION WT=1"},
       "pp_LEGEND-anno": {"number": 10225, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 0, "weight": 1, "source": "cadd-appx-a10 p. A10-16; ppm-text p. 2-90 (pdf 119)"},
       "border_SHEET": {"number": 10210, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 0, "weight": 4, "source": "cadd-appx-a10 p. A10-16; ppm-text p. 2-89 (pdf 118); weight cadd-ch2-sect7 p. 2.7-1 (sheet border)"},
       "border_PROJ-ID-BLOCK-anno": {"number": 10208, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 13, "weight": 1, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118) TX=7.0 FT=3 WT=1"},
-      "border_INSIDE-BORDER-anno": {"number": 10206, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 13, "weight": 2, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118) scale TX=8.75 FT=3 WT=2. PE review: this spec's choice of level for match lines"},
+      "border_INSIDE-BORDER-anno": {"number": 10206, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 13, "weight": 2, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118) scale TX=8.75 FT=3 WT=2. this spec's choice of level for match lines, decided 2026-10-13 (Robert)"},
       "border_SEAL": {"number": 10209, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 4, "weight": 1, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118)"},
       "border_SIGNATURE": {"number": 10211, "library": "Ct_ProjectPlans_BorderSheetInfo", "color_index": 4, "weight": 1, "source": "cadd-appx-a10 p. A10-17; ppm-text p. 2-89 (pdf 118)"}},
   # the typical section (plan prep, decided 2026-10-10): two lanes, the edge of pavement a
@@ -190,8 +198,8 @@ DRAFTING_SPEC_V1 = {
      {"id": "D1-15", "name": "alignment created from the given geometry: begin station, PIs and radii, equations within tolerance", "weight": 12, "hard_fail": True}],
 }
 
-SPEC_VERSION = DRAFTING_SPEC_V1["version"]          # "draft-v2"; the brief's ``spec_version``
-SPEC_STATUS = DRAFTING_SPEC_V1["status"]            # starts with "DRAFT"
+SPEC_VERSION = DRAFTING_SPEC_V1["version"]          # "v1"; the brief's ``spec_version``
+SPEC_STATUS = DRAFTING_SPEC_V1["status"]            # starts with "FROZEN" (was "DRAFT" to draft-v4)
 
 #: Keys of ``DRAFTING_SPEC_V1`` that ``spec_subset()`` copies into a task brief by default.
 SPEC_SUBSET_KEYS = ("units", "sheet", "layers", "layer_set", "layer_props", "text", "stationing",

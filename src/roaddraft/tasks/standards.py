@@ -1,14 +1,14 @@
-"""Design-standard lookup tables for the task generator.  DRAFT, for PE review.
+"""Design-standard lookup tables for the task generator.  Frozen with spec v1 (2026-10-16).
 
 Every table below is a transcription of AASHTO "A Policy on Geometric Design
 of Highways and Streets", 7th ed. (2018) made from memory, without page
 citations.  They exist so that the D1 task generator draws *plausible*
 alignments and profiles (radius >= minimum, grade <= maximum, K >= minimum);
-they are NOT a published standard and must be verified by a licensed
-professional engineer before any task set built on them is released.  The
-``spec_hash`` carried in every task id (see :mod:`roaddraft.tasks.spec_v1`)
-makes sure a corrected table mints new task ids instead of silently
-re-scoring old ones.
+they are NOT a published standard.  They were frozen as they stand with
+``DRAFTING_SPEC_V1`` v1 (the PE's freeze, 2026-10-16), since every design the
+task sets carry was drawn within them; a corrected table changes those
+designs, so it mints new task ids (the generator version in every id)
+instead of silently re-scoring old ones.
 
 This module imports only the standard library.
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-STANDARDS_STATUS = "DRAFT — for PE review; not a published standard"
+STANDARDS_STATUS = "FROZEN — with the drafting spec v1, 2026-10-16; AASHTO 2018 values as transcribed, not a published standard"
 
 # AASHTO "A Policy on Geometric Design of Highways and Streets", 7th ed. (2018), Table 3-7,
 # minimum radius (ft) for e_max = 6 %. DRAFT: transcribed from memory; a PE must verify before release.

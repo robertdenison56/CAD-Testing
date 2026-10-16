@@ -1,4 +1,4 @@
-"""WP2 acceptance: DRAFT design standards and DRAFTING_SPEC_V1 (Phase 1 spec section 7.1 / 7.2)."""
+"""WP2 acceptance: the design standards and DRAFTING_SPEC_V1 (Phase 1 spec section 7.1 / 7.2), frozen as v1 on 2026-10-16."""
 import copy
 import hashlib
 import json
@@ -41,16 +41,23 @@ def test_check_ids_unique_D1_00_to_D1_15():
         assert check["name"]
 
 
-def test_status_starts_with_DRAFT():
-    assert DRAFTING_SPEC_V1["status"].startswith("DRAFT")
-    assert spec_v1.SPEC_STATUS.startswith("DRAFT")
-    assert STANDARDS_STATUS.startswith("DRAFT")
+def test_status_is_frozen_not_DRAFT():
+    """The freeze of 2026-10-16: the spec and the standards tables carry a frozen
+    status, and nothing says DRAFT or asks for PE review any more."""
+    for status in (DRAFTING_SPEC_V1["status"], spec_v1.SPEC_STATUS, STANDARDS_STATUS):
+        assert status.startswith("FROZEN"), status
+        assert "DRAFT " not in status and "DRAFT —" not in status, status
+        assert "PE review" not in status, status
+    assert "2026-10-16" in DRAFTING_SPEC_V1["status"]
+    for row in DRAFTING_SPEC_V1["caltrans_levels"].values():  # the two level readings, decided
+        assert "PE review" not in row["source"], row
 
 
-def test_spec_id_and_version_draft_v2():
+def test_spec_id_and_version_v1():
     assert DRAFTING_SPEC_V1["spec_id"] == "roaddraft-drafting-spec"
-    assert DRAFTING_SPEC_V1["version"] == "draft-v4"
-    assert spec_v1.SPEC_VERSION == "draft-v4"
+    assert DRAFTING_SPEC_V1["version"] == "v1"
+    assert spec_v1.SPEC_VERSION == "v1"
+    assert not spec_v1.SPEC_VERSION.startswith("draft")  # eval.report publishes only a frozen spec
 
 
 def test_layers_are_caltrans_named_levels_with_props_and_sources():
