@@ -483,6 +483,8 @@ Sequencing given the Portfolio arc (RoadDraft is Arc 2, after the EKG arc): E0 i
 
 ## 8. Cost of the leaderboard run (estimate, replaced by the E3 smoke measurement)
 
+*2026-10-15: the table below is the June 2026 price list (cached 2026-06-24) under the predecessor model ids (`claude-opus-5`, `claude-sonnet-5`); the current ids and prices are in `eval/prices.json` (dated 2026-10-06, §4.10), and these numbers stand only until the E3 smoke run measures cost per sheet.*
+
 Assumptions: cached prefix (tools + system + brief) ≈ 15k tokens; 50–80 tool calls per sheet; ≈ 300 output tokens per call plus thinking; tool results ≈ 1k tokens each; prompt caching on. Per sheet that is roughly 20–30k output tokens, 50–80k uncached input tokens and 1–2M cached-read tokens.
 
 | Model (first-party prices, table cached 2026-06-24) | ≈ cost per sheet | 100 tasks × 1 sample | × 3 samples |
@@ -511,8 +513,10 @@ Plan on the order of $500–1,000 for a four-model v0.1 with `d1-variance` at k 
 
 ## 10. Immediate next actions
 
-1. Run E0 as a workflow (stages 2–4 of the Phase 1 spec plus the two contract additions), with the same disjoint-ownership discipline.
-2. Decide the §3.7 spec items and freeze `DRAFTING_SPEC_V1` → `v1`; regenerate the task-set manifests.
-3. Build E1 and E2 in parallel; run the human playtest on seed 42 and commit the expert journal.
-4. E3 smoke run on five dev tasks with one model; replace the §8 numbers.
-5. E4: `d1-variance`, then `d1-test`; generate the leaderboard; write *"Why frontier models can't draft a plan sheet (yet)"* from the taxonomy table.
+E0, E1 and E2 are done. E0 landed 2026-09-10 (6df5252, 029658e) and was re-verified 2026-10-13. E1 is `roaddraft.verify` at `d1-verify-v3` on spec `draft-v4` (§3.8; 295e6ea to d4cee1f, 2026-10-10 to 14; 16 seeded and 11 real-sheet task types, 584 real tasks). E2 is `roaddraft.eval` (70e4280, 2026-10-14: oracle through the loop 50/50 = 100, scripted 37.75 on the mixed set, null 0; the three manifests under `benchmarks/tasksets/`); its one open acceptance item is the human playtest. E3 and E4 are built and committed (a4e6a0e, 2026-10-15; §4.10, the fake oracle at 100 in all three dialects; the report, `--publish` and `scripts/make_leaderboard.py`, no ranked run) and have not run against a model. What remains:
+
+1. The one generator fix (the width dimension line through the bearing text on pavement sheets), then freeze `DRAFTING_SPEC_V1` `draft-v4` → `v1` (every §3.7 decision is in) and regenerate the fixtures, the prompt workbook, the real-task catalog and the three task-set manifests.
+2. The E3 smoke run, `d1-dev[:5]` × one model × single: pick the model and the route (this machine has no `ANTHROPIC_API_KEY`; the `openai` provider reaches LM Studio or Runpod); replace the §8 numbers with measured cost, steps and invalid-call rate per sheet.
+3. The human playtest on seed 42 (`python -m roaddraft.eval human start`, then `human score`); commit the expert journal under `benchmarks/expert/`.
+4. E4: `d1-variance` × 5 samples to size the interval, then `d1-test` × three or more models × neutral × {single, self-correct}; `report --publish`; `scripts/make_leaderboard.py`; write *"Why frontier models can't draft a plan sheet (yet)"* from the taxonomy table.
+5. E5 (the `c3d` and `ord` skins exist in `eval/dialects.py`; the transfer and vision runs do not) and E6 (the adapters), after E4.
