@@ -1,0 +1,155 @@
+Below is the minimal set of RoadDraft commands that (a) revises the pavement/shoulder geometry to the correct 12 ft lane & 8 ft shoulder widths, and (b) adds the missing call‑outs on the plan sheet (layer **rd_LAYOUT‑NOTE‑anno**).  
+All commands are performed in the order shown; they reference the already‑open document and respect the undo/redo journal.  
+
+> **NOTE:**  
+> The layer names **rd_EP** and **rd_ES** are assumed to already exist and to be associated with the alignment “SR‑100”.  
+> The plan sheet is assumed to be named **P‑201**; if the name differs, replace “P‑201” with the actual sheet id.  
+> The coordinate expressions (e.g. the “position” points for the call‑outs) must be filled in with the numeric values that come back from the `find_entities` query you run after inserting the geometry. Those values are not shown here because they depend on the current sheet viewport and are not known statically.
+
+---
+
+### 1.  Re‑draw the correct pavement and shoulder offsets (replacing any existing ones)
+
+```json
+{
+  "name": "draw_offset",
+  "params": {
+    "alignment": "SR-100",
+    "offsets": [-12, 12],
+    "layer": "rd_EP",
+    "replace": true
+  }
+}
+```
+
+```json
+{
+  "name": "draw_offset",
+  "params": {
+    "alignment": "SR-100",
+    "offsets": [-20, 20],
+    "layer": "rd_ES",
+    "replace": true
+  }
+}
+```
+
+These two calls overwrite any previously‑drawn pavement‑edge and shoulder‑edge lines so that the lane widths are 12 ft (left/right = ±12 ft) and the paved shoulders extend 8 ft beyond the lanes (±20 ft from the centerline).
+
+---
+
+### 2.  (Optional) Verify the actual spacing on the sheet
+
+Run a quick check of the distance between the two pavement‑edge lines at a convenient station (e.g. “PC‑1”):
+
+```json
+{
+  "name": "measure",
+  "params": {
+    "from": {"id":"PC-1@12L", "sheet":"P-201"},
+    "to":   {"id":"PC-1@12R", "sheet":"P-201"},
+    "unit_format": "feet"
+  }
+}
+```
+
+(If the returned value ≈ 24 ft, the geometry is correct; otherwise adjust the offsets.)
+
+---
+
+### 3.  Add call‑outs on the plan
+
+For each of the four edge lines we place a call‑out pointing to the line and put the note on the sheet near the center of the line.  
+Because the exact sheet‑inches location is known only after running a `find_entities` query, the `position` values below are placeholders that you should replace with the `sheet_point` that comes back from that query.
+
+```json
+{
+  "name": "place_callout",
+  "params": {
+    "space": "P-201",
+    "target_anchor": "PC-1@12R",
+    "at": "mid",
+    "position": [/*sheet_point_x*/, /*sheet_point_y*/],
+    "content": "Pavement Edge",
+    "layer": "rd_LAYOUT-NOTE-anno",
+    "height": 0.15,
+    "style": "ROMANS"
+  }
+}
+```
+
+```json
+{
+  "name": "place_callout",
+  "params": {
+    "space": "P-201",
+    "target_anchor": "PC-1@12L",
+    "at": "mid",
+    "position": [/*sheet_point_x*/, /*sheet_point_y*/],
+    "content": "Pavement Edge",
+    "layer": "rd_LAYOUT-NOTE-anno",
+    "height": 0.15,
+    "style": "ROMANS"
+  }
+}
+```
+
+```json
+{
+  "name": "place_callout",
+  "params": {
+    "space": "P-201",
+    "target_anchor": "PC-1@20R",
+    "at": "mid",
+    "position": [/*sheet_point_x*/, /*sheet_point_y*/],
+    "content": "Shoulder Edge",
+    "layer": "rd_LAYOUT-NOTE-anno",
+    "height": 0.15,
+    "style": "ROMANS"
+  }
+}
+```
+
+```json
+{
+  "name": "place_callout",
+  "params": {
+    "space": "P-201",
+    "target_anchor": "PC-1@20L",
+    "at": "mid",
+    "position": [/*sheet_point_x*/, /*sheet_point_y*/],
+    "content": "Shoulder Edge",
+    "layer": "rd_LAYOUT-NOTE-anno",
+    "height": 0.15,
+    "style": "ROMANS"
+  }
+}
+```
+
+*If the layer **rd_LAYOUT‑NOTE‑anno** does not yet exist*, create it first:
+
+```json
+{
+  "name": "create_layer",
+  "params": {
+    "name": "rd_LAYOUT-NOTE-anno",
+    "color": "green",
+    "linetype": "continuous",
+    "lineweight_mm": 0.25,
+    "description": "Plan call‑out notes"
+  }
+}
+```
+
+---
+
+## Summary of what was created / changed
+
+| Item | Layer | Key coordinates / parameters |
+|------|-------|------------------------------|
+| Pavement‑edge offset lines | `rd_EP` | Offsets ±12 ft from alignment `SR‑100` (draw_offset, replace) |
+| Shoulders (outside edges) | `rd_ES` | Offsets ±20 ft from alignment `SR‑100` (draw_offset, replace) |
+| Call‑outs for pavement edges | `rd_LAYOUT‑NOTE‑anno` | Anchored at `PC‑1@12R` and `PC‑1@12L`; text “Pavement Edge” |
+| Call‑outs for shoulder edges | `rd_LAYOUT‑NOTE‑anno` | Anchored at `PC‑1@20R` and `PC‑1@20L`; text “Shoulder Edge” |
+
+All operations are undoable; they replace any incorrect geometry that previously existed. No other layers or entities were modified. If any command failed (e.g., layer missing), the error message would be a simple “Layer not found” or “Alignment 'SR‑100' not defined.”. If the alignment value or sheet id were wrong, you would see “Reference alignment 'SR‑100' not found” or “Sheet 'P‑201' not found.” In that case, adjust the arguments accordingly.

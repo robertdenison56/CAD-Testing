@@ -1,0 +1,40 @@
+
+
+Model state confirms everything. The QA is complete — here's the report.
+
+## 1. What was wrong and what I created/changed
+
+**QA findings (against the typical section: 2×12 ft lanes → EP at ±12 ft; 8 ft shoulders → ES at ±20 ft):**
+
+| # | Defect | Entity |
+|---|--------|--------|
+| a | Missing segment: outside edge of shoulder at −20 ft (left/north side) of T‑2 (sta 27+91.37→43+21.30) not drawn | — |
+| b | T‑2's −20 ft shoulder line drawn on the **wrong layer** (`rd_EP` instead of `rd_ES`) | LN-011 |
+| c | Stray **centerline** (offset 0) on `rd_EP`, not a pavement edge | LN-016 |
+| d | Layout callouts incomplete/mis-aimed: only an "EDGE OF PAVEMENT" label existed, and its leader tip (1702.63, 980.0) landed on the **20 ft shoulder** line, not the 12 ft edge of pavement; no shoulder callout | LN-017, LN-018, PL-001, TX-001 |
+
+**Changes (all via tool calls, nothing else touched):**
+- Moved LN-011 (2778.42, 1080.55 → 3955.12, 1472.79) to layer **rd_ES** — completes the full 5-segment ±20 ft shoulder chain.
+- Deleted LN-016 (2788.22, 1051.14 → 3964.92, 1443.38) — the phantom centerline on `rd_EP`.
+- Deleted the old four callout entities (LN-017, LN-018, PL-001, TX-001).
+- Created callout **"EDGE OF PAVEMENT"** (TX-002) on `rd_LAYOUT-NOTE-anno`, anchored at **SR-100 18+00 @ 12 L** — leader tip (1800.0, 1012.0) exactly on the left EP line (y = 1012), landing (1840, 860)→(1860, 860), text at (1860, 860), arrowhead PL-002. Entities LN-019, LN-020, PL-002, TX-002.
+- Created callout **"OUTSIDE EDGE OF SHOULDER"** (TX-003) on `rd_LAYOUT-NOTE-anno`, anchored at **SR-100 18+00 @ 20 L** — leader tip (1800.0, 1020.0) exactly on the left ES line (y = 1020), text at (1860, 820). Entities LN-021, LN-022, PL-003, TX-003.
+
+Final check via `get_model_state`: `rd_EP` = 5-segment chains at offsets −12 and +12 only; `rd_ES` = 5-segment chains at −20 and +20 only; `rd_LAYOUT-NOTE-anno` = exactly the two callouts.
+
+## 2. Tool calls that mattered, in order
+
+1. `get_document_state` + `get_model_state` + `get_design_data {kind:curves, alignment:SR-100}` — inventory and alignment geometry.
+2. `modify_entity {id: LN-011, changes: {layer: "rd_ES"}}`
+3. `delete_entities {ids: [LN-016]}`
+4. `delete_entities {ids: [LN-017, LN-018, PL-001, TX-001]}`
+5. `place_callout {space: model, alignment: SR-100, target_anchor: "18+00@12L", position: [1860, 860], content: "EDGE OF PAVEMENT", height: 8, layer: rd_LAYOUT-NOTE-anno}`
+6. `place_callout {space: model, alignment: SR-100, target_anchor: "18+00@20L", position: [1860, 820], content: "OUTSIDE EDGE OF SHOULDER", height: 8, layer: rd_LAYOUT-NOTE-anno}`
+7. `get_model_state` + `render_model` — verification.
+
+## 3. Failures, confusion, and arithmetic
+
+- **`measure` failed** with `"entity '[1700.0, 988.0]' not found"` — it wanted entity ids, not points; I abandoned it and verified distances from coordinates in `get_model_state` instead.
+- **`find_entities {layer: ["rd_EP","rd_ES","rd_LAYOUT-NOTE-anno"]}` returned 0 rows** despite those entities existing — unexplained; worked around with `get_model_state`.
+- **No hand-computed coordinates for the callout tips**: I passed station/offset anchors (`18+00@12L`, `18+00@20L`) and the engine resolved them; station 18+00 falls on T‑1 (station 1700 < 24+05.27 PC), which runs due east (azimuth 90°), so left = +Y: 1000+12 = 1012 and 1000+20 = 1020 — matching the engine's returned tip points (1800, 1012) and (1800, 1020).
+- **Arithmetic I did by hand** (to identify the defects): typical section math, EP = 12/2 = ±12 ft, ES = 12 + 8 = ±20 ft. The old callout tip (1702.63, 980.0): the 20 L shoulder on T‑1 is the line y = 980 (1000 − 20), and the 12 L edge is y = 988; y = 980 proves the leader pointed at the **shoulder** edge under an "EDGE OF PAVEMENT" label. The T‑2 diagonal runs 18.4349° above east (unit vector (cos 18.4349°, sin 18.4349°) = (0.94868, 0.31623)), so offset lines keep their perpendicular offsets −20/+20 — consistent with the anchored offsets already on every other segment, confirming the −20 T‑2 chain piece was the one missing item.

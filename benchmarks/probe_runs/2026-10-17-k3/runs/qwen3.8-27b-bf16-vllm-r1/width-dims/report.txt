@@ -1,0 +1,31 @@
+
+
+Done. All four numbers verified geometrically: each text is centered in its own band with clear top/bottom clearance (e.g. the 8' text at y 6.98–7.06 sits inside its 6.94–7.10 band), so no two numbers can overlap — the bounding boxes only share the single extension line at each junction, which is the normal appearance of a continuous width chain.
+
+**1. What was placed, where, and what it points at**
+
+On sheet **C-101** (paper space, ANSI D), on layer **V-ANNO-DIMS**, four vertical linear dimensions forming a stepped chain east of the plan, all measured across the roadway at **station 17+00** of the referenced alignment `DESIGN:SR-100` (which runs N 90°00'E there, so the section is a straight vertical line at x=1700.0 / 15.5 in):
+
+| Dim | Text | Paper pts (extension-line ends) | Dimension line x | Measures (model E=1700) |
+|---|---|---|---|---|
+| DM-006 | 8' | (15.5, 7.10) → (15.5, 6.94) | 15.8 in | outside shoulder left (offset −20) → lane/shoulder (−12) |
+| DM-007 | 12' | (15.5, 6.94) → (15.5, 6.70) | 16.0 in | lane/shoulder (−12) → centerline (0) |
+| DM-008 | 12' | (15.5, 6.70) → (15.5, 6.46) | 16.2 in | centerline (0) → lane/shoulder (+12) |
+| DM-009 | 8' | (15.5, 6.46) → (15.5, 6.30) | 16.4 in | lane/shoulder (+12) → outside shoulder right (+20) |
+
+Each point was taken from `station_to_xy` on `DESIGN:SR-100` at station 17+00 and converted through VP-001 (1"=50', rotation 0) — all four confirmed `visible: true` on C-101. `measure_scale: 50` makes each dimension report model feet, reading 8', 12', 12', 8' top (left shoulder) to bottom (right shoulder).
+
+**2. Tool calls that mattered, in order**
+
+1. `get_document_state` / `list_sheets` / `get_sheet_state(C-101)` / `list_references` — found the sheet, VP-001 at 1"=50', and the `DESIGN` reference (25 entities).
+2. `list_alignments(include_references=true)` — named the referenced alignment `DESIGN:SR-100`.
+3. `station_to_xy(DESIGN:SR-100, station 17+00, offset −20/−12/0/+12, sheet C-101)` — the four section corners in model feet and paper inches.
+4. `create_layer(V-ANNO-DIMS)`.
+5. First attempt: `place_dimension` × 4 (text_height 0.14, default arrows) → failed; see below.
+6. `delete_entities([DM-001..DM-004])`, then a test `place_dimension` at h=0.10 (still rejected), deleted it, then the final `place_dimension` × 4 with **text_height 0.08, arrow_size 0.03, measure_scale 50, unit_format feet, precision 0**, p1/p2 at the four paper-corner pairs, line_point at x = 15.8/16.0/16.2/16.4 → DM-006…DM-009, no "too short" warnings.
+7. `get_entity` on each dimension — verified texts sit inside their extension lines with no overlap; `render_sheet(C-101)` produced the final proof render.
+
+**3. Failures, confusion, workarounds**
+
+- First pass, every placement warned: `DM-001 is too short for its text: the text needs 0.17 plus arrowheads across a 0.16 span, so both are drawn outside the extension lines` (12' spans: `needs 0.30 ... across a 0.24 span`), plus pairwise `DM-002 overlaps DM-001` etc. At 1"=50', an 8' width is only 0.16" on paper — smaller than any comfortable annotation, so default-size text + default arrows (1.2h) simply don't fit. I checked the damage with `get_entity`: the "8'" text of one dim straddled the shared boundary while the next dim's extension line ran straight through it.
+- Workaround: I deleted all four, tested smaller text (h=0.10 still warned `needs 0.12 plus arrowheads across a 0.16 span`), then settled on **text height 0.08" with explicit `arrow_size: 0.03`**, so text + 2 arrows (0.156" for 8', 0.204" for 12') fits strictly inside each span, and staggered the dimension lines (15.8→16.4 in) so each number is alone in its row. The final placements still returned `DM-007 overlaps DM-006` / `DM-008 overlaps DM-007` / `DM-009 overlaps DM-008` — I verified with `get_entity` these are just the dimension bounding boxes sharing the coincident boundary extension lines at each junction (one visible line each); the four numbers themselves have no overlap.

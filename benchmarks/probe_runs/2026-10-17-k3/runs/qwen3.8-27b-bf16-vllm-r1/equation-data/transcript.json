@@ -1,0 +1,442 @@
+{
+ "meta": {
+  "backend": "openai",
+  "model": "Qwen/Qwen3.8-27B",
+  "probe": "equation-data",
+  "stop": "length",
+  "turns": 11,
+  "seconds": 153.9,
+  "tokens": {
+   "input_tokens": 527114,
+   "output_tokens": 6060,
+   "reasoning_tokens": 4731
+  },
+  "cost_usd": null,
+  "max_turns": 120,
+  "budget_s": 1800.0,
+  "vision": false,
+  "effort": null,
+  "pins": {
+   "roaddraft": "0.1.0",
+   "commit": "e7178a2ff7a74ddabd04f54658c757ec2af69fc7",
+   "dirty": [],
+   "tools_sha256": "sha256:60eeeb2195be36433798af9a64b744d17e3110d5b83dce68874e846fbf7cfad4",
+   "instructions_sha256": "sha256:4dff2849f3c5a5c42f834f8821cab06c105d99580bcdaca2eeaef72817db0077"
+  },
+  "truncated_results": 1,
+  "reloads": 0,
+  "base_url": "https://api.runpod.ai/v2/jbwqugdj3bxts8/openai/v1",
+  "cut_turns": 0,
+  "usage_estimated_turns": 0,
+  "type_lists_rewritten": false,
+  "extra_body": {
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "top_k": 20,
+   "min_p": 0.0,
+   "presence_penalty": 0.0,
+   "repetition_penalty": 1.0
+  }
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 7300, E 4100 is [4100, 7300]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-15, 15]}, visible_on: 'P-202'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'BASE:RTE-7', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('86+50@15R', 'PC-2'; BC-2 and EC-2 name the PC and PT too) and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well.\n\nDrafting from a description works the same way: give the engine the description, not coordinates you worked out. A bearing and distance goes in as written -- create_alignment takes start + legs (each leg a bearing, azimuth or deflection and the distance to the next PI, with the radius of the curve at the PI it starts from), draw_traverse draws lines and curves course by course, and traverse computes the points without drawing. offset_entity copies linework parallel at a distance (one entity, or a chain offset as one path), fillet rounds the corner between two lines with a curve (a curb return), and measure with along gives distances along a line, chain or alignment and square off it. key_points and snap give the exact endpoints, intersections, centers and alignment design points (PI, BC, EC) to build on. Station-and-offset drafting is draw_station_offset with the stations and offsets given ('82+00@15R'). Linework drawn through something is cut back with trim (a point on the part to cut away) or run on with extend, not redrawn from computed points; break, join, lengthen, chamfer, copy, rotate, mirror, scale and array edit what is there. create_points sets COGO points, label_segments letters bearings and distances or L1/C1 tags with line and curve tables, place_along sets blocks or points at an interval, hatch fills an area (a point inside is enough), and area and get_entity read areas, lengths, bearings and curve data off the drawing."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n\nTHE TASK:\nSR-100 has a station equation, on sheet C-102. On that sheet, letter it the Caltrans way, with its back and ahead stations to the hundredth and BK and AH, square to the centerline at the equation and reading bottom to top. Then letter the bearing and length of the tangent it falls on, above the line and parallel to it, and the station of the BC of the next curve, lettered the way the equation is.\n\nWhen finished, reply briefly with:\n1. What you placed, in which space, and what it points at.\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages."
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-a76865d35e07af9c",
+     "type": "function",
+     "function": {
+      "name": "get_document_state",
+      "arguments": "{\"detail\": \"summary\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-842c3963f3cc94f1",
+     "type": "function",
+     "function": {
+      "name": "list_sheets",
+      "arguments": "{}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 5.7,
+   "reasoning": "Let's start by understanding the document. What I need to do is:\n1. Check the state of the document\n2. Find the sheet C-102\n3. Find the station equation on SR-100\n4. Write it in Caltrans style (back and forward stations to 2 decimal places, BK and AH)\n5. Write the bearing and distance of the tangent that the equation lies on, above the line and parallel to it\n6. Write the station of the BC (PC) of the next curve in the same way as the equation (perpendicular, read from bottom to top)\n\nFirst, let's take a look at the document.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a76865d35e07af9c",
+   "name": "get_document_state",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_document_state\",\n  \"summary\": {\n    \"meta\": {\n      \"project_name\": \"SR-100 Widening\",\n      \"description\": \"\",\n      \"model_units\": \"us_survey_ft\",\n      \"paper_units\": \"inch\"\n    },\n    \"settings\": {\n      \"current_layer\": \"0\",\n      \"current_text_style\": \"STANDARD\",\n      \"annotation_scale\": null,\n      \"annotation_scales\": [\n        {\n          \"name\": \"1\\\"=10'\",\n          \"feet_per_inch\": 10.0\n        },\n        {\n          \"name\": \"1\\\"=20'\",\n          \"feet_per_inch\": 20.0\n        },\n        {\n          \"name\": \"1\\\"=30'\",\n          \"feet_per_inch\": 30.0\n        },\n        {\n          \"name\": \"1\\\"=40'\",\n          \"feet_per_inch\": 40.0\n        },\n        {\n          \"name\": \"1\\\"=50'\",\n          \"feet_per_inch\": 50.0\n        },\n        {\n          \"name\": \"1\\\"=60'\",\n          \"feet_per_inch\": 60.0\n        },\n        {\n          \"name\": \"1\\\"=100'\",\n          \"feet_per_inch\": 100.0\n        },\n        {\n          \"name\": \"1\\\"=200'\",\n          \"feet_per_inch\": 200.0\n        },\n        {\n          \"name\": \"1\\\"=500'\",\n          \"feet_per_inch\": 500.0\n        }\n      ],\n      \"annotation_paper\": {\n        \"text_height_in\": 0.1,\n        \"tick_half_len_in\": 0.07,\n        \"label_offset_in\": 0.12,\n        \"point_offset_in\": 0.45,\n        \"bearing_offset_in\": 0.06,\n        \"bubble_offset_in\": 0.8\n      }\n    },\n    \"layers\": [\n      \"0\",\n      \"align_MAIN\",\n      \"rd_EP\",\n      \"rd_ES\",\n      \"rd_LAYOUT-NOTE-anno\"\n    ],\n    \"text_styles\": [\n      \"STANDARD\"\n    ],\n    \"blocks\": [\n      \"NORTH_ARROW\"\n    ],\n    \"sheets\": [\n      {\n        \"id\": \"SH-001\",\n        \"name\": \"C-101\",\n        \"size\": \"ANSI_D\",\n        \"entities\": 0,\n        \"viewports\": 1\n      },\n      {\n        \"id\": \"SH-002\",\n        \"name\": \"C-102\",\n        \"size\": \"ANSI_D\",\n        \"entities\": 0,\n        \"viewports\": 1\n      },\n      {\n        \"id\": \"SH-003\",\n        \"name\": \"C-103\",\n        \"size\": \"ANSI_D\",\n        \"entities\": 0,\n        \"viewports\": 1\n      }\n    ],\n    \"model_entity_count\": 0,\n    \"model_extents\": null,\n    \"alignments\": [],\n    \"profiles\": [],\n    \"annotation_scale\": null,\n    \"journal_length\": 0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-842c3963f3cc94f1",
+   "name": "list_sheets",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_sheets\",\n  \"sheets\": [\n    {\n      \"id\": \"SH-001\",\n      \"name\": \"C-101\",\n      \"size\": \"ANSI_D\",\n      \"width_in\": 34.0,\n      \"height_in\": 22.0,\n      \"entities\": 0,\n      \"viewports\": 1\n    },\n    {\n      \"id\": \"SH-002\",\n      \"name\": \"C-102\",\n      \"size\": \"ANSI_D\",\n      \"width_in\": 34.0,\n      \"height_in\": 22.0,\n      \"entities\": 0,\n      \"viewports\": 1\n    },\n    {\n      \"id\": \"SH-003\",\n      \"name\": \"C-103\",\n      \"size\": \"ANSI_D\",\n      \"width_in\": 34.0,\n      \"height_in\": 22.0,\n      \"entities\": 0,\n      \"viewports\": 1\n    }\n  ]\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b389a1be8dad44e9",
+     "type": "function",
+     "function": {
+      "name": "list_references",
+      "arguments": "{}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-afdd973e8de3eed6",
+     "type": "function",
+     "function": {
+      "name": "get_sheet_state",
+      "arguments": "{\"sheet\": \"C-102\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 4.0,
+   "reasoning": "This document is a sheet file with no alignment of its own. The design is probably in a referenced base file. Let me list the references (with include_references=true), and check the model state (including references) and the sheet state of C-102.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b389a1be8dad44e9",
+   "name": "list_references",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_references\",\n  \"count\": 1,\n  \"references\": [\n    {\n      \"id\": \"RF-001\",\n      \"name\": \"DESIGN\",\n      \"path\": \"SR-100-eq.model.rdoc.json\",\n      \"space\": \"model\",\n      \"offset\": [\n        0.0,\n        0.0\n      ],\n      \"rotation_deg\": 0.0,\n      \"scale\": 1.0,\n      \"visible\": true,\n      \"true_scale\": true,\n      \"levels_off\": [],\n      \"symbology\": {},\n      \"clip\": null,\n      \"masks\": [],\n      \"model\": \"model\",\n      \"nest_depth\": 0,\n      \"status\": \"loaded\",\n      \"error\": null,\n      \"entities\": 25,\n      \"nested\": [],\n      \"resolved_path\": \"/Volumes/RobertsExternalSSD/repos/CAD Testing/benchmarks/probe_runs/2026-10-17-k3/runs/qwen3.8-27b-bf16-vllm-r1/equation-data/project/SR-100-eq.model.rdoc.json\",\n      \"path_is_relative\": true,\n      \"levels\": [\n        {\n          \"name\": \"0\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 0\n        },\n        {\n          \"name\": \"align_MAIN\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 5\n        },\n        {\n          \"name\": \"rd_EP\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 10\n        },\n        {\n          \"name\": \"rd_ES\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 10\n        },\n        {\n          \"name\": \"rd_LAYOUT-NOTE-anno\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 0\n        }\n      ],\n      \"units\": {\n        \"base\": \"us_survey_ft\",\n        \"host\": \"us_survey_ft\",\n        \"factor\": 1.0,\n        \"warning\": null\n      }\n    }\n  ]\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-afdd973e8de3eed6",
+   "name": "get_sheet_state",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_sheet_state\",\n  \"sheet\": {\n    \"id\": \"SH-002\",\n    \"name\": \"C-102\",\n    \"size\": \"ANSI_D\",\n    \"width_in\": 34.0,\n    \"height_in\": 22.0,\n    \"title_block_template\": \"standard\",\n    \"title_block_fields\": {},\n    \"viewports\": [\n      {\n        \"id\": \"VP-002\",\n        \"center_paper\": [\n          17.0,\n          11.7\n        ],\n        \"width_in\": 31.0,\n        \"height_in\": 18.5,\n        \"model_center\": [\n          3325.0,\n          1250.0\n        ],\n        \"feet_per_inch\": 50.0,\n        \"rotation_deg\": 0.0,\n        \"visible_model_bbox\": [\n          2550.0,\n          787.5,\n          4100.0,\n          1712.5\n        ]\n      }\n    ],\n    \"entities\": {},\n    \"usable_area\": [\n      0.5,\n      1.75,\n      33.5,\n      21.5\n    ]\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b42edab359da480b",
+     "type": "function",
+     "function": {
+      "name": "list_alignments",
+      "arguments": "{\"include_references\": true}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-8140bfaded7a1741",
+     "type": "function",
+     "function": {
+      "name": "get_design_data",
+      "arguments": "{\"kind\": \"equations\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 3.6,
+   "reasoning": "The referenced file is \"SR-100-eq.model.rdoc.json\", which is named \"DESIGN\". Let me list out the alignments within the reference.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b42edab359da480b",
+   "name": "list_alignments",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_alignments\",\n  \"count\": 1,\n  \"alignments\": [\n    {\n      \"name\": \"DESIGN:SR-100\",\n      \"description\": \"SR-100 mainline\",\n      \"source\": \"pis\",\n      \"begin_station\": 1000.0,\n      \"begin_station_text\": \"10+00.00\",\n      \"end_station\": 5675.248821609945,\n      \"end_station_text\": \"57+25.25\",\n      \"length\": 4675.248821609945,\n      \"curves\": 2,\n      \"tangents\": 3,\n      \"equations\": 1,\n      \"profiles\": [],\n      \"drawn\": true,\n      \"reference\": \"DESIGN\",\n      \"read_only\": true,\n      \"placement\": {\n        \"reference\": \"DESIGN\",\n        \"rotation_deg\": 0.0,\n        \"scale\": 1.0,\n        \"offset\": [\n          0.0,\n          0.0\n        ],\n        \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n        \"read_only\": true\n      }\n    }\n  ]\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8140bfaded7a1741",
+   "name": "get_design_data",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_design_data\",\n  \"kind\": \"equations\",\n  \"total\": 0,\n  \"start\": 0,\n  \"limit\": 50,\n  \"rows\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b20f2fa9485bf629",
+     "type": "function",
+     "function": {
+      "name": "get_design_data",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"kind\": \"equations\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-b70511f313a89e37",
+     "type": "function",
+     "function": {
+      "name": "get_design_data",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"kind\": \"curves\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 4.7,
+   "reasoning": "get_design_data for the equation didn't return rows when I omitted the alignment name. Let me try specifying alignment=DESIGN:SR-100. Also, I'll grab the curve and tangent for context.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b20f2fa9485bf629",
+   "name": "get_design_data",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_design_data\",\n  \"kind\": \"equations\",\n  \"total\": 1,\n  \"start\": 0,\n  \"limit\": 50,\n  \"rows\": [\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 1,\n      \"ref\": \"EQ-1\",\n      \"raw_station\": 3500.0,\n      \"back\": 3500.0,\n      \"back_text\": \"35+00.00\",\n      \"ahead\": 3550.0,\n      \"ahead_text\": \"35+50.00\",\n      \"label\": \"STA 35+00.00 BK = STA 35+50.00 AH\"\n    }\n  ],\n  \"placement\": {\n    \"reference\": \"DESIGN\",\n    \"rotation_deg\": 0.0,\n    \"scale\": 1.0,\n    \"offset\": [\n      0.0,\n      0.0\n    ],\n    \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n    \"read_only\": true\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b70511f313a89e37",
+   "name": "get_design_data",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_design_data\",\n  \"kind\": \"curves\",\n  \"total\": 2,\n  \"start\": 0,\n  \"limit\": 50,\n  \"rows\": [\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 1,\n      \"ref\": \"C-1\",\n      \"direction\": \"L\",\n      \"radius\": 1200.0,\n      \"delta_deg\": 18.43494882292201,\n      \"delta_dms\": \"18°26'06\\\"\",\n      \"tangent\": 194.73319220205522,\n      \"length\": 386.10066527597064,\n      \"external\": 15.697748679828116,\n      \"mid_ordinate\": 15.495050835003932,\n      \"chord\": 384.43738321672134,\n      \"degree_of_curve_deg\": 4.774648333333333,\n      \"degree_of_curve_dms\": \"4°46'29\\\"\",\n      \"direction_in_deg\": 0.0,\n      \"direction_out_deg\": 18.43494882292201,\n      \"azimuth_in_deg\": 90.0,\n      \"azimuth_out_deg\": 71.56505117707799,\n      \"bearing_in\": \"N 90°00'00\\\" E\",\n      \"bearing_out\": \"N 71°33'54\\\" E\",\n      \"chord_direction_deg\": 9.217474411461005,\n      \"chord_azimuth_deg\": 80.78252558853899,\n      \"chord_bearing\": \"N 80°46'57\\\" E\",\n      \"pc_station\": 2405.2668077979447,\n      \"pi_station\": 2600.0,\n      \"pt_station\": 2791.3674730739153,\n      \"mc_station\": 2598.31714043593,\n      \"pc_station_text\": \"24+05.27\",\n      \"pi_station_text\": \"26+00.00\",\n      \"pt_station_text\": \"27+91.37\",\n      \"mc_station_text\": \"25+98.32\",\n      \"pc\": [\n        2405.2668077979447,\n        1000.0\n      ],\n      \"pi\": [\n        2600.0,\n        1000.0\n      ],\n      \"pt\": [\n        2784.7401270181504,\n        1061.5800423393835\n      ],\n      \"center\": [\n        2405.2668077979447,\n        2200.0\n      ]\n    },\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 2,\n      \"ref\": \"C-2\",\n      \"direction\": \"R\",\n      \"radius\": 900.0,\n      \"delta_deg\": 18.434948822922024,\n      \"delta_dms\": \"18°26'06\\\"\",\n      \"tangent\": 146.0498941515415,\n      \"length\": 289.57549895697815,\n      \"external\": 11.773311509871087,\n      \"mid_ordinate\": 11.62128812625295,\n      \"chord\": 288.32803741254116,\n      \"degree_of_curve_deg\": 6.366197777777778,\n      \"degree_of_curve_dms\": \"6°21'58\\\"\",\n      \"direction_in_deg\": 18.43494882292201,\n      \"direction_out_deg\": 0.0,\n      \"azimuth_in_deg\": 71.56505117707799,\n      \"azimuth_out_deg\": 90.0,\n      \"bearing_in\": \"N 71°33'54\\\" E\",\n      \"bearing_out\": \"N 90°00'00\\\" E\",\n      \"chord_direction_deg\": 9.217474411460998,\n      \"chord_azimuth_deg\": 80.782525588539,\n      \"chord_bearing\": \"N 80°46'57\\\" E\",\n      \"pc_station\": 4031.7232168045084,\n      \"pi_station\": 4177.77311095605,\n      \"pt_station\": 4321.298715761486,\n      \"mc_station\": 4176.510966282997,\n      \"pc_station_text\": \"40+81.72\",\n      \"pi_station_text\": \"42+27.77\",\n      \"pt_station_text\": \"43+71.30\",\n      \"mc_station_text\": \"42+26.51\",\n      \"pc\": [\n        3961.4449047363873,\n        1453.8149682454623\n      ],\n      \"pi\": [\n        4100.0,\n        1500.0\n      ],\n      \"pt\": [\n        4246.049894151542,\n        1500.0\n      ],\n      \"center\": [\n        4246.049894151542,\n        599.9999999999999\n      ]\n    }\n  ],\n  \"placement\": {\n    \"reference\": \"DESIGN\",\n    \"rotation_deg\": 0.0,\n    \"scale\": 1.0,\n    \"offset\": [\n      0.0,\n      0.0\n    ],\n    \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n    \"read_only\": true\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nThe basefile has the design: alignment DESIGN:SR-100, one equation (EQ-1), two curves. Let me get the tangent data and the exact anchor points.\n\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-aa131b4e72a91d18",
+     "type": "function",
+     "function": {
+      "name": "get_design_data",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"kind\": \"tangents\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-bebafcd5aa81bdf5",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": 3500, \"sheet\": \"C-102\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-bef663b5f989c767",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": 4081.72, \"sheet\": \"C-102\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 21.5,
+   "reasoning": "Got it. Equation data:\n- EQ-1: raw 3500.0, back = 35+00.00, ahead = 35+50.00.\n- Curves: C-1 has PC at 24+05.27, PT at 27+91.37. C-2 has PC (BC) at 40+81.72, PT at 43+71.30.\n\nWait a sec — the station equation is at raw station 3500.0, and the ahead station is 3550. The \"next curve\" — the one after the equation. The equation is at 35+00/35+50, i.e., between C-1's PT (27+91.37) and C-2's PC (40+81.72). Therefore, the next curve after the equation is C-2, and its BC (PC) is at 40+81.72.\n\n\"Next curve\" — the equation is at 35+00 (back). C-1's PC is 24+05.27, PT is 27+91.37 — both before 35+00. C-2's PC is 40+81.72 — after. So next curve = C-2, BC is at 40+81.72.\n\nThe tangent where the equation sits: between C-1's PT (27+91.37) and C-2's PC (40+81.72). This is tangent T-2 (the 2nd tangent). Let me get the tangent data.\n\nNext, check the viewport: C-102 shows model bbox [2550, 787.5, 4100, 1712.5], center [3325, 1250], scale 50 ft/in, no rotation.\n\nEquation at station 3500: what are the coordinates? The tangent runs from C-1's PT (2784.74, 1061.58) to C-2's PC (3961.44, 1453.81). Station 3500 is at a distance from the start of the tangent (2791.37) of 3500 - 2791.37 = 708.63 ft. Let me get the exact point via station_to_xy.\n\nAlso, C-2's BC at station 40+81.72: that's at (3961.44, 1453.81).\n\nViewport x range: 2550 to 4100. y: 787.5 to 1712.5. So the equation point (~3500) is inside the viewport. Good.\n\nLet me get the tangent data and the anchor points.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-aa131b4e72a91d18",
+   "name": "get_design_data",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_design_data\",\n  \"kind\": \"tangents\",\n  \"total\": 3,\n  \"start\": 0,\n  \"limit\": 50,\n  \"rows\": [\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 1,\n      \"ref\": \"T-1\",\n      \"start\": [\n        1000.0,\n        1000.0\n      ],\n      \"end\": [\n        2405.2668077979447,\n        1000.0\n      ],\n      \"length\": 1405.2668077979447,\n      \"direction_deg\": 0.0,\n      \"azimuth_deg\": 90.0,\n      \"bearing\": \"N 90°00'00\\\" E\",\n      \"start_station\": 1000.0,\n      \"end_station\": 2405.2668077979447,\n      \"mid_station\": 1702.6334038989723,\n      \"start_station_text\": \"10+00.00\",\n      \"end_station_text\": \"24+05.27\",\n      \"mid_station_text\": \"17+02.63\",\n      \"mid_point\": [\n        1702.6334038989723,\n        1000.0\n      ]\n    },\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 2,\n      \"ref\": \"T-2\",\n      \"start\": [\n        2784.7401270181504,\n        1061.5800423393835\n      ],\n      \"end\": [\n        3961.4449047363873,\n        1453.8149682454623\n      ],\n      \"length\": 1240.3557437305928,\n      \"direction_deg\": 18.434948822922003,\n      \"azimuth_deg\": 71.565051177078,\n      \"bearing\": \"N 71°33'54\\\" E\",\n      \"start_station\": 2791.3674730739153,\n      \"end_station\": 4031.7232168045084,\n      \"mid_station\": 3411.5453449392116,\n      \"start_station_text\": \"27+91.37\",\n      \"end_station_text\": \"40+81.72\",\n      \"mid_station_text\": \"34+11.55\",\n      \"mid_point\": [\n        3373.092515877269,\n        1257.6975052924229\n      ]\n    },\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 3,\n      \"ref\": \"T-3\",\n      \"start\": [\n        4246.049894151542,\n        1500.0\n      ],\n      \"end\": [\n        5600.0,\n        1500.0\n      ],\n      \"length\": 1353.9501058484584,\n      \"direction_deg\": 0.0,\n      \"azimuth_deg\": 90.0,\n      \"bearing\": \"N 90°00'00\\\" E\",\n      \"start_station\": 4321.298715761486,\n      \"end_station\": 5675.248821609945,\n      \"mid_station\": 4998.273768685715,\n      \"start_station_text\": \"43+71.30\",\n      \"end_station_text\": \"57+25.25\",\n      \"mid_station_text\": \"50+48.27\",\n      \"mid_point\": [\n        4923.024947075771,\n        1500.0\n      ]\n    }\n  ],\n  \"placement\": {\n    \"reference\": \"DESIGN\",\n    \"rotation_deg\": 0.0,\n    \"scale\": 1.0,\n    \"offset\": [\n      0.0,\n      0.0\n    ],\n    \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n    \"read_only\": true\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-bebafcd5aa81bdf5",
+   "name": "station_to_xy",
+   "content": "[tool error]\n{\n  \"ok\": false,\n  \"name\": \"station_to_xy\",\n  \"error\": {\n    \"type\": \"query_failed\",\n    \"message\": \"station 35+00.00 is the back reading of the equation 35+00.00 BK = 35+50.00 AH; the equation point is read by its ahead station, 35+50.00\",\n    \"hint\": \"ask for 35+50.00, or pass region=1 to read 35+00.00 on the back side (EQ-1 names the point too)\"\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-bef663b5f989c767",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    3961.4418530076773,\n    1453.813951002559\n  ],\n  \"on_point\": [\n    3961.4418530076773,\n    1453.813951002559\n  ],\n  \"station\": 4031.72,\n  \"station_text\": \"40+81.72\",\n  \"region\": 2,\n  \"offset\": 0.0,\n  \"direction_deg\": 18.434948822922003,\n  \"azimuth_deg\": 71.565051177078,\n  \"bearing\": \"N 71°33'54\\\" E\",\n  \"element_index\": 2,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-2\",\n  \"on_sheet\": {\n    \"sheet\": \"C-102\",\n    \"viewport\": \"VP-002\",\n    \"sheet_point\": [\n      29.728837,\n      15.776279\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-bef22b309a6f2937",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": \"35+50.00\", \"sheet\": \"C-102\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-98cf12febc605a8b",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": \"34+11.55\", \"sheet\": \"C-102\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 12.6,
+   "reasoning": "Good info:\n- The equation is at the point read by ahead station 35+50.00 (raw station 3500). In other words, the physical point is raw 3500, and the ahead display is 35+50.00.\n- Next curve = C-2, BC = 40+81.72 (display, region 2), model point [3961.4419, 1453.8140], on the sheet at paper coordinates (29.7288, 15.7763).\n\nNext, the equation point: query station 35+50.00 with sheet C-102. Also, for the bearing label I need the midpoint of T-2 (station 34+11.55, model [3373.0925, 1257.6975]) — its sheet coordinates.\n\nNote the hint: \"EQ-1 names the point too\" — so the anchor \"EQ-1\" will work.\n\nWhat to obtain:\n1. station_to_xy DESIGN:SR-100 station \"35+50.00\" sheet C-102 → paper point of the equation.\n2. station_to_xy DESIGN:SR-100 station \"34+11.55\" sheet C-102 → paper point of the tangent midpoint.\n\nAfter that, use resolve_anchor on the sheet with anchors EQ-1, T-2, PC-2 to verify the planned placement.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-bef22b309a6f2937",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    3457.0079697682577,\n    1285.6693232560858\n  ],\n  \"on_point\": [\n    3457.0079697682577,\n    1285.6693232560858\n  ],\n  \"station\": 3500.0,\n  \"station_text\": \"35+50.00\",\n  \"region\": 2,\n  \"offset\": 0.0,\n  \"direction_deg\": 18.434948822922003,\n  \"azimuth_deg\": 71.565051177078,\n  \"bearing\": \"N 71°33'54\\\" E\",\n  \"element_index\": 2,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-2\",\n  \"on_sheet\": {\n    \"sheet\": \"C-102\",\n    \"viewport\": \"VP-002\",\n    \"sheet_point\": [\n      19.640159,\n      12.413386\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-98cf12febc605a8b",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    3373.09693205569,\n    1257.6989773518967\n  ],\n  \"on_point\": [\n    3373.09693205569,\n    1257.6989773518967\n  ],\n  \"station\": 3411.55,\n  \"station_text\": \"34+11.55\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 18.434948822922003,\n  \"azimuth_deg\": 71.565051177078,\n  \"bearing\": \"N 71°33'54\\\" E\",\n  \"element_index\": 2,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-2\",\n  \"on_sheet\": {\n    \"sheet\": \"C-102\",\n    \"viewport\": \"VP-002\",\n    \"sheet_point\": [\n      17.961939,\n      11.85398\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nAll three anchors are on the sheet. Now let me dry-run the labels to see exactly what the engine generates, and check what's visible on the sheet.\n\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-85d28a438de591f5",
+     "type": "function",
+     "function": {
+      "name": "resolve_anchor",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"anchor\": \"EQ-1\", \"kind\": \"equation\", \"space\": \"C-102\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-8c169698b1b435af",
+     "type": "function",
+     "function": {
+      "name": "resolve_anchor",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"anchor\": \"T-2\", \"kind\": \"bearing\", \"space\": \"C-102\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-b8831d89fa4feb74",
+     "type": "function",
+     "function": {
+      "name": "resolve_anchor",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"anchor\": \"PC-2\", \"kind\": \"pc\", \"space\": \"C-102\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 15.3,
+   "reasoning": "All points on sheet:\n- EQ-1 point (ahead 35+50.00): model (3457.008, 1285.669) → paper (19.640, 12.413)\n- T-2 midpoint (34+11.55): model (3373.097, 1257.699) → paper (17.962, 11.854)\n- PC-2 (40+81.72): model (3961.442, 1453.814) → paper (29.729, 15.776)\n\nNow, let me first do a dry run with resolve_anchor to see what the engine generates for each anchor:\n1. anchor \"EQ-1\", kind equation → check content (should be the label \"STA 35+00.00 BK = STA 35+50.00 AH\"), position, and rotation.\n2. anchor \"T-2\", kind bearing → check content and position (should be at tangent midpoint, above the line, along/parallel to the line).\n3. anchor \"PC-2\", kind pc → check content (should be \"40+81.72 BC\" or something close to it) and position.\n\nAlso, let me check the reference entities on the sheet that could potentially collide: find_entities visible_on C-102. Let me execute resolve_anchor calls and find_entities in parallel.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-85d28a438de591f5",
+   "name": "resolve_anchor",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"resolve_anchor\",\n  \"alignment\": \"SR-100\",\n  \"anchor\": \"EQ-1\",\n  \"kind\": \"equation\",\n  \"auto_content\": \"STA 35+00.00 BK = STA 35+50.00 AH\",\n  \"content\": \"STA 35+00.00 BK = STA 35+50.00 AH\",\n  \"station\": 3500.0,\n  \"station_text\": \"35+00.00\",\n  \"offset\": 0.0,\n  \"point\": [\n    3457.0079697682577,\n    1285.6693232560858\n  ],\n  \"anchor_point\": [\n    3457.0079697682577,\n    1285.6693232560858\n  ],\n  \"direction_deg\": 18.434948822922003,\n  \"placement\": {\n    \"reference\": \"DESIGN\",\n    \"rotation_deg\": 0.0,\n    \"scale\": 1.0,\n    \"offset\": [\n      0.0,\n      0.0\n    ],\n    \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n    \"read_only\": true\n  },\n  \"labelling\": \"place_label, annotate_stationing and place_curve_table anchor to this referenced alignment by its qualified name (the reference must sit at identity); place_callout takes it as target_anchor too\"\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8c169698b1b435af",
+   "name": "resolve_anchor",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"resolve_anchor\",\n  \"alignment\": \"SR-100\",\n  \"anchor\": \"T-2\",\n  \"kind\": \"bearing\",\n  \"auto_content\": \"N 71°33'54\\\" E 1240.36'\",\n  \"content\": \"N 71°33'54\\\" E 1240.36'\",\n  \"station\": 3411.5453449392116,\n  \"station_text\": \"34+11.55\",\n  \"offset\": 0.0,\n  \"point\": [\n    3373.092515877269,\n    1257.6975052924229\n  ],\n  \"anchor_point\": [\n    3373.092515877269,\n    1257.6975052924229\n  ],\n  \"direction_deg\": 18.434948822922003,\n  \"placement\": {\n    \"reference\": \"DESIGN\",\n    \"rotation_deg\": 0.0,\n    \"scale\": 1.0,\n    \"offset\": [\n      0.0,\n      0.0\n    ],\n    \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n    \"read_only\": true\n  },\n  \"labelling\": \"place_label, annotate_stationing and place_curve_table anchor to this referenced alignment by its qualified name (the reference must sit at identity); place_callout takes it as target_anchor too\"\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b8831d89fa4feb74",
+   "name": "resolve_anchor",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"resolve_anchor\",\n  \"alignment\": \"SR-100\",\n  \"anchor\": \"PC-2\",\n  \"kind\": \"pc\",\n  \"auto_content\": \"40+81.72 BC\",\n  \"content\": \"40+81.72 BC\",\n  \"station\": 4031.7232168045084,\n  \"station_text\": \"40+31.72\",\n  \"offset\": 0.0,\n  \"point\": [\n    3961.4449047363873,\n    1453.8149682454623\n  ],\n  \"anchor_point\": [\n    3961.4449047363873,\n    1453.8149682454623\n  ],\n  \"direction_deg\": 18.43494882292201,\n  \"placement\": {\n    \"reference\": \"DESIGN\",\n    \"rotation_deg\": 0.0,\n    \"scale\": 1.0,\n    \"offset\": [\n      0.0,\n      0.0\n    ],\n    \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n    \"read_only\": true\n  },\n  \"labelling\": \"place_label, annotate_stationing and place_curve_table anchor to this referenced alignment by its qualified name (the reference must sit at identity); place_callout takes it as target_anchor too\"\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nI've confirmed all three labels with the design data showing the equation, tangent bearing, and curve point positioned on sheet C-102. Now I'll place the labels on the sheet.\n\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-848ba5a97ba3dddf",
+     "type": "function",
+     "function": {
+      "name": "place_label",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"anchor\": \"EQ-1\", \"kind\": \"equation\", \"space\": \"C-102\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-a42544b7b90e6a0c",
+     "type": "function",
+     "function": {
+      "name": "place_label",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"anchor\": \"T-2\", \"kind\": \"bearing\", \"space\": \"C-102\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-8bafe7c64b9d4e21",
+     "type": "function",
+     "function": {
+      "name": "place_label",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"anchor\": \"PC-2\", \"kind\": \"pc\", \"rotation\": \"perpendicular\", \"side\": \"left\", \"space\": \"C-102\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 69.1,
+   "reasoning": "I have the design data:\n\n- Alignment DESIGN:SR-100 (reference basefile, identity transform, read-only)\n- EQ-1: 35+00.00 BK = 35+50.00 AH, located at raw station 3500, on T-2 (the equation point is read by its forward station 35+50.00, which is at [3457.008, 1285.669] in model coordinates). On sheet C-102, that's paper [19.640, 12.413].\n- T-2: tangent from 27+91.37 to 40+81.72, bearing N 71°33'54\" E, length 1240.36 ft (1240.3557). The equation point at 35+50 AH is on this tangent. Midpoint of T-2 is 34+11.55, which is before the equation — but either way the bearing label for the tangent is usually placed at the midpoint. The task says \"letter the bearing and length of the tangent on which it is located, above the line, parallel to it.\" So one bearing label on the tangent. resolve_anchor for kind=bearing on anchor T-2 gives auto_content \"N 71°33'54\\\" E 1240.36'\", anchored at the midpoint of the tangent (34+11.55). Default side for bearing is \"above.\" So kind=bearing, anchor T-2, side above (default), rotation along (default for bearing is \"along\"). That covers \"above the line, parallel to it.\"\n\nHmm, wait: one subtle point — the midpoint of T-2 is at station 34+11.55, which is the region 1 side of the equation (raw station 3411.55 < 3500 raw). The label displays at the station location. That's fine. The task just says to letter the bearing and length of the tangent above the line, parallel to it. The engine places it at the midpoint of the tangent by default. That's standard drafting.\n\n- BC of the next curve: the equation is on T-2. The next curve after that is C-2, BC station is 40+81.72 (display station). Auto content of kind=pc on anchor PC-2: \"40+81.72 BC\". Wait, in resolve_anchor it says station_text \"40+31.72\" but content is \"40+81.72 BC\". Hmm, the \"station_text\" field in the response shows 40+31.72, which looks like a quirk (or is it the raw station 4031.72 formatted as \"40+31.72\"?). In fact raw_station is 4031.72, display station is 40+81.72. The station_text \"40+31.72\" seems to be formatting the raw value. But the content \"40+81.72 BC\" is the display station, which is correct. Interesting. The content is what matters.\n\nNow, \"letter the BC station of the next curve, in the same style as the equation\" — meaning: perpendicular to the centerline, at the BC point, reading from bottom to top, with the default label_offset for curve points (22.5 ft in model / 0.45 in on paper), on the left side. The equation label: kind=equation, side default left, rotation default perpendicular. So for PC-2: kind=pc, rotation perpendicular, side left. Same style as the equation label.\n\nLet me confirm: place_label defaults:\n- kind=equation: side default left, rotation default perpendicular, label_offset default 22.5 ft in model / 0.45 in on sheet.\n- kind=pc: same defaults (curve points are on the left, perpendicular, 0.45 in on sheet).\n- kind=bearing: side default above, rotation default along, label_offset 3 ft in model / 0.06 in on sheet.\n\nSo on sheet space C-102:\n1. place_label {space: 'C-102', alignment: 'DESIGN:SR-100', anchor: 'EQ-1', kind: 'equation'} → content \"STA 35+00.00 BK = STA 35+50.00 AH\", perpendicular to line, left side, reading from bottom to top.\n2. place_label {space: 'C-102', alignment: 'DESIGN:SR-100', anchor: 'T-2', kind: 'bearing'} → \"N 71°33'54\\\" E 1240.36'\", above the line, parallel to it.\n3. place_label {space: 'C-102', alignment: 'DESIGN:SR-100', anchor: 'PC-2', kind: 'pc', rotation: 'perpendicular', side: 'left'} → \"40+81.72 BC\", perpendicular, reading from bottom to top, same offset as equation.\n\nWait — for #3, I need to double-check the \"reading from bottom to top\" requirement. Perpendicular rotation: text reads bottom to top (rotated 90° counterclockwise relative to horizontal). Perpendicular to the line: the baseline of the text is perpendicular to the tangent direction. Tangent T-2 has azimuth 71.57°, i.e., 18.43° from +x (east). Perpendicular rotation means the text's baseline runs along the direction perpendicular to the line — i.e., the text reads perpendicular to the line. \"Perpendicular to the centerline, reading bottom to top\": in Caltrans plans, BC/PC labels read perpendicular to the centerline (from the bottom of the sheet to the top). If rotation=perpendicular, the text runs perpendicular to the line. The line runs east-northeast, so perpendicular means north-northwest-ish to south-southeast — effectively bottom-to-top on the sheet. Good.\n\nBut wait: does \"perpendicular\" rotation produce text that reads bottom-to-top (i.e., +90° from the line's direction), or could it be upside down? The default for curve points is perpendicular with side left — that's the standard Caltrans lettering convention, so I'll trust it.\n\nAnother consideration for #2: the bearing label defaults to rotation \"along\" the line — parallel to the tangent, above it. The task says \"above the line, parallel to it\" — exactly the bearing kind's defaults (side above, rotation along).\n\nAlso, should the bearing label be placed at the midpoint of T-2? The default anchor T-2 is placed at the midpoint of the tangent (34+11.55). But hmm — the equation is at 35+50 (raw 3500... wait, the equation point is at raw 3500, and the midpoint of T-2 is raw 3411.55). So the bearing label is at raw station 3411.55, which is on the backward side of the equation point. That's fine and standard: the bearing lettering goes at the middle of the tangent.\n\nHmm, but actually, wait. Let me think about whether the bearing label at the midpoint could collide with the equation label. The equation label is at raw 3500 (the point [3457, 1285.67]), on the left side of the line, 22.5 ft offset (0.45 in on sheet). On the sheet, the equation point is at paper [19.64, 12.41]. The bearing label is at raw 3411.55 ([3373.1, 1257.7]), on the sheet [17.96, 11.85], above the line, 0.06 in offset. The horizontal distance between them is about 1.68 in. The equation text \"STA 35+00.00 BK = STA 35+50.00 AH\" is long — at 0.10 in text height, that's about 28 characters × 0.07 in ≈ 2 in, oriented perpendicular (nearly vertical) to the line. Hmm, could overlap the bearing text.\n\nThe bearing text \"N 71°33'54\\\" E 1240.36'\" is about 21 characters ≈ 1.5 in, positioned above the line at the midpoint. The equation text is on the left side of the line (left of the direction of travel). T-2 runs east-northeast (azimuth 71.57°). \"Left\" side is the north/northwest side of the line. \"Above\" is the north side of the line. Hmm, so both the bearing label (above the line) and the equation label (left of the line) are on the north side of the line. There's potential for collision.\n\nHmm. Let me reconsider. Caltrans convention: the equation lettering is on the left side of the line, reading bottom to top, about 0.45 in offset (22.5 ft). The bearing lettering is centered above the line (0.06 in = 3 ft). In actual Caltrans plans, the bearing label sits right above the centerline, and the equation label is farther out to the upper left. Given the horizontal separation along the line is 1.68 in, and both are rotated, collision is unlikely, but possible. Let me render to check.\n\nActually, let me reconsider the anchor position of the bearing label. The bearing kind anchors at the midpoint of the tangent by default. The task: \"letter the bearing and length of the tangent on which it is located, above the line, parallel to it.\" No specific station position required. Midpoint is the natural choice.\n\nNow, text height on the sheet: place_label defaults in sheet space: 0.10 in. label_offset in inches for each kind: station 0.12 in, bearing 0.06 in, curve point 0.45 in, bubble 0.80 in. Good.\n\nSo let me place the three labels on sheet C-102. All anchored to the referenced alignment DESIGN:SR-100. The reference is at identity transform (offset [0,0], rotation 0, scale 1), so anchoring works.\n\nOne more check: place_label for a referenced alignment — per the description, space can be a sheet. \"Works in model space or on a sheet through a viewport.\" And the alignment is 'DESIGN:SR-100' via the attached file (must be at identity). It is at identity.\n\nLet me also verify that the equation label content includes \"BK\" and \"AH\" and stations to the hundredths place: \"STA 35+00.00 BK = STA 35+50.00 AH\". Yes, that matches the task: \"letter it in the Caltrans style with the backward and forward stations to the hundredths, with BK and AH, perpendicular to the centerline at the equation point, reading bottom to top.\"\n\nNote that the task's phrasing is \"BK and AH\" — the auto content uses \"BK\" and \"AH\" in \"35+00.00 BK = STA 35+50.00 AH\". Good.\n\nAnd \"letter the BC station of the next curve, in the same style as the equation\": \"40+81.72 BC\" perpendicular to the line, reading bottom to top, on the same left side, at the same 0.45 in offset. kind=pc's default side is left and rotation is perpendicular — same as the equation.\n\nSo I'll now place all three labels. These are independent calls, but they all modify the document — I could batch them. Actually, they're independent (different entities), so I can put them in one block. But careful: if one fails, I want to know. The resolve dry runs succeeded for all three, so the actual placements should succeed too. Let me run them as a batch.\n\nActually, one thing to verify for #3: the task says \"in the same style as the equation.\" Defaults for kind=pc: side left, rotation perpendicular, offset 0.45 in — same as equation defaults. To be safe and explicit, I'll set rotation='perpendicular' and side='left' explicitly.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-848ba5a97ba3dddf",
+   "name": "place_label",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"place_label\",\n  \"message\": \"label TX-001 'STA 35+00.00 BK = STA 35+50.00 AH' (equation @ EQ-1 of DESIGN:SR-100) placed in sheet C-102 via VP-002\",\n  \"created\": [\n    \"TX-001\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a42544b7b90e6a0c",
+   "name": "place_label",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 2,\n  \"name\": \"place_label\",\n  \"message\": \"label TX-002 'N 71°33\\\\'54\\\" E 1240.36\\\\'' (bearing @ T-2 of DESIGN:SR-100) placed in sheet C-102 via VP-002\",\n  \"created\": [\n    \"TX-002\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8bafe7c64b9d4e21",
+   "name": "place_label",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 3,\n  \"name\": \"place_label\",\n  \"message\": \"label TX-003 '40+81.72 BC' (pc @ PC-2 of DESIGN:SR-100) placed in sheet C-102 via VP-002\",\n  \"created\": [\n    \"TX-003\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nAll three placed. Let me render the sheet to verify.\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b9963dfafc38727b",
+     "type": "function",
+     "function": {
+      "name": "render_sheet",
+      "arguments": "{\"sheet\": \"C-102\", \"dpi\": 150, \"include_base64\": true}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 3.7,
+   "reasoning": "All three labels have been placed. Next, I'll render sheet C-102 and check visually.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b9963dfafc38727b",
+   "name": "render_sheet",
+   "content": "{\"ok\": true, \"name\": \"render_sheet\", \"path\": \"/Volumes/RobertsExternalSSD/repos/CAD Testing/benchmarks/probe_runs/2026-10-17-k3/runs/qwen3.8-27b-bf16-vllm-r1/equation-data/renders/C-102.png\", \"size_bytes\": 228758, \"base64\": \"iVBORw0KGgoAAAANSUhEUgAAE+wAAAzkCAYAAABrNADHAAAAOXRFWHRTb2Z0d2FyZQBNYXRwbG90bGliIHZlcnNpb24zLjkuNCwgaHR0cHM6Ly9tYXRwbG90bGliLm9yZy8ekN5oAAAACXBIWXMAABcSAAAXEgFnn9JSAAEAAElEQVR4nOzcv04l25XA4V2lAwlYQliCBAJMAAlIPiKABCSLt7nv4MDv4LdBlsABBAjJkECACSAByRjpQnKOVDXaNWds5Noj/xnPrHOnvk9qre5Wd68V3Lo7+1V/+MMf2ul0mgAAAAAAAAAAAAAAAAAAAAAAAACAvxrlWN8vf/nLVFXVt98GAAAAAAAAAAAAAAAAAAAAAAAAgOFq2zaN8k9yrE+wDwAAAAAAAAAAAAAAAAAAAAAAAAD+qv72cwAAAAAAAAAAAAAAAAAAAAAAAABgRrAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgQLAPAAAAAAAAAAAAAAAAAAAAAAAAAAoE+wAAAAAAAAAAAAAAAAAAAAAAAACgYFT6Tfp++9vfpl//+tfpxx9/jD4FAAAAAAAAAAAAAAAAAAAAAAAA4F/2s5/9LP3mN79JP/zwQ/Qpc6+6vr5ux+Nxqqoq+pa59vOf/zy9v79HnwEAAAAAAAAAAAAAAAAAAAAAAADwP7a6upr+9Kc/RZ8x19q2TaPoI34qfvzxx7/8fGFhIfQWAAAAAAAAAAAAAAAAAAAAAAAAgH/FdDrt9dX47wn2/ZNyrG8ymUSfAQAAAAAAAAAAAAAAAAAAAAAAAPBPW1xc/Eu0j7+v/gf+DAAAAAAAAAAAAAAAAAAAAAAAAAAMjmAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAgWAfAAAAAAAAAAAAAAAAAAAAAAAAABQI9gEAAAAAAAAAAAAAAAAAAAAAAABAwaj0m8D/vbZtux9ZXdd/99dZ0zTdrKqq+/G3v/6vv/O3v7bDDjvssMMOO+ywww477LDDDjvssMMOO+ywww477LDDDjvssMMOO+ywww477LDDDjvssMMOO+ywww477LDDDjvssMMOO+ywww477LDDDjvssMMOO+ywww47flo7gBiCfRAoP4R//OMf0y9+8Yv08vKSHh4e0traWtrf309//vOf083NTVpaWkpHR0dpOp2mi4uL7u+dnp528/e//333+4eHh2l5ebn78x8fH2lvby+tr693/17+d7e2ttL29rYddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbY8RPdAcSorq+v2/F4rJz5dywuLnb/U1tYWEiTyST6HP6fyDXb3/3ud+lXv/rVX2q2P/UCrx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddthhhx122GGHHXbYYYcddtjx798B/y66av+47hsU7PvH+A+L/62PMBdsd3Z2fIMAAAAAAAAAAAAAAAAAAAAAAECvU/Ty8pI2NjZ0ivi30VX7577B/0xsAiHy47e7u+sRBAAAAAAAAAAAAAAAAAAAAAAAirGwh4eHbgIxBPsgUH4AX19fPYQAAAAAAAAAAAAAAAAAAAAAAEDR2tpa9AkwaIJ9ECiH+u7u7gT7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\n[output truncated: the first 30000 of 305239 characters are shown]\n[image content omitted: this run is text-only -- the text above carries the file path]"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nThe render succeeded, but since this run is text-only, let me verify the labels' positions and geometry directly from the sheet data.\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b97007115f123353",
+     "type": "function",
+     "function": {
+      "name": "find_entities",
+      "arguments": "{\"space\": \"C-102\", \"type\": \"text\", \"detail\": \"full\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 7.5,
+   "reasoning": "I can't actually see the image contents (in this execution it's text-only), but the render succeeded. Let me verify the placed labels another way — I'll check the sheet state, or find the entities and look at their positions and rotations to confirm the layout is correct.\n\nLet me use find_entities against the sheet C-102's text and confirm the positions.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b97007115f123353",
+   "name": "find_entities",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"find_entities\",\n  \"space\": \"SH-002\",\n  \"total\": 3,\n  \"count\": 3,\n  \"entities\": [\n    {\n      \"id\": \"TX-001\",\n      \"type\": \"text\",\n      \"layer\": \"0\",\n      \"point\": [\n        19.4979,\n        12.8403\n      ],\n      \"anchor\": {\n        \"alignment\": \"DESIGN:SR-100\",\n        \"ref\": \"EQ-1\",\n        \"kind\": \"equation\",\n        \"station\": 3500.0,\n        \"offset\": 0.0,\n        \"side\": \"left\",\n        \"label_offset\": 0.45,\n        \"rotation\": \"perpendicular\",\n        \"viewport\": \"VP-002\",\n        \"content_auto\": true,\n        \"placed_by\": \"place_label\"\n      },\n      \"content\": \"STA 35+00.00 BK = STA 35+50.00 AH\",\n      \"entity\": {\n        \"id\": \"TX-001\",\n        \"type\": \"text\",\n        \"layer\": \"0\",\n        \"anchor\": {\n          \"alignment\": \"DESIGN:SR-100\",\n          \"ref\": \"EQ-1\",\n          \"kind\": \"equation\",\n          \"station\": 3500.0,\n          \"offset\": 0.0,\n          \"side\": \"left\",\n          \"label_offset\": 0.45,\n          \"rotation\": \"perpendicular\",\n          \"viewport\": \"VP-002\",\n          \"content_auto\": true,\n          \"placed_by\": \"place_label\"\n        },\n        \"position\": [\n          19.497856900657577,\n          12.840293949244447\n        ],\n        \"content\": \"STA 35+00.00 BK = STA 35+50.00 AH\",\n        \"height\": 0.1,\n        \"style\": \"STANDARD\",\n        \"rotation_deg\": 108.43494882292202,\n        \"halign\": \"left\",\n        \"valign\": \"middle\"\n      },\n      \"bbox\": [\n        18.61198495157712,\n        12.824482560943606,\n        19.545291065560104,\n        15.371418690079086\n      ]\n    },\n    {\n      \"id\": \"TX-002\",\n      \"type\": \"text\",\n      \"layer\": \"0\",\n      \"point\": [\n        17.9429,\n        11.9109\n      ],\n      \"anchor\": {\n        \"alignment\": \"DESIGN:SR-100\",\n        \"ref\": \"T-2\",\n        \"kind\": \"bearing\",\n        \"station\": 3411.5453449392116,\n        \"offset\": 0.0,\n        \"side\": \"left\",\n        \"label_offset\": 0.06,\n        \"rotation\": \"along\",\n        \"viewport\": \"VP-002\",\n        \"content_auto\": true,\n        \"placed_by\": \"place_label\"\n      },\n      \"content\": \"N 71°33'54\\\" E 1240.36'\",\n      \"entity\": {\n        \"id\": \"TX-002\",\n        \"type\": \"text\",\n        \"layer\": \"0\",\n        \"anchor\": {\n          \"alignment\": \"DESIGN:SR-100\",\n          \"ref\": \"T-2\",\n          \"kind\": \"bearing\",\n          \"station\": 3411.5453449392116,\n          \"offset\": 0.0,\n          \"side\": \"left\",\n          \"label_offset\": 0.06,\n          \"rotation\": \"along\",\n          \"viewport\": \"VP-002\",\n          \"content_auto\": true,\n          \"placed_by\": \"place_label\"\n        },\n        \"position\": [\n          17.942876651584367,\n          11.910871103731488\n        ],\n        \"content\": \"N 71°33'54\\\" E 1240.36'\",\n        \"height\": 0.1,\n        \"style\": \"STANDARD\",\n        \"rotation_deg\": 18.434948822921996,\n        \"halign\": \"center\",\n        \"valign\": \"bottom\"\n      },\n      \"bbox\": [\n        17.143729055347574,\n        11.655029497186453,\n        18.710401471219473,\n        12.261581040081575\n      ]\n    },\n    {\n      \"id\": \"TX-003\",\n      \"type\": \"text\",\n      \"layer\": \"0\",\n      \"point\": [\n        29.5866,\n        16.2032\n      ],\n      \"anchor\": {\n        \"alignment\": \"DESIGN:SR-100\",\n        \"ref\": \"PC-2\",\n        \"kind\": \"pc\",\n        \"station\": 4031.7232168045084,\n        \"offset\": 0.0,\n        \"side\": \"left\",\n        \"label_offset\": 0.45,\n        \"rotation\": \"perpendicular\",\n        \"viewport\": \"VP-002\",\n        \"content_auto\": true,\n        \"placed_by\": \"place_label\"\n      },\n      \"content\": \"40+81.72 BC\",\n      \"entity\": {\n        \"id\": \"TX-003\",\n        \"type\": \"text\",\n        \"layer\": \"0\",\n        \"anchor\": {\n          \"alignment\": \"DESIGN:SR-100\",\n          \"ref\": \"PC-2\",\n          \"kind\": \"pc\",\n          \"station\": 4031.7232168045084,\n          \"offset\": 0.0,\n          \"side\": \"left\",\n          \"label_offset\": 0.45,\n          \"rotation\": \"perpendicular\",\n          \"viewport\": \"VP-002\",\n          \"content_auto\": true,\n          \"placed_by\": \"place_label\"\n        },\n        \"position\": [\n          29.58659560002017,\n          16.20320684903198\n        ],\n        \"content\": \"40+81.72 BC\",\n        \"height\": 0.1,\n        \"style\": \"STANDARD\",\n        \"rotation_deg\": 108.43494882292202,\n        \"halign\": \"left\",\n        \"valign\": \"middle\"\n      },\n      \"bbox\": [\n        29.249600163234444,\n        16.187395460731135,\n        29.634029764922698,\n        17.087702052982422\n      ]\n    }\n  ]\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "finish_reason": "length",
+   "seconds": 5.3,
+   "reasoning": "Let's verify the geometry of each label.\n\n**TX-001 — Equation (EQ-1):**\n- Content: \"STA 35+00.00 BK = STA 35+50.00 AH\" ✓\n- Position [19.4979, 12.8403], rotation 108.435°\n- Anchor: EQ-1, side=left, label_offset 0.45 inches, rotation=perpendicular\n- The equation point on the sheet is [19.6402, 12.4134].\n\nLet's verify: direction is 18.435°."
+  }
+ ]
+}

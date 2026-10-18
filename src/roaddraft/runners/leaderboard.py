@@ -61,7 +61,15 @@ BUDGET_STOPS = frozenset({"budget", "budget_usd", "max_turns", "turn_limit", "co
 #: an ``error:`` stop is the infrastructure's, unless it says the model's own
 #: output was unreadable: LM Studio could not parse Llama 3.1 8B's tool call on
 #: 2026-10-07, which is the model's failure, not the rig's
-MODEL_ERRORS = ("does not match the expected",)
+#: ... and vLLM's harmony parser refusing gpt-oss-20b's own malformed tool header
+#: ("unexpected tokens remaining in message header", 2026-10-17): the model's failure too
+MODEL_ERRORS = ("does not match the expected", "unexpected tokens remaining in message header",
+                "could not decode header")
+#: an ``error:`` stop that is a turn limit in disguise: Runpod's proxy ends a streamed turn at 570 s, so
+#: on that backend a model whose single turn outlasts it (Gemma 4 thinking for 13k+ tokens, 2026-10-17)
+#: has exceeded the rig's effective turn limit, a budget failure like ``turn_limit`` (the runner's own 1,800 s).
+#: A cold start that outlasts it (0 turns) is the infrastructure's and is rerun, so it never reaches the board.
+BUDGET_ERRORS = ("stream did not complete within 570 seconds",)
 
 MARKS = {"pass": "P", "fail": "·", "budget": "B", "excluded": "X"}
 BOOTSTRAP, SEED = 2000, 0
@@ -69,6 +77,12 @@ BOOTSTRAP, SEED = 2000, 0
 NAMES = {"claude-haiku-4-5": "Claude Haiku 4.5", "claude-fable-5-1": "Claude Fable 5.1",
          "claude-opus-5-5": "Claude Opus 5.5", "claude-sonnet-5-5": "Claude Sonnet 5.5",
          "qwen/qwen3.5-9b": "Qwen3.5-9B", "Qwen/Qwen3.5-9B": "Qwen3.5-9B (bf16, vLLM)", "google/gemma-4-e4b": "Gemma 4 E4B", "gpt-oss:120b-cloud": "gpt-oss-120b",
+         # the Runpod ladder (benchmarks/runpod/models.json): Hugging Face ids as the runner names them
+         "Qwen/Qwen3.5-4B": "Qwen3.5-4B (bf16, vLLM)", "google/gemma-4-12B-it": "Gemma 4 12B (bf16, vLLM)",
+         "openai/gpt-oss-20b": "gpt-oss-20b (mxfp4, vLLM)", "Qwen/Qwen3.8-27B": "Qwen3.8-27B (bf16, vLLM)",
+         "google/gemma-4-31B-it": "Gemma 4 31B (bf16, vLLM)", "zai-org/GLM-4.7-Flash": "GLM-4.7-Flash (bf16, vLLM)",
+         "Qwen/Qwen3.6-35B-A3B": "Qwen3.6-35B-A3B (bf16, vLLM)", "google/gemma-4-26B-A4B-it": "Gemma 4 26B-A4B (bf16, vLLM)",
+         "openai/gpt-oss-120b": "gpt-oss-120b (mxfp4, vLLM)", "Qwen/Qwen3.5-122B-A10B-FP8": "Qwen3.5-122B-A10B (FP8, vLLM)",
          "meta-llama-3.1-8b-instruct": "Llama 3.1 8B Instruct",
          "mistralai/mistral-7b-instruct-v0.3": "Mistral 7B Instruct v0.3",
          "gpt-6-astra": "GPT-6-Astra", "gpt-6-luna": "GPT-6-Luna", "gpt-6-sol": "GPT-6-Sol",
@@ -110,6 +124,8 @@ def outcome(stop: str, passed: bool) -> str:
         return "budget"
     if any(marker in stop for marker in MODEL_ERRORS):
         return "fail"
+    if any(marker in stop for marker in BUDGET_ERRORS):
+        return "budget"
     return "excluded"
 
 
@@ -242,7 +258,8 @@ def _mean(values: Sequence[float]) -> Optional[float]:
 
 def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str, Any]:
     run, model, backend, vision, effort = key
-    meta = attempts[0].meta
+    # an episode the runner ended on an error carries no base_url; the class and the runner read it
+    meta = next((a.meta for a in attempts if a.meta.get("base_url")), attempts[0].meta)
     labels = sorted({a.label for a in attempts}, key=_natural)
     # an episode that ran on an earlier task text (the probe set changed since) does
     # not count: its document was drafted to other words than the current check expects

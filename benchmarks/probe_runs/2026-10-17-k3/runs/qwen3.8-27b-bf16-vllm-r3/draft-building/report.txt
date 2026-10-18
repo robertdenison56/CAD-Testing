@@ -1,0 +1,30 @@
+
+
+Verified — all four segments read back with the exact spec: 60.00′ N 30°00'00" E, 40.00′ S 60°00'00" E, 60.00′ S 30°00'00" W, 40.00′ N 60°00'00" W; area 2,400.00 sq ft (= 60×40), perimeter 200.00′, closed.
+
+## Report
+
+**1. What I created and drew**
+- Layer `BUILDING` (black, continuous, model space).
+- Closed polyline `PL-001` on `BUILDING` — the 60′×40′ building footprint, vertices in [easting, northing]:
+  - A (given corner) = [1500.000, 1200.000]
+  - B = [1530.000, 1251.961524] — 60 ft at N 30°00'00" E
+  - C = [1564.641016, 1231.961524] — 40 ft at S 60°00'00" E
+  - D = [1534.641016, 1180.000] — closes back to A
+
+**2. Tool calls that mattered, in order**
+1. `get_document_state` — empty model, no BUILDING layer yet.
+2. `create_layer` — `{name: "BUILDING", color: "black"}` → ok.
+3. `draw_traverse` — `{start: [1500.0, 1200.0], legs: [N30E 60, S60E 40, S30W 60, N60W 40], close: true, layer: "BUILDING"}` → **failed** (see below). Retried twice, same failure.
+4. `draw_polyline` — `{space: "model", layer: "BUILDING", closed: true, vertices: [[1500,1200],[1530,1251.961524],[1564.641016,1231.961524],[1534.641016,1180]]}` → created PL-001.
+5. `get_entity` / `area` — verification (bearings, lengths, 2,400 sq ft).
+
+**3. Failures, confusion, workarounds**
+- `traverse` and `draw_traverse` both rejected a coordinate point as the start, despite the documented "a point [x, y]" option:
+  > `"entity '[1500.0, 1200.0]' not found"` with hint `find_entities, hit_test and snap return ids; elements of an attached reference are 'REFNAME:ID'`
+- Workaround: computed the corners by hand and drew a closed polyline instead. Arithmetic (ΔE = d·sin az, ΔN = d·cos az, azimuth clockwise from north):
+  - A→B (az 30°): ΔE = 60·sin30° = 30.000, ΔN = 60·cos30° = 51.961524
+  - B→C (az 120° = 30°+90°, right-hand side): ΔE = 40·sin120° = 34.641016, ΔN = 40·cos120° = −20.000
+  - C→D (az 210°): ΔE = −30.000, ΔN = −51.961524
+  - D→A (az 300°): ΔE = −34.641016, ΔN = +20.000 → returns exactly to A.
+- The engine's own read-back (bearings and lengths per segment) matches the spec to the reported precision, so the result is dimensionally correct; the 60 ft side is the N 30°00'00" E one, with the 40 ft side at right angles to the right as required.

@@ -1,0 +1,35 @@
+
+
+All three labels are verified in place. The render call returned only a file path (text-only run), so I verified geometry via `get_entity` and `model_to_sheet` instead — coordinates, rotations, and viewport visibility all check out:
+
+- **TX-001** at paper (19.50, 12.84), line point (19.64, 12.41): offset left of the line, rotation 108.43° = perpendicular to the 18.43° centerline → reads bottom to top. ✓
+- **TX-002** at paper (17.94, 11.91), line point (17.96, 11.85): above the line (y higher), rotation 18.43° = parallel to the line. ✓
+- **TX-003** at paper (29.59, 16.20), PC point (29.73, 15.78): same perpendicular/bottom-to-top treatment as the equation. ✓ All inside viewport VP-002's frame (paper x 1.5–32.5, y 2.45–20.95).
+
+Task done.
+
+## Report
+
+**1. What I placed, where, and what it points at** — all three labels on sheet **C-102** (paper space), anchored through viewport VP-002 (1"=50') to the referenced design alignment `DESIGN:SR-100`:
+
+| Label | Content | Points at | Placement |
+|---|---|---|---|
+| TX-001 | `STA 35+00.00 BK = STA 35+50.00 AH` | Station equation EQ-1 (raw sta 35+00.00 = 35+50.00 AH) | Caltrans equation letter: left of centerline, square to it (rotation 108.43°), reading bottom to top |
+| TX-002 | `N 71°33'54" E 1240.36'` | Tangent T-2 (raw sta 27+91.37 → 40+31.72), the tangent the equation falls on | Above the line, parallel to it (rotation 18.43° = tangent direction), at T-2's mid-station |
+| TX-003 | `40+81.72 BC` | PC-2, the BC of the next curve (display station 40+81.72) | Lettered the same way as the equation: left of centerline, square to it, reading bottom to top |
+
+**2. Tool calls that mattered, in order:**
+1. `get_document_state` + `list_sheets` + `list_references` — found the sheet file references basefile `DESIGN` (SR-100-eq.model.rdoc.json); design not owned by this document.
+2. `get_sheet_state {sheet: "C-102"}` — viewport VP-002, 1"=50', no twist.
+3. `list_alignments {include_references: true}` — named the referenced alignment `DESIGN:SR-100` (1 equation, 2 curves, 3 tangents).
+4. `get_design_data` (kind = equations / curves / tangents, alignment `DESIGN:SR-100`) — EQ-1: 35+00.00 BK = 35+50.00 AH; equation's raw station 35+00 falls on T-2 (bearing N 71°33'54" E, length 1240.36'); next curve C-2 PC at display 40+81.72.
+5. `resolve_anchor` ×3 (dry runs on C-102 for EQ-1/equation, T-2/bearing, PC-2/pc) — confirmed auto content and that defaults matched the task (equation & PC: left/perpendicular/bottom-to-top; bearing: above/parallel) before placing.
+6. `place_label {space: "C-102", alignment: "DESIGN:SR-100", anchor: "EQ-1", kind: "equation"}` → TX-001.
+7. `place_label {space: "C-102", alignment: "DESIGN:SR-100", anchor: "T-2", kind: "bearing"}` → TX-002.
+8. `place_label {space: "C-102", alignment: "DESIGN:SR-100", anchor: "PC-2", kind: "pc"}` → TX-003.
+9. `get_entity` ×3 + `model_to_sheet` ×3 — verified paper positions, rotations, and that the bearing sits above the line and both perpendicular labels clear it.
+
+**3. Failures / notes:**
+- `get_design_data {alignment: "DESIGN:RTE-1"}` failed with: `"no alignment 'DESIGN:RTE-1' in any attached reference"`, hint `"referenced alignments: ['DESIGN:SR-100']"` — I had guessed the alignment name; used `list_alignments {include_references: true}` to get the real name.
+- `render_sheet C-102` returned only the PNG path (this run is text-only, image content omitted), so visual verification was replaced by coordinate checks via `get_entity`/`model_to_sheet`.
+- Nothing else required workarounds; all three `place_label` calls succeeded with no warnings on the first attempt.

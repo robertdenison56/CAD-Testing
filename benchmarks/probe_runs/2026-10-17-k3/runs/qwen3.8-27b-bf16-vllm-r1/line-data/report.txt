@@ -1,0 +1,31 @@
+
+
+Task complete. All three tangent line-data labels are placed and verified clear of linework.
+
+## 1. What I placed
+
+One line of text per tangent of the SR-100 alignment (from the referenced design file), in the paper space of the sheet whose viewport shows that tangent. All on new layer **V-ANNO-LINE**, height 0.25″, centered horizontally on the tangent midpoint, set 30 ft perpendicular above the centerline (so the text band sits ~19–31 ft above center — clear of the 12 ft EOP and 20 ft shoulder lines), parallel to the tangent and reading left to right:
+
+| Tangent | Sheet | Text (TX id) | Content | Notes |
+|---|---|---|---|---|
+| T-1, 10+00.00 → 24+05.27, L 1405.27 | C-101 | TX-004 @ (15.55, 7.30) | `N 90°00'00" E 1405.27'` | horizontal |
+| T-2, 27+91.37 → 40+31.72, L 1240.36 | C-102 | TX-009 @ (17.77, 12.42) | `N 71°33'54" E 1240.36'` | rotated 18.43° parallel to the tangent |
+| T-3, 43+21.30 → 56+75.25, L 1353.95 | C-103 | TX-008 @ (17.96, 17.30) | `N 90°00'00" E 1353.95'` | horizontal |
+
+Bearings/lengths taken from the design model via `get_design_data kind=tangents`. Curves C-1/C-2 were intentionally not lettered (task covers tangents only). `hit_test` at each text center with 6 ft tolerance returned 0 entities → nothing collides; nearest linework is the 20 ft shoulder at ~3.75 ft below the text bottom.
+
+## 2. Tool calls that mattered, in order
+
+1. `get_document_state`, `list_sheets`, `list_references`, `get_model_state include_references=true`, `list_alignments include_references=true` — discovered the design is xref'd in as `DESIGN` (alignment `DESIGN:SR-100`, 3 tangents + 2 curves).
+2. `get_sheet_state` ×3 (C-101/102/103) — viewport boxes: 1000–2550, 2550–4100, 4100–5650 E at 1″=50′, no twist.
+3. `get_design_data {kind: "tangents", alignment: "DESIGN:SR-100"}` — bearings, lengths, midpoints.
+4. `create_layer {name: "V-ANNO-LINE"}`.
+5. `place_text` per sheet with `halign: center` (T-2 also `rotation_deg: 18.4349`), paper positions computed from `model_to_sheet` of the tangent midpoints + 30 ft up.
+6. Verification: `hit_test` (model) at each text center, `find_entities {type: text}` per sheet.
+
+## 3. Failures / workarounds
+
+- **No tool errors at all** — every call returned `ok: true` with empty warnings. All corrections were my own, caught by verification:
+  - **Pass 1 was placed ~330 ft too high.** I initially guessed the centerline's paper position instead of converting. `model_to_sheet` of the T-1 midpoint returned `[15.5527, 6.7]`, confirming the centerline sat 5″ lower than I had assumed. Deleted TX-001/002/003 and re-placed.
+  - **Sign error on the T-2 perpendicular offset.** For the sloped tangent, "30 ft above" must be along the left normal (−cos θ, +sin θ); my first corrected pass used +cos θ in x, landing the text ~89 ft left of the line (station 36+20 instead of 34+11). `hit_test` caught it: it returned `{"id": "DESIGN:LN-011", "layer": "rd_ES", "distance": 3.8025}` — the text would have overlapped the shoulder line. Deleted TX-007 and re-placed with the correct normal.
+- One judgment call: `get_design_data` reports the due-east tangents' bearing as `N 90°00'00" E`; I used the engine's own bearing string verbatim (it matches the format of your example) rather than "E 0°00'00"".

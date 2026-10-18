@@ -7,53 +7,55 @@
 | model | `Qwen/Qwen3.5-9B` |
 | class | hosted open-weight |
 | runner | runners · openai (api.runpod.ai), `https://api.runpod.ai/v2/zee0sos76mivwk/openai/v1` |
-| run folder | `2026-10-12-k3`, labels `qwen3.5-9b-bf16-vllm-r1`, `qwen3.5-9b-bf16-vllm-r2`, `qwen3.5-9b-bf16-vllm-r3` |
+| run folder | `2026-10-17-k3`, labels `qwen3.5-9b-bf16-vllm-r1`, `qwen3.5-9b-bf16-vllm-r2`, `qwen3.5-9b-bf16-vllm-r3` |
 | budgets | 120 turns, 30 min per probe; text only; default effort |
-| standing | rank 6 of 7 |
-| engine commit | `36dcca41d5` (99); changed past it: `src/roaddraft/probes/base.py`, `src/roaddraft/probes/drafting.py`, `src/roaddraft/probes/tasks.py`, `src/roaddraft/probes/tier2.py`, `src/roaddraft/probes/tier3.py`, `src/roaddraft/runners/claims.py`, `src/roaddraft/runners/leaderboard.py`, `src/roaddraft/runners/score.py`, `src/roaddraft/tasks/ground_truth.py`, `src/roaddraft/tasks/prompts.py`, `src/roaddraft/tasks/real.py`, `src/roaddraft/tasks/reference.py`, `src/roaddraft/tasks/spec_v1.py`, `src/roaddraft/tasks/types.py`, `src/roaddraft/verify/checks.py`, `src/roaddraft/verify/geometry.py`, `src/roaddraft/verify/semantic.py` |
-| tool surface | `sha256:20fe06035283` |
-| server instructions | 99 of 99 episodes differ from the current server's |
+| standing | rank 10 of 15 |
+| engine commit | `e7178a2ff7` (99) |
+| tool surface | `sha256:60eeeb2195be` |
+| server instructions | current |
 | task prompts | current |
 
 ## Score
 
-**47.5%** pass rate, 95% CI [32.3, 63.6]: 47 of 99 attempts that count, on 33 of 33 probes.
+**44.4%** pass rate, 95% CI [29.3, 59.6]: 44 of 99 attempts that count, on 33 of 33 probes.
 
 | | T1 | T2 | T3 | all |
 |---|---|---|---|---|
-| passed | 40/51 (78%) | 3/18 (17%) | 4/30 (13%) | 47/99 |
+| passed | 41/51 (80%) | 1/18 (6%) | 2/30 (7%) | 44/99 |
 
-By attempt: qwen3.5-9b-bf16-vllm-r1 17/33, qwen3.5-9b-bf16-vllm-r2 14/33, qwen3.5-9b-bf16-vllm-r3 16/33. Of the 33 probes attempted, 12 pass every time, 12 never pass (hard-fail rate 36%), 9 split.
+By attempt: qwen3.5-9b-bf16-vllm-r1 16/33, qwen3.5-9b-bf16-vllm-r2 17/33, qwen3.5-9b-bf16-vllm-r3 11/33. Of the 33 probes attempted, 10 pass every time, 14 never pass (hard-fail rate 42%), 9 split.
 
 ## Measures (research plan §3.2)
 
 | measure | value | how it is read |
 |---|---|---|
-| invalid-call rate | 6.7% (112 of 1,668 calls) | faulted calls over calls, from the traces |
-| fault recovery | 54 of 112 faults (48%) | a fault followed within three calls by a successful call of the same tool |
-| repeated-fault loops | 0 episodes; longest run 2 | the same fault five or more times in a row |
-| query before compute | 49 of 97 episodes that changed the drawing asked a design query first; 2.7 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
-| report fidelity | 50 of 52 failed episodes' reports said the task was done (231 claims the check contradicts); 2 of 9 claims of no errors came over a faulted trace; 0 of 93 cited ids never existed | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
-| steps | 16.8 calls, 16.8 turns per episode | model turns; for Claude Code the CLI's own count |
-| wall clock | 392 s per episode, 10.8 h in all | the runner's clock, episode start to report |
-| tokens | 798k in, 9.1k out per episode (7.7k of it reasoning) | input counts cache reads and writes |
+| invalid-call rate | 8.0% (124 of 1,552 calls) | faulted calls over calls, from the traces |
+| fault recovery | 64 of 124 faults (52%) | a fault followed within three calls by a successful call of the same tool |
+| repeated-fault loops | 0 episodes; longest run 3 | the same fault five or more times in a row |
+| query before compute | 45 of 98 episodes that changed the drawing asked a design query first; 2.2 design queries per episode | `station_to_xy`, `xy_to_station`, `resolve_anchor`, `get_design_data`, `measure`, `point_on_entity` before the first successful command |
+| report fidelity | 55 of 55 failed episodes' reports said the task was done (290 claims the check contradicts); 1 of 9 claims of no errors came over a faulted trace; 0 of 42 cited ids never existed | read from `report.txt` against the record, without a model: a report claims the task done unless it concedes a shortfall; a claim of no errors is held to the trace's faults; an id is invented when neither the document nor the trace ever had it |
+| steps | 15.7 calls, 16.4 turns per episode | model turns; for Claude Code the CLI's own count |
+| wall clock | 388 s per episode, 10.7 h in all | the runner's clock, episode start to report |
+| tokens | 787k in, 9.2k out per episode (7.9k of it reasoning) | input counts cache reads and writes |
 | cost | — per episode, — in all | no price: a local model |
-| render use | 23 renders in 21 episodes; 2 followed by a change | a render is followed by a change when a successful command comes before the next render |
-| scope completion | 210 of 450 items (47%) in 75 episodes of the 25 probes that ask for more than one thing; 27 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
+| render use | 24 renders in 21 episodes; 5 followed by a change | a render is followed by a change when a successful command comes before the next render |
+| scope completion | 165 of 450 items (37%) in 75 episodes of the 25 probes that ask for more than one thing; 25 of them did every item | items done over items asked, item by item as the probe check judges them: each sheet's callouts and title block, each station, tangent or curve point, each planted error |
 
-Stops: answered 90, budget 4, length 5. 3 tool results were cut to the runner's cap.
+Stops: answered 88, budget 4, length 7. 1 tool results were cut to the runner's cap.
 
 Ended by budget, counted as failures:
 
-- qwen3.5-9b-bf16-vllm-r1/draft-intersection-corner: budget, the document fails its check
-- qwen3.5-9b-bf16-vllm-r1/line-data: length, the document fails its check
-- qwen3.5-9b-bf16-vllm-r1/row-data: length, the document fails its check
-- qwen3.5-9b-bf16-vllm-r2/curve-data: length, the document fails its check
-- qwen3.5-9b-bf16-vllm-r2/draft-building: budget, the document fails its check
-- qwen3.5-9b-bf16-vllm-r2/draft-cul-de-sac: budget, the document fails its check
-- qwen3.5-9b-bf16-vllm-r2/l2-match-lines: length, the document fails its check
+- qwen3.5-9b-bf16-vllm-r1/sheet-set-callouts: length, the document fails its check
+- qwen3.5-9b-bf16-vllm-r1/station-callouts: length, the document fails its check
+- qwen3.5-9b-bf16-vllm-r2/draft-turn-lane: budget, the document fails its check
 - qwen3.5-9b-bf16-vllm-r2/station-callouts: length, the document fails its check
-- qwen3.5-9b-bf16-vllm-r3/draft-cul-de-sac: budget, the document fails its check
+- qwen3.5-9b-bf16-vllm-r3/curve-data: length, the document fails its check
+- qwen3.5-9b-bf16-vllm-r3/curve-points: length, the document fails its check
+- qwen3.5-9b-bf16-vllm-r3/draft-intersection-corner: budget, the document fails its check
+- qwen3.5-9b-bf16-vllm-r3/draft-roadway: budget, the document fails its check
+- qwen3.5-9b-bf16-vllm-r3/l2-alignment-data: length, the document fails its check
+- qwen3.5-9b-bf16-vllm-r3/row-data: length, the document fails its check
+- qwen3.5-9b-bf16-vllm-r3/width-dims: budget, the document fails its check
 
 ## Every probe
 
@@ -61,36 +63,36 @@ P passed, · failed, B ended by budget (a failure), X excluded (infrastructure).
 
 | probe | tier | attempts | calls | faults | the first failing attempt, as its check read it |
 |---|---|---|---|---|---|
-| edge-c102 | T1 | P P P | 6.0 | 2 |  |
-| edge-curve-c102 | T1 | P P P | 6.0 | 1 |  |
-| shoulder-c101 | T1 | P P P | 4.7 | 0 |  |
-| centerline-c103 | T1 | P P P | 10.7 | 5 |  |
-| both-edges-c101 | T1 | P P P | 6.7 | 2 |  |
+| edge-c102 | T1 | P P P | 5.0 | 1 |  |
+| edge-curve-c102 | T1 | P P P | 8.7 | 1 |  |
+| shoulder-c101 | T1 | P P · | 8.0 | 1 | qwen3.5-9b-bf16-vllm-r3: hit 0 of 1 required; nearest miss on the left shoulder on C-101 was DESIGN:LN-010 at 7.82 ft from [1695.0, 1012.2] (needed 1.00 ft) |
+| centerline-c103 | T1 | P P P | 8.0 | 4 |  |
+| both-edges-c101 | T1 | P P P | 8.7 | 1 |  |
 | title-blocks | T1 | P P P | 7.0 | 0 |  |
-| pc-by-station | T1 | · P P | 8.7 | 0 | qwen3.5-9b-bf16-vllm-r1: no leader, so nothing points at the PC of the first curve |
-| edge-c102-paper | T1 | P P P | 7.0 | 1 |  |
-| sta-offset-c101-paper | T1 | P P P | 5.7 | 0 |  |
-| draft-tangent-ne | T1 | P P P | 5.0 | 3 |  |
-| draft-pi-curve | T1 | P P P | 3.3 | 0 |  |
-| draft-bearing-distance | T1 | P P P | 3.3 | 0 |  |
-| draft-edges-shoulders | T1 | · P · | 6.0 | 0 | qwen3.5-9b-bf16-vllm-r1: nothing drawn for the left edge of pavement |
-| draft-turn-lane | T1 | · · · | 17.0 | 1 | qwen3.5-9b-bf16-vllm-r1: the 120 ft taper: 23 of 26 check points have no linework within 0.5 ft; the worst is [3089.98, 1139.55], 10.56 ft from the nearest |
-| draft-cul-de-sac | T1 | · B B | 37.7 | 13 | qwen3.5-9b-bf16-vllm-r1: the left edge of pavement up to the bulb: 16 of 16 check points have no linework within 0.5 ft; the worst is [2986.00, 2000.00], 355.24 ft from the nearest |
-| draft-building | T1 | P B · | 8.7 | 1 | qwen3.5-9b-bf16-vllm-r2: nothing drawn for the 60 x 40 building footprint (ended by budget: budget) |
-| draft-roadway | T1 | P P P | 8.3 | 1 |  |
-| sheet-set-callouts | T2 | · · · | 36.3 | 3 | qwen3.5-9b-bf16-vllm-r1: C-101: title block: sheet_number='C-101' (wanted 1 or '1 of 3') |
-| station-callouts | T2 | P B · | 51.7 | 7 | qwen3.5-9b-bf16-vllm-r2: 7 of 15 stations have no leader on them: 12+00, 15+00, 17+00, 19+00, 21+00 ... (ended by budget: length) |
-| clean-callouts | T2 | P · · | 10.0 | 1 | qwen3.5-9b-bf16-vllm-r2: the right edge of shoulder: hit 0 of 1 required; nearest miss on the right edge of shoulder on C-102 was DESIGN:LN-014 at 11.34 ft from [3380.9, 1251.2] (needed 1.00 ft) |
-| draft-intersection-corner | T2 | B · · | 11.7 | 0 | qwen3.5-9b-bf16-vllm-r1: the 50 ft curb return: 19 of 19 check points have no linework within 0.5 ft; the worst is [5032.00, 5094.00], 88.00 ft from the nearest (ended by budget: budget) |
-| draft-fix-the-drawing | T2 | · · · | 12.7 | 0 | qwen3.5-9b-bf16-vllm-r1: the right edge of pavement at 12 ft: 49 of 189 check points have no linework within 0.5 ft; the worst is [3707.83, 1356.63], 1.00 ft from the nearest |
-| draft-roadway-sheets | T2 | · · P | 13.7 | 1 | qwen3.5-9b-bf16-vllm-r1: the left edge of pavement: 85 of 85 check points have no linework within 0.5 ft; the worst is [1318.95, 2954.93], 5.00 ft from the nearest |
-| line-data | T3 | B · · | 37.3 | 2 | qwen3.5-9b-bf16-vllm-r1: T-1 on C-101: 'N 90°00\'00" E 1405.27\'' runs at 90.00° on the sheet; the line runs at 0.00° there (ended by budget: length) |
-| curve-points | T3 | · · P | 16.7 | 7 | qwen3.5-9b-bf16-vllm-r1: the BC at 24+05.27 on C-101 (PC of C-1): no lettering reads 24+05.27 BC |
-| curve-data | T3 | · B · | 39.7 | 7 | qwen3.5-9b-bf16-vllm-r1: C-101 has no bubble numbered 1 on its curve |
-| stationing | T3 | P · · | 46.7 | 26 | qwen3.5-9b-bf16-vllm-r2: nothing was added to C-102 |
-| width-dims | T3 | · · · | 47.7 | 8 | qwen3.5-9b-bf16-vllm-r1: the left shoulder (8') is not dimensioned across the road at 17+00 |
-| row-data | T3 | B · · | 17.3 | 7 | qwen3.5-9b-bf16-vllm-r1: no L1/C1 tags on C-102 (ended by budget: length) |
-| equation-data | T3 | P · P | 28.7 | 9 | qwen3.5-9b-bf16-vllm-r2: no lettering gives the equation 35+00.00 BK = 35+50.00 AH at its point |
-| qa-alignment-data | T3 | · · · | 12.0 | 0 | qwen3.5-9b-bf16-vllm-r1: the BC at 24+05.27 on C-101: no lettering reads 24+05.27 BC |
-| l2-match-lines | T3 | · B · | 12.3 | 2 | qwen3.5-9b-bf16-vllm-r1: no match line crosses "SR70" at 574+50.00 |
-| l2-alignment-data | T3 | · · · | 10.0 | 2 | qwen3.5-9b-bf16-vllm-r1: the tangent 576+16.93 to 578+47.69: no lettering gives N 78°30'50" E 230.76' |
+| pc-by-station | T1 | P P · | 10.3 | 6 | qwen3.5-9b-bf16-vllm-r3: no leader, so nothing points at the PC of the first curve |
+| edge-c102-paper | T1 | P P P | 8.3 | 2 |  |
+| sta-offset-c101-paper | T1 | · P P | 7.0 | 1 | qwen3.5-9b-bf16-vllm-r1: the leader is on SR-100 18+00, 12' RT but no text reads '18+00'; found ['BEGIN GUARDRAIL'] |
+| draft-tangent-ne | T1 | P P P | 6.0 | 2 |  |
+| draft-pi-curve | T1 | P P P | 5.3 | 1 |  |
+| draft-bearing-distance | T1 | P P P | 4.0 | 2 |  |
+| draft-edges-shoulders | T1 | P · · | 6.7 | 0 | qwen3.5-9b-bf16-vllm-r2: the left edge of pavement: 189 of 189 check points have no linework within 0.5 ft; the worst is [2733.12, 1058.13], 6.00 ft from the nearest |
+| draft-turn-lane | T1 | · B · | 22.0 | 2 | qwen3.5-9b-bf16-vllm-r1: the full-width edge, 24 ft right: 24 of 25 check points have no linework within 0.5 ft; the worst is [3426.65, 1250.25], 3.00 ft from the nearest |
+| draft-cul-de-sac | T1 | P P P | 14.3 | 6 |  |
+| draft-building | T1 | P P · | 8.3 | 0 | qwen3.5-9b-bf16-vllm-r3: the 60 x 40 building footprint: 20 of 44 check points have no linework within 0.5 ft; the worst is [1534.64, 1180.00], 40.00 ft from the nearest |
+| draft-roadway | T1 | P P B | 12.3 | 7 | qwen3.5-9b-bf16-vllm-r3: the design model has no alignment (71 entities were drawn, but linework is not an alignment: it has no stations) (ended by budget: budget) |
+| sheet-set-callouts | T2 | B · · | 41.3 | 3 | qwen3.5-9b-bf16-vllm-r1: C-101: title block: sheet_number='C-101' (wanted 1 or '1 of 3') (ended by budget: length) |
+| station-callouts | T2 | B B · | 38.0 | 9 | qwen3.5-9b-bf16-vllm-r1: 13 of 15 stations have no leader on them: 12+00, 13+00, 14+00, 15+00, 16+00 ... (ended by budget: length) |
+| clean-callouts | T2 | · P · | 15.0 | 3 | qwen3.5-9b-bf16-vllm-r1: the left edge of pavement: nothing was drawn on sheet C-102 itself -- this probe wants the callout in paper space, not in the model |
+| draft-intersection-corner | T2 | · · B | 17.7 | 9 | qwen3.5-9b-bf16-vllm-r1: the 50 ft curb return: 19 of 19 check points have no linework within 0.5 ft; the worst is [5032.00, 5094.00], 88.00 ft from the nearest |
+| draft-fix-the-drawing | T2 | · · · | 18.7 | 2 | qwen3.5-9b-bf16-vllm-r1: the right edge of pavement at 12 ft: 49 of 189 check points have no linework within 0.5 ft; the worst is [3707.83, 1356.63], 24.00 ft from the nearest |
+| draft-roadway-sheets | T2 | · · · | 11.7 | 3 | qwen3.5-9b-bf16-vllm-r1: only 0 of 21 100 ft stations carry a label that reads the station, within 60 ft of it |
+| line-data | T3 | · · · | 11.7 | 2 | qwen3.5-9b-bf16-vllm-r1: T-1 on C-101: 'N 90°00\'00" E  1405.27\'' sits 2.30 in from the line (within 1 in is beside it) |
+| curve-points | T3 | · · B | 21.3 | 3 | qwen3.5-9b-bf16-vllm-r1: the BC at 24+05.27 on C-101 (PC of C-1): no lettering reads 24+05.27 BC |
+| curve-data | T3 | · · B | 33.7 | 2 | qwen3.5-9b-bf16-vllm-r1: C-101's table lists curve 2, which C-101 does not show; it shows 1 |
+| stationing | T3 | · · · | 15.0 | 16 | qwen3.5-9b-bf16-vllm-r1: nothing was added to C-102 |
+| width-dims | T3 | · · B | 53.3 | 6 | qwen3.5-9b-bf16-vllm-r1: the left shoulder (8') is not dimensioned across the road at 17+00 |
+| row-data | T3 | · P B | 21.3 | 9 | qwen3.5-9b-bf16-vllm-r1: the tag C1 is on the left right of way line; the task is the right-hand one |
+| equation-data | T3 | P · · | 17.0 | 5 | qwen3.5-9b-bf16-vllm-r2: the BC of curve 2: '40+81.72' letters 40+81.72 as no curve point; it is the BC |
+| qa-alignment-data | T3 | · · · | 21.7 | 9 | qwen3.5-9b-bf16-vllm-r1: the BC at 24+05.27 on C-101: '24+05.27 PC' letters 24+05.27 as PC; it is the BC |
+| l2-match-lines | T3 | · · · | 25.0 | 4 | qwen3.5-9b-bf16-vllm-r1: no match line crosses "SR70" at 574+50.00 |
+| l2-alignment-data | T3 | · · B | 5.0 | 2 | qwen3.5-9b-bf16-vllm-r1: the tangent 576+16.93 to 578+47.69: no lettering gives N 78°30'50" E 230.76' |

@@ -9,7 +9,7 @@
 | runner | runners · codex (Codex headless) |
 | run folder | `2026-10-12-k3`, labels `gpt6-astra-med-r1`, `gpt6-astra-med-r2`, `gpt6-astra-med-r3` |
 | budgets | 120 turns, 15 min per probe; text only; effort medium |
-| standing | rank 1 of 7 |
+| standing | rank 1 of 15 |
 | engine commit | `442800d133` (32), `555bf496a8` (67) |
 | tool surface | `sha256:20fe06035283` |
 | server instructions | 99 of 99 episodes differ from the current server's |

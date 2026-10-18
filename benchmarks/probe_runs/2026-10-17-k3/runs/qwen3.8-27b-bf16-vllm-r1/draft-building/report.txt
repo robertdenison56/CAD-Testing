@@ -1,0 +1,40 @@
+
+
+Task complete. The geometry is fully verified numerically (the render is file-only in this run, but the entity data is conclusive).
+
+## 1. What I created and drew
+
+- **Layer `BUILDING`** (new, "Building footprints", ByLayer defaults).
+- **`PL-002`** — closed polyline on layer `BUILDING`, the 60 ft × 40 ft building footprint, model space (US survey ft):
+  - Corner A (given): [1500.00, 1200.00] = N 1200.00, E 1500.00
+  - Corner B: [1530.00, 1251.961524] — 60 ft @ N 30°00'00" E
+  - Corner C: [1564.641016, 1231.961524] — 40 ft @ S 60°00'00" E (right angle, azimuth 120°)
+  - Corner D: [1534.641016, 1180.000000] — 60 ft @ S 30°00'00" W
+  - Closes back to A at 40 ft @ N 60°00'00" W; **zero misclosure**.
+  - Verified by `get_entity`: perimeter 200.00 ft, area 2400.00 ft² (= 60 × 40 exactly).
+- **`CP-001`** — COGO point #1 at [1500.00, 1200.00], description "BLDG CORNER", on `BUILDING` (created as the traverse's start anchor; left in place as the corner marker).
+
+## 2. Tool calls that mattered, in order
+
+1. `get_document_state` (summary) + `create_layer {name: "BUILDING"}` — empty doc, layer created.
+2. `draw_traverse {start: [1500, 1200], ...}` — **failed** (see below).
+3. `traverse {start: [1500, 1200], ...}` — **failed** same way; retried with float `start: [1500.0, 1200.0]` — **failed** again.
+4. `draw_line {start: [1500.0, 1200.0], end: [1530.0, 1251.961524], layer: "BUILDING"}` + `create_points {points: [{point: [1500.0, 1200.0], number: 1, description: "BLDG CORNER"}]}` — probes; both succeeded, proving arrays arrive intact.
+5. `draw_traverse {start: "CP-001", start_at: "end", legs: [N 30°E 60, 90°RT 40], close: true, polyline: true}` — drew a **triangle** (2 legs + closing chord); deleted it with `delete_entities ["PL-001"]`.
+6. `draw_traverse {start: "CP-001", start_at: "end", legs: [N 30°E 60, 90°RT 40, 90°RT 60, 90°RT 40], close: true, polyline: true, layer: "BUILDING"}` — created `PL-002`, "closes on its start".
+7. `delete_entities ["LN-001"]` (removed my probe line, which overlapped side 1) + `get_entity "PL-002"` — verification.
+8. `render_model` — rendered to PNG (file only, text-only run).
+
+## 3. Failures, confusions, workarounds
+
+- **`traverse`/`draw_traverse` rejected a point for `start`** despite the schema describing it as "a point [x, y] … or an entity id":
+  > `"message": "entity '[1500, 1200]' not found"` (same for `[1500.0, 1200.0]`)
+  The engine treated the array as an entity id. **Workaround:** created a COGO point at the corner and started the traverse from the entity id `CP-001` (`start_at: "end"`), which the doc explicitly supports ("or at the end of an entity").
+- **First successful traverse was a triangle, not the rectangle:** with only the two given legs, `close=true` added a straight closing course (reported as "S 63°41'24\" W 72.11' (closing); misses its start by 72.111' … precision 1:1"). I deleted `PL-001` and redrew with all four legs (three 90° right deflections), which closed exactly.
+- **Coordinates I had to compute myself** (for the probe line and as a check on the engine's output; model = [easting, northing]):
+  - B = A + 60 @ N 30° E: E = 1500 + 60·sin 30° = 1500 + 30 = **1530.00**; N = 1200 + 60·cos 30° = 1200 + 30√3 = 1200 + 51.961524 = **1251.961524**
+  - C = B + 40 @ S 60° E (azimuth 120°): E = 1530 + 40·sin 60° = 1530 + 20√3 = 1530 + 34.641016 = **1564.641016**; N = 1251.961524 − 40·cos 60° = 1251.961524 − 20 = **1231.961524**
+  - D = C + 60 @ S 30° W (azimuth 210°): E = 1564.641016 − 30 = **1534.641016**; N = 1231.961524 − 60·cos 30° = 1231.961524 − 51.961524 = **1180.00**
+  - (sin 30° = 0.5, cos 30° = √3/2 ≈ 0.8660254; sin 60° = √3/2, cos 60° = 0.5.) These match the engine's computed vertices to all digits, and the final leg D→A is 40 ft @ N 60° W, confirming closure.
+
+Nothing outstanding — the footprint is drawn, closed, on its own layer, and dimensionally exact.

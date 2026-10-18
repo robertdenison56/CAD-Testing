@@ -1,0 +1,36 @@
+
+
+All four labels verify correctly against the geometry:
+
+| Label | Sheet | Content | Anchor | Rotation | Side / Offset |
+|---|---|---|---|---|---|
+| TX-001 | C-101 | 24+05.27 BC | PC-1 of DESIGN:SR-100 (sta 24+05.267) | 90° | left, 0.45" (22.5 ft) |
+| TX-002 | C-102 | 27+91.37 EC | PT-1 (sta 27+91.367) | 108.43° (⊥ to 18.43° tangent) | left, 0.45" |
+| TX-003 | C-102 | 40+31.72 BC | PC-2 (sta 40+31.723) | 108.43° | left, 0.45" |
+| TX-004 | C-103 | 43+21.30 EC | PT-2 (sta 43+21.299) | 90° | left, 0.45" |
+
+Task done. Report:
+
+**1. What I placed, where, and what it points at**
+Four Caltrans curve-point station labels, in **sheet (paper) space** on C-101, C-102, C-103 (this document is a sheet file; the design lives in the attached basefile `DESIGN`):
+- **C-101:** "24+05.27 BC" — the PC of curve C-1 (R=1200 L)
+- **C-102:** "27+91.37 EC" — the PT of C-1, and "40+31.72 BC" — the PC of curve C-2 (R=900 R)
+- **C-103:** "43+21.30 EC" — the PT of C-2
+
+Each label is anchored to `DESIGN:SR-100` at its curve point, sits 22.5 ft (0.45" at 1"=50') **left** of the centerline, square to the line through the point, reading bottom to top (rotation 90° on the east-west tangents, 108.43° on the 18.43° azimuth tangent between C-1 and C-2). All four curve points fall inside their sheet's viewport (confirmed `visible: true` via `station_to_xy`), and no other curve points exist on the alignment.
+
+**2. Tool calls that mattered, in order**
+1. `get_document_state` + `list_sheets` — saw 3 empty ANSI_D sheets
+2. `list_references` + `list_alignments {include_references: true}` — found the design alignment `DESIGN:SR-100` (2 curves)
+3. `get_design_data {kind: "curves", alignment: "DESIGN:SR-100"}` — PC/PT stations for both curves
+4. `get_sheet_state` (C-101/102/103) — viewport model extents: 1000–2550 / 2550–4100 / 4100–5650 E, all 1"=50', untwisted
+5. `station_to_xy {sheet: …}` for each of the 4 stations — confirmed each is visible in its sheet's viewport and got paper coordinates
+6. `resolve_anchor {kind: pc/pt, side: left, rotation: perpendicular}` — dry runs confirming auto content ("24+05.27 BC" etc.)
+7. `place_label {space: "C-10x", alignment: "DESIGN:SR-100", anchor: "PC-1"|"PT-1"|"PC-2"|"PT-2", kind: "pc"|"pt", side: "left", rotation: "perpendicular"}` — 4 calls, one per label
+8. `render_sheet` ×3 + `get_entity` on TX-001…004 — verification
+
+**3. Failures / confusions / workarounds**
+- No command failed; all `place_label` calls returned ok with no warnings.
+- This document owns no geometry — everything had to go through the reference qualified name `DESIGN:SR-100` (read-only); nothing could be drawn on the alignment itself, so `place_label`'s anchoring was the right tool (labels carry the anchor, so the verifier can check them).
+- The render PNGs came back but this run is text-only, so I could not visually inspect the sheets; I verified each label's content, position, rotation and anchor programmatically with `get_entity` instead — all consistent with the Caltrans convention requested.
+- One judgment call: "every curve point … each BC and each EC" — I read that as the four BC/EC points (PC/PT); MC (mid-curve) is not part of the BC/EC lettering set requested and none of the sheets' task text asked for it, so I placed no MC labels.

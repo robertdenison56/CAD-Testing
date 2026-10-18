@@ -1,0 +1,30 @@
+
+
+The render confirms the layout: 28-ft pavement (edges at E 2986/3014) meeting the 45-ft bulb, centerline to the bulb center. Task done — here's the report.
+
+## 1. What was created
+
+| Item | Layer | Key coordinates |
+|---|---|---|
+| Alignment **OAK-CT** (design model) | — | 10+00.00 at [E 3000, N 2000] → 14+00.00 at [E 3000, N 2400]; 400.00 ft tangent, azimuth 0 |
+| **LN-001** centerline | `align_MAIN` | [3000, 2000] → [3000, 2400] |
+| **CI-001** bulb | `rd_EP` | circle R 45.00, center [3000, 2400] (alignment end) |
+| **LN-004** left pavement edge (offset 14 L) | `rd_EP` | [2986, 2000] → [2986, 2357.2332], 357.23 ft |
+| **LN-005** right pavement edge (offset 14 R) | `rd_EP` | [3014, 2000] → [3014, 2357.2332], 357.23 ft |
+
+Edges end exactly on the bulb at N 2357.2332 (station 13+57.23), not through it.
+
+## 2. Tool calls that mattered, in order
+
+1. `create_alignment` — `{name: "OAK-CT", start: [3000, 2000], legs: [{azimuth: 0, distance: 400}], begin_station: "10+00"}`
+2. `draw_alignment` — `{alignment: "OAK-CT", layer: "align_MAIN"}` → LN-001
+3. `draw_circle` — `{space: "model", center: [3000, 2400], radius: 45, layer: "rd_EP"}` → CI-001
+4. `delete_entities` — `{ids: ["LN-002", "LN-003"]}` (my first, miscalculated edge pass)
+5. `draw_offset` — `{alignment: "OAK-CT", offsets: [-14, 14], layer: "rd_EP"}` → LN-004, LN-005 (full length)
+6. `trim` — `{targets: [{id: "LN-004", at: [2986, 2420]}, {id: "LN-005", at: [3014, 2420]}], boundaries: ["CI-001"]}`
+
+## 3. Failures / workarounds
+
+- **No tool ever errored.** The only failure was my own arithmetic.
+- First edge attempt: I asked for `station_range: [1000, 1360.978]` (13+60.98), i.e. I had computed the cut-back as 400 − 43.00. That was wrong: I solved 45² − 14² = **1849** and took √1849 = 43.00. The correct subtraction is 2025 − 196 = **1829**, and √1829 ≈ 42.7668 (42.7² = 1823.29; 42.77² ≈ 1829.27). That error left a ~3.75 ft gap between the edges and the bulb.
+- **Workaround:** I deleted the two bad lines and let the engine do the geometry instead of my pencil: redrew the edges full-length with `draw_offset`, then `trim` against the circle with a click point inside the bulb ([2986, 2420] / [3014, 2420], i.e. N 2420 > 2400 so clearly inside the R-45 bulb). The trim report came back "42.77' cut away … kept (357.23')" — matching 400 − √1829 = 357.2332 to the hundredth. `get_entity` then confirmed both endpoints at N 2357.2332, exactly √1829 below the bulb center.

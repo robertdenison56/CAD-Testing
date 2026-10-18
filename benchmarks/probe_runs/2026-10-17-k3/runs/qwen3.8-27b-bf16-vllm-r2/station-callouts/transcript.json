@@ -1,0 +1,725 @@
+{
+ "meta": {
+  "backend": "openai",
+  "model": "Qwen/Qwen3.8-27B",
+  "probe": "station-callouts",
+  "stop": "answered",
+  "turns": 14,
+  "seconds": 283.5,
+  "tokens": {
+   "input_tokens": 432871,
+   "output_tokens": 9286,
+   "reasoning_tokens": 4841
+  },
+  "cost_usd": null,
+  "max_turns": 120,
+  "budget_s": 1800.0,
+  "vision": false,
+  "effort": null,
+  "pins": {
+   "roaddraft": "0.1.0",
+   "commit": "e7178a2ff7a74ddabd04f54658c757ec2af69fc7",
+   "dirty": [],
+   "tools_sha256": "sha256:60eeeb2195be36433798af9a64b744d17e3110d5b83dce68874e846fbf7cfad4",
+   "instructions_sha256": "sha256:4dff2849f3c5a5c42f834f8821cab06c105d99580bcdaca2eeaef72817db0077"
+  },
+  "truncated_results": 1,
+  "reloads": 0,
+  "base_url": "https://api.runpod.ai/v2/jbwqugdj3bxts8/openai/v1",
+  "cut_turns": 4,
+  "usage_estimated_turns": 5,
+  "type_lists_rewritten": false,
+  "extra_body": {
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "top_k": 20,
+   "min_p": 0.0,
+   "presence_penalty": 0.0,
+   "repetition_penalty": 1.0
+  }
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 7300, E 4100 is [4100, 7300]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-15, 15]}, visible_on: 'P-202'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'BASE:RTE-7', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('86+50@15R', 'PC-2'; BC-2 and EC-2 name the PC and PT too) and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well.\n\nDrafting from a description works the same way: give the engine the description, not coordinates you worked out. A bearing and distance goes in as written -- create_alignment takes start + legs (each leg a bearing, azimuth or deflection and the distance to the next PI, with the radius of the curve at the PI it starts from), draw_traverse draws lines and curves course by course, and traverse computes the points without drawing. offset_entity copies linework parallel at a distance (one entity, or a chain offset as one path), fillet rounds the corner between two lines with a curve (a curb return), and measure with along gives distances along a line, chain or alignment and square off it. key_points and snap give the exact endpoints, intersections, centers and alignment design points (PI, BC, EC) to build on. Station-and-offset drafting is draw_station_offset with the stations and offsets given ('82+00@15R'). Linework drawn through something is cut back with trim (a point on the part to cut away) or run on with extend, not redrawn from computed points; break, join, lengthen, chamfer, copy, rotate, mirror, scale and array edit what is there. create_points sets COGO points, label_segments letters bearings and distances or L1/C1 tags with line and curve tables, place_along sets blocks or points at an interval, hatch fills an area (a point inside is enough), and area and get_entity read areas, lengths, bearings and curve data off the drawing."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n\nTHE TASK:\nOn sheet C-101, in paper space, call out every even 100 ft station of SR-100 that the sheet shows (11+00, 12+00 and so on, as far as the view runs): one callout per station, its leader on the centerline at that station and its text reading the station.\n\nWhen finished, reply briefly with:\n1. What you placed, in which space, and what it points at.\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages."
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-a1f47ce43afb7b99",
+     "type": "function",
+     "function": {
+      "name": "get_document_state",
+      "arguments": "{\"detail\": \"summary\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-a47bff5891493102",
+     "type": "function",
+     "function": {
+      "name": "list_sheets",
+      "arguments": "{}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 3.9,
+   "reasoning": "To get a grasp of the available elements, let's start by first checking the state of the document.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a1f47ce43afb7b99",
+   "name": "get_document_state",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_document_state\",\n  \"summary\": {\n    \"meta\": {\n      \"project_name\": \"SR-100 Widening\",\n      \"description\": \"\",\n      \"model_units\": \"us_survey_ft\",\n      \"paper_units\": \"inch\"\n    },\n    \"settings\": {\n      \"current_layer\": \"0\",\n      \"current_text_style\": \"STANDARD\",\n      \"annotation_scale\": null,\n      \"annotation_scales\": [\n        {\n          \"name\": \"1\\\"=10'\",\n          \"feet_per_inch\": 10.0\n        },\n        {\n          \"name\": \"1\\\"=20'\",\n          \"feet_per_inch\": 20.0\n        },\n        {\n          \"name\": \"1\\\"=30'\",\n          \"feet_per_inch\": 30.0\n        },\n        {\n          \"name\": \"1\\\"=40'\",\n          \"feet_per_inch\": 40.0\n        },\n        {\n          \"name\": \"1\\\"=50'\",\n          \"feet_per_inch\": 50.0\n        },\n        {\n          \"name\": \"1\\\"=60'\",\n          \"feet_per_inch\": 60.0\n        },\n        {\n          \"name\": \"1\\\"=100'\",\n          \"feet_per_inch\": 100.0\n        },\n        {\n          \"name\": \"1\\\"=200'\",\n          \"feet_per_inch\": 200.0\n        },\n        {\n          \"name\": \"1\\\"=500'\",\n          \"feet_per_inch\": 500.0\n        }\n      ],\n      \"annotation_paper\": {\n        \"text_height_in\": 0.1,\n        \"tick_half_len_in\": 0.07,\n        \"label_offset_in\": 0.12,\n        \"point_offset_in\": 0.45,\n        \"bearing_offset_in\": 0.06,\n        \"bubble_offset_in\": 0.8\n      }\n    },\n    \"layers\": [\n      \"0\",\n      \"align_MAIN\",\n      \"rd_EP\",\n      \"rd_ES\",\n      \"rd_LAYOUT-NOTE-anno\"\n    ],\n    \"text_styles\": [\n      \"STANDARD\"\n    ],\n    \"blocks\": [\n      \"NORTH_ARROW\"\n    ],\n    \"sheets\": [\n      {\n        \"id\": \"SH-001\",\n        \"name\": \"C-101\",\n        \"size\": \"ANSI_D\",\n        \"entities\": 0,\n        \"viewports\": 1\n      },\n      {\n        \"id\": \"SH-002\",\n        \"name\": \"C-102\",\n        \"size\": \"ANSI_D\",\n        \"entities\": 0,\n        \"viewports\": 1\n      },\n      {\n        \"id\": \"SH-003\",\n        \"name\": \"C-103\",\n        \"size\": \"ANSI_D\",\n        \"entities\": 0,\n        \"viewports\": 1\n      }\n    ],\n    \"model_entity_count\": 0,\n    \"model_extents\": null,\n    \"alignments\": [],\n    \"profiles\": [],\n    \"annotation_scale\": null,\n    \"journal_length\": 0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a47bff5891493102",
+   "name": "list_sheets",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_sheets\",\n  \"sheets\": [\n    {\n      \"id\": \"SH-001\",\n      \"name\": \"C-101\",\n      \"size\": \"ANSI_D\",\n      \"width_in\": 34.0,\n      \"height_in\": 22.0,\n      \"entities\": 0,\n      \"viewports\": 1\n    },\n    {\n      \"id\": \"SH-002\",\n      \"name\": \"C-102\",\n      \"size\": \"ANSI_D\",\n      \"width_in\": 34.0,\n      \"height_in\": 22.0,\n      \"entities\": 0,\n      \"viewports\": 1\n    },\n    {\n      \"id\": \"SH-003\",\n      \"name\": \"C-103\",\n      \"size\": \"ANSI_D\",\n      \"width_in\": 34.0,\n      \"height_in\": 22.0,\n      \"entities\": 0,\n      \"viewports\": 1\n    }\n  ]\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-af668b84218585b3",
+     "type": "function",
+     "function": {
+      "name": "get_sheet_state",
+      "arguments": "{\"sheet\": \"C-101\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-b74332ae248895e4",
+     "type": "function",
+     "function": {
+      "name": "list_alignments",
+      "arguments": "{\"include_references\": true}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-abbfc8d2a751496f",
+     "type": "function",
+     "function": {
+      "name": "list_references",
+      "arguments": "{}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 5.6,
+   "reasoning": "The design lives in a referenced base file (model_entity_count is 0). Let me check the sheet C-101's state, list the alignments including references, and check the reference files.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-af668b84218585b3",
+   "name": "get_sheet_state",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_sheet_state\",\n  \"sheet\": {\n    \"id\": \"SH-001\",\n    \"name\": \"C-101\",\n    \"size\": \"ANSI_D\",\n    \"width_in\": 34.0,\n    \"height_in\": 22.0,\n    \"title_block_template\": \"standard\",\n    \"title_block_fields\": {},\n    \"viewports\": [\n      {\n        \"id\": \"VP-001\",\n        \"center_paper\": [\n          17.0,\n          11.7\n        ],\n        \"width_in\": 31.0,\n        \"height_in\": 18.5,\n        \"model_center\": [\n          1775.0,\n          1250.0\n        ],\n        \"feet_per_inch\": 50.0,\n        \"rotation_deg\": 0.0,\n        \"visible_model_bbox\": [\n          1000.0,\n          787.5,\n          2550.0,\n          1712.5\n        ]\n      }\n    ],\n    \"entities\": {},\n    \"usable_area\": [\n      0.5,\n      1.75,\n      33.5,\n      21.5\n    ]\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b74332ae248895e4",
+   "name": "list_alignments",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_alignments\",\n  \"count\": 1,\n  \"alignments\": [\n    {\n      \"name\": \"DESIGN:SR-100\",\n      \"description\": \"SR-100 mainline\",\n      \"source\": \"pis\",\n      \"begin_station\": 1000.0,\n      \"begin_station_text\": \"10+00.00\",\n      \"end_station\": 5675.248821609945,\n      \"end_station_text\": \"56+75.25\",\n      \"length\": 4675.248821609945,\n      \"curves\": 2,\n      \"tangents\": 3,\n      \"equations\": 0,\n      \"profiles\": [],\n      \"drawn\": true,\n      \"reference\": \"DESIGN\",\n      \"read_only\": true,\n      \"placement\": {\n        \"reference\": \"DESIGN\",\n        \"rotation_deg\": 0.0,\n        \"scale\": 1.0,\n        \"offset\": [\n          0.0,\n          0.0\n        ],\n        \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n        \"read_only\": true\n      }\n    }\n  ]\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-abbfc8d2a751496f",
+   "name": "list_references",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"list_references\",\n  \"count\": 1,\n  \"references\": [\n    {\n      \"id\": \"RF-001\",\n      \"name\": \"DESIGN\",\n      \"path\": \"SR-100.model.rdoc.json\",\n      \"space\": \"model\",\n      \"offset\": [\n        0.0,\n        0.0\n      ],\n      \"rotation_deg\": 0.0,\n      \"scale\": 1.0,\n      \"visible\": true,\n      \"true_scale\": true,\n      \"levels_off\": [],\n      \"symbology\": {},\n      \"clip\": null,\n      \"masks\": [],\n      \"model\": \"model\",\n      \"nest_depth\": 0,\n      \"status\": \"loaded\",\n      \"error\": null,\n      \"entities\": 25,\n      \"nested\": [],\n      \"resolved_path\": \"/Volumes/RobertsExternalSSD/repos/CAD Testing/benchmarks/probe_runs/2026-10-17-k3/runs/qwen3.8-27b-bf16-vllm-r2/station-callouts/project/SR-100.model.rdoc.json\",\n      \"path_is_relative\": true,\n      \"levels\": [\n        {\n          \"name\": \"0\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 0\n        },\n        {\n          \"name\": \"align_MAIN\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 5\n        },\n        {\n          \"name\": \"rd_EP\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 10\n        },\n        {\n          \"name\": \"rd_ES\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 10\n        },\n        {\n          \"name\": \"rd_LAYOUT-NOTE-anno\",\n          \"color\": \"black\",\n          \"visible_in_basefile\": true,\n          \"on\": true,\n          \"entities\": 0\n        }\n      ],\n      \"units\": {\n        \"base\": \"us_survey_ft\",\n        \"host\": \"us_survey_ft\",\n        \"factor\": 1.0,\n        \"warning\": null\n      }\n    }\n  ]\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b3c437f882fea963",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": 1100, \"sheet\": \"C-101\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-838fc3329926d6b0",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": 1200, \"sheet\": \"C-101\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-a7a9c9000fc762b7",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": 1300, \"sheet\": \"C-101\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-bafb6f0fd48d0969",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"station\": 1400, \"sheet\": \"C-101\"}"
+     }
+    }
+   ],
+   "finish_reason": "call_cap",
+   "seconds": 22.6,
+   "reasoning": "The sheet C-101 has a viewport VP-001, and its visible_model_bbox is [1000.0, 787.5, 2550.0, 1712.5] (minx, miny, maxx, maxy). Scale is 1\" = 50', center is at paper [17.0, 11.7], model center is [1775.0, 1250.0], no rotation.\n\nThe alignment DESIGN:SR-100 is referenced, and its stations run from 10+00.00 to 56+75.25.\n\nI need to find every 100-foot station that's a multiple of 2, i.e., every station whose 100-foot multiple is even: 11+00, 12+00, 13+00... that the sheet is displaying.\n\nThe viewport's model bbox is X: 1000–2550, Y: 787.5–1712.5. I need to find the stations of the alignment whose centerline points fall within the viewport's display range.\n\nLet me compute the station positions. Stations are even hundreds starting from 11+00 (1100 ft). The alignment runs from 1000 to 5675.25. I need to check which stations fall within the viewport's model bbox.\n\nLet me use station_to_xy on the referenced alignment to obtain the point for each station, and determine whether it's visible in the viewport (via the \"sheet\" parameter).\n\nEven 100 ft stations: 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000, ...\n\nLet me compute each station. But I don't know the exact geometry. Let me use station_to_xy with sheet C-101 to get the on_sheet info including visible.\n\nLet me call station_to_xy for each candidate station. First, let me confirm the range. The viewport displays model X 1000–2550, Y 787.5–1712.5.\n\nTo understand the direction of the alignment, let me obtain the points for several stations.\n",
+   "usage_estimated": true
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b3c437f882fea963",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1100.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1100.0,\n    1000.0\n  ],\n  \"station\": 1100.0,\n  \"station_text\": \"11+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      3.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-838fc3329926d6b0",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1200.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1200.0,\n    1000.0\n  ],\n  \"station\": 1200.0,\n  \"station_text\": \"12+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      5.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a7a9c9000fc762b7",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1300.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1300.0,\n    1000.0\n  ],\n  \"station\": 1300.0,\n  \"station_text\": \"13+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      7.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-bafb6f0fd48d0969",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1400.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1400.0,\n    1000.0\n  ],\n  \"station\": 1400.0,\n  \"station_text\": \"14+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      9.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-a3dafe899b4d1d80",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 1500}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-a12255d4ebfd8202",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 1600}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-944c4262aacb79e3",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 1700}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-be066729be8cef8b",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 1800}"
+     }
+    }
+   ],
+   "finish_reason": "call_cap",
+   "seconds": 10.5,
+   "reasoning": "The first tangent is an east-west straight line at y=1000, from x=1100 (station 11+00) to x=1400 (station 14+00). All visible on the sheet. Let me check stations 15+00 through 25+00.\n",
+   "usage_estimated": true
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a3dafe899b4d1d80",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1500.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1500.0,\n    1000.0\n  ],\n  \"station\": 1500.0,\n  \"station_text\": \"15+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      11.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a12255d4ebfd8202",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1600.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1600.0,\n    1000.0\n  ],\n  \"station\": 1600.0,\n  \"station_text\": \"16+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      13.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-944c4262aacb79e3",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1700.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1700.0,\n    1000.0\n  ],\n  \"station\": 1700.0,\n  \"station_text\": \"17+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      15.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-be066729be8cef8b",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1800.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1800.0,\n    1000.0\n  ],\n  \"station\": 1800.0,\n  \"station_text\": \"18+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      17.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nThe centerline runs along northing 1000 here (station = easting - 0... actually station = x coordinate, since begin station 10+00 is at x=1100). Let me check the design data to see where curves are, and verify the remaining stations.\n\n\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-bd52412fe18a05bf",
+     "type": "function",
+     "function": {
+      "name": "get_design_data",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"kind\": \"curves\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-81b590e615c230fc",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 1900}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-a3226b92903680d3",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 2000}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-a13764c02f6253e8",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 2100}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 16.1,
+   "reasoning": "The centerline in the displayed range is running along y=1000 (northing 1000) — a horizontal line in the model, with the x coordinate equal to the station (starting at x=1100, i.e., station 11+00). Therefore, for each subsequent 100-ft station, the x increases by 100 and y stays at 1000. Let's check the stations that go past the curve. The viewport's visible bbox is [1000, 787.5, 2550, 1712.5]. So x runs from 1000 to 2550. But the alignment might not be a straight line the whole time — there are 2 curves. Let's check the stations where the alignment might curve. I'll continue checking at 1900, 2000, 2100, 2200, 2300, 2400, 2500, 2600 and see which ones are visible.\n\nNo wait, let's check the design data of the alignment to understand where the curves are.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-bd52412fe18a05bf",
+   "name": "get_design_data",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"get_design_data\",\n  \"kind\": \"curves\",\n  \"total\": 2,\n  \"start\": 0,\n  \"limit\": 50,\n  \"rows\": [\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 1,\n      \"ref\": \"C-1\",\n      \"direction\": \"L\",\n      \"radius\": 1200.0,\n      \"delta_deg\": 18.43494882292201,\n      \"delta_dms\": \"18°26'06\\\"\",\n      \"tangent\": 194.73319220205522,\n      \"length\": 386.10066527597064,\n      \"external\": 15.697748679828116,\n      \"mid_ordinate\": 15.495050835003932,\n      \"chord\": 384.43738321672134,\n      \"degree_of_curve_deg\": 4.774648333333333,\n      \"degree_of_curve_dms\": \"4°46'29\\\"\",\n      \"direction_in_deg\": 0.0,\n      \"direction_out_deg\": 18.43494882292201,\n      \"azimuth_in_deg\": 90.0,\n      \"azimuth_out_deg\": 71.56505117707799,\n      \"bearing_in\": \"N 90°00'00\\\" E\",\n      \"bearing_out\": \"N 71°33'54\\\" E\",\n      \"chord_direction_deg\": 9.217474411461005,\n      \"chord_azimuth_deg\": 80.78252558853899,\n      \"chord_bearing\": \"N 80°46'57\\\" E\",\n      \"pc_station\": 2405.2668077979447,\n      \"pi_station\": 2600.0,\n      \"pt_station\": 2791.3674730739153,\n      \"mc_station\": 2598.31714043593,\n      \"pc_station_text\": \"24+05.27\",\n      \"pi_station_text\": \"26+00.00\",\n      \"pt_station_text\": \"27+91.37\",\n      \"mc_station_text\": \"25+98.32\",\n      \"pc\": [\n        2405.2668077979447,\n        1000.0\n      ],\n      \"pi\": [\n        2600.0,\n        1000.0\n      ],\n      \"pt\": [\n        2784.7401270181504,\n        1061.5800423393835\n      ],\n      \"center\": [\n        2405.2668077979447,\n        2200.0\n      ]\n    },\n    {\n      \"alignment\": \"SR-100\",\n      \"index\": 2,\n      \"ref\": \"C-2\",\n      \"direction\": \"R\",\n      \"radius\": 900.0,\n      \"delta_deg\": 18.434948822922024,\n      \"delta_dms\": \"18°26'06\\\"\",\n      \"tangent\": 146.0498941515415,\n      \"length\": 289.57549895697815,\n      \"external\": 11.773311509871087,\n      \"mid_ordinate\": 11.62128812625295,\n      \"chord\": 288.32803741254116,\n      \"degree_of_curve_deg\": 6.366197777777778,\n      \"degree_of_curve_dms\": \"6°21'58\\\"\",\n      \"direction_in_deg\": 18.43494882292201,\n      \"direction_out_deg\": 0.0,\n      \"azimuth_in_deg\": 71.56505117707799,\n      \"azimuth_out_deg\": 90.0,\n      \"bearing_in\": \"N 71°33'54\\\" E\",\n      \"bearing_out\": \"N 90°00'00\\\" E\",\n      \"chord_direction_deg\": 9.217474411460998,\n      \"chord_azimuth_deg\": 80.782525588539,\n      \"chord_bearing\": \"N 80°46'57\\\" E\",\n      \"pc_station\": 4031.7232168045084,\n      \"pi_station\": 4177.77311095605,\n      \"pt_station\": 4321.298715761486,\n      \"mc_station\": 4176.510966282997,\n      \"pc_station_text\": \"40+31.72\",\n      \"pi_station_text\": \"41+77.77\",\n      \"pt_station_text\": \"43+21.30\",\n      \"mc_station_text\": \"41+76.51\",\n      \"pc\": [\n        3961.4449047363873,\n        1453.8149682454623\n      ],\n      \"pi\": [\n        4100.0,\n        1500.0\n      ],\n      \"pt\": [\n        4246.049894151542,\n        1500.0\n      ],\n      \"center\": [\n        4246.049894151542,\n        599.9999999999999\n      ]\n    }\n  ],\n  \"placement\": {\n    \"reference\": \"DESIGN\",\n    \"rotation_deg\": 0.0,\n    \"scale\": 1.0,\n    \"offset\": [\n      0.0,\n      0.0\n    ],\n    \"note\": \"points are in host coordinates (where the reference draws them); stations, lengths, radii and bearings are as designed in the basefile\",\n    \"read_only\": true\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-81b590e615c230fc",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1900.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1900.0,\n    1000.0\n  ],\n  \"station\": 1900.0,\n  \"station_text\": \"19+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      19.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a3226b92903680d3",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2000.0,\n    1000.0\n  ],\n  \"on_point\": [\n    2000.0,\n    1000.0\n  ],\n  \"station\": 2000.0,\n  \"station_text\": \"20+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      21.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a13764c02f6253e8",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2100.0,\n    1000.0\n  ],\n  \"on_point\": [\n    2100.0,\n    1000.0\n  ],\n  \"station\": 2100.0,\n  \"station_text\": \"21+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      23.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b1790f5e084cf7c1",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 2200}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-9f59b229d45e5a5f",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 2300}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-9ac3424204aa9917",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 2400}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-b0c2eed7a00b0194",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 2500}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 10.5,
+   "reasoning": "The first curve (C-1) starts at 24+05.27, so stations 11+00 through 21+00 are all on a straight tangent line at y=1000. Let's check 22+00 through 25+00 (the viewport extends to x=2550).\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b1790f5e084cf7c1",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2200.0,\n    1000.0\n  ],\n  \"on_point\": [\n    2200.0,\n    1000.0\n  ],\n  \"station\": 2200.0,\n  \"station_text\": \"22+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      25.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-9f59b229d45e5a5f",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2300.0,\n    1000.0\n  ],\n  \"on_point\": [\n    2300.0,\n    1000.0\n  ],\n  \"station\": 2300.0,\n  \"station_text\": \"23+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      27.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-9ac3424204aa9917",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2400.0,\n    1000.0\n  ],\n  \"on_point\": [\n    2400.0,\n    1000.0\n  ],\n  \"station\": 2400.0,\n  \"station_text\": \"24+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      29.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b0c2eed7a00b0194",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2499.901631184595,\n    1003.7373824270117\n  ],\n  \"on_point\": [\n    2499.901631184595,\n    1003.7373824270117\n  ],\n  \"station\": 2500.0,\n  \"station_text\": \"25+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 4.5231767441495085,\n  \"azimuth_deg\": 85.47682325585049,\n  \"bearing\": \"N 85°28'37\\\" E\",\n  \"element_index\": 1,\n  \"element_kind\": \"curve\",\n  \"element_ref\": \"C-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      31.498033,\n      6.774748\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nThe centerline is straight along northing 1000 up through station 24+05.27, then a left curve. The viewport shows model x from 1000 to 2550. Let me verify the edge stations 10+00 and 26+00.\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-9b263ca534fb38a0",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 1000}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-ba94fc0f0258643b",
+     "type": "function",
+     "function": {
+      "name": "station_to_xy",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"sheet\": \"C-101\", \"station\": 2600}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 46.9,
+   "reasoning": "The viewport of C-101 shows model region x from 1000 to 2550. Centerline: starts from station 10+00 at (1100, 1000). So at station 1100, x = 1100, and at station 2500, the point is (2499.90, 1003.74).\n\nEven 100-foot stations displayed: 11+00 (x=1100, within the 1000-2550 range), 12+00 (1200), 13+00 (1300), 14+00 (1400), 15+00 (1500), 16+00 (1600), 17+00 (1700), 18+00 (1800), 19+00 (1900), 20+00 (2000), 21+00 (2100), 22+00 (2200), 23+00 (2300), 24+00 (2400), 25+00 (2499.9 — within the 2550 range). What about 26+00? Curve C-1: PC 2405.27, PT 2791.37, PI 2600. The x-coordinate at station 2600 is the PI's x = 2600, which is outside the 2550 range. Let's verify the on-sheet visibility of station 2600.\n\nWait — but I should also check the viewport's y range: 787.5 to 1712.5. The centerline at y=1000 is within that range. No problem.\n\nLet's check whether 26+00 is displayed. PC is 2405.27, curve center is (2405.27, 2200), left-turn radius 1200. At station 2600, the point on the centerline is the PI (2600, 1000)? No wait — PI 26+00 is at [2600, 1000]. The x-range of the viewport is 1000-2550, so the x=2600 point is outside. But wait, visible_model_bbox [1000, 787.5, 2550, 1712.5] is the model region the viewport displays. Station 26+00 is at x=2600 > 2550, so outside. Therefore 26+00 is not displayed.\n\nHmm, but let me double-check: is the curve between PC and PI? Curve C-1 is from PC 24+05.27 to PT 27+91.37, with PI 26+00 at (2600, 1000). Wait, that's strange — PC at (2405.27, 1000) and PT at (2784.74, 1061.58), PI at (2600, 1000)? The PI is at y=1000, same as PC. Hmm, this is the intersection of the tangents: incoming azimuth 90° (east), outgoing azimuth 71.57°. The PI is at the intersection of the tangents, so it can be at (2600, 1000). No problem.\n\nSo the stations displayed on C-101: 11+00 through 25+00, 15 callouts total. But wait — I need to double-check whether 25+00 is really within the viewport: sheet_point [31.498, 6.775] is visible: true. The viewport spans x from 0.5 to 32.5 on paper (center 17, width 31 → 17±15.5). 31.5 < 32.5, so visible. Good.\n\nAlso, what about stations before 11+00 — like 10+00? 10+00 is at (1100, 1000)... wait, no. The start station 10+00.00 is at x=1100? station_to_xy returned point [1100, 1000] for station 1100. So at station 10+00, x = 1000. Interesting: station = x coordinate, y = 1000 on the tangent. So 10+00 is at x=1000, exactly at the viewport's left edge. Is it displayed? \"All even 100-foot stations of SR-100 that the sheet displays (11+00, 12+00, etc., as far as the display extends)\" — the task says even 100-foot stations starting from 11+00. Hmm, \"even 100-foot station\" — in roadway stationing, \"even 100-foot stations\" typically means 11+00, 12+00, …, i.e., round 100-foot stations. The task explicitly says \"(11+00, 12+00, etc., as far as the display extends)\", so it's 11+00 through 25+00.\n\nBut wait, is 10+00 \"even\"? 10+00 is also an even 100-foot station (station 1000, divisible by 100... \"even\" here probably means integer 100-foot marks: 1100, 1200, etc. are all integer 100-foot marks). The task explicitly starts from 11+00 and says \"as far as the display extends.\" Hmm, but 10+00 is at the very edge of the viewport (x=1000 is the left edge of visible_model_bbox). Let me check with station_to_xy whether 10+00 is displayed.\n\nActually, the phrasing \"all even 100-foot stations of SR-100 that the sheet displays (11+00, 12+00, etc., as far as the display extends)\" — the example starts from 11+00, suggesting 11+00 is the first one the sheet displays. Let me check 10+00. If it's exactly at the viewport edge (x=1000 = left edge of visible bbox), the point itself might be on the boundary. The task example strongly suggests starting from 11+00. Let me verify 10+00's visibility, and if it's displayed, I may include it — but the task example \"(11+00, 12+00, etc.)\" suggests 11+00 is the first. Let me check.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-9b263ca534fb38a0",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    1000.0,\n    1000.0\n  ],\n  \"on_point\": [\n    1000.0,\n    1000.0\n  ],\n  \"station\": 1000.0,\n  \"station_text\": \"10+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 0.0,\n  \"azimuth_deg\": 90.0,\n  \"bearing\": \"N 90°00'00\\\" E\",\n  \"element_index\": 0,\n  \"element_kind\": \"tangent\",\n  \"element_ref\": \"T-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      1.5,\n      6.7\n    ],\n    \"visible\": true,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0\n  }\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-ba94fc0f0258643b",
+   "name": "station_to_xy",
+   "content": "{\n  \"ok\": true,\n  \"name\": \"station_to_xy\",\n  \"alignment\": \"SR-100\",\n  \"point\": [\n    2599.1464394143754,\n    1015.765779736003\n  ],\n  \"on_point\": [\n    2599.1464394143754,\n    1015.765779736003\n  ],\n  \"station\": 2600.0,\n  \"station_text\": \"26+00.00\",\n  \"region\": 1,\n  \"offset\": 0.0,\n  \"direction_deg\": 9.297825036906369,\n  \"azimuth_deg\": 80.70217496309363,\n  \"bearing\": \"N 80°42'08\\\" E\",\n  \"element_index\": 1,\n  \"element_kind\": \"curve\",\n  \"element_ref\": \"C-1\",\n  \"on_sheet\": {\n    \"sheet\": \"C-101\",\n    \"viewport\": \"VP-001\",\n    \"sheet_point\": [\n      33.482929,\n      7.015316\n    ],\n    \"visible\": false,\n    \"feet_per_inch\": 50.0,\n    \"rotation_deg\": 0.0,\n    \"note\": \"no viewport of C-101 shows this point; sheet_point is where VP-001 would put it, outside its window. viewports: VP-001 shows x 1000..2550, y 788..1712\"\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-af2efecb70a886f5",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"space\": \"C-101\", \"alignment\": \"DESIGN:SR-100\", \"target_anchor\": \"11+00\", \"position\": [3.8, 7.6], \"content\": \"11+00\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 64.2,
+   "reasoning": "Confirmed:\n- 10+00 through 25+00 are all shown in C-101 (25+00 is at sheet x=31.498, within the viewport range x 0.5..33.5... let me verify: viewport range x 1000..2550, y 788..1712. The sheet_point for 25+00 is (31.498, 6.775), and the viewport window in paper space spans x from 17-15.5=1.5 to 17+15.5=32.5, y from 11.7-9.25=2.45 to 11.7+9.25=20.95. So (31.498, 6.775) is inside. Good.\n- 26+00 is not shown (x=33.48 > 32.5). So the stations to call out are: 11+00, 12+00, 13+00, 14+00, 15+00, 16+00, 17+00, 18+00, 19+00, 20+00, 21+00, 22+00, 23+00, 24+00, 25+00.\n\n15 callouts.\n\nNext, place each one with place_callout, space=\"C-101\", target_anchor=\"11+00\" etc. (station anchor), alignment \"DESIGN:SR-100\", and position is the text location. The tip goes to the centerline at that station.\n\nText position: leader is at centerline, text is on the upper side (above the line, away from the geometry). On the sheet, the line is at paper y=6.7. Place text above the line. Each station is 2 inches apart in the x direction. Text like \"11+00\" is roughly 0.5 inch wide at height 0.10 (default sheet text height 0.10 inch). If I place text centered on the station's x, they'll fit neatly in 2-inch spacing.\n\nHowever, per place_callout's position semantics: \"Text is read away from the target: if the target is on the left, text starts here and extends to the right (left-justified); if the target is on the right, text ends here (right-justified). Vertically it is centered on this point, and the landing runs from here back toward the target.\"\n\nHmm, this is for cases where the target is to the left/right of the text. When the target is above or below (our case: text is above the line, target is directly below), \"the target is on the right/left\" doesn't directly apply. Vertical relationship: text is above the target. In that case which way is the text justified? The description only distinguishes left and right. If the target is directly below, it's ambiguous. Safer approach: use halign center? place_callout doesn't have an halign parameter... let me re-check the schema.\n\nplace_callout parameters: space, position, content, and optional: alignment, arrow, arrow_size, at, color, height, landing, layer, linetype, style, target, target_anchor, viewport. No halign. So justification is derived: target left → left-justified, target right → right-justified. Directly below/above, which does it pick? Unclear.\n\nTo avoid the ambiguity of centering, I can offset the text position slightly to the right of the station point so that the target is on the left → text starts at the position and extends right. For example, place text at station_x + 0.25 (in inches). Leader goes from there back to the tip on the line. With a 2-inch spacing, a left-justified text \"11+00\" at station_x + 0.25 extends right to about station_x + 0.75, well within the 2-inch spacing.\n\nWait, actually: leader from position to target; if the target is at the lower-left of the text start, the leader will slant. That's fine.\n\nAs an alternative, put the text directly above the station point, at (station_x, 7.5). In that case the target is directly below; the engine probably picks one or the other. A centered leader might be cleaner, but the justification could end up left or right. Either way, the callout is legible. I'll go with a slight right offset, e.g. +0.15 inch, so that the text extends to the right of the target, and the landing is short.\n\nHmm wait, \"the landing runs from here back toward the target\" — the landing is a horizontal shoulder at the text position, running from the position back toward the target. If the target is on the left, text starts at the position and runs to the right, and the landing runs left from the position toward the target. That's the classic callout shape.\n\nLet me set the text at (station_x_sheet + 0.30, 7.6). Station sheet x's: 11+00→3.5, 12+00→5.5, ..., 24+00→29.5, 25+00→31.498. So text positions: 3.8..31.8, y 7.6. 25+00 at 31.8: text \"25+00\" at height 0.10 is about 0.55 inch wide, extending to about 32.35. Viewport right edge is 32.5, and the usable sheet area goes to 33.5. The text slightly overlaps the viewport window edge... 31.8+0.55=32.35 < 32.5 so it's inside the viewport. OK, no problem — the text is paper-space entity; visually it just sits on the viewport edge. Actually, the text is on the paper (paper space), and the viewport is just a window; if the text overlaps the viewport frame, it could cover the line drawing. At y=7.6, the text is well above the line (y=6.7) and above the EOP line (EOP is at offset ±15 ft → 0.3 inch → y 6.4 to 7.0). The rd_ES shoulder is at ±21 → y 6.28 to 7.12. So a text baseline at y≈7.55 (vertically centered on 7.6) is just above the shoulder lines. No problem.\n\nShould I set y=7.8 to be a bit safer? The top of the text is 7.6+0.05=7.65; shoulder line top is at 7.12. Plenty of clearance. y=7.6 is fine.\n\nHeight: default 0.10 inch on the sheet. Use the default (omit height).\n\nNow, should the content read exactly the station? \"11+00\" etc. Task: \"text should show the station\". Station text from the design: \"11+00.00\". Call it out in \"11+00\" format (the standard for plans). Use e.g. \"11+00\". Or \"STA 11+00\"? Task says \"text should show the station\" — just the station number is enough. Use \"11+00\".\n\nFor the alignment parameter, list_alignments showed name \"DESIGN:SR-100\" (reference prefix). place_callout's alignment description says \"referenced ones as 'BASE:RTE-7'\". So I should pass \"DESIGN:SR-100\".\n\ntarget_anchor: \"11+00\" station string. place_callout's target_anchor: \"'87+41.62@19.75L', 'PC-2', {station, offset}\". So \"11+00\" works.\n\nLayer: the callout goes on the current layer \"0\" unless specified. The sheet has a standard template; layer \"0\" is fine. There's also an \"rd_LAYOUT-NOTE-anno\" layer for layout notes, but... that's for the base file's layout notes. Use the default layer (0) — or create something? Keep it simple: layer \"0\". Hmm, this document has layers \"0\", \"align_MAIN\", \"rd_EP\", \"rd_ES\", \"rd_LAYOUT-NOTE-anno\" (mirroring the base file). \"0\" is fine.\n\nViewport: default is \"the first one that shows it\" — VP-001. Fine.\n\nOK, place 15 callouts. All independent → can batch in parallel blocks. Let me do 5 per block.\n\nCallout 1: position [3.80, 7.60], target_anchor \"11+00\".\n2: [5.80, 7.60] \"12+00\"\n3: [7.80, 7.60] \"13+00\"\n4: [9.80, 7.60] \"14+00\"\n5: [11.80, 7.60] \"15+00\"\n6: [13.80, 7.60] \"16+00\"\n7: [15.80, 7.60] \"17+00\"\n8: [17.80, 7.60] \"18+00\"\n9: [19.80, 7.60] \"19+00\"\n10: [21.80, 7.60] \"20+00\"\n11: [23.80, 7.60] \"21+00\"\n12: [25.80, 7.60] \"22+00\"\n13: [27.80, 7.60] \"23+00\"\n14: [29.80, 7.60] \"24+00\"\n15: 25+00 at station point x=31.498; use +0.30 → [31.798, 7.60], or [31.80, 7.60]. \"25+00\".\n\nLet me do the first callout as a test to confirm the engine accepts the reference alignment + station anchor, and check the geometry (landing, arrow tip position) before batch-processing the rest. Actually, to be efficient: run the first one, verify, then do the remaining 14 in parallel.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-af2efecb70a886f5",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-001 ('11+00') placed in sheet C-101, pointing at DESIGN:SR-100 11+00.00 through VP-001\",\n  \"created\": [\n    \"LN-001\",\n    \"LN-002\",\n    \"PL-001\",\n    \"TX-001\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nThe first callout placed cleanly. The centerline is a straight run at model y=1000 for stations 11+00–24+00, then curves; stations 11+00 through 25+00 are visible, 26+00 is outside the viewport. Placing the remaining 14 callouts:\n\n\n\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-a9048482ff46dd1e",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"12+00\", \"position\": [5.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"12+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-ace9d618620a0505",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"13+00\", \"position\": [7.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"13+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-823c5f6d1b15e472",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"14+00\", \"position\": [9.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"14+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-92d3b2c679d3ba05",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"15+00\", \"position\": [11.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"15+00\"}"
+     }
+    }
+   ],
+   "finish_reason": "call_cap",
+   "seconds": 39.5,
+   "reasoning": "The first callout worked. Now let's place the rest: 12+00 through 25+00. Station → paper coordinate mapping (tip = sheet_point):\n\n- 11+00 → tip (3.5, 6.7), text (3.8, 7.6) ✓ Done\n- 12+00 → tip (5.5, 6.7), text (5.8, 7.6)\n- 13+00 → tip (7.5, 6.7), text (7.8, 7.6)\n- 14+00 → tip (9.5, 6.7), text (9.8, 7.6)\n- 15+00 → tip (11.5, 6.7), text (11.8, 7.6)\n- 16+00 → tip (13.5, 6.7), text (13.8, 7.6)\n- 17+00 → tip (15.5, 6.7), text (15.8, 7.6)\n- 18+00 → tip (17.5, 6.7), text (17.8, 7.6)\n- 19+00 → tip (19.5, 6.7), text (19.8, 7.6)\n- 20+00 → tip (21.5, 6.7), text (21.8, 7.6)\n- 21+00 → tip (23.5, 6.7), text (23.8, 7.6)\n- 22+00 → tip (25.5, 6.7), text (25.8, 7.6)\n- 23+00 → tip (27.5, 6.7), text (27.8, 7.6)\n- 24+00 → tip (29.5, 6.7), text (29.8, 7.6)\n- 25+00 → tip (31.498, 6.775), text (31.8, 7.67)\n\nWait — about text placement: the text reads away from the target. Since the target is below (the centerline is at paper y=6.7 and the text is at y=7.6, which is above), the text is above the target. Vertically the text is centered on the specified point. \"When the target is on the left, the text starts from here and extends to the right (left-aligned); when it's on the right, the text ends here (right-aligned).\"\n\nFor the 11+00 callout, the target tip is at (3.5, 6.7) and the text position was (3.8, 7.6). The target is to the left of the text position (3.5 < 3.8), so the text extends to the right from 3.8. \"11+00\" at 0.10 inches text height — the text width is about 5 chars × 0.067 ≈ 0.34 inches. So the text spans from 3.8 to about 4.14. No problem, doesn't overlap with the next text at 5.8.\n\nActually, wait, does the target being on the left even matter? The tip is at (3.5, 6.7), the text at (3.8, 7.6): the target is slightly to the left, so the text is left-aligned at 3.8 and extends to the right. The landing line goes from the text back to the target. Good.\n\nEach subsequent text is 2 inches apart horizontally (200 ft / 50 fpi), and each text is about 0.35 inches wide, so there's no overlap. Good.\n\nFor 25+00, the tip is at (31.498, 6.775) and the text at (31.8, 7.67). The text extends to the right from 31.8: \"25+00\" spans about 31.8–32.15. The viewport window ends at x=32.5, and the usable area ends at 33.5. No problem.\n\nSo, let's place the remaining 14 callouts. Since they're all independent, they can be executed in parallel in a single block.\n",
+   "usage_estimated": true
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a9048482ff46dd1e",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 2,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-002 ('12+00') placed in sheet C-101, pointing at DESIGN:SR-100 12+00.00 through VP-001\",\n  \"created\": [\n    \"LN-003\",\n    \"LN-004\",\n    \"PL-002\",\n    \"TX-002\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-ace9d618620a0505",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 3,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-003 ('13+00') placed in sheet C-101, pointing at DESIGN:SR-100 13+00.00 through VP-001\",\n  \"created\": [\n    \"LN-005\",\n    \"LN-006\",\n    \"PL-003\",\n    \"TX-003\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-823c5f6d1b15e472",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 4,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-004 ('14+00') placed in sheet C-101, pointing at DESIGN:SR-100 14+00.00 through VP-001\",\n  \"created\": [\n    \"LN-007\",\n    \"LN-008\",\n    \"PL-004\",\n    \"TX-004\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-92d3b2c679d3ba05",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 5,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-005 ('15+00') placed in sheet C-101, pointing at DESIGN:SR-100 15+00.00 through VP-001\",\n  \"created\": [\n    \"LN-009\",\n    \"LN-010\",\n    \"PL-005\",\n    \"TX-005\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nAll clean so far. Continuing with stations 16+00 through 20+00:\n\n\n\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-a1d7b94ad81b6236",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"16+00\", \"position\": [13.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"16+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-8996b9e82e0140e1",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"17+00\", \"position\": [15.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"17+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-8daa0034aa61e7f9",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"18+00\", \"position\": [17.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"18+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-8a4b775bb5716f82",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"19+00\", \"position\": [19.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"19+00\"}"
+     }
+    }
+   ],
+   "finish_reason": "call_cap",
+   "seconds": 28.1,
+   "reasoning": "All placed without issues. Continuing with stations 16+00 through 25+00 (text positions are the x-coordinate of sheet_point + 0.3, y-coordinate is 7.6):\n- 16+00: tip (13.5, 6.7) → text (13.8, 7.6)\n- 17+00: tip (15.5, 6.7) → text (15.8, 7.6)\n- 18+00: tip (17.5, 6.7) → text (17.8, 7.6)\n- 19+00: tip (19.5, 6.7) → text (19.8, 7.6)\n- 20+00: tip (21.5, 6.7) → text (21.8, 7.6)\n- 21+00: tip (23.5, 6.7) → text (23.8, 7.6)\n- 22+00: tip (25.5, 6.7) → text (25.8, 7.6)\n- 23+00: tip (27.5, 6.7) → text (27.8, 7.6)\n- 24+00: tip (29.5, 6.7) → text (29.8, 7.6)\n- 25+00: tip (31.498, 6.775) → text (31.8, 7.65)\n\nWait — the 24+00 text at (29.8, 7.6), and the 25+00 text at (31.8, 7.65), the text is right-justified and... hmm, actually I need to be careful: the rule for text placement: \"If the target is on the right side, the text ends at this position (right-justified).\" The target is on the left (tip is to the left of the text position), so the text starts from this position and extends to the right (left-justified). That means \"24+00\" starting at 29.8 extends rightward by about 0.5 inches, ending around 30.3. And \"25+00\" starting at 31.8. Gap between them is no problem. Good.\n",
+   "usage_estimated": true
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-a1d7b94ad81b6236",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 6,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-006 ('16+00') placed in sheet C-101, pointing at DESIGN:SR-100 16+00.00 through VP-001\",\n  \"created\": [\n    \"LN-011\",\n    \"LN-012\",\n    \"PL-006\",\n    \"TX-006\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8996b9e82e0140e1",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 7,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-007 ('17+00') placed in sheet C-101, pointing at DESIGN:SR-100 17+00.00 through VP-001\",\n  \"created\": [\n    \"LN-013\",\n    \"LN-014\",\n    \"PL-007\",\n    \"TX-007\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8daa0034aa61e7f9",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 8,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-008 ('18+00') placed in sheet C-101, pointing at DESIGN:SR-100 18+00.00 through VP-001\",\n  \"created\": [\n    \"LN-015\",\n    \"LN-016\",\n    \"PL-008\",\n    \"TX-008\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8a4b775bb5716f82",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 9,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-009 ('19+00') placed in sheet C-101, pointing at DESIGN:SR-100 19+00.00 through VP-001\",\n  \"created\": [\n    \"LN-017\",\n    \"LN-018\",\n    \"PL-009\",\n    \"TX-009\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nLast group — 20+00 through 25+00 (25+00 sits on the curve):\n\n\n\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-950912280d307cf5",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"20+00\", \"position\": [21.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"20+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-b9a488bbacec2f20",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"21+00\", \"position\": [23.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"21+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-9032ef8901109e78",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"22+00\", \"position\": [25.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"22+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-af7eecf2b3afc8f9",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"23+00\", \"position\": [27.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"23+00\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 14.8,
+   "reasoning": "Next up is the final group, 20+00 through 25+00 (25+00 is on the curve at paper coordinates [31.498, 6.775]). For 25+00, I'll place the text at [31.5, 7.6].\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-950912280d307cf5",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 10,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-010 ('20+00') placed in sheet C-101, pointing at DESIGN:SR-100 20+00.00 through VP-001\",\n  \"created\": [\n    \"LN-019\",\n    \"LN-020\",\n    \"PL-010\",\n    \"TX-010\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b9a488bbacec2f20",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 11,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-011 ('21+00') placed in sheet C-101, pointing at DESIGN:SR-100 21+00.00 through VP-001\",\n  \"created\": [\n    \"LN-021\",\n    \"LN-022\",\n    \"PL-011\",\n    \"TX-011\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-9032ef8901109e78",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 12,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-012 ('22+00') placed in sheet C-101, pointing at DESIGN:SR-100 22+00.00 through VP-001\",\n  \"created\": [\n    \"LN-023\",\n    \"LN-024\",\n    \"PL-012\",\n    \"TX-012\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-af7eecf2b3afc8f9",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 13,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-013 ('23+00') placed in sheet C-101, pointing at DESIGN:SR-100 23+00.00 through VP-001\",\n  \"created\": [\n    \"LN-025\",\n    \"LN-026\",\n    \"PL-013\",\n    \"TX-013\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-af59418954efc12b",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"24+00\", \"position\": [29.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"24+00\"}"
+     }
+    },
+    {
+     "id": "chatcmpl-tool-8e4b84d92e64f375",
+     "type": "function",
+     "function": {
+      "name": "place_callout",
+      "arguments": "{\"alignment\": \"DESIGN:SR-100\", \"content\": \"25+00\", \"position\": [31.8, 7.6], \"space\": \"C-101\", \"target_anchor\": \"25+00\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 12.6,
+   "reasoning": "Next, the last two: 24+00 and 25+00. Since 25+00 is on the curve (model point ~[2499.9, 1003.7], on sheet [31.50, 6.77]), its text position [31.8, 7.6] might collide with the 24+00 text at [29.8, 7.6]. The text \"24+00\" is about 0.6 inches wide (0.10 inch height × ~6 characters ≈ 0.45–0.5 inch). 24+00 is at 29.8, with right-alignment it extends leftward to ~29.3. 25+00 is at 31.8 and extends rightward to ~32.3. The sheet's usable width goes up to 33.5. OK, no collision.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-af59418954efc12b",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 14,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-014 ('24+00') placed in sheet C-101, pointing at DESIGN:SR-100 24+00.00 through VP-001\",\n  \"created\": [\n    \"LN-027\",\n    \"LN-028\",\n    \"PL-014\",\n    \"TX-014\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8e4b84d92e64f375",
+   "name": "place_callout",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 15,\n  \"name\": \"place_callout\",\n  \"message\": \"callout TX-015 ('25+00') placed in sheet C-101, pointing at DESIGN:SR-100 25+00.00 through VP-001\",\n  \"created\": [\n    \"LN-029\",\n    \"LN-030\",\n    \"PL-015\",\n    \"TX-015\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "\n\nAll 15 callouts placed without warnings. Let me render the sheet to verify.\n\n",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-8799e7ec0193637a",
+     "type": "function",
+     "function": {
+      "name": "render_sheet",
+      "arguments": "{\"sheet\": \"C-101\", \"dpi\": 120, \"include_base64\": true}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 5.0,
+   "reasoning": "All 15 callouts (from 11+00 to 25+00) have been placed. Let's render the sheet to check the results.\n"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-8799e7ec0193637a",
+   "name": "render_sheet",
+   "content": "{\"ok\": true, \"name\": \"render_sheet\", \"path\": \"/Volumes/RobertsExternalSSD/repos/CAD Testing/benchmarks/probe_runs/2026-10-17-k3/runs/qwen3.8-27b-bf16-vllm-r2/station-callouts/renders/C-101.png\", \"size_bytes\": 93001, \"base64\": \"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\n[output truncated: the first 30000 of 124233 characters are shown]\n[image content omitted: this run is text-only -- the text above carries the file path]"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "finish_reason": null,
+   "seconds": 1.9,
+   "usage_estimated": true
+  }
+ ]
+}

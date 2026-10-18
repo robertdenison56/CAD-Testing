@@ -1,0 +1,53 @@
+
+
+Model extents confirm everything is consistent: [990.69, 2869.09] to [2993.18, 3319.75] — the render bounds were just the renderer's own padding. All checks pass; the task is complete.
+
+## Report
+
+### 1. What was created and drawn
+
+**Alignment `ELM-AVE`** (design model, begin station 10+00.00), 5 elements, 10+00.00 → 30+80.16, 2,080.16 ft:
+| Element | Stations | Bearing / Δ | Length |
+|---|---|---|---|
+| T-1 | 10+00.00 → 16+18.01 | S 80°00'00" E | 618.01 ft |
+| C-1 (L, R=500) | 16+18.01 → 19+67.08 | Δ40°00'00", T=181.99 | 349.07 ft |
+| T-2 | 19+67.08 → 23+29.91 | N 60°00'00" E | 362.83 ft |
+| C-2 (R, R=700) | 23+29.91 → 26+35.34 | Δ25°00'00", T=155.19 | 305.43 ft |
+| T-3 | 26+35.34 → 30+80.16 | N 85°00'00" E | 444.81 ft |
+
+Key coordinates (engine-verified, match my hand traverse):
+- BEGIN 10+00 = **N 3000.00, E 1000.00** = [1000.00, 3000.00]
+- PI-1 (Δ40 L, R=500) = [1787.85, 2861.08]; PC-1 = [1608.63, 2892.68]; EC-1 = [1945.45, 2952.07]; C-1 center [1695.45, 3385.09]
+- PI-2 (Δ25 R, R=700) = [2394.06, 3211.08]; PC-2 = [2259.67, 3133.49]; EC-2 = [2548.66, 3224.61]; C-2 center [2609.67, 2527.27]
+- END 30+80.16 = [2991.78, 3263.37]
+
+**Drawn entities** (all design-anchored):
+- Centerline on **align_MAIN**: LN-001…LN-003 (tangents) + AR-001 (R=500, 260°→300°), AR-002 (R=700, 95°→120°)
+- Pavement edges ±11 ft on **rd_EP** (2×11 ft lanes = 22 ft): LN-004…LN-009 + AR-003 (R=489), AR-004 (R=711), AR-005/AR-006 (R=716, 684)
+- Shoulder edges ±16 ft on **rd_ES** (+5 ft shoulders = 32 ft outside): LN-010…LN-015 + AR-007…AR-010 (R=484, 716, 721, 684)
+- Stationing: 21 ticks at 100 ft on align_MAIN (10+00…30+00), Caltrans lettering (full station at 500-ft marks, ones digit elsewhere), 4 BC/EC labels (16+18.01 BC, 19+67.08 EC, 23+29.91 BC, 26+35.34 EC), tick marks + labels on **rd_LAYOUT-NOTE-anno** (LN-016…LN-036, TX-001…TX-025).
+
+### 2. Tool calls that mattered, in order
+1. `get_document_state` — confirmed layers `align_MAIN`, `rd_EP`, `rd_ES` pre-existed, model empty
+2. `set_meta` — project name ELM-AVE; `set_current_layer` — align_MAIN
+3. `create_alignment` — name ELM-AVE, begin_station "10+00", start [1000, 3000], legs: `[{bearing "S 80°00'00\" E", distance 800}, {deflection "40 L", radius 500, distance 700}, {deflection "25 R", radius 700, distance 600}]`
+4. `draw_alignment` — ELM-AVE → align_MAIN
+5. `draw_offset` — offsets [-11, 11] → rd_EP
+6. `draw_offset` — offsets [-16, 16] → rd_ES
+7. `annotate_stationing` — alignment ELM-AVE, interval 100, layer align_MAIN, label_layer rd_LAYOUT-NOTE-anno
+8. Verification: `get_design_data` (curves, tangents), `get_entity` (AR-001/002/003/004, LN-004/007, TX-001), `get_extents`, `render_model`
+
+### 3. Failures / workarounds
+- **No tool errors at all** — every call returned ok.
+- **Interpretation note:** the legs are PI-to-PI tangents, the standard alignment-leg convention. So the "600 ft to its end" leg runs from PI-2 to END along the final tangent, meaning the drawn final tangent is 600 − T₂ = 600 − 155.19 = **444.81 ft** (total 2,080.16 ft, ending 30+80.16). Had "600 ft from EC-2 to END" been intended, the total would be 2,235.34 ft. The engine's PI coordinates exactly match my hand traverse under the PI-to-PI reading (see arithmetic below).
+- **Minor confusion:** `render_model` reported bounds ~100 ft larger than `get_extents` — it was the renderer's padding, not stray geometry.
+- **Cosmetic:** `get_entity` on AR-002 reports `turn: "left"` (its CCW math-angle convention, 95°→120°) while design data reports direction R — same geometry, right deflection = decreasing azimuth = CCW arc.
+
+Hand arithmetic used for cross-checking (engine returned the same values):
+- T = R·tan(Δ/2): C-1 = 500·tan20° = 500×0.363970 = **181.99 ft**; C-2 = 700·tan12.5° = 700×0.221695 = **155.19 ft**
+- L = R·Δ: C-1 = 500×(40°×π/180) = 500×0.698132 = **349.07 ft**; C-2 = 700×0.436332 = **305.43 ft**
+- PI-1 = BEGIN + 800×(sin80°, −cos80°) = (1000+787.85, 3000−138.89) = **(1787.85, 2861.11)**
+- PI-2 = PI-1 + 700×(sin60°, cos60°) = (1787.85+606.22, 2861.08+350.00) = **(2394.06, 3211.08)**
+- END = PI-2 + 600×(sin85°, cos85°) = (2394.06+597.72, 3211.08+52.29) = **(2991.78, 3263.37)**
+- T-1 = 800−181.99 = 618.01; T-2 = 700−181.99−155.19 = 362.83; T-3 = 600−155.19 = 444.81; total = 2,080.16 ft ✓
+- Offset spot-checks: left T-1 start = (1000+11cos80°, 3000+11sin80°) = (1001.91, 3010.83) ✓; C-1 left edge R = 500−11 = 489, C-2 left edge R = 700+11 = 711 (offsets shrink radius into a left turn, grow it out of a right turn) ✓

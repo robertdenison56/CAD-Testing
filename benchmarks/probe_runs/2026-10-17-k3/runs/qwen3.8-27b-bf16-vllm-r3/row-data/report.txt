@@ -1,0 +1,47 @@
+
+
+All verified — the sheet contains exactly the 9 entities placed, with tags rotated to their segment directions and positioned beside the geometry. Task complete.
+
+---
+
+## Report
+
+### 1. What was placed, where, and what it points at
+
+All annotation is in **sheet space C-102** (paper inches), on new layer **RD_ROW-ANNO**, pointing at the right-hand right-of-way line of SR-100 (layer `rd_RIGHT-OF-WAY` in referenced basefile `DESIGN`, viewport VP-002, 1"=50'). The right ROW chain is LN-019 → AR-013 → LN-020 → LN-021 → LN-022 → LN-023 → LN-024 → AR-014 → LN-025 (confirmed right-of-stationing: LN-020's start sits exactly 50 ft right of the centerline's 27+91.37 PI, i.e. offset +50 on the alignment). Of the 9 pieces, 7 are shown on C-102 and are tagged in order along the line:
+
+| Tag | Segment | Tag position (paper in) | Segment geometry |
+|---|---|---|---|
+| C1 | AR-013 (R 1250') | (4.02, 6.37) | Δ 18°26'06" L, L 402.19' |
+| L1 | LN-020 | (8.47, 7.71) | N 71°33'54" E, 208.63' |
+| L2 | LN-021 | (10.63, 8.04) | S 18°26'06" E, 30.00' |
+| L3 | LN-022 | (16.33, 9.70) | N 71°33'54" E, 600.00' |
+| L4 | LN-023 | (22.02, 11.84) | N 18°26'06" W, 30.00' |
+| L5 | LN-024 | (25.93, 13.53) | N 71°33'54" E, 431.72' |
+| C2 | AR-014 (R 850') | (31.24, 15.25) | Δ 18°26'06" L, L 273.49' |
+
+Plus two tables, lower-left clear of the viewport:
+- **LINE TABLE (TB-003)** at (3.0, 5.5): LINE / BEARING / LENGTH for L1–L5.
+- **CURVE TABLE (TB-004)** at (3.0, 4.02): CURVE / RADIUS / DELTA / LENGTH for C1, C2 (engine also carried TANGENT, CHORD BRG, CHORD).
+
+The two ROW lines outside this sheet (LN-019 on C-101, LN-025 on C-103) were intentionally **not** tagged — the task covers only pieces the sheet shows, and C-101/C-103 are separate lettering sheets. All table values are the segments' full geometry (each segment is fully visible on this sheet, so drawn = full length).
+
+### 2. Tool calls that mattered, in order
+
+1. `get_document_state` + `list_sheets` + `list_references` + `get_model_state{include_references:true}` — found the design in basefile `DESIGN` and its 14 `rd_RIGHT-OF-WAY` entities; split them into left/right ROW chains.
+2. `get_sheet_state{sheet:'C-102'}` — viewport VP-002 (center paper (17, 11.7), 31×18.5", model center (3325, 1250), 50 f/i).
+3. `find_entities{layer:'rd_RIGHT-OF-WAY', visible_on:'C-102'}` — 10 ROW pieces visible; identified the 7 right-side ones.
+4. `list_alignments{include_references:true}` — referenced alignment `DESIGN:SR-100`.
+5. `get_entity` on DESIGN:LN-019/020/021/022/023/025 and AR-013/014 — full bearings, lengths, R, Δ for each piece.
+6. `create_layer{name:'RD_ROW-ANNO'}`.
+7. `label_segments{ids:[LN-019, AR-013, LN-020…LN-025], style:'tags', space:'C-102', table:{position:[3.0,5.5]}, layer:'RD_ROW-ANNO'}` — first pass, auto-numbered by draw order (wrong).
+8. `delete_entities{ids:[TX-001…TX-007, TB-001, TB-002]}` — removed the wrong pass.
+9. `label_segments{…same…, order_along:'DESIGN:SR-100'}` — re-lettered in station order → tags C1, L1, L2, L3, L4, L5, C2 + LINE TABLE TB-003 + CURVE TABLE TB-004.
+10. `find_entities{space:'C-102', type:'text'}` + `get_entity{TB-003, TB-004}` + `render_sheet{sheet:'C-102'}` — verified tag contents/positions and table rows.
+
+### 3. Failures, confusion, workarounds
+
+- **Numbering order**: the first `label_segments` call numbered by entity draw order (L1–L5, C1, C2 with L1 on LN-020… wait, actually it labeled the first five visible *lines* L1–L5 and the two curves C1/C2, so the L-numbers happened to coincide but only by luck and the tool's message claimed 5 lines + 2 curves generically). I deleted it and re-ran with `order_along:'DESIGN:SR-100'` so numbering strictly follows stationing order as required.
+- **Warning (both label_segments calls)**: `"no viewport of C-102 shows DESIGN:LN-019, DESIGN:LN-025; those segments were not labelled"` — expected and intended; those off-sheet ROW lines belong to adjacent sheets C-101/C-103.
+- **Minor**: the CURVE TABLE's auto-added columns (TANGENT, CHORD BRG, CHORD) exceed the minimal columns requested, but they are standard ROW-map content and don't hurt; the required tag/RADIUS/DELTA/LENGTH are all present.
+- Render images were returned as text-only in this run, so final verification was done from `get_sheet_state`/`get_entity` data (tag positions checked against model→sheet geometry: each tag sits ~3–5 ft beside its own segment, not on a neighbor).

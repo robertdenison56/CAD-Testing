@@ -1,0 +1,171 @@
+{
+ "meta": {
+  "backend": "openai",
+  "model": "google/gemma-4-26B-A4B-it",
+  "probe": "draft-roadway",
+  "stop": "answered",
+  "turns": 6,
+  "seconds": 66.9,
+  "tokens": {
+   "input_tokens": 208822,
+   "output_tokens": 3547,
+   "reasoning_tokens": 2684
+  },
+  "cost_usd": null,
+  "max_turns": 120,
+  "budget_s": 1800.0,
+  "vision": false,
+  "effort": null,
+  "pins": {
+   "roaddraft": "0.1.0",
+   "commit": "e7178a2ff7a74ddabd04f54658c757ec2af69fc7",
+   "dirty": [],
+   "tools_sha256": "sha256:60eeeb2195be36433798af9a64b744d17e3110d5b83dce68874e846fbf7cfad4",
+   "instructions_sha256": "sha256:4dff2849f3c5a5c42f834f8821cab06c105d99580bcdaca2eeaef72817db0077"
+  },
+  "truncated_results": 0,
+  "reloads": 0,
+  "base_url": "https://api.runpod.ai/v2/lnljvntj92giid/openai/v1",
+  "cut_turns": 0,
+  "usage_estimated_turns": 0,
+  "type_lists_rewritten": false,
+  "extra_body": {
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "top_k": 64,
+   "chat_template_kwargs": {
+    "enable_thinking": true
+   }
+  }
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "RoadDraft is a headless 2D CAD engine for roadway plans. Model space is US survey feet, and a point is [x, y] = [easting, northing] -- the other way round from how coordinates are usually spoken, so N 7300, E 4100 is [4100, 7300]. Sheets are paper inches seen through viewports at a feet-per-inch scale. Work through the commands: each one validates its params and explains what was wrong, every change is journaled and undoable. Start with get_document_state to see what is in the document, list_commands for the full surface, and render_sheet or render_model to look at your work.\n\nTo annotate something, find it before you point at it. In a sheet file the design usually lives in a referenced basefile, so the document owns no geometry of its own; find_entities searches the attachments too. Filter by what a thing IS -- layer, type, or its design anchor -- rather than dumping the document: find_entities {anchor: {kind: 'offset', offset: [-15, 15]}, visible_on: 'P-202'} is the pavement edges that sheet shows. Then pass the id straight to place_callout as target_entity, and the engine puts the leader tip on the geometry. Do not compute the point yourself: the midpoint of a curve's endpoints is not on the curve, and roadway linework runs parallel a few feet apart, so a hand-computed point usually lands on the wrong line rather than on nothing. If you do pass a raw target point, read the warning that comes back -- it names what the tip actually touched.\n\nSome things are not entities at all -- a station, a PC, a point at an offset. Ask the design for those: list_alignments with include_references=true names a referenced alignment 'BASE:RTE-7', and station_to_xy, xy_to_station, resolve_anchor and get_design_data all accept that name and answer in host coordinates. To call one out, give place_callout a target_anchor ('86+50@15R', 'PC-2'; BC-2 and EC-2 name the PC and PT too) and that alignment name. Otherwise commands do not take it: nothing can be drawn, labelled or anchored to an alignment this document does not own.\n\nPlan annotation belongs on the sheet, in paper inches, not in the model. Pass the sheet as place_callout's space and still name a model target -- target_entity or target_anchor: the engine sees it through the sheet's viewport (scale and twist included) and puts the tip where it shows on the paper. 'at' then runs along the part of the entity that sheet shows, since a pavement edge runs the whole project and a sheet shows one stretch. find_entities with visible_on gives each row a sheet_point, which is where that tip will land -- use it to choose a position for the text that is clear of the linework. Never work out a viewport by hand: model_to_sheet and sheet_to_model convert, and station_to_xy and point_on_entity take a sheet and answer in paper inches as well.\n\nDrafting from a description works the same way: give the engine the description, not coordinates you worked out. A bearing and distance goes in as written -- create_alignment takes start + legs (each leg a bearing, azimuth or deflection and the distance to the next PI, with the radius of the curve at the PI it starts from), draw_traverse draws lines and curves course by course, and traverse computes the points without drawing. offset_entity copies linework parallel at a distance (one entity, or a chain offset as one path), fillet rounds the corner between two lines with a curve (a curb return), and measure with along gives distances along a line, chain or alignment and square off it. key_points and snap give the exact endpoints, intersections, centers and alignment design points (PI, BC, EC) to build on. Station-and-offset drafting is draw_station_offset with the stations and offsets given ('82+00@15R'). Linework drawn through something is cut back with trim (a point on the part to cut away) or run on with extend, not redrawn from computed points; break, join, lengthen, chamfer, copy, rotate, mirror, scale and array edit what is there. create_points sets COGO points, label_segments letters bearings and distances or L1/C1 tags with line and curve tables, place_along sets blocks or points at an interval, hatch fills an area (a point inside is enough), and area and get_entity read areas, lengths, bearings and curve data off the drawing."
+  },
+  {
+   "role": "user",
+   "content": "Do one drafting task in a headless CAD engine called RoadDraft, using the tools you have been given. They are your ENTIRE tool surface.\n\nRules:\n- Every change to the drawing must go through a tool call.\n- The document is already open and saves itself after each command. Do not save it under another name.\n- Nobody can answer questions. Work until you judge the task done, then stop and give your report.\n- You have no calculator and no code execution. Any arithmetic you need, do yourself.\n\nTHE TASK:\nDraft the design model for ELM-AVE. The alignment begins at N 3000.00, E 1000.00, station 10+00. It runs S 80°00'00\" E for 800.00 ft to PI-1, where it deflects 40°00'00\" to the left on a 500 ft radius curve; then 700.00 ft to PI-2, where it deflects 25°00'00\" to the right on a 700 ft radius curve; then 600.00 ft to its end. It has two 11 ft lanes and 5 ft shoulders. Draw the centerline on align_MAIN, the edges of pavement on rd_EP and the outside edges of shoulder on rd_ES, and label the stations every 100 ft.\n\nWhen finished, reply briefly with:\n1. What you created and drew (names, layers, key coordinates).\n2. The tool calls that mattered, in order (tool name + the key arguments).\n3. Anything that failed, confused you, or that you had to work around -- quote error messages. If you had to compute coordinates yourself, show the arithmetic."
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-9a28492a3a3fdcbf",
+     "type": "function",
+     "function": {
+      "name": "create_alignment",
+      "arguments": "{\"begin_station\": \"10+00\", \"legs\": [{\"bearing\": \"S 80°00'00\\\" E\", \"distance\": 800}, {\"deflection\": \"40 L\", \"distance\": 700, \"radius\": 500}, {\"deflection\": \"25 R\", \"distance\": 600, \"radius\": 700}], \"name\": \"ELM-AVE\", \"start\": [1000, 3000]}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 26.6,
+   "reasoning": "The user wants me to draft a roadway design model for \"ELM-AVE\" in RoadDraft.\n\n    *   Name: `ELM-AVE`\n    *   Start: `[1000.00, 3000.00]` (E, N) (Note: Prompt says N 3000.00, E 1000.00, and model space is US survey feet, point is [easting, northing]).\n    *   Start Station: `10+00` (1000 ft).\n    *   Leg 1: `S 80°00'00\" E` for `800.00 ft` to PI-1.\n    *   PI-1: Deflect `40°00'00\" Left` on a `500 ft` radius curve.\n    *   Leg 2: `700.00 ft` to PI-2.\n    *   PI-2: Deflect `25°00'00\" Right` on a `700 ft` radius curve.\n    *   Leg 3: `600.00 ft` to end.\n\n    *   Two 11 ft lanes (Total width = 22 ft).\n    *   5 ft shoulders on each side (Total width = 22 + 5 + 5 = 32 ft).\n    *   Centerline to edge of pavement (EP) = 11 ft.\n    *   Centerline to outside edge of shoulder (ES) = 11 + 5 = 16 ft.\n\n    *   Centerline: Layer `align_MAIN`.\n    *   Edges of pavement: Layer `rd_EP`.\n    *   Outside edges of shoulder: Layer `rd_ES`.\n    *   Stationing: Every 100 ft.\n\n    *   Step 1: Create the alignment `ELM-AVE` using `create_alignment`.\n    *   Step 2: Draw the alignment linework in model space using `draw_alignment` on layer `align_MAIN`.\n    *   Step 3: Annotate stationing on the alignment using `annotate_stationing` on layer `align_MAIN` (or a dedicated layer if preferred, but prompt says label the stations, usually on the centerline or an annotation layer). I'll use a standard stationing approach.\n    *   Step 4: Draw the edges of pavement (`rd_EP`) using `draw_offset` at offsets `-11` and `11`.\n    *   Step 5: Draw the outside edges of shoulder (`rd_ES`) using `draw_offset` at offsets `-16` and `16`.\n\n    *   `create_alignment` needs: `name`, `start`, `legs`.\n    *   Start: `[1000, 3000]`.\n    *   Legs:\n        1.  `{bearing: 'S 80 00 00 E', distance: 800.0}`\n        2.  `{deflection: '40 L', radius: 500.0, distance: 700.0}`\n        3.  `{deflection: '25 R', radius: 700.0, distance: 600.0}`\n    *   Wait, the prompt says `10+00` is the start station. `create_alignment` allows `begin_station`.\n\n    *   After alignment is created:\n    *   `draw_alignment(alignment='ELM-AVE', layer='align_MAIN')`\n    *   `annotate_stationing(alignment='ELM-AVE', space='model', interval=100)`\n    *   `draw_offset(alignment='ELM-AVE', offsets=[-11, 11], layer='rd_EP')`\n    *   `draw_offset(alignment='ELM-AVE', offsets=[-16, 16], layer='rd_ES')`\n\n    Let's re-read the alignment definition carefully.\n    \"The alignment begins at N 3000.00, E 1000.00, station 10+00. It runs S 80°00'00\" E for 800.00 ft to PI-1, where it deflects 40°00'00\" to the left on a 500 ft radius curve; then 700.00 ft to PI-2, where it deflects 25°00'00\" to the right on a 700 ft radius curve; then 600.00 ft to its end.\"\n\n    Legs for `create_alignment`:\n    - Leg 1: `S 80°00'00\" E` for `800.00` ft.\n    - Leg 2: `40 L` on `500` radius, `700.00` ft.\n    - Leg 3: `25 R` on `700` radius, `600.00` ft.\n\n    Wait, `create_alignment` legs: \"each leg a bearing, azimuth or deflection and the distance to the next PI, with the radius of the curve at the PI it starts from\".\n    So:\n    - Leg 1: Bearing `S 80°00'00\" E`, distance `800`. (Since it's the first leg, it has no curve at the start? No, \"radius of the curve at the PI it starts from\". PI-1 is the end of Leg 1 and start of Leg 2. The deflection at PI-1 defines the curve. The radius is associated with the leg starting at that PI. So Leg 2 should have the radius).\n    - Leg 2: `40 L` deflection, `500` radius, `700` distance.\n    - Leg 3: `25 R` deflection, `700` radius, `600` distance.\n\n    Correct.\n\n    Let's check stationing. `begin_station='10+00'`.\n\n    Let's start."
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-9a28492a3a3fdcbf",
+   "name": "create_alignment",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 1,\n  \"name\": \"create_alignment\",\n  \"message\": \"alignment ELM-AVE created: 5 elements (3 tangents, 2 curves), 2080.16 ft, 10+00.00 to 30+80.16; PIs BEGIN [1000.00, 3000.00], PI-2 [1787.85, 2861.08] R=500, PI-3 [2394.06, 3211.08] R=700, END [2991.78, 3263.37]\",\n  \"created\": [\n    \"alignment:ELM-AVE\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b2c706d1ce589c70",
+     "type": "function",
+     "function": {
+      "name": "draw_alignment",
+      "arguments": "{\"alignment\": \"ELM-AVE\", \"layer\": \"align_MAIN\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 9.7,
+   "reasoning": "The alignment `ELM-AVE` has been created.\nNext, I need to:\n1. Draw the centerline on layer `align_MAIN`.\n2. Draw the edges of pavement (EP) on layer `rd_EP`.\n   - The road has two 11 ft lanes and 5 ft shoulders.\n   - Total width from centerline to EP: 11 ft (lane) + 5 ft (shoulder)? No, \"two 11 ft lanes and 5 ft shoulders\".\n   - A road with two 11 ft lanes usually has the centerline in the middle of the lanes.\n   - Lane 1: 11 ft, Lane 2: 11 ft. Total width = 22 ft.\n   - Centerline to EP: 11 ft.\n   - Centerline to outside shoulder edge: 11 ft (lane) + 5 ft (shoulder) = 16 ft.\n   - Wait, let's re-read: \"two 11 ft lanes and 5 ft shoulders\".\n   - Usually, this means: [Shoulder 5'] [Lane 11'] [Lane 11'] [Shoulder 5'].\n   - Total width = 5 + 11 + 11 + 5 = 32 ft.\n   - From centerline to EP: 11 ft.\n   - From centerline to outside shoulder edge: 11 + 5 = 16 ft.\n   - Wait, if the centerline is in the middle of the two lanes, then the distance from centerline to each EP is 11 ft.\n   - Distance from centerline to outside edge of shoulder is 11 + 5 = 16 ft.\n   - So EP offsets are [-11, 11].\n   - Outside shoulder edge (ES) offsets are [-16, 16].\n\n3. Draw the centerline on `align_MAIN`.\n4. Draw EP on `rd_EP` with offsets [-11, 11].\n5. Draw ES on `rd_ES` with offsets [-16, 16].\n6. Label the stations every 100 ft.\n\nLet's start by drawing the centerline."
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b2c706d1ce589c70",
+   "name": "draw_alignment",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 2,\n  \"name\": \"draw_alignment\",\n  \"message\": \"ELM-AVE drawn on align_MAIN: 3 lines, 2 arcs\",\n  \"created\": [\n    \"LN-001\",\n    \"AR-001\",\n    \"LN-002\",\n    \"AR-002\",\n    \"LN-003\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-b4012db989cbe21f",
+     "type": "function",
+     "function": {
+      "name": "draw_offset",
+      "arguments": "{\"alignment\": \"ELM-AVE\", \"layer\": \"rd_EP\", \"offsets\": [\"11L\", \"11R\"]}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 7.7,
+   "reasoning": "The alignment is created and drawn. Now I need to draw the pavement edges and shoulders.\nThe alignment has two 11 ft lanes and 5 ft shoulders.\nThe total width from centerline is:\nLanes: 11 ft each -> 11 ft on each side.\nShoulders: 5 ft each -> 5 ft on each side.\nPavement edges (rd_EP): 11 ft from centerline.\nOutside edges of shoulder (rd_ES): 11 + 5 = 16 ft from centerline.\n\nI will use `draw_offset` to draw these.\nThe offsets should be `[-11, 11]` for `rd_EP` and `[-16, 16]` for `rd_ES`.\nWait, the prompt says: \"Draw the centerline on align_MAIN, the edges of pavement on rd_EP and the outside edges of shoulder on rd_ES\".\nI'll do `rd_EP` first, then `rd_ES`.\nI also need to create the layers if they don't exist, but `draw_offset` will create them if I specify them and the engine handles it? Actually, it's better to create them to be sure of the style.\nThe task doesn't specify colors or linetypes, so I'll just use defaults.\n\nWait, I should check the alignment name again. It is `ELM-AVE`.\nI'll draw the edges of pavement.\nThen the outside edges of shoulder.\nThen I need to label the stations every 100 ft.\n\nLet's start with the offsets."
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-b4012db989cbe21f",
+   "name": "draw_offset",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 3,\n  \"name\": \"draw_offset\",\n  \"message\": \"ELM-AVE offset 11.00' LT, 11.00' RT drawn on rd_EP: 6 lines, 4 arcs\",\n  \"created\": [\n    \"LN-004\",\n    \"AR-003\",\n    \"LN-005\",\n    \"AR-004\",\n    \"LN-006\",\n    \"LN-007\",\n    \"AR-005\",\n    \"LN-008\",\n    \"AR-006\",\n    \"LN-009\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-9e809e8c5aebca9f",
+     "type": "function",
+     "function": {
+      "name": "draw_offset",
+      "arguments": "{\"alignment\": \"ELM-AVE\", \"layer\": \"rd_ES\", \"offsets\": [\"16L\", \"16R\"]}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 9.9,
+   "reasoning": "The task says \"two 11 ft lanes and 5 ft shoulders\".\nThe centerline is the reference.\nThe pavement edges (EP) are at 11 ft offset from centerline.\nThe outside edges of shoulder (ES) are at (11 + 5) = 16 ft offset from centerline.\nWait, the user said: \"two 11 ft lanes and 5 ft shoulders\". Usually, this means 11' lanes on either side of the centerline. So the pavement edges are 11' from centerline.\nThe shoulders are 5' wide outside the lanes. So the outside edge of the shoulder is 11' + 5' = 16' from centerline.\n\nI already drew the EP at 11L and 11R.\nNow I need to draw the ES at 16L and 16R.\nI also need to label the stations every 100 ft.\n\nLet's check the layers first.\nThe task says:\n- centerline on `align_MAIN`\n- edges of pavement on `rd_EP`\n- outside edges of shoulder on `rd_ES`\n\nI have done:\n1. `create_alignment` (ELM-AVE)\n2. `draw_alignment` (align_MAIN)\n3. `draw_offset` (rd_EP) with offsets `11L, 11R`.\n\nNow:\n4. `draw_offset` (rd_ES) with offsets `16L, 16R`.\n5. `annotate_stationing` (model) for ELM-AVE every 100 ft.\n\nWait, I should check if the layers `rd_EP` and `rd_ES` exist. The instructions imply I should use them. If they don't exist, `draw_offset` will create them.\n\nLet's draw the shoulder edges.\nOffsets: 16L, 16R.\nLayer: `rd_ES`.\nAlignment: `ELM-AVE`."
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-9e809e8c5aebca9f",
+   "name": "draw_offset",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 4,\n  \"name\": \"draw_offset\",\n  \"message\": \"ELM-AVE offset 16.00' LT, 16.00' RT drawn on rd_ES: 6 lines, 4 arcs\",\n  \"created\": [\n    \"LN-010\",\n    \"AR-007\",\n    \"LN-011\",\n    \"AR-008\",\n    \"LN-012\",\n    \"LN-013\",\n    \"AR-009\",\n    \"LN-014\",\n    \"AR-010\",\n    \"LN-015\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "chatcmpl-tool-97c336491983029b",
+     "type": "function",
+     "function": {
+      "name": "annotate_stationing",
+      "arguments": "{\"alignment\": \"ELM-AVE\", \"interval\": 100, \"layer\": \"align_MAIN\", \"space\": \"model\"}"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls",
+   "seconds": 1.7
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "chatcmpl-tool-97c336491983029b",
+   "name": "annotate_stationing",
+   "content": "{\n  \"ok\": true,\n  \"command_id\": 5,\n  \"name\": \"annotate_stationing\",\n  \"message\": \"stationing annotated in model space from ELM-AVE: 21 ticks @ 100 ft lettered the whole station at each 500 ft, the ones digit elsewhere, 4 BC/EC labels, 0 equation labels, stations 10+00.00 to 30+80.16\",\n  \"created\": [\n    \"LN-016\",\n    \"TX-001\",\n    \"LN-017\",\n    \"TX-002\",\n    \"LN-018\",\n    \"TX-003\",\n    \"LN-019\",\n    \"TX-004\",\n    \"LN-020\",\n    \"TX-005\",\n    \"LN-021\",\n    \"TX-006\",\n    \"LN-022\",\n    \"TX-007\",\n    \"LN-023\",\n    \"TX-008\",\n    \"LN-024\",\n    \"TX-009\",\n    \"LN-025\",\n    \"TX-010\",\n    \"LN-026\",\n    \"TX-011\",\n    \"LN-027\",\n    \"TX-012\",\n    \"LN-028\",\n    \"TX-013\",\n    \"LN-029\",\n    \"TX-014\",\n    \"LN-030\",\n    \"TX-015\",\n    \"LN-031\",\n    \"TX-016\",\n    \"LN-032\",\n    \"TX-017\",\n    \"LN-033\",\n    \"TX-018\",\n    \"LN-034\",\n    \"TX-019\",\n    \"LN-035\",\n    \"TX-020\",\n    \"LN-036\",\n    \"TX-021\",\n    \"TX-022\",\n    \"TX-023\",\n    \"TX-024\",\n    \"TX-025\"\n  ],\n  \"modified\": [],\n  \"deleted\": [],\n  \"warnings\": []\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "I have completed the drafting of the ELM-AVE design model.\n\n### 1. Created and Drawn\n*   **Alignment:** `ELM-AVE` (Total length: 2080.16 ft, from station 10+00 to 30+80.16).\n    *   Key PIs/Points:\n        *   BEGIN: [1000.00, 3000.00] (Sta 10+00)\n        *   PI-1: [1787.85, 2861.08] (R=500)\n        *   PI-2: [2394.06, 3211.08] (R=700)\n        *   END: [2991.78, 3263.37] (Sta 30+80.16)\n*   **Layers and Linework:**\n    *   `align_MAIN`: Centerline (lines and arcs).\n    *   `rd_EP`: Pavement edges (11 ft offsets from centerline).\n    *   `rd_ES`: Outside edge of shoulder (16 ft offsets from centerline: 11 ft lane + 5 ft shoulder).\n*   **Annotations:** Station ticks and labels every 100 ft on `align_MAIN`.\n\n### 2. Tool Calls\n1.  `create_alignment(name='ELM-AVE', start=[1000, 3000], begin_station='10+00', legs=[{'bearing': 'S 80°00\\'00\" E', 'distance': 800}, {'deflection': '40 L', 'distance': 700, 'radius': 500}, {'deflection': '25 R', 'distance': 600, 'radius': 700}])`\n2.  `draw_alignment(alignment='ELM-AVE', layer='align_MAIN')`\n3.  `draw_offset(alignment='ELM-AVE', offsets=['11L', '11R'], layer='rd_EP')`\n4.  `draw_offset(alignment='ELM-AVE', offsets=['16L', '16R'], layer='rd_ES')`\n5.  `annotate_stationing(alignment='ELM-AVE', interval=100, space='model', layer='align_MAIN')`\n\n### 3. Errors and Computations\nNo errors occurred. I used the `create_alignment` engine to handle all coordinate geometry and trigonometric calculations for the tangents, curves, and offsets.",
+   "finish_reason": "stop",
+   "seconds": 10.9
+  }
+ ]
+}

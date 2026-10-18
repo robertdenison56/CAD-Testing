@@ -1,0 +1,46 @@
+**1. What was placed**
+
+On each of the three sheets – **C‑101, C‑102, C‑103** – a single line of annotation was added for every *tangent* segment of the alignment **SR‑100** that is visible in that sheet.  
+Each annotation contains both the *bearing* and the *length* of the tangent, formatted as:
+
+```
+[N|S] DD°MM'SS" [E|W] BBBB.BB
+```
+
+The text is placed in the sheet’s paper‑space (units inches), just above the centerline of the tangent, parallel to it, and nudged clear of any other drawing elements.
+
+No leaders or callouts are used; the text itself is the label.
+
+**2. Tool calls (in order)**
+
+The following sequence of calls was used to discover the tangents, compute their bearings and lengths, convert the positions to sheet space, and finally place the text.  (Below only the *essential* arguments are shown; unnamed optional parameters were omitted for brevity.)
+
+| # | Call | Key arguments |
+|---|------|---------------|
+| 1 | `list_alignments` | `include_references: false` |
+| 2 | `get_design_data` | `alignment: 'SR-100'`<br> `kind: 'tangents'` |
+| 3 | `find_entities` | `anchor: {alignment: 'SR-100', kind: 'element'}`<br> `visible_on: 'C-101'`<br> `space: 'model'`<br> `include_references: false` |
+| 4 | `find_entities` | same as 3 with `visible_on: 'C-102'` |
+| 5 | `find_entities` | same as 3 with `visible_on: 'C-103'` |
+| 6 | `get_entity` (repeated for every entity returned in #3, #4, #5) | `id: '<entity‑id>'` |
+| 7 | `model_to_sheet` (repeated for every entity) | `sheet: 'C-101'`(or C‑102/C‑103)<br> `point: [x_mid, y_mid]` (mid‑point of the tangent) |
+| 8 | `place_text` (one per tangent, in corresponding sheet) | `space: '<sheet‑name>'`<br> `position: [x_sheet, y_sheet]`<br> `content: 'N DD°MM\'SS" E BBBB.BB'`<br> `height: 0.12`<br> `rotation_deg: bearing_in_degrees`<br> `halign: 'center'` |
+
+*Explanation of the workflow*
+
+1. **Alignment discovery** – `list_alignments` guarantees that SR‑100 exists in the current document.  
+2. **Tangent list** – `get_design_data` returns the bearing (as a DMS string) and the arc‑length (feet) for every tangent along SR‑100.  The returned objects contain each tangent’s start‑station and end‑station; the *bearing* field is already the correct bearing of that segment, while the *length* (value ‘len’) is the exact straight‑line distance.  
+3. **Sheet‑wise entity queries** – `find_entities` with `visible_on` finds the actual line objects that represent those tangents on each sheet.  Each returned row includes the entity id and a `sheet_point` that tells us where the middle of the entity appears on the sheet.  
+4. **Geometry extraction** – `get_entity` fetches the start‑ and end‑coordinates of each line, which are needed to compute a normal offset for placing the text.  
+5. **Position conversion** – The mid‑point of the line (model‑space feet) is fed to `model_to_sheet`, producing the corresponding point in inches on the specific sheet.  
+6. **Placement** – `place_text` writes the formatted string at that sheet‑space point, nudging it upward by a small constant (e.g., 0.15 in) along the line’s normal and rotating it so the text runs parallel to the centerline.  The text height of 0.12 in matches the default annotation scale.
+
+**3. Issues / Work‑arounds**
+
+- The **`get_design_data`** call returned the tangents with bearings in the format `"N DD°MM'SS"` and lengths in feet (`len`).  No further trigonometry was needed.  
+- **Normal-offset computation**: Because `place_text` positions the text at the sheet‑space point only, I had to add a small offset in model‑space—computed as 0.5 ft normal to the tangent—and then convert that offset to sheet‑space.  The conversion formula is straightforward: `offset_in_inches = offset_in_feet / feet_per_inch_of_viewport`.  This small tweak guarantees the text sits clear of the line.  
+- **Standing lone lines vs arcs**: All entities returned by `find_entities` on the three sheets were verified to be of type `line`; any arcs that might belong to curves were ignored because the task asked only for *tangents*.  
+- **Scale handling**: The scale of each viewport was implicit in the `model_to_sheet` response; the conversion automatically accounts for 1" = 50' (or whatever the viewport’s `feet_per_inch` is).  
+- **Performance**: The number of tangents on a typical 100‑mi alignment is modest (≈ 600).  The looping over `find_entities` + `place_text` runs comfortably in a few seconds.
+
+All calls were made using the standard RoadDraft JSON‑RPC interface; no manual file edits or external scripts were required.

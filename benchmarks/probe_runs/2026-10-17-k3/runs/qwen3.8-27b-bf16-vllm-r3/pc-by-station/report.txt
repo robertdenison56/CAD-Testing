@@ -1,0 +1,27 @@
+
+
+All checks pass — the label is a proper two-line text, the leader is anchored to the design point, and it sits inside the viewport window. Task complete.
+
+## Report
+
+**1. What was placed, where, and what it points at**
+
+A two-line callout on sheet **C-101** (paper space, at paper inches [31.5, 8.0], layer `rd_LAYOUT-NOTE-anno`):
+- Text: `PC 1` / `24+05.27` (height 0.10")
+- Leader + arrowhead pointing at the **PC of the first curve (C-1) of SR-100** — anchored to the design alignment `DESIGN:SR-100` at anchor `PC-1`, station **24+05.27**. The engine aimed the tip through viewport VP-001 (1"=50'), landing it on the alignment's curve-start point at model [2405.27, 1000.0] (paper ≈ 29.61, 6.70). It is anchored to the design model, not a hand-computed point, so it can't drift from the geometry.
+
+**2. Tool calls that mattered, in order**
+
+1. `get_document_state {detail: "summary"}` — found the SR-100 Widening project and sheet C-101.
+2. `list_alignments {include_references: true}` + `list_references` — found the SR-100 mainline lives in referenced basefile `DESIGN`, read as `DESIGN:SR-100`.
+3. `get_design_data {kind: "curves", alignment: "DESIGN:SR-100"}` — first curve is C-1, **PC station 24+05.27** (2 curves total; C-2's PC is 40+31.72, not it).
+4. `get_sheet_state {sheet: "C-101"}` — viewport VP-001 shows model bbox [1000, 787.5]–[2550, 1712.5] at 1"=50'.
+5. `station_to_xy {alignment: "DESIGN:SR-100", station: "24+05.27", sheet: "C-101"}` — confirmed the PC is visible on the sheet at paper (29.61, 6.70).
+6. `place_callout {space: "C-101", alignment: "DESIGN:SR-100", target_anchor: "PC-1", content: "PC 1\n24+05.27", position: [31.5, 8.0], layer: "rd_LAYOUT-NOTE-anno"}` — the deliverable.
+7. `modify_entity {id: "TX-001", changes: {content: "PC 1\n24+05.27"}}` — fixed the newline (see below).
+8. `render_sheet {sheet: "C-101"}` — final visual verification.
+
+**3. Failures, confusion, workarounds**
+
+- **Literal `\n` in the callout text**: the tool docs say content "supports \n for multi-line," and I passed `"PC 1\n24+05.27"` — but the stored content came back as the literal two-character sequence (`PC 1\\n24+05.27`), and the text bbox was only one line tall (0.10"). No error was raised; `get_entity` revealed it. Workaround: `modify_entity` with a real newline character in the JSON string, after which the bbox grew to 0.26" tall (two lines) and the render confirms the two-line label.
+- No errors otherwise. One note: the design is a referenced basefile (`DESIGN`, read-only), so nothing could be drawn or anchored in the host's own design model — `place_callout` with `target_anchor` + the referenced alignment name is exactly the supported path, and it worked without needing raw coordinates.

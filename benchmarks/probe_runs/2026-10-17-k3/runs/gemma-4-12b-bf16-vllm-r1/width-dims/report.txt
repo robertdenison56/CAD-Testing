@@ -1,0 +1,129 @@
+The roadway at SR-100 station 17+00 consists of four components:
+1.  **Left Shoulder**: Offset -20.0 (Outer edge is at -20, Inner edge at -12).
+2.  **Left Lane**: Offset -12.0 to -12.0 (This is incorrect; lanes are between edges).
+
+Wait, let's look at the `rd_ES` and `rd_EP` layers:
+- `rd_ES` (Edge of Shoulder/Roadway?) has offsets:
+  - -20.0 (`DESIGN:LN-010`)
+  - +20.0 (`DESIGN:LN-013`)
+- `rd_EP` (Edge of Pavement?) has offsets:
+  - -12.0 (`DESIGN:LN-004`)
+  - +12.0 (`DESIGN:LN-007`)
+
+The task asks for: "outside edge of shoulder to outside edge of shoulder: the left shoulder, the two lanes and the right shoulder".
+This implies:
+- Left Shoulder: From -20.0 to -12.0 (Width 8')
+- Lane 1: From -12.0 to +12.0? No, that's 24'.
+- Let's check the widths: 8', 12', 12', 8'.
+- Total width = 8 + 12 + 12 + 8 = 40'.
+- If the centerline is 0:
+  - Left Shoulder: -20 to -12 (Width 8)
+  - Lane 1: -12 to 0? (Width 12)
+  - Lane 2: 0 to 12? (Width 12)
+  - Right Shoulder: 12 to 20? (Width 8)
+
+Let's verify the linework:
+- `rd_ES` contains -20 and +20.
+- `rd_EP` contains -12 and +12.
+- Where is the 0 offset? The alignment `DESIGN:SR-100` is at 0.
+
+So the layout is:
+- Outside Left (Edge of Shoulder): -20.0
+- Inside Left (Edge of Pavement): -12.0
+- Inside Right (Edge of Pavement): +12.0
+- Outside Right (Edge of Shoulder): +20.0
+
+The widths are:
+- Left Shoulder: 20 - 12 = 8'
+- Lane 1: 12 - 0 = 12' (Wait, if the centerline is 0, then Lane 1 is -12 to 0, Lane 2 is 0 to 12).
+- Right Shoulder: 20 - 12 = 8'
+
+The request says: "the left shoulder, the two lanes and the right shoulder, each reading its width in feet (8', 12', 12', 8')".
+This confirms the layout:
+- Left Shoulder: -20 to -12 (8')
+- Lane 1: -12 to 0 (12')
+- Lane 2: 0 to 12 (12')
+- Right Shoulder: 12 to 20 (8')
+
+I need to dimension these four segments at station 17+00.
+Station 17+00, Offset 0 is point [1700, 1000].
+
+Target entities at station 17+00:
+- Outside Left: `DESIGN:LN-010` (Offset -20)
+- Inside Left: `DESIGN:LN-004` (Offset -12)
+- Centerline: `DESIGN:LN-001` (Offset 0)
+- Inside Right: `DESIGN:LN-007` (Offset +12)
+- Outside Right: `DESIGN:LN-013` (Offset +20)
+
+I will place four dimensions on sheet `C-101`.
+
+I'll use `place_dimension` with `line_point` to position them.
+Since the line runs East-West ([1700, 1000] to [1700, 1000] was the query, but the alignment is at 90 degrees to North, so East-West).
+Actually, the query `station_to_xy` returned `direction_deg: 0.0`, `azimuth_deg: 90.0`. This means the alignment is heading East (90 deg from North).
+So the linework is horizontal.
+Dimensions should be placed above or below the line.
+
+Dimension 1 (Left Shoulder): `DESIGN:LN-010` to `DESIGN:LN-004`
+Dimension 2 (Lane 1): `DESIGN:LN-004` to `DESIGN:LN-001`
+Dimension 3 (Lane 2): `DESIGN:LN-001` to `DESIGN:LN-007`
+Dimension 4 (Right Shoulder): `DESIGN:LN-007` to `DESIGN:LN-013`
+
+I will place them slightly offset from the center point [1700, 1000] to avoid overlap.
+Since they are widths, I'll place them "above" the line (higher Y) or "below" (lower Y).
+Let's try placing them slightly offset in X to make them distinct.
+Wait, the prompt says "Every number must be readable: no two may overlap."
+If I place them all at the same X, they will overlap.
+I'll place them at different X positions near 1700.
+- Dim 1: X=1680
+- Dim 2: X=1700
+- Dim 3: X=1720
+- Dim 4: X=1740
+
+Actually, I'll place them in a stack or spread them out. Spreading them out is safer.
+
+Wait, I need to find the exact IDs for the segments at 17+00.
+`find_entities` for `rd_ES` and `rd_EP` already gave me them.
+- `DESIGN:LN-010` (Offset -20)
+- `DESIGN:LN-004` (Offset -12)
+- `DESIGN:LN-001` (Offset 0)
+- `DESIGN:LN-007` (Offset +12)
+- `DESIGN:LN-013` (Offset +20)
+
+Let's confirm these are the correct ones.
+`station_to_xy` at 17+00 gave [1700, 1000].
+The lines are:
+- `LN-010`: starts at [1000, 1020], ends at [2405, 1020]. (At X=1700, Y=1020)
+- `LN-004`: starts at [1000, 1012], ends at [2405, 1012]. (At X=1700, Y=1012)
+- `LN-001`: starts at [1000, 1000], ends at [2405, 1000]. (At X=1700, Y=1000)
+- `LN-007`: starts at [1000, 988], ends at [2405, 988]. (At X=1700, Y=988)
+- `LN-013`: starts at [1000, 980], ends at [2405, 980]. (At X=1700, Y=980)
+
+These are all horizontal lines. I'll place the dimensions above the road (Y > 1020).
+Since I'm on a sheet, I should check the viewport.
+I'll use `model_to_sheet` to find a good paper position.
+Sheet `C-101` (SH-001) has one viewport.
+I'll find where [1700, 1000] is on the sheet.
+
+Wait, I'll just place them in model space and the engine will handle the viewport projection?
+"Plan annotation belongs on the sheet, in paper inches, not in the model."
+The instructions say: "Pass the sheet as place_callout's space... 'at' then runs along...".
+For `place_dimension`, the `space` param is `model` or a sheet id.
+If I use a sheet id, the `line_point` is in paper inches?
+"place_dimension... line_point settles which measurement was meant... measure_scale: multiplier from drawn length to reported length... on a sheet, set it to the viewport's plot scale (50 for 1"=50') to dimension in model feet."
+
+I need to know the scale. `list_annotation_scales`?
+I'll check the sheet's viewports first.
+Actually, I'll just use the `model` space for `place_dimension` first to see if it works, but the prompt says "Plan annotation belongs on the sheet".
+Let's check `place_dimension` again.
+`space`: 'model' or a sheet id.
+If I use 'SH-001', `line_point` is in paper inches.
+I need to know the viewport's scale.
+I'll call `get_sheet_state` for `C-101`.
+Then I'll call `model_to_sheet` for [1700, 1000] to get the paper point.
+Then I'll use that paper point to place the dimensions.
+
+Wait, if I'm placing dimensions between model entities, and I'm in sheet space, do I still refer to model entities?
+"Name what to measure (of_entity for one entity end to end...)."
+Yes.
+
+Let's get the sheet state.
