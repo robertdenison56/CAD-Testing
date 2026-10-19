@@ -293,6 +293,16 @@ one worker, 01:08 to 01:53 UTC; parked at max workers 0 afterwards.
 Result in `benchmarks/probe_runs/2026-10-18-gpt-oss-k3/RESULTS.md`: 6, 5, 2 of 33 = 13.1% [4.0, 24.2], last of the
 board's nine, superseding the Oct 17 row (7.1%). The flag ended the harmony parser rejections (17 to 0) and 13 of
 the 22 tool-using episodes passed (7 of 32 before), but 77 of 99 episodes made no tool call at all, which the flag
-cannot reach. Bill: about $1 by worker time; Runpod had not posted the Oct 19 UTC record when this was written.
+cannot reach. Bill: about $1 by worker time; $0.43 posted for Oct 19 UTC by 02:30 UTC.
 gpt-oss-120b (`7maayov2g1xjoi`, still REST-created) would run with `send_reasoning` too; not run.
+
+## Run record: 2026-10-18, the E3 smoke run (Track D) on Qwen3.6-35B-A3B
+
+Robert picked Qwen3.6-35B-A3B for the smoke, and open-weight models first for Track D (the frontier route decided
+once the smoke had measured tokens per sheet). The reference agent and the fake oracle first scored 100 on the
+same five tasks from the pinned worktree (`727fb7f`). `runpod_campaign.py warm qwen3.6-35b-a3b` (the queue route,
+288 s to a warm worker), then `e3-smoke qwen3.6-35b-a3b`: `d1-dev[:5]` × single × explicit, three at a time,
+316 s for the longest episode; the endpoint `wn6oehzs020wpc` was parked at max workers 0 straight after. Effective
+62.4 on five task types, 0 invalid calls; the measurements and the two findings are in the eval plan §8. Results
+in `results/e3-runpod/e3-smoke-qwen3.6-35b-a3b` (gitignored). Bill: about $0.60 by worker time at $3.49/h.
 

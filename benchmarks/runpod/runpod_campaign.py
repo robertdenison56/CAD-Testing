@@ -9,6 +9,8 @@
     python benchmarks/runpod/runpod_campaign.py smoke NAME [--probe edge-c102] [--print]
     python benchmarks/runpod/runpod_campaign.py k3 NAME [PROBE...] [--force] [--print]
     python benchmarks/runpod/runpod_campaign.py e3-smoke NAME [--limit 5] [--dry-run] [--print]
+    python benchmarks/runpod/runpod_campaign.py e3 NAME [--taskset d1-variance] [--samples 5] [--mode single]
+                                                [--concurrency 4] [--limit N] [--dry-run] [--print]
     python benchmarks/runpod/runpod_campaign.py rerun NAME [--print]      # infrastructure-error episodes, again
     python benchmarks/runpod/runpod_campaign.py score NAME [--print]
     python benchmarks/runpod/runpod_campaign.py bill
@@ -409,14 +411,19 @@ def cmd_k3(args) -> int:
     return 0
 
 
-def cmd_e3_smoke(args) -> int:
+def cmd_e3(args) -> int:
+    """A Track D run through the E3 harness: a task set (or its first ``--limit``) x ``--samples`` x one
+    mode and prompt level, on the model's endpoint. Results under results/e3-runpod/<run id> (gitignored);
+    the harness resumes a run id, skipping every episode that already has an end record."""
     data = load()
     m = spec(data, args.name)
-    run_id = f"e3-smoke-{args.name}"
-    cmd = [str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", "d1-dev", "--limit", str(args.limit),
+    run_id = args.run_id or f"e3-{args.taskset}-{args.name}-{args.mode}"
+    cmd = [str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", args.taskset,
            "--model", m["model"], "--provider", "openai", "--base-url", route(m), "--api-key-env", "RUNPOD_API_KEY",
-           "--out", str(E3_OUT), "--run-id", run_id, "--mode", "single", "--level", "explicit",
-           "--concurrency", str(args.concurrency)]
+           "--out", str(E3_OUT), "--run-id", run_id, "--mode", args.mode, "--level", args.level,
+           "--samples", str(args.samples), "--concurrency", str(args.concurrency)]
+    if args.limit:
+        cmd += ["--limit", str(args.limit)]
     if m.get("extra_body"):
         cmd += ["--extra-body", json.dumps(m["extra_body"])]
     if args.dry_run:
@@ -430,10 +437,19 @@ def cmd_e3_smoke(args) -> int:
         env = dict(os.environ, PYTHONPATH=str(WORKTREE / "src"))
         return subprocess.run(cmd, cwd=REPO, env=env).returncode
     arm(m)
-    print(f"E3 smoke {args.name}: d1-dev[:{args.limit}] x single x explicit -> {E3_OUT / run_id}; log {log}")
+    what = f"{args.taskset}" + (f"[:{args.limit}]" if args.limit else "")
+    print(f"E3 {args.name}: {what} x {args.samples} sample(s) x {args.mode} x {args.level} -> {E3_OUT / run_id}; "
+          f"log {log}")
     rc = stream(cmd, log)
     print(f"exit {rc}; report with: {PYTHON} -m roaddraft.eval report {E3_OUT / run_id}")
     return rc
+
+
+def cmd_e3_smoke(args) -> int:
+    """The E3 smoke run: d1-dev[:5] x single x explicit (2026-10-18 on Qwen3.6-35B-A3B)."""
+    args.taskset, args.samples, args.mode, args.level = "d1-dev", 1, "single", "explicit"
+    args.run_id = f"e3-smoke-{args.name}"
+    return cmd_e3(args)
 
 
 INFRA_ERRORS = ("Connection reset", "connection reset", "Remote end closed", "HTTP 5")
@@ -554,6 +570,13 @@ def main(argv=None) -> int:
     e = sub.add_parser("e3-smoke"); e.add_argument("name"); e.add_argument("--limit", type=int, default=5)
     e.add_argument("--concurrency", type=int, default=3); e.add_argument("--dry-run", action="store_true")
     e.add_argument("--print", action="store_true"); e.set_defaults(fn=cmd_e3_smoke)
+    e3 = sub.add_parser("e3"); e3.add_argument("name"); e3.add_argument("--taskset", default="d1-variance")
+    e3.add_argument("--samples", type=int, default=5); e3.add_argument("--limit", type=int)
+    e3.add_argument("--mode", default="single", choices=["single", "self_correct", "vision"])
+    e3.add_argument("--level", default="explicit", choices=["explicit", "vague"])
+    e3.add_argument("--concurrency", type=int, default=4); e3.add_argument("--run-id")
+    e3.add_argument("--dry-run", action="store_true"); e3.add_argument("--print", action="store_true")
+    e3.set_defaults(fn=cmd_e3)
     sc = sub.add_parser("score"); sc.add_argument("name"); sc.add_argument("--print", action="store_true")
     sc.set_defaults(fn=cmd_score)
     rr = sub.add_parser("rerun"); rr.add_argument("name"); rr.add_argument("--print", action="store_true")

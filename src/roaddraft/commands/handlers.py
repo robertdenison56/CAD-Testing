@@ -1108,6 +1108,22 @@ def annotate_stationing(doc: Document, p: dict):
     ids = list(p["path_ids"])
     if p.get("chain"):
         ids, warnings = chain_elements(doc, ids, tol)
+    # the ticks and labels are drawn beside the linework, in its coordinates: a path in
+    # model space stations in model space, which a sheet shows through its viewport
+    # (until 2026-10-18 a sheet space took model-space ticks onto the paper as they were)
+    elsewhere = {}
+    for eid in ids:
+        found = doc.find_entity(eid)
+        if found is not None and found[0] != space_key:
+            elsewhere.setdefault(found[0], []).append(eid)
+    if elsewhere:
+        where, wrong = next(iter(elsewhere.items()))
+        here = "model space" if where == "model" else f"sheet {doc.sheets[where].name}"
+        raise CommandFault(
+            f"path {', '.join(wrong)} is in {here}, not in space {p['space']!r}: stationing "
+            f"is drawn beside its linework, in the linework's space",
+            hint=("give space='model'; a sheet shows model-space stationing through its "
+                  "viewport" if where == "model" else f"give space={doc.sheets[where].name!r}"))
     reverse = bool(p.get("reverse", False))
     pieces, kinds, ends = _chain_path(doc, ids, tol)
     total = ends[-1] if ends else 0.0

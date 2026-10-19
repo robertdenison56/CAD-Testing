@@ -15,7 +15,10 @@ one of three bins:
 - **candidates** -- the rest, keyed by ``(alignment, ref, kind)``.  For each
   the verifier recomputes the pose the entity's *own* anchor record implies
   (``compile_label``, then ``sheet_pose`` through the recorded viewport for a
-  sheet label) and compares it with where the entity actually is.
+  sheet label) and compares it with where the entity actually is.  A bearing
+  anchored at a station inside a tangent is that tangent's bearing
+  (d1-verify-v5, PE decision 2026-10-18): it is keyed and posed as ``T-n``, so it
+  meets the truth's label and its placement is judged at the tangent's middle.
 
 Each truth label the task asks for (its group is in scope) then takes the
 best candidate under its key; any others are duplicates.  Matching is
@@ -182,6 +185,27 @@ def _expected_pose(ctx: Context, text: Text, space: str, rec: dict, align):
     return ap.ref, float(ap.station), position, rotation, float(ctx.tol["position_paper_in"])
 
 
+def _as_tangent_bearing(ctx: Context, rec: dict, align) -> dict:
+    """A bearing anchored at a station strictly inside a tangent, read as that
+    tangent's ``T-n`` bearing; any other record unchanged.  The labelers accept a
+    station for a bearing, and the task words it as the tangent's bearing at its
+    middle, so the station is where on the tangent it was put, not which bearing."""
+    if rec.get("kind") != "bearing":
+        return rec
+    try:
+        ap = resolve_record(align, rec)
+    except DesignError:
+        return rec  # _expected_pose reports it as inconsistent
+    if ap.kind_hint != "station" or ap.tangent_index is None:
+        return rec
+    t = align.tangents()[ap.tangent_index - 1]
+    start = float(align.begin_station) + t.start_dist
+    margin = float(ctx.tol["station_ft"])  # a station at a BC or EC is no tangent's
+    if not start + margin < float(ap.station) < start + t.length - margin:
+        return rec
+    return {**rec, "ref": f"T-{ap.tangent_index}", "station": None}
+
+
 def index_labels(ctx: Context) -> LabelIndex:
     """Bin every text and match the truth labels in scope (see the module docstring)."""
     idx = LabelIndex()
@@ -203,7 +227,8 @@ def index_labels(ctx: Context) -> LabelIndex:
             continue  # anchored to an alignment the task did not ask for: an extra
         name, align = found  # the truth's name, however the anchor named it
         try:
-            ref, station, position, rotation, tol = _expected_pose(ctx, text, space, rec, align)
+            ref, station, position, rotation, tol = _expected_pose(
+                ctx, text, space, _as_tangent_bearing(ctx, rec, align), align)
         except _Bad as bad:
             idx.inconsistent.append(Inconsistent(text, (name, rec["ref"], rec["kind"]), str(bad)))
             continue

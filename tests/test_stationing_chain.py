@@ -129,6 +129,32 @@ def test_an_element_off_the_chain_is_a_fault():
     assert not r["ok"] and "not on the chain" in r["error"]["message"]
 
 
+def test_stationing_is_drawn_in_the_space_of_its_linework():
+    # a model-space path named with a sheet as the space once drew its ticks on the
+    # paper at their model coordinates, thousands of inches off the sheet (2026-10-18)
+    s, lid = straight()
+    s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"})
+    before = len(s.doc.sheet_by_ref("C-101").entities)
+    r = s.execute("annotate_stationing", {"space": "C-101", "path_ids": [lid], "begin_station": 0.0})
+    assert not r["ok"]
+    assert r["error"]["message"].startswith(f"path {lid} is in model space, not in space 'C-101'")
+    assert "space='model'" in r["error"]["hint"]
+    assert len(s.doc.sheet_by_ref("C-101").entities) == before
+    # paper linework stations on its sheet, and is refused in model space
+    pid = s.execute("draw_line", {"space": "C-101", "start": [2, 2], "end": [12, 2]})["created"][0]
+    r = s.execute("annotate_stationing", {"space": "model", "path_ids": [pid], "begin_station": 0.0,
+                                          "interval": 5.0, "tick_half_len": 0.1, "text_height": 0.1,
+                                          "label_offset": 0.2})
+    assert not r["ok"] and "is in sheet C-101, not in space 'model'" in r["error"]["message"]
+    assert r["error"]["hint"] == "give space='C-101'"
+    r = s.execute("annotate_stationing", {"space": "C-101", "path_ids": [pid], "begin_station": 0.0,
+                                          "interval": 5.0, "tick_half_len": 0.1, "text_height": 0.1,
+                                          "label_offset": 0.2})
+    assert r["ok"], r
+    assert all(2 <= e.start[0] <= 12 for e in s.doc.sheet_by_ref("C-101").entities.values()
+               if isinstance(e, Line) and e.id != pid)
+
+
 def test_a_start_point_off_the_path_is_taken_at_the_nearest_point():
     s, lid = straight()
     r = s.execute("annotate_stationing", {"space": "model", "lettering": "full", "path_ids": [lid],
