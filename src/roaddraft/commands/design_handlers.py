@@ -33,6 +33,7 @@ from roaddraft.design.offsets import offset_pieces
 from roaddraft.design.stations import StationSystem, build_equations
 from roaddraft.design.vertical import PVI, Profile
 from roaddraft.document import annotation as anno
+from roaddraft.document import confine
 from roaddraft.document.document import Document
 from roaddraft.document.entities import Arc, Circle, Line, Table, Text
 
@@ -672,6 +673,10 @@ def import_landxml(doc: Document, p: dict):
         raise CommandFault("give exactly one of path (a file read at execute time) or xml "
                            "(inline text)")
     if has_path:
+        try:
+            confine.check(p["path"])
+        except confine.OutsideRoot as ex:
+            raise CommandFault(str(ex), hint=ex.hint)
         try:
             text = Path(p["path"]).read_text()
         except FileNotFoundError:

@@ -595,6 +595,13 @@ for a probe's fresh project.
   taken from what it says it did. Each line carries the full result the agent
   was shown, so a trace converts straight into a training conversation
   (`python -m roaddraft.trajectories convert`).
+- **`--root DIR`** holds every file a tool reads or writes inside DIR, links
+  followed: a document opened, a reference attached, LandXML imported, a render,
+  an export, a save. A path that leads out (absolute, through `..`, or by a
+  link) is refused with a tool error, and paths in results are shown relative
+  to the working directory instead of absolute. The probe runner sets it to the
+  episode's run folder, so a benchmarked model cannot open the reference
+  solutions kept elsewhere in the repository. Without it nothing is held.
 - **Faults teach instead of failing**: a bad call comes back as a tool error
   carrying the message, the hint, the schema and a valid example, so the model
   corrects itself rather than guessing.
@@ -685,7 +692,7 @@ behind, which is what was scored. See its README.
 `roaddraft.runners` is the client the research plan's Phase A calls for: the
 same tools, the same words and the same budgets for every model, so the
 leaderboard rows are comparable. It sets up a fresh project per probe, starts
-`roaddraft-mcp` on it with autosave and a trace, hands the server's tools and
+`roaddraft-mcp` on it with autosave, a trace and `--root` on the run folder, hands the server's tools and
 instructions to the model, runs the tool-calling loop to the model's final
 report, and leaves the run folder the scorers read — the layout the rigs under
 `benchmarks/probe_runs/` left (`project/`, `trace.jsonl`, `transcript.json`,

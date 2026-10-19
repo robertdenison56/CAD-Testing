@@ -13,6 +13,11 @@ reads it and corrects itself.
 
 Renders come back as images, so an agent can look at the sheet it just drew.
 
+With ``--root DIR`` every file a tool reads or writes must lie inside DIR
+(document/confine.py), and the paths in results are shown relative to the
+working directory rather than absolute: a benchmarked model works in its
+episode folder and learns nothing of where that is.
+
 Transport is newline-delimited JSON-RPC 2.0 on stdin/stdout (the MCP stdio
 transport). The official Python SDK needs 3.10+ and this project runs on 3.9,
 so the protocol is implemented here with the standard library only -- the same
@@ -24,6 +29,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -31,7 +37,7 @@ from typing import Dict, List, Optional, Sequence
 from roaddraft import __version__
 from roaddraft.api.session import Session
 from roaddraft.mcp import config as mcpconfig
-from roaddraft.document import fileformat
+from roaddraft.document import confine, fileformat
 from roaddraft.document.fileformat import DocumentFormatError, journal_path
 
 #: Revision of the MCP spec this server implements. The client's requested
@@ -181,7 +187,7 @@ class RoadDraftMCP:
 
     def __init__(self, session: Session, only: Optional[Sequence[str]] = None,
                  exclude: Optional[Sequence[str]] = None, autosave: bool = False,
-                 trace: Optional[str] = None):
+                 trace: Optional[str] = None, root: Optional[str] = None):
         self.session = session
         self.only = list(only) if only else None
         self.exclude = list(exclude) if exclude else None
@@ -191,6 +197,9 @@ class RoadDraftMCP:
         #: where autosave writes: the file the document was opened from. It does
         #: not follow a save_document to somewhere else (see _autosave).
         self.home = getattr(session.doc, "_path", None)
+        #: the folder every tool's file access is held to (``--root``); None
+        #: holds nothing
+        self.root = confine.Root(root) if root else None
 
     # ------------------------------------------------------------- tools
 
@@ -211,26 +220,38 @@ class RoadDraftMCP:
         return self._kinds().get(name)
 
     def call_tool(self, name: str, arguments: Optional[dict]) -> dict:
-        """Run one tool. Returns an MCP tool result; a fault is ``isError``."""
+        """Run one tool. Returns an MCP tool result; a fault is ``isError``.
+        Under a root the tool's file access is held to it, and the result is
+        what the agent is shown -- and the trace keeps -- with the root's
+        paths made relative; the server's own writes (autosave, the trace)
+        are not held."""
         arguments = arguments or {}
         kind = self._kinds().get(name)
         if kind is None:
             return self._tool_error(
                 f"unknown tool {name!r}. Call tools/list for the surface, or the "
                 f"list_commands tool for the command manifest.")
-        if kind == "extra":
-            return self._call_extra(name, arguments)
-        result = (self.session.execute(name, arguments) if kind == "command"
-                  else self.session.query(name, arguments))
+        with confine.held(self.root):
+            if kind == "extra":
+                return self._shown(self._call_extra(name, arguments))
+            result = (self.session.execute(name, arguments) if kind == "command"
+                      else self.session.query(name, arguments))
+        image_path = result.get("path") if result.get("ok") and name in IMAGE_QUERIES else None
+        result = self._shown(result)
         self._trace(name, kind, arguments, result)
         if kind == "command" and result.get("ok"):
             self._autosave()
         content = [_text(result)]
-        if result.get("ok") and name in IMAGE_QUERIES:
-            image = _image_content(result.get("path"))
+        if image_path:
+            image = _image_content(image_path)
             if image is not None:
                 content.append(image)
         return {"content": content, "isError": not result.get("ok", False)}
+
+    def _shown(self, result: dict) -> dict:
+        """``result`` with every absolute path inside the root written
+        relative to the working directory; as it is with no root."""
+        return result if self.root is None else self.root.show(result)
 
     def _call_extra(self, name: str, arguments: dict) -> dict:
         if name != "open_document":
@@ -239,8 +260,11 @@ class RoadDraftMCP:
         if not isinstance(path, str) or not path:
             return self._tool_error("open_document needs a path to a document file")
         try:
+            confine.check(path)
             self.session = Session.load(path, out_dir=self.session.out_dir)
             self.home = getattr(self.session.doc, "_path", None)
+        except confine.OutsideRoot as ex:
+            return self._tool_error(f"cannot open {path}: {ex} ({ex.hint})")
         except FileNotFoundError:
             return self._tool_error(f"no such document: {path}")
         except DocumentFormatError as ex:  # not a document, or malformed JSON
@@ -443,6 +467,20 @@ def _names(value: Optional[str]) -> Optional[List[str]]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def _start_inside(args) -> None:
+    """Relative paths resolve against the working directory, so under a root
+    it must lie inside it: a client that starts the server elsewhere has it
+    moved into the root, its own path options made absolute first."""
+    root = confine.Root(args.root)
+    if root.contains(os.getcwd()):
+        return
+    for option in ("doc", "out_dir", "trace", "root"):
+        if getattr(args, option):
+            setattr(args, option, os.path.abspath(getattr(args, option)))
+    os.chdir(root.real)
+    print(f"roaddraft-mcp: working directory moved into --root {root.real}", file=sys.stderr)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roaddraft-mcp",
@@ -462,6 +500,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--trace", help="append one JSON line per tool call to this "
                                         "file: arguments, outcome, faults and hints, and "
                                         "the full result the agent was shown")
+    parser.add_argument("--root", metavar="DIR",
+                        help="hold every file a tool reads or writes (a document, a "
+                             "reference, LandXML, a render, an export, a save) inside "
+                             "DIR, links followed, and show paths in results relative "
+                             "to the working directory instead of absolute. The "
+                             "server starts in DIR unless already inside it. For a "
+                             "benchmarked model, which must not read what lies "
+                             "outside its episode")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool names that would be served, then exit")
     parser.add_argument("--config", metavar="CLIENT", choices=sorted(mcpconfig.CLIENTS),
@@ -482,17 +528,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.config, name=args.name,
             args=mcpconfig.server_args(doc=args.doc, autosave=args.autosave, trace=args.trace,
                                        out_dir=args.out_dir, only=_names(args.only),
-                                       exclude=_names(args.exclude), project=args.project),
+                                       exclude=_names(args.exclude), project=args.project,
+                                       root=args.root),
             write_to=args.write)
     if args.write:
         parser.error("--write goes with --config")
+
+    if args.root:
+        if not Path(args.root).is_dir():
+            parser.error(f"--root {args.root} is not a folder")
+        _start_inside(args)
 
     if args.doc:
         session = Session.load(args.doc, out_dir=args.out_dir)
     else:
         session = Session(project_name=args.project, out_dir=args.out_dir)
     server = RoadDraftMCP(session, only=_names(args.only), exclude=_names(args.exclude),
-                          autosave=args.autosave, trace=args.trace)
+                          autosave=args.autosave, trace=args.trace, root=args.root)
 
     if args.list_tools:
         tools = server.tools()

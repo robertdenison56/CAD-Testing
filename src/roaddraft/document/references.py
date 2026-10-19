@@ -26,9 +26,10 @@ Display settings mirror MicroStation's reference dialog:
 
 Relative paths resolve against the host document's folder first (the file it
 was loaded from or last saved to), then the working directory — the way a
-MicroStation master file finds its references. Loaded documents are cached
-on the host Document instance (transient, never serialized). Nested
-references are not resolved — one level deep.
+MicroStation master file finds its references. Under a held root
+(document/confine.py) a path that resolves outside it does not load. Loaded
+documents are cached on the host Document instance (transient, never
+serialized). Nested references are not resolved — one level deep.
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ from typing import List, Optional, Tuple
 
 from roaddraft.core import colors as colorlib
 from roaddraft.core import geometry as geo
-from roaddraft.document import fileformat
+from roaddraft.document import confine, fileformat
 from roaddraft.core.units import normalize_unit, unit_factor
 from roaddraft.document.clip import clip_primitives
 from roaddraft.document.entities import as_point, as_positive, expand_entities
@@ -190,9 +191,13 @@ def resolve_reference_path(doc, ref: Reference) -> Path:
 def resolve_reference(doc, ref: Reference):
     """Load a reference's basefile. Returns (base_document, error) and caches
     the result on the host document instance, keyed by the resolved path so a
-    host that moves folders re-resolves automatically."""
+    host that moves folders re-resolves automatically. A path outside the
+    held root is refused before the cache is read, and the refusal is not
+    cached."""
     cache = doc._ref_cache
     target = resolve_reference_path(doc, ref)
+    if not confine.inside(target):
+        return None, str(confine.OutsideRoot(ref.path))
     key = str(target)
     hit = cache.get(ref.id)
     if hit is not None and hit[0] == key:
@@ -499,6 +504,7 @@ def describe_reference(doc, ref: Reference) -> dict:
     """The reference record plus load status, resolved path, unit handling
     and per-level display — what list_references and the GUI show."""
     base, error = resolve_reference(doc, ref)
+    target = resolve_reference_path(doc, ref)
     d = ref.to_dict()
     d.update({
         "status": "loaded" if base is not None else "error",
@@ -508,7 +514,7 @@ def describe_reference(doc, ref: Reference) -> dict:
                     "status": "loaded" if resolve_reference(base, r)[0]
                     is not None else "error"}
                    for r in base.references.values()] if base else [],
-        "resolved_path": str(resolve_reference_path(doc, ref)),
+        "resolved_path": str(target) if confine.inside(target) else ref.path,
         "path_is_relative": not Path(ref.path).expanduser().is_absolute(),
         "levels": reference_levels(doc, ref, base) if base else [],
         "units": None,
