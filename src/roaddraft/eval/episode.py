@@ -1,6 +1,7 @@
 """The episode loop (eval plan section 4.1).
 
-    reset    a Session on the task's starting document (files beside it)
+    reset    a Session on the task's starting document, in a folder of its
+             own with the task's files beside it
     observe  the task text, the tool definitions, a state summary, the budget
     loop     agent -> tool calls -> executed in order on the session, through
              the whitelist, each one a step against the budgets -> results
@@ -16,17 +17,29 @@ The dialect is the harness's: the agent is shown the skin's tool names and
 task text, and every call is resolved back to the canonical command before
 the whitelist sees it.  In the vision mode a render's PNG goes to the agent
 as an image beside the results and never into the trajectory.
+
+The episode folder is a fresh temporary folder: the task's files, the
+document's home (a relative reference path resolves there) and the renders.
+Every file a tool reads or writes -- a reference attached or loaded, a
+render -- must resolve, links followed, inside it (document/confine.py), so
+the reference solutions, other tasks' files and the trajectories that carry
+the truth are out of reach; the truth itself is never written there.  The
+agent is shown the folder's paths relative to it, never where it is.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 import time
 import traceback
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from roaddraft.api.session import Session
+from roaddraft.document import confine
+from roaddraft.document.fileformat import INTERCHANGE_EXT
 from roaddraft.eval import dialects, prices
 from roaddraft.eval.agents import Agent, AgentRefusal, Submit, ToolCall
 from roaddraft.eval.budget import Budgets, BudgetState
@@ -43,7 +56,8 @@ from roaddraft.verify import VERIFIER_VERSION, verify
 from roaddraft.verify.audit import audit_journal
 from roaddraft.verify.report import VerifyReport
 
-HARNESS_VERSION = "e3-v1"  # (2026-10-14) + LLM agents, dialect skins, vision images, cost
+HARNESS_VERSION = "e3-v2"  # (2026-10-18) + file access held to the episode folder
+#                  e3-v1     (2026-10-14) + LLM agents, dialect skins, vision images, cost
 #: bus error types that count as invalid calls (a fault of the call, not of the drawing)
 INVALID = ("invalid_params", "unknown_command")
 #: a tool result longer than this (as JSON) is cut, with a hint to filter
@@ -132,6 +146,8 @@ class Episode:
         self.out_root = out_root
         self.pins = pins
         self.session: Optional[Session] = None
+        #: the episode folder every tool's file access is held to (``reset``)
+        self.root: Optional[confine.Root] = None
         self.state = BudgetState()
         self.scope = list(task.truth.scope)
         self.allowed = allowed_names(config.mode, self.scope)
@@ -158,7 +174,7 @@ class Episode:
                             self.config.mode, self.config.level, self.config.sample)
 
     def reset(self) -> dict:
-        self.session = session_for_task(self.task)
+        self.session = self._open_session()
         self.tools = self.dialect.tools(
             tool_definitions(self.session.manifest(), self.config.mode, self.scope))
         self.state = BudgetState()
@@ -170,9 +186,31 @@ class Episode:
                 "state": self.state_summary(), "budget": self.state.remaining(self.budgets),
                 "mode": self.config.mode, "dialect": self.config.dialect}
 
+    def _open_session(self) -> Session:
+        """A session on the task's starting document in a fresh episode
+        folder: the task's files are written there, the document's home is
+        there, a render goes there by default and a relative render path
+        lands there.  The folder lives as long as the session."""
+        workdir = tempfile.TemporaryDirectory(prefix="roaddraft-episode-")
+        folder = Path(workdir.name)
+        session = session_for_task(self.task, out_dir=folder)
+        session._task_dir = workdir
+        session.doc._path = folder / f"{self.task.task_id}{INTERCHANGE_EXT}"
+        session.base_dir = folder
+        session.out_dir = folder / "renders"
+        self.root = confine.Root(folder)
+        return session
+
+    def _shown(self, value):
+        """``value`` as the agent sees it: every absolute path inside the
+        episode folder written relative to the folder, which is where a
+        relative path the agent gives resolves."""
+        return value if self.root is None else self.root.show(value, base=self.root.real)
+
     def state_summary(self) -> dict:
-        result = self.session.query("get_document_state", {"detail": "summary"})
-        summary = result.get("summary") or {}
+        with confine.held(self.root):
+            result = self.session.query("get_document_state", {"detail": "summary"})
+        summary = self._shown(result.get("summary") or {})
         return {k: summary[k] for k in STATE_KEYS if k in summary}
 
     def header(self) -> dict:
@@ -195,8 +233,11 @@ class Episode:
 
     def execute(self, call: ToolCall) -> dict:
         """One tool call on the session: a step, whatever it returns.  The
-        call's name is resolved through the dialect first; a render's image
-        in the vision mode is kept for the agent in ``_turn_images``."""
+        call's name is resolved through the dialect first; the session runs
+        it with file access held to the episode folder, and its result is
+        shown with the folder's paths relative.  A render's image in the
+        vision mode, read from disk by the session, is kept for the agent in
+        ``_turn_images``."""
         name, params = self.dialect.canonical(call.name), call.params or {}
         images = None
         if name not in self.allowed:
@@ -205,15 +246,17 @@ class Episode:
             result = _error(call.name, "unknown_command",
                             f"{call.name!r} is not a tool of this episode", hint)
         elif name in HARNESS_TOOLS:
-            result = self._harness_tool(name, params)
+            result = self._shown(self._harness_tool(name, params))
         else:
             shaped, notes = shape_params(name, params)
             if name in RENDER_QUERIES and self.config.mode == "vision":
                 shaped = dict(shaped, include_base64=True)
-            if name in RENDER_QUERIES or name in self.session_queries():
-                result = self.session.query(name, shaped)
-            else:
-                result = self.session.execute(name, shaped)
+            with confine.held(self.root):
+                if name in RENDER_QUERIES or name in self.session_queries():
+                    result = self.session.query(name, shaped)
+                else:
+                    result = self.session.execute(name, shaped)
+            result = self._shown(result)
             if notes and isinstance(result, dict):
                 result = dict(result)
                 result["warnings"] = list(result.get("warnings") or []) + notes
