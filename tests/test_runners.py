@@ -534,7 +534,8 @@ def test_openai_loop_sends_function_tools_and_keeps_reasoning_out_of_the_next_tu
     assert bodies[0]["messages"][0] == {"role": "system", "content": FakeServer.instructions}
     tool_msg = bodies[1]["messages"][-1]
     assert tool_msg["role"] == "tool" and tool_msg["tool_call_id"] == "c1" and '"ok": true' in tool_msg["content"]
-    assert "reasoning_content" not in bodies[1]["messages"][2] and ep.log[2]["reasoning"] == "let me think"
+    assert not {"reasoning_content", "reasoning"} & set(bodies[1]["messages"][2])
+    assert ep.log[2]["reasoning"] == "let me think" and "send_reasoning" not in out.extra
     assert ep.server.calls == [("draw_line", {"start": [0, 0], "end": [1, 1]})]
     assert parse_args("not json") == {"_unparsed": "not json"} and parse_args("") == {}
 
@@ -564,6 +565,43 @@ def test_openai_sends_the_extra_body_every_turn_and_records_it(tmp_path, capsys)
     for bad in ("[1, 2]", "top_k=20"):
         with pytest.raises(cli.argparse.ArgumentTypeError):
             cli.json_object(bad)
+
+
+def test_openai_sends_a_tool_call_turns_reasoning_back_when_asked(tmp_path, monkeypatch):
+    def call(cid, name, arguments="{}"):
+        return [{"id": cid, "type": "function", "function": {"name": name, "arguments": arguments}}]
+
+    bodies = []
+    replies = iter([
+        openai_reply(tool_calls=call("c1", "get_document_state"), reasoning="read the state first"),
+        {"choices": [{"message": {"role": "assistant", "content": "", "reasoning": "now the line",  # vLLM's name
+                                  "tool_calls": call("c2", "draw_line", json.dumps({"start": [0, 0], "end": [1, 1]}))},
+                      "finish_reason": "tool_calls"}]},
+        openai_reply(tool_calls=call("c3", "get_document_state")),     # no thinking, nothing to send
+        openai_reply("Drew the line.", reasoning="done"),
+    ])
+
+    def post(body):
+        bodies.append(json.loads(json.dumps(body)))
+        return next(replies)
+
+    ep = episode(tmp_path, model="openai/gpt-oss-20b")
+    ep.options.extra = {"send_reasoning": True}
+    out = OpenAIBackend(ep.options, post=post).run(ep)
+    assert out.stop == "answered" and out.turns == 4 and out.extra["send_reasoning"] is True
+    sent = [m for m in bodies[-1]["messages"] if m["role"] == "assistant"]
+    assert [m.get("reasoning") for m in sent] == ["read the state first", "now the line", None]
+    assert all("reasoning_content" not in m for m in sent)
+    assert bodies[1]["messages"][2]["reasoning"] == "read the state first"  # from the next turn on
+    assert [r.get("reasoning") for r in ep.log if r["role"] == "assistant"] == \
+        ["read the state first", "now the line", None, "done"]
+
+    seen = []
+    monkeypatch.setattr(cli, "run_probe", lambda backend, *a, **k: seen.append(backend) or {})
+    for flag in (["--send-reasoning"], []):
+        assert cli.main(["run", "--backend", "openai", "--model", "openai/gpt-oss-20b", "--out", str(tmp_path / "o"),
+                         "--label", "g", *flag, BLANK.id]) == 0
+    assert [b.send_reasoning for b in seen] == [True, False]
 
 
 def test_openai_post_resamples_a_malformed_tool_call_and_reloads_on_overflow(monkeypatch):

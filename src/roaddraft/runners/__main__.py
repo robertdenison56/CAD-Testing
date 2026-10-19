@@ -7,6 +7,7 @@
         claude-code:  [--claude-bin PATH] [--max-budget-usd D] [--claude-arg ARG ...]
         codex:        [--codex-bin PATH] [--codex-arg ARG ...]
         openai:       [--base-url URL] [--api-key-env NAME] [--lms-context N] [--extra-body JSON]
+                      [--send-reasoning]
     python -m roaddraft.runners score DIR/runs/LABEL [PROBE ...]
     python -m roaddraft.runners leaderboard [--runs benchmarks/probe_runs] [--out benchmarks/leaderboard] [--check]
     python -m roaddraft.runners backends
@@ -64,7 +65,8 @@ def build_backend(args) -> object:
         extra = {"codex_bin": args.codex_bin, "codex_args": args.codex_arg or []}
     elif args.backend == "openai":
         extra = {"base_url": args.base_url, "api_key_env": args.api_key_env,
-                 "lms_context": args.lms_context, "extra_body": args.extra_body}
+                 "lms_context": args.lms_context, "extra_body": args.extra_body,
+                 "send_reasoning": args.send_reasoning}
     options = Options(model=args.model, max_turns=args.max_turns,
                       budget=args.budget * 60 if args.budget else None,
                       vision=args.vision, effort=args.effort, extra=extra)
@@ -143,6 +145,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run.add_argument("--lms-context", type=int, help="openai: LM Studio guard, reload the model at this context")
     run.add_argument("--extra-body", type=json_object,
                      help="openai: a JSON object sent in every request, e.g. the sampling the model card asks for")
+    run.add_argument("--send-reasoning", action="store_true",
+                     help="openai: send a tool-call turn's thinking back as `reasoning` (gpt-oss on vLLM)")
     run.set_defaults(func=cmd_run)
     score = subs.add_parser("score", help="score a label's run folders")
     score.add_argument("folder", help="runs/LABEL")

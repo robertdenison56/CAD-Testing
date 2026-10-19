@@ -4,10 +4,20 @@ Ollama, vLLM, and a fine-tuned checkpoint served by any of them.
 The LM Studio rig's runner (benchmarks/probe_runs/2026-10-04-lmstudio-tier2),
 generalised: the MCP tools go in as function tools, the server's instructions
 as the system message, tool results back as ``role: tool`` messages. A
-model's thinking (``reasoning_content``) is kept in the transcript and not
-sent back: the tool schema already costs ~22k tokens a request and a local
-model's context is the scarce resource. Runs are text-only -- a render comes
-back as a note with the file path -- since tool messages carry strings.
+model's thinking (``reasoning_content``, or ``reasoning``) is kept in the
+transcript and by default not sent back: the tool schema already costs ~22k
+tokens a request and a local model's context is the scarce resource. Runs are
+text-only -- a render comes back as a note with the file path -- since tool
+messages carry strings.
+
+``--send-reasoning`` sends a tool-call turn's thinking back as that message's
+``reasoning``, the field vLLM reads (v0.31.0,
+entrypoints/openai/parser/harmony_utils.py) and renders as harmony's
+``analysis`` channel. gpt-oss expects the thinking behind its earlier tool
+calls in front of it, per the harmony format; vLLM drops what came before a
+final answer itself. gpt-oss-20b's k = 3 row (2026-10-17) ran without it:
+82 of 99 episodes reported calls it never made and 17 ended on vLLM's harmony
+parser refusing its tool header. run.json records ``send_reasoning``.
 
 LM Studio's guard is kept, switched on by ``--lms-context N``: a 400 that
 names a context overflow or a dead engine reloads the model through ``lms``
@@ -310,6 +320,7 @@ class OpenAIBackend(Backend):
         context = options.extra.get("lms_context")
         self.guard = LmStudioGuard(self.base_url, options.model, int(context)) if context else None
         self.extra_body = dict(options.extra.get("extra_body") or {})
+        self.send_reasoning = bool(options.extra.get("send_reasoning"))
         self.post = post or self._post
         self.rewrite_type_lists = False     # set for good the first time the tools are refused
 
@@ -356,16 +367,18 @@ class OpenAIBackend(Backend):
                 msg = choice["message"]
                 content = msg.get("content") or ""
                 calls = msg.get("tool_calls") or []
+                reasoning = msg.get("reasoning_content") or msg.get("reasoning")
                 sent = {"role": "assistant", "content": content}
                 if calls:
                     sent["tool_calls"] = calls
+                    if reasoning and self.send_reasoning:
+                        sent["reasoning"] = reasoning
                 messages.append(sent)
                 turns += 1
                 finish = choice.get("finish_reason")
                 kept = dict(sent)
                 kept["finish_reason"] = finish
                 kept["seconds"] = round(time.time() - t0, 1)
-                reasoning = msg.get("reasoning_content") or msg.get("reasoning")
                 if reasoning:
                     kept["reasoning"] = reasoning
                 if u.get("estimated"):
@@ -398,6 +411,8 @@ class OpenAIBackend(Backend):
                       "type_lists_rewritten": self.rewrite_type_lists})
         if self.extra_body:
             extra["extra_body"] = self.extra_body
+        if self.send_reasoning:
+            extra["send_reasoning"] = True
         if unparsed:
             extra["unparsed_tool_markup"] = True
         return Outcome(stop=stop, final=final, turns=turns, usage=usage, extra=extra)
