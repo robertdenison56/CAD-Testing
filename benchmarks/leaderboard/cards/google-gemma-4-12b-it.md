@@ -9,7 +9,8 @@
 | runner | runners · openai (api.runpod.ai), `https://api.runpod.ai/v2/opp76sn4ruhsd0/openai/v1` |
 | run folder | `2026-10-17-k3`, labels `gemma-4-12b-bf16-vllm-r1`, `gemma-4-12b-bf16-vllm-r2`, `gemma-4-12b-bf16-vllm-r3` |
 | budgets | 120 turns, 30 min per probe; text only; default effort |
-| standing | rank 11 of 15 |
+| request settings | `{"chat_template_kwargs": {"enable_thinking": true}, "temperature": 1.0, "top_k": 64, "top_p": 0.95}` |
+| standing | rank 6 of 9 |
 | engine commit | `e7178a2ff7` (99) |
 | tool surface | `sha256:60eeeb2195be` |
 | server instructions | current |

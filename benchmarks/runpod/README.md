@@ -280,3 +280,19 @@ first-turn 570 s cut-offs counted as budget stops, so `rerun` no longer touches 
 Nine rows, two UTC days: **$65.44** (`list-serverless-billing`, GPU $65.17 + disk $0.27). Every endpoint is parked at
 max workers 0 (`key-check`: 0 max workers in all); the two unrun rungs (gpt-oss-120b `7maayov2g1xjoi`,
 Qwen3.5-122B-A10B-FP8 `d1aaw4ddzlsghg`) are still REST-created and should be redeployed from the Hub before a run.
+
+## Run record: 2026-10-18, gpt-oss-20b again with `--send-reasoning`
+
+Robert: "do number 1" (Oct 18 evening): rerun gpt-oss-20b at k = 3 with the runner's `--send-reasoning` (`727fb7f`),
+which sends a tool-call turn's thinking back as harmony's analysis channel. `models.json` gained `send_reasoning`
+(both gpt-oss rungs) and `campaign` (this row's folder, `2026-10-18-gpt-oss-k3`, since the board makes one row of a
+model per folder); `runpod_campaign.py` reads both, and `PIN` is now `727fb7f` (the runner and board rules past
+`e7178a2`; engine and tool surface unchanged). Same endpoint `823ffmdxxfz2v2` (A40), smoke then three processes on
+one worker, 01:08 to 01:53 UTC; parked at max workers 0 afterwards.
+
+Result in `benchmarks/probe_runs/2026-10-18-gpt-oss-k3/RESULTS.md`: 6, 5, 2 of 33 = 13.1% [4.0, 24.2], last of the
+board's nine, superseding the Oct 17 row (7.1%). The flag ended the harmony parser rejections (17 to 0) and 13 of
+the 22 tool-using episodes passed (7 of 32 before), but 77 of 99 episodes made no tool call at all, which the flag
+cannot reach. Bill: about $1 by worker time; Runpod had not posted the Oct 19 UTC record when this was written.
+gpt-oss-120b (`7maayov2g1xjoi`, still REST-created) would run with `send_reasoning` too; not run.
+

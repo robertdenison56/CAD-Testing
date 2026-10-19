@@ -122,6 +122,24 @@ def test_class_runner_and_cost_come_from_the_run():
     assert lb.cost_of({"cost_usd": None}) is None
 
 
+def test_a_card_says_what_each_request_carried_and_a_rerun_in_a_later_folder_supersedes():
+    passes = {pid: 1 for pid in IDS}
+    served = {"base_url": "https://api.runpod.ai/v2/x/openai/v1", "extra_body": {"temperature": 1.0}}
+    old = model_rows("g", passes, run="2026-10-17-k3", backend="openai")
+    new = model_rows("g", passes, run="2026-10-18-g-k3", backend="openai")
+    for a in old:
+        a.meta.update(served)
+    for a in new[1:]:
+        a.meta.update(served, send_reasoning=True)      # new[0] ended on an error: it records neither
+    b = lb.board(old + new, folders("2026-10-17-k3", "2026-10-18-g-k3"))
+    (ranked,), (superseded,) = b["ranked"], b["unranked"]
+    assert ranked["run"] == "2026-10-18-g-k3" and superseded["why"] == "superseded by 2026-10-18-g-k3"
+    assert dict(lb.card_facts(ranked, b))["request settings"] == \
+        "`{\"temperature\": 1.0}`; a tool-call turn's thinking sent back as `reasoning` (`--send-reasoning`)"
+    assert dict(lb.card_facts(superseded, b))["request settings"] == "`{\"temperature\": 1.0}`"
+    assert lb._request({"backend": "claude-code"}) == "none (the provider's defaults)"
+
+
 def test_measures_read_queries_before_the_first_change_and_renders_followed_by_one():
     q = lambda tool, ok=True: {"tool": tool, "kind": "query", "ok": ok}
     c = lambda tool, ok=True: {"tool": tool, "kind": "command", "ok": ok}

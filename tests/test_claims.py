@@ -75,16 +75,15 @@ def test_the_reader_agrees_with_the_hand_labels():
     135 failed episodes of 2026-10-12-k3 (the patterns were tuned on these)
     and, held out, 26 failed gpt-oss episodes of 2026-09-24 with 60 passing
     2026-10-12-k3 episodes. As built: 125 of 133 and 84 of 86 on the claim,
-    134 of 135 and 82 of 86 on a clean run."""
+    134 of 135 and 82 of 86 on a clean run. Each row carries its report: both
+    run folders ran on the help text before fe26ce2 and were removed Oct 18."""
     rows = [json.loads(line) for line in LABELS.read_text().splitlines()]
     assert len(rows) == 221
     for part in ("tuning", "held-out"):
-        mine = [r for r in rows if r["set"] == part and (ROOT / r["episode"] / "report.txt").exists()]
-        if len(mine) < 50:          # run folders another session has not committed yet
-            continue
+        mine = [r for r in rows if r["set"] == part]
         agree = clean = judged = 0
         for r in mine:
-            report = (ROOT / r["episode"] / "report.txt").read_text(errors="replace")
+            report = r["report"]
             done = claims.claims_done(report)
             if r["claim"] != "unclear":
                 judged += 1

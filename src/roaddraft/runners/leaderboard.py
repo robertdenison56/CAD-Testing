@@ -260,6 +260,7 @@ def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str,
     run, model, backend, vision, effort = key
     # an episode the runner ended on an error carries no base_url; the class and the runner read it
     meta = next((a.meta for a in attempts if a.meta.get("base_url")), attempts[0].meta)
+    served = [a for a in attempts if a.meta.get("base_url")] or attempts
     labels = sorted({a.label for a in attempts}, key=_natural)
     # an episode that ran on an earlier task text (the probe set changed since) does
     # not count: its document was drafted to other words than the current check expects
@@ -309,6 +310,7 @@ def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str,
         "model": model, "name": NAMES.get(model, model), "class": model_class(model, meta),
         "runner": runner(meta), "backend": backend, "run": run, "labels": labels,
         "vision": vision, "effort": effort,
+        "requests": Counter(_request(a.meta) for a in served),
         "budgets": sorted({(a.meta.get("max_turns"), a.meta.get("budget_s")) for a in attempts},
                           key=lambda b: (b[0] or 0, b[1] or 0)),
         "base_url": meta.get("base_url"),
@@ -508,6 +510,14 @@ def _score(r: Dict[str, Any]) -> str:
     return f"{_pct(r['score'])} {_ci(r)}"
 
 
+def _request(meta: Dict[str, Any]) -> str:
+    """What the runner added to every request: the sampling from the model card, the thinking sent back."""
+    parts = [f"`{json.dumps(meta['extra_body'], sort_keys=True)}`"] if meta.get("extra_body") else []
+    if meta.get("send_reasoning"):
+        parts.append("a tool-call turn's thinking sent back as `reasoning` (`--send-reasoning`)")
+    return "; ".join(parts) or "none (the provider's defaults)"
+
+
 def _budgets(r: Dict[str, Any]) -> str:
     parts = []
     for turns, seconds in r["budgets"]:
@@ -636,6 +646,8 @@ def card_facts(r: Dict[str, Any], b: Dict[str, Any]) -> List[Tuple[str, str]]:
         ("run folder", f"`{r['run']}`, labels {', '.join(f'`{l}`' for l in r['labels'])}"),
         ("budgets", f"{_budgets(r)} per probe; {'vision' if r['vision'] else 'text only'}; "
                     f"{'effort ' + r['effort'] if r['effort'] else 'default effort'}"),
+        ("request settings", "; ".join(q if len(r["requests"]) == 1 else f"{q} ({n})"
+                                       for q, n in r["requests"].items())),
         ("standing", status),
         ("engine commit", commits + (f"; changed past it: {', '.join(f'`{d}`' for d in pins['dirty'])}"
                                      if pins["dirty"] else "")),

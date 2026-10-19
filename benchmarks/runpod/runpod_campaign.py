@@ -24,9 +24,12 @@ What it fixes, so a run tomorrow is the same run as the plan:
 - the key: ``RUNPOD_API_KEY`` from the environment, else read from ``~/.claude.json`` (the Runpod MCP
   header) into the child's environment; it is never printed;
 - the route: ``https://api.runpod.ai/v2/<endpoint>/openai/v1`` with ``--backend openai``, the model id as the
-  worker serves it, the spec's ``extra_body`` on every request (recorded in each run.json);
-- the folder: ``benchmarks/probe_runs/2026-10-17-k3``, labels ``<label>-r1..r3``, logs ``run-<label>-rN.log``;
-  the smoke probe runs as ``-r1`` so the repeat skips it (``2026-10-12-k3`` did the same).
+  worker serves it, the spec's ``extra_body`` on every request (recorded in each run.json), and
+  ``--send-reasoning`` when the spec sets ``send_reasoning`` (gpt-oss: harmony wants its earlier thinking back);
+- the folder: ``benchmarks/probe_runs/2026-10-17-k3``, or the spec's ``campaign`` folder name when it has one (the
+  board makes one row of a model per folder, so a rerun under another rig setting needs a folder of its own),
+  labels ``<label>-r1..r3``, logs ``run-<label>-rN.log``; the smoke probe runs as ``-r1`` so the repeat skips it
+  (``2026-10-12-k3`` did the same).
 
 Nothing here starts a worker until ``smoke``, ``k3`` or ``e3-smoke`` sends a request: ``create`` makes
 endpoints with ``workers.min = 0``, which bill nothing while idle.
@@ -49,7 +52,9 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SPECS = HERE / "models.json"
 WORKTREE = REPO / ".claude" / "worktrees" / "runpod-k3"
-PIN = "e7178a2"                      # main on 2026-10-16: spec v1, d1-v6, d1-verify-v4, scrubbed help text
+PIN = "727fb7f"                      # main on 2026-10-18: e7178a2 (spec v1, d1-v6, d1-verify-v4, scrubbed help
+                                     # text) plus the runner's --send-reasoning and the board rules; engine and
+                                     # tool surface unchanged, so the 2026-10-17-k3 rows ran on the same server
 PYTHON = REPO / ".venv" / "bin" / "python"
 CAMPAIGN = REPO / "benchmarks" / "probe_runs" / "2026-10-17-k3"
 E3_OUT = REPO / "results" / "e3-runpod"
@@ -122,6 +127,10 @@ def endpoint_body(data: dict, name: str) -> dict:
             "flashboot": "FLASHBOOT", "timeout": 1_800_000}
 
 
+def campaign(m: dict) -> Path:
+    return REPO / "benchmarks" / "probe_runs" / m["campaign"] if m.get("campaign") else CAMPAIGN
+
+
 def route(m: dict) -> str:
     if not m.get("endpoint"):
         sys.exit(f"{m['model']} has no endpoint yet: run `create` first")
@@ -174,9 +183,11 @@ def child_env() -> Dict[str, str]:
 def run_command(m: dict, label: str, probes: List[str], force: bool = False) -> List[str]:
     cmd = [str(PYTHON), "-m", "roaddraft.runners", "run", "--backend", "openai", "--model", m["model"],
            "--base-url", route(m), "--api-key-env", "RUNPOD_API_KEY",
-           "--out", str(CAMPAIGN), "--label", label, "--budget", str(BUDGET_MIN), "--max-turns", str(MAX_TURNS)]
+           "--out", str(campaign(m)), "--label", label, "--budget", str(BUDGET_MIN), "--max-turns", str(MAX_TURNS)]
     if m.get("extra_body"):
         cmd += ["--extra-body", json.dumps(m["extra_body"])]
+    if m.get("send_reasoning"):
+        cmd.append("--send-reasoning")
     if force:
         cmd.append("--force")
     return cmd + list(probes)
@@ -350,7 +361,7 @@ def cmd_smoke(args) -> int:
     m = spec(data, args.name)
     label = f"{m['label']}-r1"
     cmd = run_command(m, label, [args.probe])
-    log = CAMPAIGN / f"run-{m['label']}-smoke.log"
+    log = campaign(m) / f"run-{m['label']}-smoke.log"
     if args.print:
         show(cmd, log)
         return 0
@@ -360,7 +371,7 @@ def cmd_smoke(args) -> int:
           f"(${m['rate_usd_h']}/h while it runs, ~5 min to load)")
     t0 = time.time()
     rc = stream(cmd, log)
-    meta = CAMPAIGN / "runs" / label / args.probe / "run.json"
+    meta = campaign(m) / "runs" / label / args.probe / "run.json"
     if meta.is_file():
         d = json.loads(meta.read_text())
         print(f"run.json: stop={d.get('stop')} turns={d.get('turns')} seconds={d.get('seconds')} "
@@ -368,7 +379,7 @@ def cmd_smoke(args) -> int:
               f"tools={d.get('pins', {}).get('tools_sha256', '')[:19]} "
               f"instr={d.get('pins', {}).get('instructions_sha256', '')[:19]}")
     print(f"exit {rc} after {time.time() - t0:.0f} s; score it with: "
-          f"PYTHONPATH={WORKTREE / 'src'} {PYTHON} -m roaddraft.runners score {CAMPAIGN / 'runs' / label}")
+          f"PYTHONPATH={WORKTREE / 'src'} {PYTHON} -m roaddraft.runners score {campaign(m) / 'runs' / label}")
     return rc
 
 
@@ -378,14 +389,14 @@ def cmd_k3(args) -> int:
     cmds = [(f"{m['label']}-r{i}", run_command(m, f"{m['label']}-r{i}", args.probes, args.force)) for i in (1, 2, 3)]
     if args.print:
         for label, cmd in cmds:
-            show(cmd, CAMPAIGN / f"run-{label}.log")
+            show(cmd, campaign(m) / f"run-{label}.log")
         return 0
     preflight()
     arm(m)
-    CAMPAIGN.mkdir(parents=True, exist_ok=True)
+    campaign(m).mkdir(parents=True, exist_ok=True)
     pids = []
     for label, cmd in cmds:
-        log = CAMPAIGN / f"run-{label}.log"
+        log = campaign(m) / f"run-{label}.log"
         fh = log.open("a")
         proc = subprocess.Popen(cmd, cwd=REPO, env=child_env(), stdout=fh, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -393,7 +404,7 @@ def cmd_k3(args) -> int:
     for label, pid, log in pids:
         print(f"{label}: pid {pid}, log {log}")
     print(f"three detached processes on endpoint {m['endpoint']} ({m['rate_usd_h']}/h while the worker runs); "
-          f"watch with: tail -f {CAMPAIGN}/run-{m['label']}-r*.log; "
+          f"watch with: tail -f {campaign(m)}/run-{m['label']}-r*.log; "
           f"stop with: pkill -f 'label {m['label']}-r'")
     return 0
 
@@ -440,7 +451,7 @@ def cmd_rerun(args) -> int:
     todo: Dict[str, List[str]] = {}
     for i in (1, 2, 3):
         label = f"{m['label']}-r{i}"
-        for meta in sorted((CAMPAIGN / "runs" / label).glob("*/run.json")):
+        for meta in sorted((campaign(m) / "runs" / label).glob("*/run.json")):
             d = json.loads(meta.read_text())
             stop = str(d.get("stop", ""))
             if stop.startswith("error") and any(s in stop for s in INFRA_ERRORS):
@@ -452,17 +463,17 @@ def cmd_rerun(args) -> int:
         print(f"{label}: {', '.join(probes)}")
     if args.print:
         for label, probes in todo.items():
-            show(run_command(m, label, probes), CAMPAIGN / f"run-{label}-rerun.log")
+            show(run_command(m, label, probes), campaign(m) / f"run-{label}-rerun.log")
         return 0
     preflight()
     arm(m)
     stamp = time.strftime("%Y%m%dT%H%M%S")
-    aside = CAMPAIGN / "runs" / "_superseded"
+    aside = campaign(m) / "runs" / "_superseded"
     aside.mkdir(exist_ok=True)
     for label, probes in todo.items():
         for probe in probes:
-            (CAMPAIGN / "runs" / label / probe).rename(aside / f"{label}-{probe}-{stamp}")
-        log = CAMPAIGN / f"run-{label}-rerun.log"
+            (campaign(m) / "runs" / label / probe).rename(aside / f"{label}-{probe}-{stamp}")
+        log = campaign(m) / f"run-{label}-rerun.log"
         proc = subprocess.Popen(run_command(m, label, probes), cwd=REPO, env=child_env(),
                                 stdout=log.open("a"), stderr=subprocess.STDOUT, start_new_session=True)
         print(f"{label}: rerunning {len(probes)} episode(s), pid {proc.pid}, log {log}; "
@@ -473,7 +484,7 @@ def cmd_rerun(args) -> int:
 def cmd_score(args) -> int:
     data = load()
     m = spec(data, args.name)
-    cmds = [[str(PYTHON), "-m", "roaddraft.runners", "score", str(CAMPAIGN / "runs" / f"{m['label']}-r{i}")]
+    cmds = [[str(PYTHON), "-m", "roaddraft.runners", "score", str(campaign(m) / "runs" / f"{m['label']}-r{i}")]
             for i in (1, 2, 3)]
     board = [str(PYTHON), "-m", "roaddraft.runners", "leaderboard"]
     if args.print:
@@ -483,7 +494,7 @@ def cmd_score(args) -> int:
         return 0
     preflight(need_key=False)
     for cmd in cmds:
-        if (CAMPAIGN / "runs" / Path(cmd[-1]).name).is_dir():
+        if (campaign(m) / "runs" / Path(cmd[-1]).name).is_dir():
             subprocess.run(cmd, cwd=REPO, env=dict(os.environ, PYTHONPATH=str(WORKTREE / "src")), check=False)
     return subprocess.run(board, cwd=REPO, check=False).returncode
 
