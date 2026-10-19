@@ -54,9 +54,9 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SPECS = HERE / "models.json"
 WORKTREE = REPO / ".claude" / "worktrees" / "runpod-k3"
-PIN = "727fb7f"                      # main on 2026-10-18: e7178a2 (spec v1, d1-v6, d1-verify-v4, scrubbed help
-                                     # text) plus the runner's --send-reasoning and the board rules; engine and
-                                     # tool surface unchanged, so the 2026-10-17-k3 rows ran on the same server
+PIN = "3daef52"                      # main on 2026-10-18: the engine refuses stationing out of its linework's
+                                     # space, d1-verify-v5; tool surface unchanged since e7178a2 (60eeeb21). The
+                                     # 2026-10-17-k3 rows ran at e7178a2, the gpt-oss rerun at 727fb7f
 PYTHON = REPO / ".venv" / "bin" / "python"
 CAMPAIGN = REPO / "benchmarks" / "probe_runs" / "2026-10-17-k3"
 E3_OUT = REPO / "results" / "e3-runpod"
