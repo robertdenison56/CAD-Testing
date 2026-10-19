@@ -33,6 +33,7 @@ The 33 probes in three tiers (T1 find and draft, 17; T2 harder tasks, 6; T3 line
 
 | model | class | runner | run folder | attempts | passed | why not ranked | card |
 |---|---|---|---|---|---|---|---|
+| GPT-6-Luna | frontier API | runners · codex (Codex headless) | `2026-10-18-luna-k3` | 48 on 16 probes | 42/48 | in progress: 3 episodes unfinished; k = 3 on 15 of 33 probes | [card](cards/gpt-6-luna.md) |
 | gpt-oss-20b (mxfp4, vLLM) | hosted open-weight | runners · openai (api.runpod.ai) | `2026-10-17-k3` | 99 on 33 probes | 7/99 | superseded by 2026-10-18-gpt-oss-k3 | [card](cards/openai-gpt-oss-20b--2026-10-17-k3.md) |
 
 ## Run folders not on the board
