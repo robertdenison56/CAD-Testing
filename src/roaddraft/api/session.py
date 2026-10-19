@@ -27,7 +27,7 @@ from roaddraft.commands.schemas import (
     IDS, NSTR, NUM, POS, SPACE, STR, TRAVERSE_PROPS, obj,
 )
 from roaddraft.core.units import LENGTH_FORMATS
-from roaddraft.document import fileformat
+from roaddraft.document import confine, fileformat
 from roaddraft.document.annotation import DEFAULT_SCALES, format_scale, parse_scale
 from roaddraft.document.document import Document
 from roaddraft.document.sheets import SHEET_SIZES
@@ -1613,13 +1613,14 @@ class Session:
                            round(content[1] * paper_scale, 3)]}
 
     def _q_save_document(self, p):
-        path = fileformat.write_document(self._resolve(p["path"]),
-                                         self.doc.to_dict())
+        target = fileformat.normalize_path(self._resolve(p["path"]))
+        self._inside(target, p["path"])
+        path = fileformat.write_document(target, self.doc.to_dict())
         self.doc._path = path.resolve()  # relative reference paths follow the host
         return self._file_result(path, False)
 
     def _q_save_journal(self, p):
-        path = self._resolve(p["path"])
+        path = self._inside(self._resolve(p["path"]), p["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = [json.dumps({"type": "init", "document": self.bus.baseline})]
         lines += [json.dumps({"type": "command", **entry})
@@ -1977,8 +1978,17 @@ class Session:
 
     def _out_path(self, given, default_name) -> Path:
         path = self._resolve(given) if given else self.out_dir / default_name
+        self._inside(path, given)
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
+
+    @staticmethod
+    def _inside(path: Path, given=None) -> Path:
+        """``path``, unless a held root (document/confine.py) refuses it."""
+        try:
+            return confine.check(path, given)
+        except confine.OutsideRoot as ex:
+            raise _QueryFault(str(ex), hint=ex.hint)
 
     @staticmethod
     def _file_result(path: Path, include_base64: bool) -> dict:

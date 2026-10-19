@@ -68,8 +68,9 @@ def episode(tmp_path, server=None, **opts) -> Episode:
 def test_the_server_over_stdio_serves_tools_and_traces_calls(tmp_path):
     setup = setup_probe(tmp_path / "p", BLANK, SERVER)
     assert (tmp_path / "p" / "server.json").exists() and (tmp_path / "p" / "prompt.txt").exists()
-    assert json.loads((tmp_path / "p" / "server.json").read_text())["cmd"][-5:] == [
-        "--autosave", "--trace", str(tmp_path / "p" / "trace.jsonl"), "--out-dir", str(tmp_path / "p" / "renders")]
+    assert json.loads((tmp_path / "p" / "server.json").read_text())["cmd"][-7:] == [
+        "--autosave", "--trace", str(tmp_path / "p" / "trace.jsonl"), "--out-dir", str(tmp_path / "p" / "renders"),
+        "--root", str(tmp_path / "p")]
     assert BLANK.prompt in (tmp_path / "p" / "prompt.txt").read_text()
     server = McpServer(setup.cmd, cwd=setup.folder / "project", log=setup.folder / "server.log")
     try:
@@ -278,6 +279,7 @@ def test_claude_code_command_and_stream_parsing(tmp_path):
     entry = config["mcpServers"]["roaddraft"]
     assert entry["type"] == "stdio" and entry["command"] == sys.executable
     assert entry["args"][:2] == ["-m", "roaddraft.mcp.server"] and "--autosave" in entry["args"]
+    assert entry["args"][-2:] == ["--root", str(ep.setup.folder)]   # held to the run folder
     assert mcp_config(["/v/roaddraft-mcp", "--doc", "x"])["mcpServers"]["roaddraft"]["args"] == ["--doc", "x"]
 
     out = parse_stream("\n".join(json.dumps(l) for l in STREAM), ep, "claude-haiku-4-5")
@@ -381,6 +383,7 @@ def test_codex_command_pares_the_harness_back(tmp_path, monkeypatch):
     assert json.loads(settings["mcp_servers.roaddraft.command"]) == sys.executable
     args = json.loads(settings["mcp_servers.roaddraft.args"])
     assert args[:2] == ["-m", "roaddraft.mcp.server"] and "--autosave" in args
+    assert args[-2:] == ["--root", str(ep.setup.folder)]   # held to the run folder
     assert settings["mcp_servers.roaddraft.env"] == '{PYTHONPATH = "/pinned/src"}'
     instructions = Path(json.loads(settings["model_instructions_file"]))
     assert instructions.is_absolute() and "model space" in instructions.read_text().lower()

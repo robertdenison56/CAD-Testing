@@ -174,13 +174,17 @@ class Setup:
 def setup_probe(folder: Path, probe: Probe, server_command: Sequence[str]) -> Setup:
     """A fresh project for the probe under ``folder``, with ``server.json`` and
     ``prompt.txt`` beside it, the way ``setup_runs.py`` wrote them. The paths
-    in the command are absolute: the server starts in ``project/``."""
+    in the command are absolute: the server starts in ``project/``. ``--root``
+    holds the model's file access to the run folder, so the reference
+    solutions elsewhere in the repository cannot be opened, attached or
+    imported, and nothing is written outside it."""
     folder = Path(folder).resolve()
     folder.mkdir(parents=True, exist_ok=True)
     doc = fixture.start_document(folder / "project", probe.start)
     cmd = list(server_command) + ["--doc", str(doc), "--autosave",
                                   "--trace", str(folder / "trace.jsonl"),
-                                  "--out-dir", str(folder / "renders")]
+                                  "--out-dir", str(folder / "renders"),
+                                  "--root", str(folder)]
     (folder / "server.json").write_text(json.dumps({"cmd": cmd}))
     (folder / "prompt.txt").write_text(prompting.task_text(probe))
     return Setup(folder=folder, doc=doc, cmd=cmd)
