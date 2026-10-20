@@ -917,7 +917,12 @@ every call a step against the budgets (150 steps, 8 consecutive faults, 20
 minutes; `run_check` 3 uses in the self-correct mode, none in single) — and
 when it submits, or a budget trips, verifies the document against the ground
 truth at the prompt level and writes one trajectory file: header, turns, the
-replayable journal, the verify report, the audit, the end record.
+replayable journal, the verify report, the audit, the end record. Each
+episode works in a fresh temporary folder holding the task's files and the
+renders, and every file a tool reads or writes (a reference attached or
+loaded, a render) must resolve inside it, links followed — the hold
+`roaddraft-mcp --root` puts on a probe run — so nothing else on disk is in
+reach; results show the folder's paths relative to it.
 
 ```
 .venv/bin/python -m roaddraft.eval run --taskset d1-dev --agent oracle        # 50/50 = 100: the harness loses nothing
