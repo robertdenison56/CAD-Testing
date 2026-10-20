@@ -54,7 +54,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SPECS = HERE / "models.json"
 WORKTREE = REPO / ".claude" / "worktrees" / "runpod-k3"
-PIN = "3daef52"                      # main on 2026-10-18: the engine refuses stationing out of its linework's
+PIN = "2658fa0"                      # 2026-10-19: main a1c0038 + 89f7a13 (eval file access held to the episode folder, e3-v2), for d1-variance; before it 3daef52 (2026-10-18): the engine refuses stationing out of its linework's
                                      # space, d1-verify-v5; tool surface unchanged since e7178a2 (60eeeb21). The
                                      # 2026-10-17-k3 rows ran at e7178a2, the gpt-oss rerun at 727fb7f
 PYTHON = REPO / ".venv" / "bin" / "python"

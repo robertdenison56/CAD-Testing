@@ -8,7 +8,8 @@
 | class | hosted open-weight |
 | runner | runners · openai (api.runpod.ai), `https://api.runpod.ai/v2/823ffmdxxfz2v2/openai/v1` |
 | run folder | `2026-10-17-k3`, labels `gpt-oss-20b-mxfp4-vllm-r1`, `gpt-oss-20b-mxfp4-vllm-r2`, `gpt-oss-20b-mxfp4-vllm-r3` |
-| budgets | 120 turns, 30 min per probe; text only; default effort |
+| effort | medium (default): Nothing set, so the model's default applied: vLLM sends no `reasoning_effort`, so the harmony system message reads `Reasoning: medium`. |
+| budgets | 120 turns, 30 min per probe; text only |
 | request settings | none (the provider's defaults) |
 | standing | not ranked yet: superseded by 2026-10-18-gpt-oss-k3 |
 | engine commit | `e7178a2ff7` (99) |

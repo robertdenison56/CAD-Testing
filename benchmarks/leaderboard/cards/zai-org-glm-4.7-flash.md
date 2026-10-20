@@ -8,9 +8,10 @@
 | class | hosted open-weight |
 | runner | runners · openai (api.runpod.ai), `https://api.runpod.ai/v2/cwvlr4nqczsrvl/openai/v1` |
 | run folder | `2026-10-17-k3`, labels `glm-4.7-flash-bf16-vllm-r1`, `glm-4.7-flash-bf16-vllm-r2`, `glm-4.7-flash-bf16-vllm-r3` |
-| budgets | 120 turns, 30 min per probe; text only; default effort |
+| effort | thinking on (default): Nothing set, so the model's default applied: its chat template thinks unless the request sets `enable_thinking: false`, and has no effort levels. |
+| budgets | 120 turns, 30 min per probe; text only |
 | request settings | `{"temperature": 1.0, "top_p": 0.95}` |
-| standing | rank 7 of 9 |
+| standing | rank 9 of 11 |
 | engine commit | `e7178a2ff7` (99) |
 | tool surface | `sha256:60eeeb2195be` |
 | server instructions | current |

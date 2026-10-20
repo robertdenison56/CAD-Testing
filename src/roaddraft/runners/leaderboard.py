@@ -44,6 +44,7 @@ from urllib.parse import urlparse
 
 from roaddraft.mcp.server import INSTRUCTIONS
 from roaddraft.probes import prompting, tasks
+from roaddraft import effort as effort_of
 from roaddraft.runners.score import score_folder
 
 K = 3
@@ -223,6 +224,30 @@ def cost_of(meta: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+#: what each backend sends ``--effort`` as; the openai-compatible backend sends none
+EFFORT_SENT = {"anthropic": "the Messages API's `output_config.effort`",
+               "claude-code": "the Claude Code CLI's `--effort`",
+               "codex": "Codex's `model_reasoning_effort`"}
+
+
+def effort(meta: Dict[str, Any]) -> Tuple[str, str]:
+    """The effort a row ran at, as a cell and in words (``roaddraft.effort``):
+    the level ``--effort`` set; for the openai-compatible backend, which sends no
+    level, what its request body set; else the model's default where it is
+    known, ``default`` where it is not."""
+    backend = meta.get("backend") or "?"
+    return effort_of.describe(meta.get("model") or "?", meta.get("effort"),
+                              EFFORT_SENT.get(backend), meta.get("extra_body"))
+
+
+def _effort_words(label: str) -> str:
+    """``medium effort``, ``xhigh (default) effort``, ``thinking on (default)``: the cell as a phrase."""
+    if label.startswith("thinking"):
+        return label
+    level, _, rest = label.partition(" ")
+    return f"{level} effort" + (f" {rest}" if rest else "")
+
+
 def interval(per_probe: Sequence[Sequence[int]], n: int = BOOTSTRAP, seed: int = SEED
              ) -> Tuple[Optional[float], Optional[float]]:
     """A 95% interval on the mean per-probe pass rate: probes resampled, then
@@ -257,7 +282,7 @@ def _mean(values: Sequence[float]) -> Optional[float]:
 
 
 def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str, Any]:
-    run, model, backend, vision, effort = key
+    run, model, backend, vision, level = key
     # an episode the runner ended on an error carries no base_url; the class and the runner read it
     meta = next((a.meta for a in attempts if a.meta.get("base_url")), attempts[0].meta)
     served = [a for a in attempts if a.meta.get("base_url")] or attempts
@@ -287,13 +312,15 @@ def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str,
                      ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
                  for a in valid if a.meta.get("tokens")]
     tokens_out = [(a.meta.get("tokens") or {}).get("output_tokens", 0) for a in valid if a.meta.get("tokens")]
-    reasoning = [(a.meta.get("tokens") or {}).get("reasoning_tokens") for a in valid
-                 if (a.meta.get("tokens") or {}).get("reasoning_tokens") is not None]
+    # Codex counts reasoning as ``reasoning_output_tokens``
+    reasoning = [r for a in valid for t in [a.meta.get("tokens") or {}]
+                 for r in [t.get("reasoning_tokens", t.get("reasoning_output_tokens"))] if r is not None]
     multi = [a for a in valid if (a.row.get("items_asked") or 0) > 1]
     read = [(a, a.row["claims"]) for a in valid if (a.row.get("claims") or {}).get("report")]
     failed = [(a, c) for a, c in read if not a.row.get("passed")]
     commits = Counter((a.meta.get("pins") or {}).get("commit") for a in attempts)
     instructions = Counter(a.instructions_current for a in attempts)
+    effort_label, effort_note = effort(meta)
     marks = {}
     for p in tasks.PROBES:
         mine = sorted((a for a in attempts if a.probe == p.id), key=lambda a: _natural(a.label))
@@ -309,7 +336,7 @@ def summarize(key: Tuple, attempts: List[Attempt], unfinished: int) -> Dict[str,
     return {
         "model": model, "name": NAMES.get(model, model), "class": model_class(model, meta),
         "runner": runner(meta), "backend": backend, "run": run, "labels": labels,
-        "vision": vision, "effort": effort,
+        "vision": vision, "effort": level, "effort_label": effort_label, "effort_note": effort_note,
         "requests": Counter(_request(a.meta) for a in served),
         "budgets": sorted({(a.meta.get("max_turns"), a.meta.get("budget_s")) for a in attempts},
                           key=lambda b: (b[0] or 0, b[1] or 0)),
@@ -567,11 +594,12 @@ def render_board(b: Dict[str, Any]) -> str:
         "## Ranked", "",
     ]
     if b["ranked"]:
-        lines += [f"| rank | model | class | runner | pass rate [95% CI] | {head} | hard-fail | invalid calls | cost / task | attempts | card |",
-                  "|---|---|---|---|---|" + "---|" * len(tiers) + "---|---|---|---|---|"]
+        lines += [f"| rank | model | effort | class | runner | pass rate [95% CI] | {head} | hard-fail | invalid calls | cost / task | attempts | card |",
+                  "|---|---|---|---|---|---|" + "---|" * len(tiers) + "---|---|---|---|---|"]
         for r in b["ranked"]:
             cells = " | ".join(_tier(r["tiers"][t]) for t in tiers)
-            lines.append(f"| {r['rank']} | {r['name']} | {r['class']} | {r['runner']} | {_score(r)} | {cells} | "
+            lines.append(f"| {r['rank']} | {r['name']} | {r['effort_label']} | {r['class']} | {r['runner']} | "
+                         f"{_score(r)} | {cells} | "
                          f"{_pct(r['hard_fail'], 0)} ({r['never']}/{r['probes_attempted']}) | "
                          f"{_pct(r['invalid_rate'])} | {_usd(r['cost_per_task'])} | "
                          f"{r['valid']} (k = {b['k']}) | [card]({r['card']}) |")
@@ -582,10 +610,10 @@ def render_board(b: Dict[str, Any]) -> str:
         lines.append(f"No model has all {b['probes']} probes at k = {b['k']} yet.")
     lines += ["", "## Not ranked yet", ""]
     if b["unranked"]:
-        lines += ["| model | class | runner | run folder | attempts | passed | why not ranked | card |",
-                  "|---|---|---|---|---|---|---|---|"]
+        lines += ["| model | effort | class | runner | run folder | attempts | passed | why not ranked | card |",
+                  "|---|---|---|---|---|---|---|---|---|"]
         for r in b["unranked"]:
-            lines.append(f"| {r['name']} | {r['class']} | {r['runner']} | `{r['run']}` | "
+            lines.append(f"| {r['name']} | {r['effort_label']} | {r['class']} | {r['runner']} | `{r['run']}` | "
                          f"{r['valid']} on {r['probes_attempted']} probe{'s' * (r['probes_attempted'] != 1)} | "
                          f"{r['passes']}/{r['valid']} | "
                          f"{r['why']} | [card]({r['card']}) |")
@@ -612,6 +640,14 @@ def render_board(b: Dict[str, Any]) -> str:
         "failure whatever the document shows. One ended by the infrastructure (a crash, a dead engine, a CLI "
         "error) is recorded on the card and excluded, except an error that says the model's own output was "
         "unreadable, which is the model's failure.",
+        "- **Effort** is the level the run asked for with `--effort`, sent as "
+        + ", ".join(EFFORT_SENT[k] for k in ("anthropic", "claude-code"))
+        + f" or {EFFORT_SENT['codex']}. The openai-compatible backend sends no level, so its rows show what the request body set "
+        "(`reasoning_effort`, or `enable_thinking` for a chat template with a thinking switch). Where the run "
+        "set nothing, the cell is the model's default, marked **(default)**, as read from where the setting "
+        "lives: the model's chat template on Hugging Face (vLLM's harmony system message for gpt-oss), or "
+        "Codex's model catalog; plain **default** is a default not looked up. A model run at two efforts is "
+        "two rows.",
         "- **Ties** break on hard-fail rate, then invalid-call rate, then cost per task (a row with no price sorts "
         "after one with a price).",
         "- **Hard-fail rate**: the share of probes failed on every attempt. Track P checks are pass or fail with no "
@@ -644,8 +680,8 @@ def card_facts(r: Dict[str, Any], b: Dict[str, Any]) -> List[Tuple[str, str]]:
         ("class", r["class"]),
         ("runner", r["runner"] + (f", `{r['base_url']}`" if r["base_url"] else "")),
         ("run folder", f"`{r['run']}`, labels {', '.join(f'`{l}`' for l in r['labels'])}"),
-        ("budgets", f"{_budgets(r)} per probe; {'vision' if r['vision'] else 'text only'}; "
-                    f"{'effort ' + r['effort'] if r['effort'] else 'default effort'}"),
+        ("effort", f"{r['effort_label']}: {r['effort_note']}"),
+        ("budgets", f"{_budgets(r)} per probe; {'vision' if r['vision'] else 'text only'}"),
         ("request settings", "; ".join(q if len(r["requests"]) == 1 else f"{q} ({n})"
                                        for q, n in r["requests"].items())),
         ("standing", status),
@@ -804,7 +840,10 @@ def render_svg(b: Dict[str, Any]) -> str:
     """Every row's probes as a grid of passes over attempts, tiers side by side."""
     rows = b["ranked"] + b["unranked"]
     cell, gap, tier_gap, pitch = 24, 2, 12, 34
-    left, top = 250, 210
+    subtitles = [f"{r['class']} · {r['backend']} · {_effort_words(r['effort_label'])}"
+                 + ("" if "rank" in r else " · not ranked yet") for r in rows]
+    # the row labels' column, wide enough for the longest subtitle (under 5 px a character at 10.5 px)
+    left, top = max(250, 28 + 5 * max(map(len, subtitles), default=0)), 210
     xs, x = {}, left
     for t, v in b["tiers"].items():
         for pid in v["probes"]:
@@ -832,13 +871,12 @@ def render_svg(b: Dict[str, Any]) -> str:
             out.append(f'<text class="ink2" font-size="10.5" transform="translate({cx:g},{top - 6}) rotate(-55)">'
                        f"{_x(pid)}</text>")
     out.append(f'<text class="ink2" x="{right + 8}" y="{top - 8}" font-size="11">pass rate</text>')
-    for i, r in enumerate(rows):
+    for i, (r, subtitle) in enumerate(zip(rows, subtitles)):
         y = top + i * pitch
         standing = f"{r['rank']}  " if "rank" in r else ""
         out.append(f'<text class="ink" x="16" y="{y + 15}" font-size="13" font-weight="600">'
                    f"{standing}{_x(r['name'])}</text>")
-        out.append(f'<text class="ink2" x="16" y="{y + 29}" font-size="10.5">'
-                   f"{_x(r['class'])} · {_x(r['backend'])}{'' if 'rank' in r else ' · not ranked yet'}</text>")
+        out.append(f'<text class="ink2" x="16" y="{y + 29}" font-size="10.5">{_x(subtitle)}</text>')
         for pid, p in r["probes"].items():
             cx = xs[pid]
             tip = (f"{r['name']} · {pid} ({p['tier']}): {p['passes']} of {p['attempts']} passed"

@@ -140,6 +140,52 @@ def test_a_card_says_what_each_request_carried_and_a_rerun_in_a_later_folder_sup
     assert lb._request({"backend": "claude-code"}) == "none (the provider's defaults)"
 
 
+def test_every_row_says_its_effort_where_the_run_has_one():
+    passes = {pid: 2 for pid in IDS}
+    medium = model_rows("luna", passes, backend="codex")
+    for a in medium:
+        a.meta["effort"] = "medium"
+    unset = model_rows("luna", passes, backend="codex")
+    thinking = model_rows("gemma", passes, backend="openai")
+    for a in thinking:
+        a.meta.update(base_url="https://api.runpod.ai/v2/x/openai/v1",
+                      extra_body={"chat_template_kwargs": {"enable_thinking": True}})
+    b = lb.board(medium + unset + thinking, folders("2026-10-09-k3"))
+    rows = {(r["model"], r["effort"]): r for r in b["ranked"]}
+    assert len(rows) == 3                                   # one model at two efforts is two rows
+    assert rows[("luna", "medium")]["effort_label"] == "medium"
+    assert rows[("luna", None)]["effort_label"] == "default"
+    assert rows[("gemma", None)]["effort_label"] == "thinking on"
+    text = lb.render_board(b)
+    assert "| rank | model | effort | class |" in text
+    assert "| luna | medium |" in text and "| luna | default |" in text and "| gemma | thinking on |" in text
+    facts = dict(lb.card_facts(rows[("luna", "medium")], b))
+    assert facts["effort"] == "medium: set by the run, sent as Codex's `model_reasoning_effort`."
+    assert "medium effort" in lb.render_svg(b) and "thinking on" in lb.render_svg(b)
+    assert lb.effort({"backend": "openai", "extra_body": {"reasoning_effort": "high"}})[0] == "high"
+    assert lb.effort({"backend": "openai", "effort": "high"}) == (
+        "default", "`high` was recorded, but this backend sends no effort. "
+                   "Nothing set, so the model's own default applied (not looked up here).")
+    assert lb.effort({"backend": "claude-code"})[1].startswith("Nothing set, so the provider's default")
+
+
+def test_a_row_that_set_no_effort_shows_the_model_s_default():
+    # read from each model's chat template on Hugging Face, vLLM's harmony default, Codex's catalog
+    unset = lambda model, backend="openai", **meta: lb.effort({"backend": backend, "model": model, **meta})[0]
+    assert unset("Qwen/Qwen3.8-27B") == "xhigh (default)"
+    assert unset("Qwen/Qwen3.6-35B-A3B") == unset("zai-org/GLM-4.7-Flash") == "thinking on (default)"
+    assert unset("openai/gpt-oss-20b") == "medium (default)"
+    assert unset("gpt-6-astra", backend="codex") == "low (default)"
+    label, note = lb.effort({"backend": "codex", "model": "gpt-6-luna", "effort": "high"})
+    assert label == "high" and note.endswith("Left unset it would be medium: Codex's model catalog default "
+                                             "for `gpt-6-luna`.")
+    label, note = lb.effort({"backend": "openai", "model": "google/gemma-4-31B-it",
+                             "extra_body": {"chat_template_kwargs": {"enable_thinking": True}}})
+    assert label == "thinking on" and "Left unset it would be thinking off" in note
+    assert lb._effort_words("xhigh (default)") == "xhigh effort (default)"
+    assert lb._effort_words("thinking on (default)") == "thinking on (default)"
+
+
 def test_measures_read_queries_before_the_first_change_and_renders_followed_by_one():
     q = lambda tool, ok=True: {"tool": tool, "kind": "query", "ok": ok}
     c = lambda tool, ok=True: {"tool": tool, "kind": "command", "ok": ok}

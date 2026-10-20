@@ -404,7 +404,7 @@ def _board_row(r: dict, tiers: dict, status: str) -> list:
                 if k in t else "" for k in tiers]
     cost = r.get("cost_per_task")
     return [r.get("rank", ""), r["name"], r["class"], r["runner"], r["run"],
-            r["model"], r.get("backend", ""), r.get("effort") or "",
+            r["model"], r.get("backend", ""), r.get("effort_label") or r.get("effort") or "default",
             _pct(r["score"]), f"[{_pct(r['ci'][0])}, {_pct(r['ci'][1])}]", *per_tier,
             f"{r['passes']}/{r['valid']}", r["probes_attempted"], r["always"], r["never"],
             _pct(r["hard_fail"]), _pct(r["invalid_rate"]),
@@ -437,7 +437,9 @@ def probe_marks(board: dict):
     cols = []
     for r in board["ranked"]:
         marks = {pid: p["marks"] for pid, p in r["probes"].items()}
-        cols.append((f"{r['name']}\n{r['run']} (rank {r['rank']})", marks))
+        effort = r.get("effort_label") or r.get("effort") or "default"
+        cols.append((f"{r['name']}, {effort}{'' if effort.startswith('thinking') else ' effort'}\n"
+                     f"{r['run']} (rank {r['rank']})", marks))
     return cols
 
 

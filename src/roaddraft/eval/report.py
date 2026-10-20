@@ -64,6 +64,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from roaddraft import effort as effort_of
 from roaddraft.eval.trajectory import read_episode, replay_journal
 from roaddraft.verify.report import FINDING_CODES
 
@@ -292,6 +293,9 @@ def load_episode(path, reverify: bool = False, check_delta: bool = True) -> Opti
         "seed": header.get("seed"), "agent": header.get("agent"),
         "model": header.get("model") or header.get("agent"),
         "provider": header.get("provider") or "unknown", "effort": header.get("effort"),
+        "effort_label": effort_label(header.get("model") or header.get("agent"),
+                                     header.get("provider") or "unknown", header.get("effort"),
+                                     (header.get("provider_config") or {}).get("extra_body")),
         "dialect": header.get("dialect", "neutral"), "mode": header.get("mode", "single"),
         "level": level, "sample": header.get("sample", 0),
         "spec_version": verify_rec.get("spec_version", header.get("spec_version")),
@@ -334,6 +338,30 @@ def group_label(dims: dict) -> str:
     if dims.get("dialect") and dims["dialect"] != "neutral":
         parts.append(dims["dialect"])
     return " · ".join(parts)
+
+
+#: how each E3 provider sends ``--effort``
+EFFORT_SENT = {"anthropic": "the Messages API's `output_config.effort`",
+               "openai": "`reasoning_effort` in the request body"}
+
+
+def effort_label(model: Optional[str], provider: str, effort: Optional[str],
+                 extra_body: Optional[dict] = None) -> str:
+    """An episode's effort (``roaddraft.effort``): the level the run set, what
+    the request body set, else the model's default marked ``(default)``, or
+    ``default`` where that is not known; ``–`` for the harness's own agents."""
+    if provider == "harness":
+        return "–"
+    return effort_of.describe(model or "?", effort, EFFORT_SENT.get(provider), extra_body)[0]
+
+
+def effort_cell(row: dict) -> str:
+    """A row's effort cell: the label its episodes carry, else one from its key
+    (a summary written before rows carried it)."""
+    if row.get("effort"):
+        return row["effort"]
+    key = row.get("key") or row
+    return effort_label(key.get("model"), key.get("provider") or "unknown", key.get("effort"))
 
 
 def task_means(eps: Sequence[dict], field: str = "effective_score") -> Dict[str, float]:
@@ -381,6 +409,7 @@ def summarize_group(dims: dict, eps: Sequence[dict]) -> dict:
                            for r in (e["row"] for e in eps))
     out = {
         "key": dims, "label": group_label(dims),
+        "effort": eps[0]["row"].get("effort_label") if eps else effort_cell({"key": dims}),
         "n_episodes": len(eps), "n_scored": len(scored), "n_tasks": len(tm),
         "errors": len(errored),
         "k_min": min(per_task.values()) if per_task else 0,
@@ -632,12 +661,12 @@ def render_markdown(s: dict) -> str:
           "Effective score: 0 on a hard fail, else the rubric score; per task over its samples, "
           f"then over tasks. 95% CI: bootstrap over tasks within task type "
           f"({s['bootstrap']['resamples']:,} resamples, seed {s['bootstrap']['seed']}).", "",
-          "| # | Row | Effective | 95% CI | Rubric | Hard-fail | Clean | Submit | Steps (med / p90) "
+          "| # | Row | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Submit | Steps (med / p90) "
           "| Invalid calls | Recovery | run_check | Cost / sheet | Tasks × k |",
-          "|---:|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|"]
+          "|---:|---|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|"]
     for g in rows:
         k = f"{g['k_min']}" if g["k_min"] == g["k_max"] else f"{g['k_min']}–{g['k_max']}"
-        L.append(f"| {g['rank']} | {g['label']} | **{_f(g['effective_mean'])}** | {_ci(g)} | "
+        L.append(f"| {g['rank']} | {g['label']} | {effort_cell(g)} | **{_f(g['effective_mean'])}** | {_ci(g)} | "
                  f"{_f(g['rubric_mean'])} | {_p(g['hard_fail_rate'])} | {_p(g['clean_sheet_rate'])} | "
                  f"{_p(g['submit_rate'])} | {_f(g['steps_median'], 0)} / {_f(g['steps_p90'], 0)} | "
                  f"{_p(g['invalid_call_rate'])} | {_p(g['recovery_rate'])} | "
@@ -953,7 +982,8 @@ def board(summaries: Sequence[dict]) -> dict:
                 reasons.append(f"run on {s.get('taskset')}, not {LEADERBOARD_SET}")
             others.append({"run_id": s["run_id"], "taskset": s.get("taskset"),
                            "episodes": s.get("episodes"), "reasons": reasons,
-                           "rows": [{"label": g["label"], "effective_mean": g["effective_mean"],
+                           "rows": [{"label": g["label"], "effort": effort_cell(g),
+                                     "effective_mean": g["effective_mean"],
                                      "half_width": g["half_width"], "n_tasks": g["n_tasks"],
                                      "k_max": g["k_max"]} for g in s.get("rows") or []]})
             continue
@@ -962,7 +992,8 @@ def board(summaries: Sequence[dict]) -> dict:
                                          "half_width", "rubric_mean", "hard_fail_rate",
                                          "clean_sheet_rate", "invalid_call_rate", "cost_per_sheet",
                                          "n_tasks", "k_min", "k_max")},
-                   "run_id": s["run_id"], "spec_version": ", ".join(s["versions"]["spec_version"])}
+                   "effort": effort_cell(g), "run_id": s["run_id"],
+                   "spec_version": ", ".join(s["versions"]["spec_version"])}
             (reference if g["key"].get("provider") == "harness" else ranked).append(row)
     ranked.sort(key=rank_key)
     for i, r in enumerate(ranked):
@@ -978,12 +1009,13 @@ def board(summaries: Sequence[dict]) -> dict:
 
 
 def _board_table(rows: Sequence[dict], numbered: bool = True) -> List[str]:
-    L = ["| # | Model · mode · prompt | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls "
+    L = ["| # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls "
          "| Cost / sheet | Tasks × k | Run |",
-         "|---:|---|---:|---|---:|---:|---:|---:|---:|---|---|"]
+         "|---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|"]
     for i, r in enumerate(rows):
         k = f"{r['k_min']}" if r["k_min"] == r["k_max"] else f"{r['k_min']}–{r['k_max']}"
-        L.append(f"| {r.get('rank', '') if numbered else ''} | {r['label']} | **{_f(r['effective_mean'])}** "
+        L.append(f"| {r.get('rank', '') if numbered else ''} | {r['label']} | {effort_cell(r)} "
+                 f"| **{_f(r['effective_mean'])}** "
                  f"| {_ci(r)} | {_f(r['rubric_mean'])} | {_p(r['hard_fail_rate'])} | "
                  f"{_p(r['clean_sheet_rate'])} | {_p(r['invalid_call_rate'])} | "
                  f"{_usd(r['cost_per_sheet'])} | {r['n_tasks']} × {k} | `{r['run_id']}` |")
@@ -1007,7 +1039,9 @@ def render_board(b: dict, readme: bool = False) -> str:
     if not readme and b["others"]:
         L += ["", "## Published runs that are not ranked", ""]
         for o in b["others"]:
-            rows = "; ".join(f"{r['label']} {_f(r['effective_mean'])} ± {_f(r['half_width'])} "
+            rows = "; ".join(f"{r['label']}"
+                             + (f", effort {r['effort']}" if r.get("effort", "–") != "–" else "")
+                             + f" {_f(r['effective_mean'])} ± {_f(r['half_width'])} "
                              f"({r['n_tasks']} tasks × {r['k_max']})" for r in o["rows"])
             L.append(f"- `{o['run_id']}` ({o['taskset']}, {o['episodes']} episodes): {rows}. "
                      f"Not ranked: {'; '.join(o['reasons'])}.")
@@ -1018,7 +1052,10 @@ def render_board(b: dict, readme: bool = False) -> str:
     else:
         L += ["", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
               "samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank "
-              "on the effective mean, then hard-fail rate, invalid-call rate and cost.",
+              "on the effective mean, then hard-fail rate, invalid-call rate and cost. Effort is the "
+              "level the run set with `--effort`, else what the request body set, else the model's "
+              "default marked (default), as read from its chat template or catalog (`roaddraft.effort`); "
+              "plain default is one not looked up. A model run at two efforts is two rows.",
               "", "_Generated by `scripts/make_leaderboard.py` from `benchmarks/runs/*/summary.json`; "
               "do not edit._"]
     return "\n".join(L) + "\n"
@@ -1034,6 +1071,7 @@ def replace_block(text: str, block: str) -> str:
 
 __all__ = ["REPORT_VERSION", "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
            "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
-           "summarize_group", "paired", "build", "publish_problems", "render_markdown", "files",
+           "effort_label", "effort_cell", "summarize_group", "paired", "build", "publish_problems",
+           "render_markdown", "files",
            "write", "publish", "published", "board", "render_board", "replace_block",
            "README_BEGIN", "README_END"]

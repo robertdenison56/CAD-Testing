@@ -8,9 +8,10 @@
 | class | hosted open-weight |
 | runner | runners · openai (api.runpod.ai), `https://api.runpod.ai/v2/kgu6d0ogfm0oyu/openai/v1` |
 | run folder | `2026-10-17-k3`, labels `gemma-4-31b-bf16-vllm-r1`, `gemma-4-31b-bf16-vllm-r2`, `gemma-4-31b-bf16-vllm-r3` |
-| budgets | 120 turns, 30 min per probe; text only; default effort |
+| effort | thinking on: the request body set `enable_thinking: true`. Left unset it would be thinking off: vLLM's Gemma 4 chat template leaves thinking off unless the request sets `enable_thinking: true`. |
+| budgets | 120 turns, 30 min per probe; text only |
 | request settings | `{"chat_template_kwargs": {"enable_thinking": true}, "temperature": 1.0, "top_k": 64, "top_p": 0.95}` |
-| standing | rank 1 of 9 |
+| standing | rank 2 of 11 |
 | engine commit | `e7178a2ff7` (99) |
 | tool surface | `sha256:60eeeb2195be` |
 | server instructions | current |

@@ -756,8 +756,12 @@ files. It re-scores every episode the native runner left under
 ranks a row once all 33 probes have k = 3 attempts that count. Ties break on
 the hard-fail rate (probes failed on every attempt), then the invalid-call
 rate, then cost per task. An attempt the infrastructure ended is excluded; an
-attempt the budget ended is a failure. Each row's class and runner are on the
-board, its 95% interval comes from a seeded bootstrap, and its model card
+attempt the budget ended is a failure. Each row's class, runner and effort are
+on the board (the `--effort` level the run set; for an open-weight model on the
+openai backend, which sends no level, the thinking switch its request set; else
+the model's default, marked `(default)`, as `roaddraft.effort` records it from
+the model's chat template or Codex's model catalog), its 95% interval comes
+from a seeded bootstrap, and its model card
 carries the §3.2 measures, the pins and every probe's attempts. Single runs
 without `--repeat`, and the earlier rigs' folders, are listed with the reason
 they are not rows. `tests/test_leaderboard.py` covers the rules.

@@ -191,6 +191,21 @@ def _fake_row(model, provider, eff, hf=0.1):
             "k_max": 3}
 
 
+def test_a_row_says_the_effort_it_ran_at():
+    high = _fake_row("claude-a", "anthropic", 61.0)
+    high["key"]["effort"] = "high"
+    b = R.board([_fake_summary("2026-11-01-d1-test", [high])])
+    assert b["ranked"][0]["effort"] == "high"
+    assert "| claude-a · single · explicit | high |" in R.render_board(b)
+    assert R.effort_cell({"provider": "anthropic", "effort": None}) == "default"
+    assert R.effort_cell({"provider": "harness", "effort": None}) == "–"
+    # a model left at its default shows it, from its chat template
+    assert R.effort_label("Qwen/Qwen3.8-27B", "openai", None) == "xhigh (default)"
+    assert R.effort_label("Qwen/Qwen3.8-27B", "openai", "low") == "low"
+    assert R.effort_label("google/gemma-4-31B-it", "openai", None,
+                          {"chat_template_kwargs": {"enable_thinking": True}}) == "thinking on"
+
+
 def test_board_ranks_only_rankable_model_rows():
     good = _fake_summary("2026-11-01-d1-test", [_fake_row("claude-a", "anthropic", 61.0),
                                                 _fake_row("claude-b", "anthropic", 72.5),
@@ -209,6 +224,9 @@ def test_board_ranks_only_rankable_model_rows():
     assert others["var"] == ["run on d1-variance, not d1-test"]
     md = R.render_board(b)
     assert "**Best model 72.5/100" in md and "Published runs that are not ranked" in md
+    assert "| Model · mode · prompt | Effort |" in md
+    assert "| claude-b · single · explicit | default |" in md and "| oracle · single · explicit | – |" in md
+    assert "claude-c · single · explicit, effort default" in md
     block = R.render_board(b, readme=True)
     text = f"intro\n{R.README_BEGIN}\nold\n{R.README_END}\nafter\n"
     new = R.replace_block(text, block)
