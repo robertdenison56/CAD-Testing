@@ -24,6 +24,7 @@ from roaddraft.commands import design_handlers as dh
 from roaddraft.commands import dimension_handlers as dim
 from roaddraft.commands import edit_handlers as eh
 from roaddraft.commands import handlers as h
+from roaddraft.commands import label_updates as lu
 from roaddraft.commands import modify_handlers as mh
 from roaddraft.commands.schemas import EXAMPLES, SCHEMAS
 from roaddraft.document.document import Document
@@ -41,6 +42,11 @@ ANCHOR_PRODUCERS = ("draw_alignment", "draw_offset", "annotate_stationing",
 # piece of anything else is stamped with the cutting command, which no
 # verifier trusts -- so cutting cannot launder a hand-made anchor.
 CUTTERS = ("trim", "break_entity")
+# Commands that make a producer's work again from the design (a centerline
+# redrawn, a stationing set laid out again after the alignment changed): what
+# they create carries the producer's stamp, which the handler sets. Their
+# parameters take no anchors, so nothing a caller passes is stamped.
+REGENERATORS = ("modify_alignment", "update_labels")
 
 
 @dataclass
@@ -333,9 +339,20 @@ REGISTRY: List[CommandSpec] = [
                 {"c3d": ["CREATEALIGNMENTLAYOUT"], "ord": ["complex by pi"]}),
     CommandSpec("modify_alignment",
                 "Change an alignment's PIs, begin station, equations, description, "
-                "or name (rename rewrites anchors and profile bindings). Entities "
-                "already drawn from it are not regenerated (a warning says so).",
+                "or name (rename rewrites anchors and profile bindings). The labels "
+                "lettered from it follow the new design (update_labels); its drawn "
+                "linework does not: redraw=true redraws the centerline, draw_offset "
+                "replace=true the offsets (a warning names what is left).",
                 dh.modify_alignment, {"c3d": ["EDITALIGNMENT"], "ord": ["alignment edit"]}),
+    CommandSpec("update_labels",
+                "Bring the labels lettered from an alignment up to date with its design: "
+                "place_label labels move to their anchors and re-letter, annotate_stationing "
+                "sets are laid out again (new stations ticked, stations past a new end "
+                "dropped), curve tables refill. modify_alignment does this for this "
+                "document's own alignments; run it after the basefile a referenced alignment "
+                "('BASE:RTE-7') lives in has changed. Labels whose anchor is gone are named, "
+                "not deleted. No alignment: every one with labels.",
+                lu.update_labels),
     CommandSpec("delete_alignment",
                 "Delete an alignment (cascade=true also deletes its profiles); "
                 "drawn entities keep their anchors.",
@@ -427,7 +444,8 @@ REGISTRY: List[CommandSpec] = [
                          "reference clip mask", "reference levels",
                          "reference presentation"]}),
     CommandSpec("reload_references",
-                "Re-read all referenced basefiles from disk on next use.",
+                "Re-read all referenced basefiles from disk on next use; warns when labels "
+                "lettered through a reference no longer match its design (update_labels).",
                 h.reload_references, {"ord": ["reference reload"]}),
     CommandSpec("set_annotation_scale",
                 "Set the current annotation scale (AutoCAD annotation scale / Civil 3D "
@@ -551,6 +569,8 @@ class CommandBus:
             if found is not None and found[1].anchor is not None:
                 if name in CUTTERS and found[1].anchor.get("placed_by") in ANCHOR_PRODUCERS:
                     continue  # a piece cut from a producer's linework stays its
+                if name in REGENERATORS and found[1].anchor.get("placed_by") in ANCHOR_PRODUCERS:
+                    continue  # the producer's work, made again from the design
                 found[1].anchor["placed_by"] = name
 
     def _restore(self, snapshot: dict):

@@ -200,6 +200,9 @@ class RoadDraftMCP:
         #: the folder every tool's file access is held to (``--root``); None
         #: holds nothing
         self.root = confine.Root(root) if root else None
+        #: the journal autosave last wrote for each file, so a file opened
+        #: again keeps its earlier passes (Session.journal_history)
+        self._journals: Dict[Path, List[dict]] = {}
 
     # ------------------------------------------------------------- tools
 
@@ -263,6 +266,7 @@ class RoadDraftMCP:
             confine.check(path)
             self.session = Session.load(path, out_dir=self.session.out_dir)
             self.home = getattr(self.session.doc, "_path", None)
+            self.session.journal_history = list(self._journals.get(self.home, []))
         except confine.OutsideRoot as ex:
             return self._tool_error(f"cannot open {path}: {ex} ({ex.hint})")
         except FileNotFoundError:
@@ -296,6 +300,7 @@ class RoadDraftMCP:
             return
         fileformat.write_document(self.home, self.session.doc.to_dict())
         self.session.query("save_journal", {"path": str(journal_path(self.home))})
+        self._journals[self.home] = self.session.journal_records()
 
     def _trace(self, name: str, kind: str, arguments: dict, result: dict) -> None:
         """One line per tool call -- queries and faults too, which the journal

@@ -17,7 +17,7 @@ from roaddraft.commands import schemas as base
 
 DESIGN_COMMANDS = {"create_alignment", "modify_alignment", "delete_alignment",
                    "create_profile", "delete_profile", "draw_alignment", "draw_offset",
-                   "place_label", "place_curve_table", "import_landxml"}
+                   "place_label", "place_curve_table", "import_landxml", "update_labels"}
 
 LABEL_KINDS_13 = ["station", "pc", "pt", "pi", "mc", "pcc", "prc", "bearing", "begin",
                   "end", "equation", "curve_data", "custom"]
@@ -50,10 +50,10 @@ def test_every_schema_closed_additionalProperties_false():
     assert ds.ELEMENT["additionalProperties"] is False
 
 
-def test_schema_and_example_keys_equal_the_ten_design_commands():
+def test_schema_and_example_keys_equal_the_eleven_design_commands():
     assert set(ds.DESIGN_SCHEMAS) == DESIGN_COMMANDS
     assert set(ds.DESIGN_EXAMPLES) == DESIGN_COMMANDS
-    assert len(ds.DESIGN_SCHEMAS) == 10 and len(ds.DESIGN_EXAMPLES) == 10
+    assert len(ds.DESIGN_SCHEMAS) == 11 and len(ds.DESIGN_EXAMPLES) == 11
     # none of them collides with an existing base command
     assert not (DESIGN_COMMANDS & set(base.SCHEMAS) - DESIGN_COMMANDS)
 
@@ -365,7 +365,7 @@ def test_design_schemas_imports_with_schemas_py_blocked():
         "sys.meta_path.insert(0, Block())\n"
         "import roaddraft.commands.design_schemas as ds\n"
         "assert 'roaddraft.commands.schemas' not in sys.modules, 'cycle'\n"
-        "assert len(ds.DESIGN_SCHEMAS) == 10 and len(ds.DESIGN_EXAMPLES) == 10\n"
+        "assert len(ds.DESIGN_SCHEMAS) == 11 and len(ds.DESIGN_EXAMPLES) == 11\n"
         "print('blocked-ok')\n")
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"

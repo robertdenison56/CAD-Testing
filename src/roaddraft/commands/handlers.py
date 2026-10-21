@@ -1384,10 +1384,19 @@ def modify_reference(doc: Document, p: dict):
 
 
 def reload_references(doc: Document, p: dict):
+    from roaddraft.commands.label_updates import stale_labels
     doc._ref_cache.clear()
     count = len(doc.references)
+    # labels lettered through a reference do not see its basefile change
+    warnings = [f"{_plural_n(n, 'label')} anchored to {name} no longer stand where its "
+                f"design puts them; update_labels alignment={name!r} brings them up to date"
+                for name, n in stale_labels(doc).items()]
     return (f"reference cache cleared; {count} reference(s) will reload from "
-            f"disk on next use", _diff(), [])
+            f"disk on next use", _diff(), warnings)
+
+
+def _plural_n(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
 
 
 def fill_title_block(doc: Document, p: dict):

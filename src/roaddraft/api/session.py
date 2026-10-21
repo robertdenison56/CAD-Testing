@@ -676,6 +676,10 @@ class Session:
         #: the GUI points it at the drawing's own folder, because an app opened
         #: from Finder runs in '/'.
         self.base_dir: Optional[Path] = None
+        #: journal records from before this session began: a document opened
+        #: again over MCP carries what was journaled for it earlier, so its
+        #: journal keeps every pass over the file (journal_records)
+        self.journal_history: List[dict] = []
         self._validators = {}
 
     @property
@@ -1656,12 +1660,18 @@ class Session:
                 written.append(journal)
         return self._file_result(path, False)
 
+    def journal_records(self) -> List[dict]:
+        """The journal: any earlier passes over the document
+        (``journal_history``), then an ``init`` with the document as this
+        session began and every command since. Replay starts at the last init."""
+        return (list(self.journal_history)
+                + [{"type": "init", "document": self.bus.baseline}]
+                + [{"type": "command", **entry} for entry in self.bus.journal])
+
     def _q_save_journal(self, p):
         path = self._inside(self._resolve(p["path"]), p["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [json.dumps({"type": "init", "document": self.bus.baseline})]
-        lines += [json.dumps({"type": "command", **entry})
-                  for entry in self.bus.journal]
+        lines = [json.dumps(record) for record in self.journal_records()]
         path.write_text("\n".join(lines) + "\n")
         return self._file_result(path, False)
 
@@ -2106,11 +2116,15 @@ class Session:
                  Path(path).read_text().splitlines() if line.strip()]
         if not lines or lines[0].get("type") != "init":
             raise ValueError("journal must start with an init record")
-        bus = CommandBus.replay(lines[0]["document"],
-                                [e for e in lines[1:] if e.get("type") == "command"],
+        # a document opened again starts a new pass with the file as it was
+        # then (journal_records): its commands are replayed from there
+        last = max(i for i, e in enumerate(lines) if e.get("type") == "init")
+        bus = CommandBus.replay(lines[last]["document"],
+                                [e for e in lines[last + 1:] if e.get("type") == "command"],
                                 home=Path(home or path).resolve())
         session = cls(out_dir=out_dir)
         session.bus = bus
+        session.journal_history = lines[:last]
         return session
 
 

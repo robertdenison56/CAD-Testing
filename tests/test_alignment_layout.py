@@ -99,19 +99,27 @@ def test_redraw_does_nothing_for_an_alignment_never_drawn():
     assert r["ok"] and s.doc.model_entities == {}
 
 
-def test_redraw_still_names_the_annotation_it_did_not_regenerate():
+def test_redraw_and_the_labels_following_leave_nothing_stale():
+    """The label used to be named in a warning as not regenerated; it now
+    follows the design (commands/label_updates.py), and the redrawn centerline
+    is draw_alignment's work."""
     s = Session()
     laid_out(s)
     s.execute("draw_alignment", {"alignment": "A"})
-    assert s.execute("place_label", {"space": "model", "alignment": "A",
-                                     "anchor": "10+00"})["ok"]
-    r = s.execute("modify_alignment", {
-        "name": "A", "changes": {"pis": [[0, 0], [1000, 0, 300], [1800, 600, 0],
-                                         [3000, 600]]},
-        "angle_points": True, "redraw": True})
-    assert r["ok"] and len(r["warnings"]) == 1
-    assert "1 entities are anchored" in r["warnings"][0]
-    assert "draw_alignment" not in r["warnings"][0]
+    label = s.execute("place_label", {"space": "model", "alignment": "A",
+                                      "anchor": "15+00"})["created"][0]
+    pis = [[0, 0], [1000, 0, 300], [1800, 600, 0], [3000, 600]]
+    r = s.execute("modify_alignment", {"name": "A", "changes": {"pis": pis},
+                                       "angle_points": True, "redraw": True})
+    assert r["ok"] and r["warnings"] == [] and label in r["modified"]
+    fresh = Session()
+    fresh.execute("create_alignment", {"name": "A", "pis": pis, "angle_points": True})
+    want = fresh.doc.model_entities[fresh.execute("place_label", {
+        "space": "model", "alignment": "A", "anchor": "15+00"})["created"][0]]
+    got = s.doc.model_entities[label]
+    assert got.position == pytest.approx(want.position) and got.content == want.content
+    assert {e.anchor["placed_by"] for e in s.doc.model_entities.values()
+            if e.anchor["kind"] == "element"} == {"draw_alignment"}
 
 
 def test_without_angle_points_a_modify_still_teaches_the_radius():
