@@ -1391,8 +1391,15 @@ def reload_references(doc: Document, p: dict):
 
 
 def fill_title_block(doc: Document, p: dict):
+    from roaddraft.render.titleblock import keys_text, template_keys
     sheet = _sheet(doc, p["sheet"])
     fields = {k: str(v) for k, v in p["fields"].items()}
     sheet.title_block_fields.update(fields)
+    warnings = []
+    template = (sheet.title_block_template or "standard").lower()
+    unlettered = [k for k in fields if k not in template_keys(template)]
+    if unlettered and template != "none":
+        warnings.append(f"the {template} border letters no {', '.join(unlettered)} (kept with "
+                        f"the sheet's fields, but not drawn); it letters: {keys_text(template)}")
     return (f"title block of {sheet.name} updated: {', '.join(sorted(fields))}",
-            _diff(modified=[sheet.id]), [])
+            _diff(modified=[sheet.id]), warnings)

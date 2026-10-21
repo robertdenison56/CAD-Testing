@@ -20,6 +20,7 @@ from roaddraft.probes import fixture, tasks
 from roaddraft.runners import (Episode, McpServer, Options, ToolResult, estimate_cost,
                                run_probe, setup_probe)
 from roaddraft.runners import __main__ as cli
+from roaddraft.runners.core import IMAGE_OMITTED
 from roaddraft.runners.anthropic_api import (AnthropicBackend, credentials, tool_definitions,
                                              tool_result_block)
 from roaddraft.runners.claude_code import ClaudeCodeBackend, mcp_config, parse_stream
@@ -107,6 +108,9 @@ def test_a_relative_run_folder_still_starts_the_server(tmp_path, monkeypatch):
 def test_tool_result_rendering_and_cost():
     r = ToolResult(text="x", images=[("image/png", "QUJD")])
     assert "text-only" in r.rendered(vision=False) and "text-only" not in r.rendered(vision=True)
+    # the note claims nothing about the text above it: an attachment's carries no path
+    assert r.rendered(vision=False) == "x\n" + IMAGE_OMITTED
+    assert "path" not in IMAGE_OMITTED and "above" not in IMAGE_OMITTED
     assert ToolResult(text="x", is_error=True).rendered().startswith("[tool error]")
     usage = {"input_tokens": 1_000_000, "output_tokens": 100_000,
              "cache_read_input_tokens": 1_000_000, "cache_creation_input_tokens": 0}

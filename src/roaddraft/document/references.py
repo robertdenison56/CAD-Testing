@@ -335,6 +335,40 @@ def find_reference_alignment(doc, qualified: str):
     return None
 
 
+def reference_base(doc, name: str):
+    """The loaded basefile of the attachment named ``name``, else None."""
+    for ref in doc.references.values():
+        if ref.name == name:
+            return resolve_reference(doc, ref)[0]
+    return None
+
+
+def reference_profiles(doc):
+    """``[(reference, basefile, profile, placement)]`` for every design profile
+    in every attachment that loads; nested references are not searched, as
+    for ``reference_alignments``."""
+    out = []
+    for ref in doc.references.values():
+        base, _error = resolve_reference(doc, ref)
+        if base is None:
+            continue
+        placement = design_placement(doc, ref, base)
+        for profile in base.design.profiles.values():
+            out.append((ref, base, profile, placement))
+    return out
+
+
+def find_reference_profile(doc, qualified: str):
+    """``(profile, basefile, placement)`` for ``"DESIGN:SR-100 PGL"``, else None."""
+    name, sep, profile_name = str(qualified).partition(":")
+    if not sep:
+        return None
+    for ref, base, profile, placement in reference_profiles(doc):
+        if ref.name == name and profile.name == profile_name:
+            return profile, base, placement
+    return None
+
+
 def apply_symbology(prims, symbology: dict):
     """Bake attachment-wide display overrides into (already copied) primitives:
     entity color/linetype overrides plus the render-time lineweight hook."""

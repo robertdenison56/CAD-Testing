@@ -204,3 +204,90 @@ def test_the_host_own_design_is_unaffected_by_any_of_this(tmp_path):
     r = s.query("station_to_xy", {"alignment": "SR-100", "station": "16+00"})
     assert r["point"] == pytest.approx([1600.0, 1000.0], abs=1e-6)
     assert s.execute("draw_alignment", {"alignment": "SR-100"})["ok"]
+
+
+# ------------------------------------------------- a referenced design profile
+
+PVIS = [[1000, 100.0], [1500, 110.0, 300], [2000, 105.0]]
+
+
+def profiled_plans(tmp_path):
+    """The sheet file of ``plans``, its basefile carrying a profile on SR-100."""
+    design_file(tmp_path)
+    model = Session.load(tmp_path / "design.rdoc.json", out_dir=tmp_path)
+    assert model.execute("create_profile", {"name": "SR-100 PGL", "alignment": "SR-100",
+                                            "pvis": PVIS})["ok"]
+    model.query("save_document", {"path": str(tmp_path / "design.rdoc.json")})
+    host = Session(project_name="plans", out_dir=tmp_path)
+    host.query("save_document", {"path": str(tmp_path / "plans.rdoc.json")})
+    assert host.execute("attach_reference", {"name": "DESIGN", "space": "model",
+                                             "path": "design.rdoc.json"})["ok"]
+    return host
+
+
+def test_a_sheet_file_can_read_the_profile_its_basefile_carries(tmp_path):
+    """A plan-and-profile sheet keeps the design in the alignment file; the
+    profile reads through the reference the way the alignment does
+    (pilot p06, 2026-10-19)."""
+    s = profiled_plans(tmp_path)
+    row = s.query("list_alignments", {"include_references": True})["alignments"][0]
+    assert row["profiles"] == ["DESIGN:SR-100 PGL"]
+
+    # the qualified name alone
+    pvis = s.query("get_design_data", {"kind": "pvis", "profile": "DESIGN:SR-100 PGL"})
+    assert pvis["ok"] and pvis["total"] == 3, pvis
+    assert [r["elevation"] for r in pvis["rows"]] == [100.0, 110.0, 105.0]
+    assert pvis["rows"][1]["station_text"] == "15+00.00"
+    assert pvis["placement"]["reference"] == "DESIGN"
+
+    # the referenced alignment, with or without the profile's own name
+    for params in ({"alignment": "DESIGN:SR-100"},
+                   {"alignment": "DESIGN:SR-100", "profile": "SR-100 PGL"},
+                   {"alignment": "DESIGN:SR-100", "profile": "DESIGN:SR-100 PGL"}):
+        vcs = s.query("get_design_data", {"kind": "vcs", **params})
+        assert vcs["ok"] and vcs["total"] == 1, (params, vcs)
+        assert vcs["rows"][0]["pvi_station_text"] == "15+00.00"
+    overview = s.query("get_design_data", {"alignment": "DESIGN:SR-100"})
+    assert overview["rows"][0]["profiles"] == ["DESIGN:SR-100 PGL"]
+    profiles = s.query("get_design_data", {"kind": "profiles", "profile": "DESIGN:SR-100 PGL"})
+    assert profiles["rows"][0]["station_range_text"] == "10+00.00 to 20+00.00"
+
+
+def test_the_profile_errors_say_where_the_profiles_actually_are(tmp_path):
+    s = profiled_plans(tmp_path)
+    r = s.query("get_design_data", {"kind": "pvis", "profile": "SR-100 PGL"})
+    assert not r["ok"] and "owns no profiles" in r["error"]["hint"]
+    assert "DESIGN:SR-100 PGL" in r["error"]["hint"]
+    r = s.query("get_design_data", {"kind": "pvis", "profile": "DESIGN:NOPE"})
+    assert not r["ok"] and "no profile 'DESIGN:NOPE'" in r["error"]["message"]
+    assert "DESIGN:SR-100 PGL" in r["error"]["hint"]
+    r = s.query("get_design_data", {"kind": "pvis", "alignment": "DESIGN:SR-100",
+                                    "profile": "NOPE"})
+    assert not r["ok"] and "DESIGN:SR-100 PGL" in r["error"]["hint"]
+    # nothing named: the host's own (none), and a pointer to the referenced ones
+    r = s.query("get_design_data", {"kind": "profiles"})
+    assert r["ok"] and r["total"] == 0 and "DESIGN:SR-100 PGL" in r["hint"]
+
+
+def test_a_profile_is_created_in_the_file_that_owns_its_alignment(tmp_path):
+    """create_profile still refuses a referenced alignment, and says where to
+    put the profile instead."""
+    s = profiled_plans(tmp_path)
+    r = s.execute("create_profile", {"name": "MINE", "alignment": "DESIGN:SR-100",
+                                     "pvis": PVIS})
+    assert not r["ok"] and "attached reference" in r["error"]["message"]
+    assert "create_profile there" in r["error"]["hint"]
+    assert "get_design_data" in r["error"]["hint"]
+    assert s.doc.design.profiles == {}
+
+
+def test_the_host_own_profiles_read_as_before(tmp_path):
+    s = Session(project_name="own", out_dir=tmp_path)
+    s.execute("create_alignment", {"name": "SR-100", "begin_station": "10+00", "pis": A_PIS})
+    assert s.execute("create_profile", {"name": "PGL", "alignment": "SR-100",
+                                        "pvis": PVIS})["ok"]
+    r = s.query("get_design_data", {"kind": "pvis", "profile": "PGL"})
+    assert r["ok"] and r["total"] == 3 and "placement" not in r
+    assert s.query("get_design_data", {})["rows"][0]["profiles"] == ["PGL"]
+    r = s.query("get_design_data", {"kind": "pvis", "profile": "NOPE"})
+    assert not r["ok"] and r["error"]["hint"] == "profiles: ['PGL']"

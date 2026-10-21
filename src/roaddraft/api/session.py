@@ -15,8 +15,10 @@ from __future__ import annotations
 import base64
 import json
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 import jsonschema
 from jsonschema.exceptions import best_match
@@ -36,6 +38,8 @@ from roaddraft.render import mpl as mpl_render
 
 DESIGN_DATA_KINDS = ["alignments", "curves", "tangents", "equations", "anchors", "profiles",
                      "pvis", "vcs"]
+#: the kinds read from profiles rather than alignments
+PROFILE_KINDS = ("profiles", "pvis", "vcs")
 
 BOUNDS = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4,
           "description": "[minx, miny, maxx, maxy]"}
@@ -334,8 +338,9 @@ QUERIES = {
         "example": {"point": [1601.0, 1001.0], "tolerance": 5.0},
     },
     "get_sheet_state": {
-        "description": "One sheet: size, usable area, title block fields, "
-                       "viewports (with the model region each shows), entities.",
+        "description": "One sheet: size, usable area, title block fields and the "
+                       "keys its border letters (title_block_keys), viewports (with "
+                       "the model region each shows), entities.",
         "schema": obj({"sheet": NSTR}, ["sheet"]),
         "example": {"sheet": "P-201"},
     },
@@ -557,7 +562,10 @@ QUERIES = {
                        "bearings, PC/PI/PT/MC stations), tangents, station "
                        "equations, named anchors, profiles, PVIs, vertical curves. "
                        "Stations are raw + display text. Paginated (default 50). "
-                       "kind defaults to 'alignments', the overview. ""An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed.",
+                       "kind defaults to 'alignments', the overview. ""An alignment in an attached basefile is named 'REFNAME:ALIGNMENT' (list_alignments include_references=true shows them); its points come back in host coordinates, while stations, lengths and bearings are as designed. "
+                       "A profile in one is named 'REFNAME:PROFILE' (the profiles list_alignments "
+                       "shows on a referenced alignment); profile alone reads it, or give the "
+                       "referenced alignment and the profile's own name.",
         "schema": obj({"kind": {"enum": list(DESIGN_DATA_KINDS)}, "alignment": NSTR,
                        "profile": NSTR, "start": {"type": "integer", "minimum": 0},
                        "limit": {"type": "integer", "minimum": 1, "maximum": 500}}),
@@ -577,6 +585,25 @@ QUERIES = {
         "example": {},
     },
 }
+
+
+#: inside ``journals_beside_saves``: the journals save_document has written
+_SAVED_JOURNALS: ContextVar[Optional[List[Path]]] = ContextVar("saved_journals", default=None)
+
+
+@contextmanager
+def journals_beside_saves() -> Iterator[List[Path]]:
+    """While inside, save_document also writes the saving session's journal
+    beside the document it saves (``journal_path``), so a scripted solution
+    that edits more than the document it was handed -- a base file loaded,
+    changed and saved, as an agent does with open_document -- keeps every
+    file's commands. Yields the journals written, each once, in order."""
+    written: List[Path] = []
+    token = _SAVED_JOURNALS.set(written)
+    try:
+        yield written
+    finally:
+        _SAVED_JOURNALS.reset(token)
 
 
 def _slug(name: str) -> str:
@@ -1267,9 +1294,13 @@ class Session:
         return element
 
     def _q_get_sheet_state(self, p):
+        from roaddraft.render.titleblock import template_keys
         sheet = self._sheet(p["sheet"])
         state = sheet.to_dict()
         state["usable_area"] = sheet.usable_area()
+        # what fill_title_block can letter on this sheet's border
+        state["title_block_keys"] = list(template_keys(
+            (sheet.title_block_template or "standard").lower()))
         for vp_state, vp in zip(state["viewports"], sheet.viewports):
             vp_state["visible_model_bbox"] = vp.transform().visible_model_bbox(
                 vp.width_in, vp.height_in)
@@ -1617,6 +1648,12 @@ class Session:
         self._inside(target, p["path"])
         path = fileformat.write_document(target, self.doc.to_dict())
         self.doc._path = path.resolve()  # relative reference paths follow the host
+        written = _SAVED_JOURNALS.get()
+        if written is not None:
+            journal = Path(self._q_save_journal(
+                {"path": str(fileformat.journal_path(path))})["path"]).resolve()
+            if journal not in written:
+                written.append(journal)
         return self._file_result(path, False)
 
     def _q_save_journal(self, p):
@@ -1685,6 +1722,8 @@ class Session:
             from roaddraft.document.references import reference_alignments
             for ref, base, alignment, placement in reference_alignments(self.doc):
                 row = self._alignment_row(base, alignment, f"{ref.name}:{alignment.name}")
+                # named the way get_design_data's profile takes them
+                row["profiles"] = [f"{ref.name}:{name}" for name in row["profiles"]]
                 row["reference"] = ref.name
                 row["read_only"] = True
                 row["placement"] = _placement_block(placement)
@@ -1817,7 +1856,11 @@ class Session:
             out["on_sheet"] = self._on_sheet(p["sheet"], out["point"])
         return out
 
-    def _design_rows(self, kind, aligns, profiles):
+    def _design_rows(self, kind, aligns, profiles, owner=None, prefix: str = ""):
+        """Rows of ``kind``. ``owner`` is the document whose design they come
+        from (the host's, or a basefile's), and ``prefix`` (``'BASE:'``) names
+        a referenced alignment's profiles the way ``profile`` takes them."""
+        owner = owner if owner is not None else self.doc
         from roaddraft.core.units import format_station
         from roaddraft.design.anchors import list_anchors
         from roaddraft.design.horizontal import curve_data, tangent_data
@@ -1832,8 +1875,8 @@ class Session:
                 d.update(length=a.length, end_station=a.end_station,
                          begin_station_text=st.begin_text(), end_station_text=st.end_text(),
                          curves=len(a.curves()), tangents=len(a.tangents()),
-                         profiles=[pr.name for pr in self.doc.design.profiles_of(a.name)],
-                         drawn=self._drawn(self.doc, a.name))
+                         profiles=[prefix + pr.name for pr in owner.design.profiles_of(a.name)],
+                         drawn=self._drawn(owner, a.name))
                 rows.append(d)
         elif kind == "curves":
             for a in aligns:
@@ -1857,7 +1900,7 @@ class Session:
                                  "point": ap.point, "direction_deg": ap.direction_deg})
         else:
             for prof in profiles:
-                parent = self.doc.design.alignments.get(prof.alignment)
+                parent = owner.design.alignments.get(prof.alignment)
                 fmt = parent.stations().format if parent else format_station
                 if kind == "profiles":
                     d = prof.to_dict()
@@ -1890,27 +1933,37 @@ class Session:
         return rows
 
     def _q_get_design_data(self, p):
-        design = self.doc.design
         # no kind is the question "what is this alignment?": answer it, and say
         # what else can be asked (the commonest fault in every agent run so far)
         kind = p.get("kind", "alignments")
-        from roaddraft.document.references import Placement
-        placement = Placement()
+        from roaddraft.document.references import Placement, reference_base
+        # the design read: the host's own, or the basefile a qualified name
+        # ('BASE:SR-100', 'BASE:SR-100 PGL') reads through
+        placement, owner = Placement(), self.doc
         if "alignment" in p:
             one, placement = self._alignment_placed(p)
+            if placement.reference:
+                owner = reference_base(self.doc, placement.reference)
             aligns = [one]
         else:
-            aligns = list(design.alignments.values())
+            aligns = list(owner.design.alignments.values())
         names = {a.name for a in aligns}
         if "profile" in p:
-            if p["profile"] not in design.profiles:
-                raise _QueryFault(f"no profile named {p['profile']!r}",
-                                  hint=f"profiles: {list(design.profiles)}")
-            profiles = [design.profiles[p["profile"]]]
+            prof, prof_owner, prof_placement = self._profile_placed(p["profile"], owner,
+                                                                    placement)
+            profiles = [prof]
+            if "alignment" not in p and prof_placement.reference:
+                # a referenced profile alone reads its own basefile's alignment
+                owner, placement = prof_owner, prof_placement
+                aligns = [a for a in [owner.design.alignments.get(prof.alignment)] if a]
         else:
-            profiles = [pr for pr in design.profiles.values()
+            prof_owner, prof_placement = owner, placement
+            profiles = [pr for pr in owner.design.profiles.values()
                         if "alignment" not in p or pr.alignment in names]
-        rows = self._design_rows(kind, aligns, profiles)
+        if kind in PROFILE_KINDS:
+            owner, placement = prof_owner, prof_placement
+        prefix = f"{placement.reference}:" if placement.reference else ""
+        rows = self._design_rows(kind, aligns, profiles, owner, prefix)
         fields = DESIGN_POINT_FIELDS.get(kind, ())
         rows = [_place_row(placement, row, fields) for row in rows]
         start = int(p.get("start", 0))
@@ -1921,7 +1974,41 @@ class Session:
             out["other_kinds"] = [k for k in DESIGN_DATA_KINDS if k != kind]
         if not placement.is_identity or placement.reference:
             out["placement"] = _placement_block(placement)
+        elif kind in PROFILE_KINDS and not rows and not self.doc.design.profiles:
+            carried = self._referenced_profile_names()
+            if carried:
+                out["hint"] = (f"this document owns no profiles, but its references carry "
+                               f"{carried} -- name one as profile to read it")
         return out
+
+    def _profile_placed(self, name, owner, placement):
+        """``(profile, owner, placement)``: ``owner``'s profile ``name`` (the
+        host's, or that of the basefile a referenced alignment was read from,
+        placed by ``placement``), else a referenced one, ``'BASE:SR-100 PGL'``."""
+        from roaddraft.document.references import find_reference_profile
+        if name in owner.design.profiles:
+            return owner.design.profiles[name], owner, placement
+        found = find_reference_profile(self.doc, name) if ":" in str(name) else None
+        if found is not None:
+            return found
+        referenced = self._referenced_profile_names()
+        if ":" in str(name):
+            raise _QueryFault(f"no profile {name!r} in any attached reference",
+                              hint=(f"referenced profiles: {referenced}" if referenced else
+                                    "no attachment carries a design profile; "
+                                    "list_references shows what is attached"))
+        prefix = f"{placement.reference}:" if placement.reference else ""
+        known = [prefix + k for k in owner.design.profiles]
+        carried = [k for k in referenced if k not in known]
+        if not known and carried:
+            raise _QueryFault(f"no profile named {name!r}",
+                              hint=f"this document owns no profiles, but its references "
+                                   f"carry {carried} -- name one of those to read it")
+        raise _QueryFault(f"no profile named {name!r}", hint=f"profiles: {known + carried}")
+
+    def _referenced_profile_names(self) -> List[str]:
+        from roaddraft.document.references import reference_profiles
+        return [f"{ref.name}:{prof.name}" for ref, _b, prof, _pl in reference_profiles(self.doc)]
 
     def _q_list_annotation_scales(self, p):
         from roaddraft.document import annotation as anno

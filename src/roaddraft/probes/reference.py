@@ -8,6 +8,8 @@ project does. Beside the document:
 
     <name>.jsonl      the journal: the start, then every command the solution
                       ran (Session.replay_journal rebuilds the document from it)
+    <base>.jsonl      beside a base file the solution changed and saved (a
+                      design edited through open_document), that file's journal
     <probe>.pdf       the sheets plotted with print_pdf, or model space when the
                       document has no sheets
     <probe>.dxf       the document for AutoCAD, Civil 3D or MicroStation: each
@@ -22,13 +24,15 @@ against the untouched start, which is how a model's document is scored.
 from __future__ import annotations
 
 import json
+import os
 import shutil
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
 from roaddraft import __version__
-from roaddraft.api.session import Session
+from roaddraft.api.session import Session, journals_beside_saves
 from roaddraft.document.fileformat import journal_path
 from roaddraft.probes import fixture, tasks
 from roaddraft.probes.base import Probe, Result
@@ -48,6 +52,9 @@ class Reference:
     result: Result
     pdf: Optional[Path] = None
     dxf: Optional[Path] = None
+    #: the journals of the other files the solution changed and saved, each
+    #: beside its file
+    base_journals: List[Path] = field(default_factory=list)
 
 
 def _ok(r: dict) -> dict:
@@ -69,14 +76,24 @@ def write(probe: Probe, folder, start_dir=None, plots: bool = True) -> Reference
     else:
         shutil.copytree(start_dir, folder, dirs_exist_ok=True)
         document = folder / fixture.START[probe.start]
-    baseline = Session.load(document, out_dir=folder)
-    session = Session.load(document, out_dir=folder)
-    probe.solve(session)
-    _ok(session.query("save_document", {"path": str(document)}))
-    journal = journal_path(document)
-    _ok(session.query("save_journal", {"path": str(journal)}))
-    finished = Session.load(document, out_dir=folder)
-    ref = Reference(probe, document, journal, probe.check(baseline, finished))
+    with tempfile.TemporaryDirectory(prefix="roaddraft-start-") as kept:
+        # the baseline reads a copy of the start: a document loads its
+        # references when first asked, by when a solve that saves over a base
+        # file in ``folder`` has changed what the start would show
+        untouched = Path(kept) / "start"
+        shutil.copytree(folder, untouched)
+        start = untouched / Path(document).resolve().relative_to(folder.resolve())
+        baseline = Session.load(start, out_dir=folder)
+        session = Session.load(document, out_dir=folder)
+        with journals_beside_saves() as saved:
+            probe.solve(session)
+        _ok(session.query("save_document", {"path": str(document)}))
+        journal = journal_path(document)
+        _ok(session.query("save_journal", {"path": str(journal)}))
+        finished = Session.load(document, out_dir=folder)
+        ref = Reference(probe, document, journal, probe.check(baseline, finished))
+    ref.base_journals = [j for j in saved if j != journal.resolve()
+                         and folder.resolve() in j.parents]
     if plots:
         ref.pdf, ref.dxf = _plot(probe, finished, folder)
     _record(ref, finished)
@@ -108,6 +125,9 @@ def _record(ref: Reference, session: Session) -> None:
         "detail": ref.result.detail,
         "roaddraft": __version__,
     }
+    if ref.base_journals:
+        record["base_journals"] = [os.path.relpath(j, ref.document.parent.resolve())
+                                   for j in ref.base_journals]
     (ref.document.parent / RECORD).write_text(json.dumps(record, indent=1) + "\n")
 
 
@@ -135,8 +155,9 @@ back from disk, against a fresh start, which is how a model's document is
 scored; `python -m roaddraft.probes score <probe> --doc <document>` repeats it.
 
     <probe>/<document>      the completed document: the file the agent is handed, finished
-    <probe>/<design file>   what the document references, untouched
+    <probe>/<design file>   what the document references, untouched unless the task edits it
     <probe>/<name>.jsonl    the journal: the start, then every command the solution ran
+    <probe>/<base>.jsonl    beside a base file the solution changed and saved, its journal
     <probe>/<probe>.pdf     the sheets as plotted (print_pdf); model space when it has none
     <probe>/<probe>.dxf     for AutoCAD, Civil 3D or MicroStation: each sheet a layout, references bound in
     <probe>/reference.json  the probe, its prompt and the verdict

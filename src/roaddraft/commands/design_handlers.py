@@ -345,6 +345,14 @@ def delete_alignment(doc: Document, p: dict):
 
 def create_profile(doc: Document, p: dict):
     name, aname = p["name"], p["alignment"]
+    if ":" in str(aname) and aname not in doc.design.alignments:
+        raise CommandFault(
+            f"{aname!r} is an alignment in an attached reference: a profile is kept in "
+            f"the file that owns its alignment",
+            hint="open that basefile (open_document), create_profile there and save it; "
+                 "this file then reads the profile through the reference as "
+                 "'REFNAME:PROFILE' (get_design_data profile=..., or list_alignments "
+                 "include_references=true)")
     align = _alignment(doc, {"alignment": aname})
     if name in doc.design.profiles:
         raise CommandFault(f"profile {name!r} already exists", hint="delete_profile first")

@@ -26,7 +26,8 @@ drawn representation.  ``sheet.title_block_template`` picks the drawing:
 """
 from __future__ import annotations
 
-from typing import List
+from functools import lru_cache
+from typing import List, Tuple
 
 from roaddraft.document.entities import Entity, Line, Polyline, Text
 from roaddraft.document.sheets import BORDER_MARGIN_IN, TITLE_STRIP_H_IN, Sheet
@@ -53,6 +54,62 @@ def title_block_entities(sheet: Sheet) -> List[Entity]:
     if template == "fdot":
         return fdot_entities(sheet)
     return standard_entities(sheet)
+
+
+class _AskedFields(dict):
+    """Title block fields that answer every key with a placeholder and keep
+    the keys asked for, in the order the border letters them."""
+
+    def __init__(self):
+        super().__init__()
+        self.asked: List[str] = []
+
+    def _ask(self, key) -> None:
+        if key not in self.asked:
+            self.asked.append(key)
+
+    def get(self, key, default=None):
+        self._ask(key)
+        return "X"
+
+    def __contains__(self, key) -> bool:
+        self._ask(key)
+        return True
+
+
+@lru_cache(maxsize=None)
+def template_keys(template: str) -> Tuple[str, ...]:
+    """The ``title_block_fields`` keys a border draws, read off the template
+    itself so the list never drifts from the drawing; () for ``none``."""
+    fields = _AskedFields()
+    sheet = Sheet(id="SHEET-KEYS", name="keys", title_block_template=template)
+    sheet.title_block_fields = fields
+    title_block_entities(sheet)
+    return tuple(fields.asked)
+
+
+def keys_text(template: str) -> str:
+    """``template_keys`` as one line, a numbered run of keys shortened to its
+    range: ``revised_by_1..3, date_revised_1..3, designed_by, ...``."""
+    runs: dict = {}
+    order: List[str] = []
+    for key in template_keys(template):
+        stem, _sep, n = key.rpartition("_")
+        if n.isdigit():
+            if stem not in runs:
+                runs[stem] = []
+                order.append(stem + "_")
+            runs[stem].append(int(n))
+        else:
+            order.append(key)
+    out = []
+    for item in order:
+        if item.endswith("_") and item[:-1] in runs:
+            ns = runs[item[:-1]]
+            out.append(f"{item}{min(ns)}..{max(ns)}" if len(ns) > 1 else f"{item}{ns[0]}")
+        else:
+            out.append(item)
+    return ", ".join(out)
 
 
 def standard_entities(sheet: Sheet) -> List[Entity]:

@@ -45,8 +45,11 @@ PRICES: Dict[str, Tuple[float, float]] = {
 }
 CACHE_READ, CACHE_WRITE = 0.1, 1.25
 
-#: the image note every text-only run carries, as the earlier rigs did
-IMAGE_OMITTED = "[image content omitted: this run is text-only -- the text above carries the file path]"
+#: the image note every text-only run carries. True of every image a tool
+#: returns: a render's text gives its file path, but view_attachment's gives
+#: only the attachment's name and size (the earlier rigs' wording, "the text
+#: above carries the file path", was not true of it; changed 2026-10-20)
+IMAGE_OMITTED = "[image content omitted: this run is text-only, so the image is not shown]"
 
 #: characters of one tool result a model is shown, whatever the backend: about
 #: the cap Claude Code's Bash tool puts on a command's output, which is what the
