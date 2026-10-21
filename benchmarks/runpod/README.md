@@ -306,3 +306,31 @@ same five tasks from the pinned worktree (`727fb7f`). `runpod_campaign.py warm q
 62.4 on five task types, 0 invalid calls; the measurements and the two findings are in the eval plan §8. Results
 in `results/e3-runpod/e3-smoke-qwen3.6-35b-a3b` (gitignored). Bill: about $0.60 by worker time at $3.49/h.
 
+
+## Run record: 2026-10-20, `d1-variance` × 5 on the five cheapest rows (Track D)
+
+Robert: "run d1 variance x 5 for the 5 cheapest models" (Oct 19 19:50 PDT), after the harness's file-access fix
+(`89f7a130`, `e3-v2`) was merged first at his word: the runs are pinned to `2658fa0d` (main `a1c0038b` + the fix;
+in main as `821ac291`), oracle 100 and null 0 on all 20 tasks there, 154 eval/verifier tests green. Each model:
+`warm` (queue route), `e3 NAME` (`d1-variance` × 5 × single × explicit, 4 at a time, into
+`results/e3-runpod/e3-d1-variance-<name>-single`, gitignored), then parked. Started 02:57 UTC Oct 20; Robert
+cancelled the rest at 04:38 UTC ("cancel all runpod runs"): the two running evals were stopped and every endpoint
+parked (per-worker reads 0 workers on all five, account spend $0/h). Robert then had the unfinished runs removed
+("remove any unfinished runs and commit the rest"): Qwen3.5-9B (70 of 100 episodes) and Qwen3.5-4B (56) went to
+the SSD Trash, and gpt-oss-20b never started (two 25-min warm waits throttled: no A40 in AMPERE_48; an A100
+fallback pool was not set). The two finished runs are published (`report --publish`) to `benchmarks/runs/<run id>/`
+and listed, not ranked, on `benchmarks/runs/LEADERBOARD.md`; their episodes stay in `results/e3-runpod/` (gitignored).
+
+| row | episodes | effective | read |
+|---|---|---|---|
+| Qwen3.6-35B-A3B `wn6oehzs020wpc` | 100 of 100 | 86.8 (report [84.2, 89.4]; over the 20 tasks [76.1, 95.6]) | all submitted, 0 cut-offs; SD within a task 17.7, between tasks 22.4 |
+| Gemma 4 12B `opp76sn4ruhsd0` | 100 of 100 | 69.3 by the report (10 episodes left out as `error`), 66.3 with them as budget stops | the 10 are Runpod's 570 s cut-off of a model turn; SD within 28.2, between 30.0; hard-fail 12% |
+
+Two harness findings: the eval provider records Runpod's 570 s stream cut-off as an infrastructure `error`, so
+the report leaves it out of the score, where the Track P board counts it as the model's budget stop
+(`BUDGET_ERRORS`); and the report's interval sizing on `d1-variance` uses the type-stratified bootstrap, which
+has one or two tasks per type to resample here and reads too narrow (Gemma ±3.0 → "7 tasks for the target"; the ± on `benchmarks/runs/LEADERBOARD.md` is that figure).
+A by-type projection from the within-task and within-type spread puts `d1-test` (100 tasks) at a half-width of
+about 4.3 (k = 1) / 3.2 (k = 3) for Qwen3.6 and 6.0 / 4.0 for Gemma 12B (rough: four types hold two tasks).
+Bill: the balance read $22.35 before and $11.99 after ($10.36); `list-serverless-billing` had posted $5.32 for
+Oct 20 UTC by 04:40 (Qwen3.6 $2.39, Gemma 12B $1.22, 9B $1.22, 4B $0.48).
