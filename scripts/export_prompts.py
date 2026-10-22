@@ -7,27 +7,38 @@
 Sheets: a read-me, the D1 task catalog, one row per D1 task (every task type on
 one and two sheets, explicit and vague prompt per task, links to its files),
 one row per real-sheet task (benchmarks/real_tasks/catalog.json, which
-scripts/real_tasks.py writes first), the rules every D1 prompt is prefixed
-with, the Track P probe prompts with every ranked model's k = 3 marks beside
-each, and the Track P leaderboard (benchmarks/leaderboard/track_p.json, which
-``python -m roaddraft.runners leaderboard`` writes) with the Track D (D1)
-board's state (benchmarks/runs/leaderboard.json).
+scripts/real_tasks.py writes first), the D1 eval sets (the d1-dev, d1-test and
+d1-variance manifests under benchmarks/tasksets, each task's prompts and every
+published run's score on it), the published D1 runs (benchmarks/runs), the
+rules every D1 prompt is prefixed with, the Track P probe prompts with every
+ranked model's k = 3 marks beside each, the Track P leaderboard
+(benchmarks/leaderboard/track_p.json, which ``python -m roaddraft.runners
+leaderboard`` writes) with the Track D (D1) board's state
+(benchmarks/runs/leaderboard.json), and the harder-task pilots (off the board)
+with a picture of each scripted solution.
+
+A published run's per-task scores come from the ``episodes.csv`` its report
+wrote beside the run under ``results/`` (not committed); without it the eval-set
+columns for that run stay empty and the D1 runs sheet still shows its totals.
 
 The task files go under ``benchmarks/prompts/tasks/<type>/<n>-sheet/seed-<n>/``
 (gitignored; regenerate with this script): the brief and truth, the starting
 document (``start.rdoc.json``, plus any base drawing shipped with the task),
 the reference solution's finished document and journal, and a PNG of every
-sheet (or the model) before and after.  The workbook links to them by
+sheet (or the model) before and after; each pilot's reference PDF pages go
+under ``tasks/pilot/<id>/`` for its picture.  The workbook links to them by
 absolute path (``file://`` URLs to this checkout), so a copy of the workbook
 opened from anywhere on this Mac still reaches them.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import json
 import math
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -37,7 +48,11 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from PIL import Image as PILImage, ImageFilter
 from openpyxl.utils import get_column_letter
 
+from roaddraft.eval import taskset as tasksets
+from roaddraft.eval.episode import HARNESS_VERSION
+from roaddraft.eval.report import LEADERBOARD_SET, effort_cell
 from roaddraft.probes import prompting
+from roaddraft.probes.pilot import PILOT_PROBES
 from roaddraft.probes.tasks import DRAFT_PROBES, FIND_PROBES, PROBES, TIER2_PROBES, TIER3_PROBES
 from roaddraft.tasks.brief import GENERATOR_VERSION, Task
 from roaddraft.tasks.generator import generate_task
@@ -46,6 +61,7 @@ from roaddraft.tasks.reference import reference_solution, session_for_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, SPEC_VERSION, spec_hash
 from roaddraft.tasks.real import REAL_GENERATOR_VERSION, build_real_task
 from roaddraft.tasks.types import PHASE_ORDER, REAL_TASK_TYPES, TASK_TYPES, checks_in_scope, task_type
+from roaddraft.verify import VERIFIER_VERSION
 
 #: the validated real-sheet tasks (scripts/real_tasks.py writes it)
 REAL_CATALOG = Path("benchmarks/real_tasks/catalog.json")
@@ -53,6 +69,23 @@ REAL_CATALOG = Path("benchmarks/real_tasks/catalog.json")
 TRACK_P = Path("benchmarks/leaderboard/track_p.json")
 #: the Track D (D1) leaderboard (scripts/make_leaderboard.py writes it)
 D1_BOARD = Path("benchmarks/runs/leaderboard.json")
+#: the published D1 runs, one folder each with its summary.json
+D1_RUNS = D1_BOARD.parent
+#: where harness runs live with their episodes and report (not committed)
+RESULTS = Path("results")
+#: the pilots' scripted solutions (python -m roaddraft.probes.pilot reference writes them)
+PILOT_REFS = Path("benchmarks/pilot_references")
+#: where pilot model runs go (runners run --pilot)
+PILOT_RUNS = Path("benchmarks/pilot_runs")
+#: a pilot's picture shows at most this many pages of its reference PDF
+PILOT_PAGES = 3
+#: the pilots by the brainstorm's numbers (docs/Probes_Pilots.md), from each id's pNN prefix
+PILOT_NAMES = {1: "Redraw an alignment from a scanned sheet", 2: "Sources that disagree",
+               3: "Survey traps", 4: "Crowded annotation", 5: "The model picks the sheet breaks",
+               6: "Plan and profile on one sheet", 10: "Typical section from a description",
+               11: "Redlines with knock-on edits", 12: "A small full plan set",
+               13: "Striping with no-passing zones", 14: "Open-ended QA review",
+               15: "Plan reading", 17: "Twisted variants"}
 
 #: the dev-set dial cycle: every curve count with and without a station equation
 DIALS = [(curves, eq) for curves in (1, 2, 3) for eq in (False, True)]
@@ -389,6 +422,188 @@ def probe_set(probe) -> str:
     return "other"
 
 
+# --------------------------------------------------------------- eval sets
+
+
+def published_runs() -> List[dict]:
+    """Every published D1 run's summary (benchmarks/runs/<run>/summary.json)."""
+    return [json.loads(p.read_text()) for p in sorted(D1_RUNS.glob("*/summary.json"))]
+
+
+def run_episodes(run_id: str) -> Optional[List[dict]]:
+    """A published run's per-episode scores: the episodes.csv its report wrote
+    beside the run under results/, or None when the run is not on this machine."""
+    hits = sorted(RESULTS.glob(f"**/{run_id}/report/episodes.csv"))
+    if not hits:
+        return None
+    with hits[0].open(newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def run_columns(runs: List[dict]):
+    """For each row of each published run whose episodes are on this machine, a
+    column header and its scores by task: ``{task_id: [effective per sample]}``,
+    None for a sample that errored (the report leaves those out of the mean)."""
+    cols = []
+    for s in runs:
+        eps = run_episodes(s["run_id"])
+        if eps is None:
+            print(f"note: no episodes.csv for {s['run_id']} under {RESULTS}/; "
+                  "the eval sets show no scores for it")
+            continue
+        for g in s["rows"]:
+            key = tuple(str(g["key"].get(d) or "") for d in ("model", "provider", "effort",
+                                                             "dialect", "mode", "level"))
+            scores: Dict[str, List[Optional[float]]] = {}
+            mine = [e for e in eps if tuple(e[d] for d in ("model", "provider", "effort",
+                                                           "dialect", "mode", "level")) == key]
+            for e in sorted(mine, key=lambda e: int(e["sample"])):
+                scores.setdefault(e["task_id"], []).append(
+                    None if e["termination"] == "error" else float(e["effective_score"]))
+            means = [_mean(v) for v in scores.values() if _mean(v) is not None]
+            if not means or abs(sum(means) / len(means) - g["effective_mean"]) > 0.05:
+                print(f"warning: {s['run_id']} {g['label']}: episodes.csv gives "
+                      f"{sum(means) / max(len(means), 1):.2f}, its summary {g['effective_mean']}")
+            verifiers = ", ".join(sorted({e["verifier_version"] for e in mine}))
+            cols.append((f"{g['key']['model'].split('/')[-1]}, {effort_cell(g)}\n"
+                         f"{s['taskset']} x {g['k_max']}, {verifiers}", scores))
+    return cols
+
+
+def _mean(samples: List[Optional[float]]) -> Optional[float]:
+    """The mean of the samples that did not error, or None when all did."""
+    done = [x for x in samples if x is not None]
+    return sum(done) / len(done) if done else None
+
+
+def eval_set_rows(cols) -> List[list]:
+    """One row per task of d1-dev and d1-test (d1-variance is d1-test's first 20)."""
+    variance = {t["task_id"] for t in tasksets.load("d1-variance")["tasks"]}
+    rows = []
+    for name in ("d1-dev", "d1-test"):
+        for i, entry in enumerate(tasksets.load(name)["tasks"], start=1):
+            task = tasksets.task_from_entry(entry)
+            ttype = task_type(entry["task_type"])
+            graded = checks_in_scope(ttype.asks, list(WEIGHTS))
+            dialed = entry.get("dialed")
+            cells = []
+            for _, scores in cols:
+                s = scores.get(entry["task_id"])
+                m = _mean(s) if s else None
+                cells += ["" if not s else ("all errored" if m is None else round(m, 1)),
+                          ", ".join("error" if x is None else f"{x:.1f}" for x in s) if s else ""]
+            rows.append([
+                name, i, entry["seed"], entry["task_type"], entry["sheets"], entry["curves"],
+                "yes" if task.truth.counts["equations"] else
+                ("asked, none fit" if entry["equations"] else "no"),
+                entry["task_id"], "yes" if name == "d1-test" and entry["task_id"] in variance else "",
+                (f"dialed {dialed['task_type']} on {dialed['sheets']} sheet(s), which this seed "
+                 "cannot make" if dialed else ""),
+                ", ".join(graded), sum(WEIGHTS[c] for c in graded), *cells,
+                task.brief.prompts["explicit"], task.brief.prompts["vague"]])
+    return rows
+
+
+def _rate(x: Optional[float]) -> str:
+    return "" if x is None else f"{100 * x:.0f}%"
+
+
+def d1_run_rows(runs: List[dict], d1_board: Optional[dict]) -> List[list]:
+    """One row per row of every published D1 run, with why it is or is not ranked."""
+    status = {}
+    if d1_board:
+        for r in d1_board.get("ranked") or []:
+            status[(r["run_id"], r["label"])] = f"ranked {r['rank']} on {d1_board['leaderboard_set']}"
+        for r in d1_board.get("reference") or []:
+            status[(r["run_id"], r["label"])] = "reference row (a harness agent)"
+        for o in d1_board.get("others") or []:
+            for g in o["rows"]:
+                status[(o["run_id"], g["label"])] = "not ranked: " + "; ".join(o["reasons"])
+    rows = []
+    for s in runs:
+        v = s["versions"]
+        scored = (f"{s['current_versions']['verifier_version']} (re-scored)" if s.get("reverified")
+                  else ", ".join(v["verifier_version"]))
+        for g in s["rows"]:
+            pc = g.get("per_check") or {}
+            cost = g.get("cost_per_sheet")
+            rows.append([
+                s["run_id"], s["taskset"], g["label"], effort_cell(g),
+                status.get((s["run_id"], g["label"]), "not on the board"),
+                g["effective_mean"], f"[{g['ci_low']:.1f}, {g['ci_high']:.1f}]", g["half_width"],
+                f"{g['n_tasks']} x {g['k_max']}", _rate(g["hard_fail_rate"]),
+                _rate(g["clean_sheet_rate"]), _rate(g["submit_rate"]),
+                f"{100 * g['invalid_call_rate']:.1f}%", _rate(g["recovery_rate"]),
+                f"{g['steps_median']:g} / {g['steps_p90']:g}", round(g["output_tokens_mean"]),
+                round(g["input_tokens_mean"]), g["elapsed_median_s"],
+                f"${cost:.2f}" if cost is not None else "—",
+                scored, ", ".join(v["spec_version"]), ", ".join(v["generator_version"]),
+                s.get("harness_version") or "", ((s.get("pins") or {}).get("commit") or "")[:8],
+                *[round(pc[c]["mean_credit"], 2) if c in pc and pc[c]["n"] else "–"
+                  for c in WEIGHTS]])
+    return rows
+
+
+def d1_run_headers() -> List[str]:
+    return (["Run", "Task set", "Row", "Effort", "Status", "Effective", "95% CI", "±",
+             "Tasks x k", "Hard-fail", "Clean sheet", "Submitted", "Invalid calls", "Recovery",
+             "Steps (median / p90)", "Output tokens / episode", "Input tokens / episode",
+             "Elapsed median (s)", "Cost / sheet", "Scored by", "Spec", "Generator", "Harness",
+             "Engine commit"]
+            + [f"{c} credit (weight {w})" for c, w in WEIGHTS.items()])
+
+
+# ------------------------------------------------------------------- pilots
+
+
+def pilot_number(probe) -> int:
+    """The brainstorm's number of a pilot, from its ``pNN-`` id."""
+    return int(probe.id.split("-")[0][1:])
+
+
+def pilot_picture(pdf: Path, folder: Path) -> Optional[Path]:
+    """The first PILOT_PAGES pages of a pilot's reference PDF, rendered into
+    ``folder`` as finished-<n>.png (poppler's pdftoppm) and joined into one
+    picture; None when pdftoppm is not installed."""
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir(parents=True)
+    try:
+        subprocess.run(["pdftoppm", "-png", "-r", str(RENDER_DPI), "-l", str(PILOT_PAGES),
+                        str(pdf), str(folder / "finished")], check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return thumbnail(folder, "finished")
+
+
+def pilot_rows(tasks_dir: Optional[Path]) -> List[list]:
+    """One row per pilot, by the brainstorm's numbers, with its scripted solution."""
+    rows = []
+    for p in sorted(PILOT_PROBES, key=lambda p: (pilot_number(p), p.id)):
+        n = pilot_number(p)
+        folder = PILOT_REFS / p.id
+        ref = (json.loads((folder / "reference.json").read_text())
+               if (folder / "reference.json").exists() else None)
+        links = ["", "", ""]
+        if ref:
+            uri = folder.resolve().as_uri()
+            links = [Link(f"{p.id}/", uri + "/"),
+                     Link("PDF", f"{uri}/{ref['pdf']}") if ref.get("pdf") else "", ""]
+            if tasks_dir is not None and ref.get("pdf"):
+                thumb = pilot_picture(folder / ref["pdf"], tasks_dir / "pilot" / p.id)
+                links[2] = Img(thumb) if thumb else "(pdftoppm not installed)"
+        rows.append([n, PILOT_NAMES.get(n, ""), p.id, ", ".join(t for t in p.tags if t != "pilot"),
+                     p.prompt, p.note,
+                     (("PASS: " if ref["passed"] else "FAIL: ") + ref["detail"]) if ref
+                     else f"(no reference under {PILOT_REFS})", *links])
+    return rows
+
+
+def pilot_runs() -> List[str]:
+    """The pilot model runs kept so far (folders under benchmarks/pilot_runs)."""
+    return sorted(p.name for p in PILOT_RUNS.iterdir() if p.is_dir()) if PILOT_RUNS.exists() else []
+
+
 # ------------------------------------------------------------- leaderboard
 
 
@@ -465,6 +680,9 @@ def main(argv=None) -> int:
     real = json.loads(REAL_CATALOG.read_text())
     board = json.loads(TRACK_P.read_text()) if TRACK_P.exists() else None
     d1_board = json.loads(D1_BOARD.read_text()) if D1_BOARD.exists() else None
+    runs = published_runs()
+    sets = {name: tasksets.load(name) for name in tasksets.NAMES}
+    pilot_done = pilot_runs()
 
     wb = Workbook()
     ws = wb.active
@@ -505,6 +723,23 @@ def main(argv=None) -> int:
                              f"{REAL_CATALOG} lists why)."),
         ("Real task files", f"{TASKS_ROOT}/real/<agency>/<sheet>/<alignment>/<type>/: as for the "
                             "D1 tasks, plus the real base files beside start.rdoc.json."),
+        ("Eval sets", f"The D1 task sets the eval harness runs, as their manifests pin them "
+                      f"(benchmarks/tasksets, generator {sets['d1-test']['generator_version']}, "
+                      f"spec {sets['d1-test']['spec_version']}): d1-dev = "
+                      f"{len(sets['d1-dev']['tasks'])} tasks on seeds 1-50, for iteration and "
+                      f"never reported; d1-test = {len(sets['d1-test']['tasks'])} held-out tasks "
+                      f"on seeds 1000-1099, the set the {LEADERBOARD_SET} leaderboard ranks on; "
+                      f"d1-variance = d1-test's first {len(sets['d1-variance']['tasks'])} tasks, "
+                      "sampled k = 5 times to size the interval. One row per task with its dials, "
+                      "both prompts and every published run's score on it: the mean effective "
+                      "score over its samples, then the samples in order (a sample that errored "
+                      "shows as error and is left out of the mean, as the run's report does)."),
+        ("D1 runs", f"The {len(runs)} published D1 run(s) (benchmarks/runs/<run>/summary.json): "
+                    "effective score (0 on a hard fail, else the rubric score; per task over its "
+                    "samples, then over tasks) with its bootstrap CI over tasks within task type, "
+                    "the behaviour rates, the verifier it was scored with, each check's mean "
+                    "credit (0-1, over the episodes whose task grades it), and why it is not "
+                    "ranked yet. The check names are listed below the table."),
         ("D1 rules", "The benchmark rules sent ahead of every D1 prompt, at both levels."),
         ("Probes", f"The {len(PROBES)} Track P capability probes (the current leaderboard), "
                    "each a single natural-language request. One column per ranked model "
@@ -520,15 +755,29 @@ def main(argv=None) -> int:
                          "cost. Overlapping intervals are not separated. The Track D (D1) "
                          "board's state is below the table.") if board else
                         f"{TRACK_P} was missing; run python -m roaddraft.runners leaderboard"),
+        ("Pilot probes", f"The {len(PILOT_PROBES)} harder-task pilots (docs/Probes_Pilots.md), "
+                         "set on the real example sheets: input that is not clean data, layout "
+                         "decisions, changes that ripple, problems nobody named. Off the board: "
+                         "the Probes sheet, the probe-set hash and the leaderboard do not include "
+                         "them. Each row has the brainstorm's number and name, the prompt, the "
+                         "note (what is planted, what a naive answer gets wrong), the scripted "
+                         f"solution's verdict and a picture of up to {PILOT_PAGES} pages of its "
+                         f"PDF ({PILOT_REFS}/<id>/ holds the finished project). Pilot 16 (the 33 "
+                         "probes on the basic tool profile) has no rows of its own. Model runs: "
+                         + (", ".join(pilot_done) if pilot_done else "none yet") + "."),
         ("", None),
         ("Spec", f"{SPEC_VERSION} ({spec_hash()}), frozen 2026-10-16"),
         ("Generator", f"{GENERATOR_VERSION} (seeded); {REAL_GENERATOR_VERSION} (real sheets)"),
+        ("Verifier", f"{VERIFIER_VERSION}; eval harness {HARNESS_VERSION}"),
         ("Two sheets", "A longer alignment laid out on C-101 and C-102, breaking at a match line "
                        "on a tangent; each sheet shows its own part, carries its own curve table, "
                        "north arrow and title block, and a MATCH LINE STA ... SEE SHEET ... label."),
-        ("Dial cycle", "seed 1 = 1 curve, no equation; seed 2 = 1 curve, equation; ... cycling "
-                       "through 1-3 curves x equation off/on. Provisional: the E2 taskset "
-                       "manifests will pin the final assignment."),
+        ("Dial cycle", "D1 tasks sheet: seed 1 = 1 curve, no equation; seed 2 = 1 curve, "
+                       "equation; ... cycling through 1-3 curves x equation off/on. The eval sets "
+                       "have their own, pinned by the manifests: by position in the set, curves "
+                       "cycle 1, 2, 3, the equation flips every three tasks, the sheet count every "
+                       "six, and the task type cycles through the seeded types (a seed that cannot "
+                       "make its type takes the next one, noted in the Dial fallback column)."),
         ("Regenerate", "see the docstring of scripts/export_prompts.py"),
         ("Source", "src/roaddraft/tasks/{types,prompts,generator,real}.py (D1), "
                    "src/roaddraft/probes/ (Track P)"),
@@ -564,6 +813,35 @@ def main(argv=None) -> int:
                 "Files", "Start", "Finished", "Start (picture)", "Finished (picture)"],
            [16, 22, 9, 12, 9, 8, 10, 18, 18, 24, 28, 30, 7, 8, 7, 7, 95, 40, 8, 8, 9, 12, 12],
            real_rows(real, tasks_dir, out.parent), wrap_cols=(8, 11, 12, 17, 18))
+
+    ws = wb.create_sheet("Eval sets")
+    cols = run_columns(runs)
+    score_heads = [h for head, _ in cols for h in (head, head.split("\n")[0] + "\nsamples")]
+    n = 12 + len(score_heads)
+    _table(ws, ["Set", "#", "Seed", "Type", "Sheets", "Curves", "Station equation", "Task ID",
+                "In d1-variance", "Dial fallback", "Checks graded", "Points", *score_heads,
+                "EXPLICIT prompt", "VAGUE prompt"],
+           [8, 5, 6, 16, 7, 7, 11, 24, 10, 22, 30, 7, *[14, 22] * len(cols), 95, 40],
+           eval_set_rows(cols),
+           wrap_cols=(10, 11, *range(14, n + 1, 2), n + 1, n + 2))
+    ws.row_dimensions[1].height = 56
+
+    ws = wb.create_sheet("D1 runs")
+    rows = d1_run_rows(runs, d1_board)
+    _table(ws, d1_run_headers(),
+           [30, 11, 30, 16, 34, 9, 13, 6, 8, 8, 8, 9, 8, 8, 10, 10, 10, 9, 8, 18, 6, 9, 8, 9,
+            *[9] * len(WEIGHTS)], rows, wrap_cols=(1, 3, 5))
+    ws.row_dimensions[1].height = 56
+    base = len(rows) + 3
+    legend = [("Check", "Weight", "What it grades")] + [
+        (c["id"], c["weight"], c["name"]) for c in DRAFTING_SPEC_V1["checks"]]
+    for i, line in enumerate(legend):
+        for j, value in enumerate(line, start=1):
+            c = ws.cell(row=base + i, column=j, value=value)
+            c.font = Font(name=FONT, size=10, bold=(i == 0))
+            c.alignment = TOP_WRAP
+        ws.merge_cells(start_row=base + i, start_column=3, end_row=base + i, end_column=12)
+        ws.row_dimensions[base + i].height = 13.5 * _lines(line[2], 150) + 4
 
     ws = wb.create_sheet("D1 rules")
     _table(ws, ["Sent before every D1 prompt (explicit and vague)"], [120],
@@ -601,6 +879,12 @@ def main(argv=None) -> int:
                      f"no ranked run yet on {d1_board['leaderboard_set']}: a row needs a "
                      "published run under a frozen spec (v0.1: spec v1, then d1-variance x 5 "
                      "samples, then d1-test x at least three models)")
+            others = d1_board.get("others") or []
+            if others:
+                state += (f"; {len(others)} published run(s) not ranked, on the D1 runs sheet ("
+                          + ", ".join(f"{g['label'].split(' · ')[0].split('/')[-1]} "
+                                      f"{g['effective_mean']:.1f} on {o['taskset']}"
+                                      for o in others for g in o["rows"]) + ")")
             notes.append(("Track D (D1) board", f"{state}; report {d1_board['report_version']}, "
                                                 "benchmarks/runs/LEADERBOARD.md"))
         base = len(rows) + 3
@@ -627,11 +911,19 @@ def main(argv=None) -> int:
            [["Wrapper", sample], ["T1 report (draft probes)", prompting.T1_REPORT],
             ["T2 report (all others)", prompting.T2_REPORT]], wrap_cols=(2,))
 
+    ws = wb.create_sheet("Pilot probes")
+    _table(ws, ["#", "Pilot", "Probe ID", "Tags", "Prompt", "Note", "Scripted solution",
+                "Reference", "PDF", "Reference (picture)"],
+           [5, 22, 28, 24, 90, 60, 44, 12, 6, 12], pilot_rows(tasks_dir), wrap_cols=(2, 4, 5, 6, 7))
+
     wb.save(out)
     print(f"wrote {out}: {len(TASK_TYPES)} types x 2 sheet counts x {len(seeds)} seeds x 2 "
-          f"levels, {len(real['tasks'])} real-sheet tasks, {len(PROBES)} probes"
+          f"levels, {len(real['tasks'])} real-sheet tasks, "
+          + ", ".join(f"{name} {len(s['tasks'])}" for name, s in sets.items())
+          + f", {len(runs)} published D1 run(s), {len(PROBES)} probes"
           + (f", {len(board['ranked'])} ranked + {len(board['unranked'])} unranked board rows"
              if board else "")
+          + f", {len(PILOT_PROBES)} pilots"
           + ("" if tasks_dir is None else f"; task files under {tasks_dir}"))
     return 0
 
