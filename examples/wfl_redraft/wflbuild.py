@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ppm_redraft"))
 
 from leaders import poly_dist, plen                                   # noqa: E402
 from ppmbuild import (Doc, draw, draw_filled, fill_groups, is_closed, snap_mm,   # noqa: E402
-                      linetype, aim_at, split_leader)
+                      linetype, aim_at, split_leader, trace_layer)
 from wflsheet import snap_h, SHEET_W, SHEET_H                         # noqa: E402
 
 MODEL0 = (10000.0, 10000.0)
@@ -197,12 +197,18 @@ def build_bases(dig, out, names, title, naming=None):
         for p in sp:
             if p.get("_in_group"):
                 continue
+            if p.get("traced"):
+                draw(d, "model", p["pts"], trace_layer(d, "E_TOPO_TRACE"), is_closed(p["pts"]),
+                     linetype(p["dash"]), p["fill"], xf)
+                continue
             lt = linetype(p["dash"])
             lay = d.layer("E_TOPO" if p["lw"] <= 0.5 else "E_TOPO_HEAVY", snap_mm(p["lw"], 1.0),
                           lt or "dashed", "Existing features (dashed)")
             draw(d, "model", p["pts"], lay, is_closed(p["pts"]), None, p["fill"], xf)
         for g in groups:
-            draw_filled(d, "model", g, d.layer("E_TOPO_SYMB", 0.18, None, "Existing symbols"), xf)
+            lay = trace_layer(d, "E_TOPO_TRACE") if all(q.get("traced") for q in g) else \
+                d.layer("E_TOPO_SYMB", 0.18, None, "Existing symbols")
+            draw_filled(d, "model", g, lay, xf)
         for r in st:
             text_in(d, "model", r, d.layer("E_TOPO_TEXT", 0.18, None, "Contour elevations, names"), xf)
         path = out / naming.design_file(prefix, "SUR", anames)
@@ -305,8 +311,9 @@ def build_bases(dig, out, names, title, naming=None):
               f"drainage system of sheet {names[2]} -- pipes, culverts, inlets." + desc_tail}})
         d.run("set_annotation_scale", {"scale": dig["fpi"]})
         for p in hp:
-            lay = d.layer("P_DRAIN" if p["lw"] >= 1.2 else "P_DRAIN_SYMB", 0.50 if p["lw"] >= 1.2 else 0.35,
-                          None, "Drainage system")
+            lay = trace_layer(d, "P_DRAIN_TRACE") if p.get("traced") else \
+                d.layer("P_DRAIN" if p["lw"] >= 1.2 else "P_DRAIN_SYMB", 0.50 if p["lw"] >= 1.2 else 0.35,
+                        None, "Drainage system")
             draw(d, "model", p["pts"], lay, is_closed(p["pts"]), linetype(p["dash"]), p["fill"], xf)
         path = out / naming.design_file(prefix, "HYD", anames)
         d.save(path)
@@ -324,12 +331,18 @@ def build_bases(dig, out, names, title, naming=None):
         for p in cp:
             if p.get("_in_group"):
                 continue
+            if p.get("traced"):
+                draw(d, "model", p["pts"], trace_layer(d, "P_ROAD_TRACE"), is_closed(p["pts"]),
+                     linetype(p["dash"]), p["fill"], xf)
+                continue
             lay = model_layer(d, p)
             lt = linetype(p["dash"])
             lay_lt = None if lay in ("P_ROAD_LIMITS", "P_ROAD_HIDDEN", "P_ROAD_DASHED", "P_ROAD_PHANTOM") else lt
             draw(d, "model", p["pts"], lay, is_closed(p["pts"]), lay_lt, p["fill"], xf)
         for g in groups:
-            draw_filled(d, "model", g, d.layer("P_ROAD_SYMB", 0.18, None, "Filled symbols"), xf)
+            lay = trace_layer(d, "P_ROAD_TRACE") if all(q.get("traced") for q in g) else \
+                d.layer("P_ROAD_SYMB", 0.18, None, "Filled symbols")
+            draw_filled(d, "model", g, lay, xf)
         for r in runs:
             if r["kind"] == "design-label":
                 text_in(d, "model", r, d.layer("P_ROAD_TEXT", 0.25, None, "R/W, catch points"), xf)
@@ -370,8 +383,9 @@ def build_sheet(dig, out, names, title, bases, naming=None):
         d.run("set_annotation_scale", {"scale": dig["fpi"]})
         for key, paths_ in inline.items():
             for p in paths_:
-                lay = d.layer("P_DRAIN" if p["lw"] >= 1.2 else "P_DRAIN_SYMB", 0.50 if p["lw"] >= 1.2 else 0.35,
-                              None, "Drainage system (this file's own model)")
+                lay = trace_layer(d, "P_DRAIN_TRACE") if p.get("traced") else \
+                    d.layer("P_DRAIN" if p["lw"] >= 1.2 else "P_DRAIN_SYMB", 0.50 if p["lw"] >= 1.2 else 0.35,
+                            None, "Drainage system (this file's own model)")
                 draw(d, "model", p["pts"], lay, is_closed(p["pts"]), linetype(p["dash"]), p["fill"], xf)
     fields = {k: v for k, v in dig["fields"].items() if not k.startswith("_")}
     size = {"size": "ANSI_B"} if not (dig["portrait"] or dig.get("oversize")) else {

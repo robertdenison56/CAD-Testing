@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ppm_redraft"))
 
 import alignfit                                                   # noqa: E402
+import traced                                                     # noqa: E402
 from leaders import landings, component, ends_of, poly_dist, closed, plen   # noqa: E402
 from ppmsheet import (match_glyphs, reanchor, join_lines as _join_lines, mark_symbols,   # noqa: E402
                       run_center, centroid, bad_char)
@@ -997,6 +998,7 @@ def digitise(sheet_id, rel, extract, cfg, std=None):
         fpi = 50.0
 
     # ---------------------------------------------------------- plan view
+    traced_words = 0
     if kind == "plan":
         if twist is None and aligns:
             # a bearing lettered in pieces (N59°59'28" and its W apart) reads joined
@@ -1035,6 +1037,10 @@ def digitise(sheet_id, rel, extract, cfg, std=None):
                 if any(al["chain"].locate(r["center"])[0] < 1.0 for al in aligns):
                     r["kind"] = "align-text"
         mark_symbols(paths, runs)
+        # lettering drawn as strokes with no text layer: routed like the rest, then
+        # drawn on its design file's trace layer (ppm_redraft/traced.py)
+        traced_words = traced.mark(paths, keep=lambda p: not in_regions(p["pts"]),
+                                   exclude=[tuple(b) for b in cfg.get("trace_exclude", [])])
         for p in paths:
             if p["dest"] is not None:
                 continue
@@ -1101,4 +1107,5 @@ def digitise(sheet_id, rel, extract, cfg, std=None):
             "aligns": [dict({k: v for k, v in al.items() if k != "chain"}, length=al["chain"].length())
                        for al in aligns],
             "counts": dict(Counter(str(p["dest"]) for p in paths)),
+            "traced": {"words": traced_words, "strokes": sum(1 for p in paths if p.get("traced"))},
             "text_counts": dict(Counter(r["kind"] for r in runs))}
