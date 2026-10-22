@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from roaddraft.mcp import config as mcpconfig
+from roaddraft.mcp import profiles
 from roaddraft.mcp.server import INSTRUCTIONS
 from roaddraft.runners.core import Backend, Episode, Outcome, estimate_cost, register, text_of
 
@@ -84,7 +85,7 @@ class ClaudeCodeBackend(Backend):
                 "--tools", "",
                 "--allowedTools", f"mcp__{SERVER_NAME}__*",
                 "--restricted",
-                "--system-prompt", INSTRUCTIONS,
+                "--system-prompt", profiles.instructions(self.options.profile, INSTRUCTIONS),
                 "--output-format", "stream-json", "--verbose",
                 "--no-session-persistence"]
         if self.options.effort:
@@ -97,7 +98,8 @@ class ClaudeCodeBackend(Backend):
 
     def run(self, episode: Episode) -> Outcome:
         argv = self.command(episode)
-        episode.log.append({"role": "system", "content": INSTRUCTIONS})
+        episode.log.append({"role": "system",
+                            "content": profiles.instructions(self.options.profile, INSTRUCTIONS)})
         episode.log.append({"role": "user", "content": episode.task})
         env = dict(os.environ)
         env.pop("CLAUDECODE", None)       # a nested session refuses to start otherwise

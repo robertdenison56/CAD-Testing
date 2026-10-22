@@ -75,7 +75,8 @@ def server_command(python: Optional[str] = None) -> List[str]:
 def server_args(doc: Optional[str] = None, autosave: bool = False,
                 trace: Optional[str] = None, out_dir: Optional[str] = None,
                 only: Optional[Sequence[str]] = None, exclude: Optional[Sequence[str]] = None,
-                project: Optional[str] = None, root: Optional[str] = None) -> List[str]:
+                project: Optional[str] = None, root: Optional[str] = None,
+                profile: str = "default", attachments: Optional[str] = None) -> List[str]:
     """The server's own options as an argument list, every path absolute: a
     client starts the server from a working directory of its own choosing, so
     a relative path in a registration would resolve somewhere else."""
@@ -96,6 +97,10 @@ def server_args(doc: Optional[str] = None, autosave: bool = False,
         args += ["--exclude", ",".join(exclude)]
     if root:
         args += ["--root", _absolute(root)]
+    if profile and profile != "default":
+        args += ["--profile", profile]
+    if attachments:
+        args += ["--attachments", _absolute(attachments)]
     return args
 
 

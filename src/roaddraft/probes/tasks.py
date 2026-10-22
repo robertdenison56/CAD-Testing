@@ -476,8 +476,12 @@ def get(probe_id: str) -> Probe:
     from roaddraft.probes import families
     if families.is_instance(probe_id):
         return families.instance(probe_id)
+    from roaddraft.probes import pilot  # the harder-task pilots: off the board
+    if probe_id in pilot.BY_ID:
+        return pilot.BY_ID[probe_id]
     raise KeyError(f"no probe {probe_id!r}; probes: {', '.join(BY_ID)}; "
-                   f"families: {', '.join(families.BY_ID)} (as family@seed)")
+                   f"families: {', '.join(families.BY_ID)} (as family@seed); "
+                   f"pilots: {', '.join(pilot.BY_ID)}")
 
 
 __all__ = ["TOLERANCE_FT", "TITLE_FIELDS", "Probe", "Result", "PROBES", "FIND_PROBES",

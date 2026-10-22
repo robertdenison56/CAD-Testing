@@ -58,6 +58,19 @@ START = {"sheets": SHEET_FILE, "model": MODEL_FILE, "blank": BLANK_FILE,
          "flawed": FLAWED_FILE, "sheets-eq": EQ_SHEET_FILE, "sheets-row": ROW_SHEET_FILE,
          "sheets-qa": QA_FILE, "l2": L2_SHEET_FILE}
 
+#: starts added by other modules (the pilot probes', probes/pilot): name -> builder,
+#: each ``builder(out) -> path of the document the agent is handed``
+EXTRA_STARTS: dict = {}
+
+
+def register_start(name: str, filename: str, builder) -> None:
+    """Add a start document: ``filename`` is what ``builder(out)`` writes under ``out``."""
+    if name in START and EXTRA_STARTS.get(name) is not builder:
+        raise ValueError(f"start {name!r} is taken")
+    START[name] = filename
+    EXTRA_STARTS[name] = builder
+
+
 #: the station equation the sheets-eq design carries, on T-2 (sheet C-102)
 EQUATION = {"back": "35+00", "ahead": "35+50"}
 
@@ -359,6 +372,8 @@ def start_document(out: Path, start: str = "sheets") -> Path:
     this ``start`` hands to the agent."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    if start in EXTRA_STARTS:
+        return Path(EXTRA_STARTS[start](out))
     if start == "blank":
         return build_blank(out)
     if start == "centerline":
@@ -390,7 +405,7 @@ def build(out: Path) -> Tuple[Path, Path]:
     return model_path, build_sheets(out, model_path)
 
 
-__all__ = ["START", "BLANK_FILE", "CENTERLINE_FILE", "INTERSECTION_FILE", "FLAWED_FILE",
+__all__ = ["START", "EXTRA_STARTS", "register_start", "BLANK_FILE", "CENTERLINE_FILE", "INTERSECTION_FILE", "FLAWED_FILE",
            "EQ_MODEL_FILE", "EQ_SHEET_FILE", "ROW_MODEL_FILE", "ROW_SHEET_FILE", "QA_FILE",
            "L2_SHEET_FILE", "EQUATION", "ROW", "row_pieces", "build_qa", "build_l2",
            "INTERSECTION", "FLAWS", "corner_geometry", "build_intersection", "build_flawed",

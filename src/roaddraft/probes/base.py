@@ -78,6 +78,9 @@ class Probe:
     #: parameters the seed drew. Empty for the fixed probes.
     family: str = ""
     params: dict = field(default_factory=dict)
+    #: extra roaddraft-mcp options the probe needs (``--attachments {project}/scans``);
+    #: ``{project}`` is the project folder the start is built in
+    server_args: List[str] = field(default_factory=list)
 
 
 __all__ = ["Probe", "Result", "Tally"]

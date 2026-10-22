@@ -75,6 +75,7 @@ class Options:
     vision: bool = False                    # pass renders to the model as images
     effort: Optional[str] = None            # low | medium | high | xhigh | max, where the model takes it
     extra: Dict[str, Any] = field(default_factory=dict)
+    profile: str = "default"                # the server's tool profile (mcp/profiles.py)
 
 
 @dataclass
@@ -171,7 +172,8 @@ class Setup:
     cmd: List[str]
 
 
-def setup_probe(folder: Path, probe: Probe, server_command: Sequence[str]) -> Setup:
+def setup_probe(folder: Path, probe: Probe, server_command: Sequence[str],
+                profile: str = "default") -> Setup:
     """A fresh project for the probe under ``folder``, with ``server.json`` and
     ``prompt.txt`` beside it, the way ``setup_runs.py`` wrote them. The paths
     in the command are absolute: the server starts in ``project/``. ``--root``
@@ -185,6 +187,9 @@ def setup_probe(folder: Path, probe: Probe, server_command: Sequence[str]) -> Se
                                   "--trace", str(folder / "trace.jsonl"),
                                   "--out-dir", str(folder / "renders"),
                                   "--root", str(folder)]
+    cmd += [a.replace("{project}", str(folder / "project")) for a in probe.server_args]
+    if profile != "default":
+        cmd += ["--profile", profile]
     (folder / "server.json").write_text(json.dumps({"cmd": cmd}))
     (folder / "prompt.txt").write_text(prompting.task_text(probe))
     return Setup(folder=folder, doc=doc, cmd=cmd)
@@ -285,7 +290,7 @@ def run_probe(backend: Backend, folder: Path, probe: Probe, server_command: Sequ
         return {"probe": probe.id, "skipped": True}
     if folder.exists():
         shutil.rmtree(folder)
-    setup = setup_probe(folder, probe, server_command)
+    setup = setup_probe(folder, probe, server_command, profile=backend.options.profile)
     episode = Episode(folder=folder, probe=probe, setup=setup,
                       task=prompting.task_text(probe), options=backend.options)
     try:
@@ -304,6 +309,7 @@ def run_probe(backend: Backend, folder: Path, probe: Probe, server_command: Sequ
             "tokens": outcome.usage, "cost_usd": outcome.cost_usd,
             "max_turns": backend.options.max_turns, "budget_s": backend.options.budget,
             "vision": backend.options.vision, "effort": backend.options.effort,
+            "profile": backend.options.profile,
             "pins": pins()}
     if episode.server is not None:
         meta["truncated_results"] = episode.server.truncated

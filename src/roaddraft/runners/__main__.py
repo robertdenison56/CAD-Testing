@@ -3,6 +3,7 @@
     python -m roaddraft.runners run --backend BACKEND --model MODEL --out DIR --label LABEL
                                     [--tag TAG] [PROBE ...] [--max-turns N] [--budget MIN]
                                     [--repeat K] [--vision] [--effort LEVEL] [--force]
+                                    [--profile basic] [--pilot]
         anthropic:    ANTHROPIC_API_KEY in the environment
         claude-code:  [--claude-bin PATH] [--max-budget-usd D] [--claude-arg ARG ...]
         codex:        [--codex-bin PATH] [--codex-arg ARG ...]
@@ -34,9 +35,16 @@ from roaddraft.runners.core import BACKENDS, Options, run_probe
 from roaddraft.runners.score import format_table, score_label
 
 
-def select(tag: Optional[str], ids: Sequence[str]) -> List:
-    """Probes by tag and/or id; a family instance id (``draft-offsets@4``) counts."""
-    chosen = [p for p in tasks.PROBES if (not tag or tag in p.tags)]
+def select(tag: Optional[str], ids: Sequence[str], pilot: bool = False) -> List:
+    """Probes by tag and/or id; a family instance id (``draft-offsets@4``) counts, and
+    so does a pilot's id. ``pilot`` picks from the harder-task pilots (probes/pilot)
+    instead of the 33."""
+    if pilot:
+        from roaddraft.probes import pilot as pilots
+        pool = pilots.PILOT_PROBES
+    else:
+        pool = tasks.PROBES
+    chosen = [p for p in pool if (not tag or tag in p.tags)]
     if ids:
         by_id = {p.id: p for p in tasks.PROBES}
         chosen = [by_id[i] if i in by_id else tasks.get(i) for i in ids]
@@ -69,12 +77,13 @@ def build_backend(args) -> object:
                  "send_reasoning": args.send_reasoning}
     options = Options(model=args.model, max_turns=args.max_turns,
                       budget=args.budget * 60 if args.budget else None,
-                      vision=args.vision, effort=args.effort, extra=extra)
+                      vision=args.vision, effort=args.effort, extra=extra,
+                      profile=args.profile)
     return BACKENDS[args.backend](options)
 
 
 def cmd_run(args) -> int:
-    probes = select(args.tag, args.probes)
+    probes = select(args.tag, args.probes, pilot=args.pilot)
     if not probes:
         print("no probes selected", file=sys.stderr)
         return 2
@@ -135,6 +144,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run.add_argument("--vision", action="store_true", help="hand renders to the model as images")
     run.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     run.add_argument("--force", action="store_true", help="rerun probes that already have a report")
+    run.add_argument("--profile", choices=["default", "basic"], default="default",
+                     help="the server's tool surface: basic drops the commands that work out "
+                          "geometry for the model (mcp/profiles.py); a separate track, never "
+                          "the board's --out")
+    run.add_argument("--pilot", action="store_true",
+                     help="pick from the harder-task pilots (probes/pilot) instead of the 33")
     run.add_argument("--claude-bin", help="claude-code: the CLI to run (default: PATH, then the app's)")
     run.add_argument("--max-budget-usd", type=float, help="claude-code: the CLI's own spend cap")
     run.add_argument("--claude-arg", action="append", help="claude-code: an extra CLI argument")

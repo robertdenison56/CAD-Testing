@@ -58,6 +58,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from roaddraft.mcp import profiles
 from roaddraft.mcp.server import INSTRUCTIONS
 from roaddraft.runners.core import Backend, Episode, Outcome, register
 
@@ -122,7 +123,7 @@ class CodexBackend(Backend):
 
     def command(self, episode: Episode) -> List[str]:
         instructions = (episode.folder / "instructions.md").resolve()   # the CLI runs from project/
-        instructions.write_text(INSTRUCTIONS)
+        instructions.write_text(profiles.instructions(self.options.profile, INSTRUCTIONS))
         cmd = episode.setup.cmd
         settings: Dict[str, Any] = {
             "approval_policy": "never",
@@ -163,7 +164,8 @@ class CodexBackend(Backend):
     def run(self, episode: Episode) -> Outcome:
         version = self.version()
         argv = self.command(episode)
-        episode.log.append({"role": "system", "content": INSTRUCTIONS})
+        episode.log.append({"role": "system",
+                            "content": profiles.instructions(self.options.profile, INSTRUCTIONS)})
         episode.log.append({"role": "user", "content": episode.task})
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True,

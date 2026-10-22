@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Sequence
 from roaddraft import __version__
 from roaddraft.api.session import Session
 from roaddraft.mcp import config as mcpconfig
+from roaddraft.mcp import profiles
 from roaddraft.document import confine, fileformat
 from roaddraft.document.fileformat import DocumentFormatError, journal_path
 
@@ -63,6 +64,34 @@ EXTRA_TOOLS = {
     },
 }
 
+#: Served only with ``--attachments DIR``: the images a task came with (a scanned
+#: sheet, a markup), which a model looks at a region at a time. Not a bus query,
+#: so the ranked runs' tool surface and its digest are untouched.
+ATTACHMENT_TOOL = {
+    "view_attachment": {
+        "description": "Look at an image this task came with, such as a scanned plan "
+                       "sheet or a marked-up print. With no name, lists the attachments "
+                       "and their sizes in pixels. With a name, returns the image; a large "
+                       "image comes back scaled down to fit, so pass region [left, top, "
+                       "right, bottom] as fractions of its width and height, measured from "
+                       "the top-left corner, to see part of it in full detail: [0.5, 0.5, "
+                       "1, 1] is the lower-right quarter.",
+        "inputSchema": {"type": "object", "additionalProperties": False,
+                        "properties": {
+                            "name": {"type": "string", "minLength": 1,
+                                     "description": "the attachment's file name"},
+                            "region": {"type": "array", "minItems": 4, "maxItems": 4,
+                                       "items": {"type": "number", "minimum": 0, "maximum": 1},
+                                       "description": "[left, top, right, bottom], fractions "
+                                                      "of the image from its top-left corner"}}},
+    },
+}
+
+#: Longest side, in pixels, of an attachment view sent back
+ATTACHMENT_MAX_PX = 1568
+#: Image files an attachments folder may hold
+ATTACHMENT_TYPES = (".png", ".jpg", ".jpeg")
+
 #: Queries whose ``path`` result is an image worth showing the agent.
 IMAGE_QUERIES = ("render_sheet", "render_model")
 
@@ -78,11 +107,15 @@ INTERNAL_ERROR = -32603
 
 
 def tool_definitions(session: Session, only: Optional[Sequence[str]] = None,
-                     exclude: Optional[Sequence[str]] = None) -> List[dict]:
+                     exclude: Optional[Sequence[str]] = None,
+                     strip: Optional[Dict[str, List[str]]] = None,
+                     attachments: bool = False) -> List[dict]:
     """MCP tool definitions from the command/query manifest, plus the extras.
 
     ``only`` keeps just those names (the eval harness's whitelist, later);
     ``exclude`` drops them. Both are applied to bus and extra tools alike.
+    ``strip`` takes parameters out of a tool's schema (a profile's), and
+    ``attachments`` adds ``view_attachment``.
     """
     manifest = session.manifest()
     tools: List[dict] = []
@@ -92,9 +125,20 @@ def tool_definitions(session: Session, only: Optional[Sequence[str]] = None,
             description += "\nExample params: " + json.dumps(entry["example"])
         tools.append({"name": entry["name"], "description": description,
                       "inputSchema": entry["params_schema"]})
-    for name, spec in EXTRA_TOOLS.items():
+    extras = dict(EXTRA_TOOLS, **(ATTACHMENT_TOOL if attachments else {}))
+    for name, spec in extras.items():
         tools.append({"name": name, "description": spec["description"],
                       "inputSchema": spec["inputSchema"]})
+    for tool in tools:
+        gone = (strip or {}).get(tool["name"])
+        if gone:
+            schema = json.loads(json.dumps(tool["inputSchema"]))
+            for key in gone:
+                schema.get("properties", {}).pop(key, None)
+            if "required" in schema:
+                schema["required"] = [k for k in schema["required"] if k not in gone]
+            tool["inputSchema"] = schema
+            tool["description"] = tool["description"].split("\nExample params: ")[0]
     if only:
         keep = set(only)
         tools = [t for t in tools if t["name"] in keep]
@@ -187,10 +231,17 @@ class RoadDraftMCP:
 
     def __init__(self, session: Session, only: Optional[Sequence[str]] = None,
                  exclude: Optional[Sequence[str]] = None, autosave: bool = False,
-                 trace: Optional[str] = None, root: Optional[str] = None):
+                 trace: Optional[str] = None, root: Optional[str] = None,
+                 profile: str = "default", attachments: Optional[str] = None):
         self.session = session
         self.only = list(only) if only else None
-        self.exclude = list(exclude) if exclude else None
+        #: the tool profile (``mcp.profiles``): what it hides joins ``exclude``
+        self.profile = profile
+        hidden = list(exclude or []) + profiles.exclude(profile)
+        self.exclude = hidden or None
+        self.strip = profiles.strip(profile)
+        #: the folder of images ``view_attachment`` shows; None serves no such tool
+        self.attachments = Path(attachments).resolve() if attachments else None
         self.protocol_version = PROTOCOL_VERSION
         self.autosave = autosave
         self.trace = Path(trace) if trace else None
@@ -204,7 +255,8 @@ class RoadDraftMCP:
     # ------------------------------------------------------------- tools
 
     def tools(self) -> List[dict]:
-        return tool_definitions(self.session, self.only, self.exclude)
+        return tool_definitions(self.session, self.only, self.exclude, self.strip,
+                                attachments=self.attachments is not None)
 
     def _kinds(self) -> Dict[str, str]:
         """``{tool name: "command" | "query" | "extra"}`` for the exposed tools."""
@@ -212,6 +264,8 @@ class RoadDraftMCP:
         kinds = {c["name"]: "command" for c in manifest["commands"]}
         kinds.update({q["name"]: "query" for q in manifest["queries"]})
         kinds.update({name: "extra" for name in EXTRA_TOOLS})
+        if self.attachments is not None:
+            kinds.update({name: "extra" for name in ATTACHMENT_TOOL})
         exposed = {t["name"] for t in self.tools()}
         return {k: v for k, v in kinds.items() if k in exposed}
 
@@ -231,6 +285,13 @@ class RoadDraftMCP:
             return self._tool_error(
                 f"unknown tool {name!r}. Call tools/list for the surface, or the "
                 f"list_commands tool for the command manifest.")
+        gone = sorted(k for k in self.strip.get(name, []) if k in arguments)
+        if gone:
+            return self._tool_error(
+                f"{name} takes no {', '.join(gone)} on this server (the {self.profile} tool "
+                f"profile): work out the coordinates yourself and give them")
+        if name in ATTACHMENT_TOOL:
+            return self._view_attachment(arguments)
         with confine.held(self.root):
             if kind == "extra":
                 return self._shown(self._call_extra(name, arguments))
@@ -274,6 +335,55 @@ class RoadDraftMCP:
         summary = self.session.query("get_document_state", {})
         return {"content": [_text({"ok": True, "opened": str(Path(path).resolve()),
                                    "state": summary})], "isError": False}
+
+    def _view_attachment(self, arguments: dict) -> dict:
+        """``view_attachment``: list the attachments, or show one (a region of it)
+        scaled to fit ``ATTACHMENT_MAX_PX``. Traced like a query."""
+        from PIL import Image
+        folder = self.attachments
+        files = sorted(p for p in folder.iterdir() if p.suffix.lower() in ATTACHMENT_TYPES) \
+            if folder.is_dir() else []
+        name = arguments.get("name")
+        if not name:
+            listing = []
+            for p in files:
+                with Image.open(p) as im:
+                    listing.append({"name": p.name, "size_px": list(im.size)})
+            result = {"ok": True, "attachments": listing}
+            self._trace("view_attachment", "query", arguments, result)
+            return {"content": [_text(result)], "isError": False}
+        match = [p for p in files if p.name == name]
+        if not match:
+            result = {"ok": False, "error": {"message": f"no attachment {name!r}; attachments: "
+                                                        f"{', '.join(p.name for p in files) or 'none'}"}}
+            self._trace("view_attachment", "query", arguments, result)
+            return self._tool_error(result["error"]["message"])
+        region = arguments.get("region") or [0, 0, 1, 1]
+        left, top, right, bottom = (float(v) for v in region)
+        if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+            result = {"ok": False, "error": {"message": "region is [left, top, right, bottom] "
+                                                        "with left < right and top < bottom, "
+                                                        "each from 0 to 1"}}
+            self._trace("view_attachment", "query", arguments, result)
+            return self._tool_error(result["error"]["message"])
+        with Image.open(match[0]) as im:
+            w, h = im.size
+            box = (round(left * w), round(top * h), round(right * w), round(bottom * h))
+            crop = im.convert("RGB").crop(box)
+        fit = min(1.0, ATTACHMENT_MAX_PX / max(crop.size))
+        if fit < 1.0:
+            crop = crop.resize((max(1, round(crop.size[0] * fit)), max(1, round(crop.size[1] * fit))),
+                               Image.LANCZOS)
+        import io
+        buf = io.BytesIO()
+        crop.save(buf, format="PNG")
+        result = {"ok": True, "name": name, "size_px": [w, h], "region": [left, top, right, bottom],
+                  "region_px": list(box), "shown_px": list(crop.size),
+                  "scale": round(fit, 4)}
+        self._trace("view_attachment", "query", arguments, result)
+        image = {"type": "image", "data": base64.b64encode(buf.getvalue()).decode("ascii"),
+                 "mimeType": "image/png"}
+        return {"content": [_text(result), image], "isError": False}
 
     @staticmethod
     def _tool_error(message: str) -> dict:
@@ -356,8 +466,7 @@ class RoadDraftMCP:
         return {"protocolVersion": self.protocol_version,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": dict(SERVER_INFO),
-                "instructions": (
-                    INSTRUCTIONS)}
+                "instructions": profiles.instructions(self.profile, INSTRUCTIONS)}
 
     def serve(self, stdin=None, stdout=None) -> None:
         """Read newline-delimited JSON-RPC from stdin until EOF."""
@@ -508,6 +617,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "server starts in DIR unless already inside it. For a "
                              "benchmarked model, which must not read what lies "
                              "outside its episode")
+    parser.add_argument("--profile", choices=profiles.PROFILES, default="default",
+                        help="the tool surface: default (everything), or basic (no "
+                             "commands that work out geometry for the caller; mcp/profiles.py)")
+    parser.add_argument("--attachments", metavar="DIR",
+                        help="serve view_attachment over the images in DIR (a task's "
+                             "scanned sheet or markup)")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool names that would be served, then exit")
     parser.add_argument("--config", metavar="CLIENT", choices=sorted(mcpconfig.CLIENTS),
@@ -529,7 +644,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args=mcpconfig.server_args(doc=args.doc, autosave=args.autosave, trace=args.trace,
                                        out_dir=args.out_dir, only=_names(args.only),
                                        exclude=_names(args.exclude), project=args.project,
-                                       root=args.root),
+                                       root=args.root, profile=args.profile,
+                                       attachments=args.attachments),
             write_to=args.write)
     if args.write:
         parser.error("--write goes with --config")
@@ -543,8 +659,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session = Session.load(args.doc, out_dir=args.out_dir)
     else:
         session = Session(project_name=args.project, out_dir=args.out_dir)
+    if args.attachments and not Path(args.attachments).is_dir():
+        parser.error(f"--attachments {args.attachments} is not a folder")
     server = RoadDraftMCP(session, only=_names(args.only), exclude=_names(args.exclude),
-                          autosave=args.autosave, trace=args.trace, root=args.root)
+                          autosave=args.autosave, trace=args.trace, root=args.root,
+                          profile=args.profile, attachments=args.attachments)
 
     if args.list_tools:
         tools = server.tools()

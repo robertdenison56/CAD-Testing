@@ -172,6 +172,8 @@ def collect(runs_root: Path) -> Tuple[List[Attempt], List[Folder]]:
                 folder.native += 1
                 probe = tasks.BY_ID[episode.name]
                 meta = json.loads((episode / "run.json").read_text())
+                if meta.get("profile", "default") != "default":
+                    continue  # another tool surface (mcp/profiles.py): never a board row
                 row = score_folder(episode, probe, starts)
                 prompt = episode / "prompt.txt"
                 attempts.append(Attempt(
