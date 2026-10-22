@@ -140,12 +140,43 @@ def test_f_chain_mode_stationing_on_hand_drawn_linework():
                                  "text_height": b.D["text_heights"]["model_label_ft"],
                                  "layer": _L["ticks"], "label_layer": _L["labels"]})
     r = b.verify()
-    assert r.check("D1-01").credit == 1.0 and r.check("D1-02").credit == 1.0
+    assert r.check("D1-01").credit == 1.0
+    # chain-mode ticks carry no anchor, so no stamp: right where they belong, and
+    # reported, not credited (d1-verify-v6)
+    assert r.check("D1-02").credit == 0.0
+    assert [f.code for f in r.check("D1-02").findings] == ["unanchored"] * b.n_ticks
     assert r.check("D1-03").credit == 0.0
     # only the C-n callouts (place_label) survive in D1-04
     assert r.check("D1-04").credit == pytest.approx(b.n_curves / b.n("D1-04"))
     assert any(f.code == "unanchored" for f in r.check("D1-07").findings)
     assert not r.hard_failed
+
+
+def _ticks_by_draw_line(b: Base):
+    for t in b.ticks():
+        b.ex("delete_entities", {"ids": [t.id]})
+        b.ex("draw_line", {"space": "model", "start": list(t.start), "end": list(t.end),
+                           "layer": t.layer})
+
+
+def _ticks_copied_into_place(b: Base):
+    old = [t.id for t in b.ticks()]
+    copies = b.ex("copy_entities", {"ids": old, "delta": [10.0, 0.0]})["created"]
+    b.ex("delete_entities", {"ids": old})
+    b.ex("move_entities", {"ids": copies, "delta": [-10.0, 0.0]})
+
+
+@pytest.mark.parametrize("probe", [_ticks_by_draw_line, _ticks_copied_into_place],
+                         ids=["draw_line", "copied"])
+def test_k_ticks_not_placed_by_an_anchoring_command_earn_nothing(probe):
+    b = Base(**BASE)
+    ref = b.verify()
+    probe(b)
+    r = b.verify()
+    assert r.check("D1-02").credit == 0.0 and not r.hard_failed
+    assert [f.code for f in r.check("D1-02").findings] == ["unanchored"] * b.n_ticks
+    for cid in ("D1-01", "D1-03", "D1-04", "D1-05", "D1-06", "D1-07", "D1-08"):
+        assert r.check(cid).credit == ref.check(cid).credit, cid
 
 
 def test_g_table_built_with_place_table_scores_zero():

@@ -36,7 +36,7 @@ from roaddraft.verify.report import (
 )
 from roaddraft.verify.rubric import score_checks
 
-VERIFIER_VERSION = "d1-verify-v5"  # (2026-10-18) a bearing anchored at a station on its tangent is that tangent's bearing; v4 (2026-10-16) D1-08 charges a dimension line or callout leader through text; v3 (2026-10-11) anchors through references, PPM label forms by meaning
+VERIFIER_VERSION = "d1-verify-v6"  # (2026-10-21) D1-02 credits only ticks an anchoring command placed; v5 (2026-10-18) a bearing anchored at a station on its tangent is that tangent's bearing; v4 (2026-10-16) D1-08 charges a dimension line or callout leader through text; v3 (2026-10-11) anchors through references, PPM label forms by meaning
 DEFAULT_LEVEL = "explicit"
 
 

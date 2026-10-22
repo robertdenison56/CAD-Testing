@@ -197,6 +197,7 @@ class TickMatch:
     piece: Piece  # the truth tick
     hits: List[Piece] = field(default_factory=list)  # document lines that match it
     near: Optional[Piece] = None  # an unmatched line close by: a misplaced tick
+    unanchored: Optional[Piece] = None  # a line that matches it but no anchoring command placed
 
 
 def crosses_at(piece: Piece, tick: Piece, tol: float, rot_tol_deg: float) -> bool:

@@ -20,6 +20,9 @@ eval plan's section 3.4 table, with these readings made precise:
   ``geometry_mismatch`` while some element is still unmatched (a wrong
   attempt at it) and ``extra_linework`` once every element is matched; both
   are value findings.
+- D1-02 credits a truth tick only with a line an anchoring command placed
+  (``placed_by`` in ``bus.ANCHOR_PRODUCERS``), as labels are credited; a
+  line drawn by hand that would have matched is ``unanchored`` (d1-verify-v6).
 - Per-sheet checks (D1-00, D1-06, D1-10, D1-11) average over the deliverable
   sheets; D1-08 adds up overlaps across them.  With two sheets D1-00 also
   wants the match line drawn at the break and labelled on each sheet.
@@ -330,9 +333,19 @@ def analyze(ctx: Context) -> Analysis:
     given = {i for sh in ctx.truth.sheets for i in sh.get("given_entities") or ()}
     tickable = [e for e in model if e.id not in given and (getattr(e, "anchor", None) or {}
                                                            ).get("kind") not in LABEL_PART_KINDS]
-    ticks = match_ticks(ctx.truth.ticks, tickable, tol, exact=ctx.states("tick_length"),
-                        rot_tol_deg=float(ctx.tol["rotation_deg"]),
-                        length_range=(lo * ctx.fpi_used, hi * ctx.fpi_used))
+    # a tick earns credit only when an anchoring command placed it (d1-verify-v6), as a
+    # label does: a line drawn by hand at the station, however exact, is reported, not credited
+    stamped = {e.id for e in tickable
+               if (getattr(e, "anchor", None) or {}).get("placed_by") in ANCHOR_PRODUCERS}
+    tick_args = dict(exact=ctx.states("tick_length"), rot_tol_deg=float(ctx.tol["rotation_deg"]),
+                     length_range=(lo * ctx.fpi_used, hi * ctx.fpi_used))
+    ticks = match_ticks(ctx.truth.ticks, [e for e in tickable if e.id in stamped], tol,
+                        **tick_args)
+    by_hand = match_ticks(ctx.truth.ticks, [e for e in tickable if e.id not in stamped], tol,
+                          **tick_args)
+    for tm, hm in zip(ticks, by_hand):
+        if not tm.hits and hm.hits:
+            tm.unanchored = hm.hits[0]
     edges = None
     if ctx.truth.edges and ctx.alignment is not None and ctx.asks("edges"):
         edges = match_edges(ctx.alignment, ctx.truth.edges, model, ctx.layers["edges"], tol)
@@ -512,6 +525,11 @@ def check_ticks(a: Analysis) -> Result:  # D1-02
                                     actual=[tm.near.a, tm.near.b],
                                     note="a tick near this station is off the station or the "
                                          "wrong length"))
+        elif tm.unanchored is not None:
+            findings.append(Finding("unanchored", anchor=anchor,
+                                    entity_ids=[tm.unanchored.entity.id],
+                                    note="the tick at this station was not placed by an "
+                                         "anchoring command, so it earns no credit"))
         else:
             findings.append(Finding("missing", anchor=anchor, note="no tick at this station"))
     return (hits / len(a.ticks) if a.ticks else 1.0), findings
