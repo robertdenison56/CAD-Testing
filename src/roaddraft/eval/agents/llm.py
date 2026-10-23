@@ -71,6 +71,9 @@ class LLMAgent(Agent):
     def begin(self, context: dict) -> None:
         if self.fixed_system:
             return
+        if context.get("system"):  # a task with a system prompt of its own (a probe task)
+            self.system = context["system"]
+            return
         text = prompts.system_prompt(context.get("dialect", "neutral"), context["mode"],
                                      context.get("budgets"))
         skin = context.get("skin")

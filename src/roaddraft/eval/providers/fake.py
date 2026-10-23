@@ -52,7 +52,10 @@ class FakeProvider(Provider):
     def reset(self, task) -> None:
         self._n = 0
         self.requests = []
-        if self.oracle_mode:
+        if self.oracle_mode and getattr(task, "probe", None) is not None:
+            from roaddraft.eval.probe_tasks import oracle_calls
+            self._solution = [(name, dict(params)) for name, params in oracle_calls(task.probe)]
+        elif self.oracle_mode:
             from roaddraft.tasks.reference import solution_commands
             self._solution = [(name, dict(params)) for name, params in solution_commands(task)]
 

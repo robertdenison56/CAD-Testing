@@ -70,6 +70,23 @@ three additions, each read only from a real truth sheet:
 - **North arrow.** On a turned sheet it must point to north, so it is inserted turned
   by the twist; one pointing up the paper earns half.
 
+## The eval sets drawn from it
+
+The harness runs two task sets from this catalogue (`src/roaddraft/eval/taskset.py`,
+manifests under `benchmarks/tasksets/`):
+
+- **`d1-real`**: 99 held-out tasks, nine of each type. Within a type every agency
+  that has the type is drawn once before any is drawn again, then the sheet the set
+  has used least, so it holds 66 Caltrans tasks and 11 each of WFL, CFL and FDOT,
+  on 42 sheets. Ranked on its own board beside the seeded `d1-test`.
+- **`d1-real-dev`**: 22 tasks, two of each type, on three Caltrans sheets that
+  `d1-real` never uses. For smoke runs; never reported.
+
+```bash
+.venv/bin/python -m roaddraft.eval run --taskset d1-real-dev --agent oracle --agent null --level explicit --level vague
+.venv/bin/python -m roaddraft.eval taskset --check d1-real d1-real-dev   # rebuilds every task; fails on a stale catalogue
+```
+
 ## Validation
 
 A pairing is kept only when its reference solution verifies 100 and its starting

@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import argparse
 import json
 import shutil
@@ -59,6 +61,17 @@ def _models(values: Optional[List[str]]) -> List[str]:
     return [m.strip() for v in values or [] for m in v.split(",") if m.strip()]
 
 
+def _budgets(args) -> Budgets:
+    """The run's budgets: the task set's defaults (a probe set takes Track P's,
+    taskset.default_budgets), with any the command line set."""
+    base = tasksets.default_budgets(args.taskset)
+    return replace(base, **{k: v for k, v in (("steps", args.steps),
+                                             ("wall_clock_s", None if args.wall_clock is None
+                                              else args.wall_clock * 60),
+                                             ("output_tokens", args.output_tokens))
+                            if v is not None})
+
+
 def cmd_run(args) -> int:
     models = _models(args.model)
     options = {"effort": args.effort, "max_tokens": args.max_tokens, "base_url": args.base_url,
@@ -71,8 +84,7 @@ def cmd_run(args) -> int:
                    levels=tuple(args.level or ["explicit"]), modes=tuple(args.mode or ["single"]),
                    samples=args.samples, limit=args.limit, task_ids=args.task or None,
                    results_root=args.out, run_id=args.run_id, concurrency=args.concurrency,
-                   budgets=Budgets(steps=args.steps, wall_clock_s=args.wall_clock * 60,
-                                   output_tokens=args.output_tokens),
+                   budgets=_budgets(args),
                    journal=args.journal, models=tuple(models), provider=args.provider,
                    provider_options={k: v for k, v in options.items() if v is not None},
                    dialects=tuple(args.dialect or ["neutral"]), cost_cap=args.cost_cap)
@@ -164,6 +176,9 @@ def cmd_verify(args) -> int:
     if entry is None:
         print(f"verify: task {args.task} is not in {args.taskset}", file=sys.stderr)
         return 2
+    if "probe" in entry:
+        print("verify: a probe task is graded by its own check, not the D1 verifier: run it with python -m roaddraft.eval run --taskset hard-pilots, or set one up for a person with python -m roaddraft.probes setup", file=sys.stderr)
+        return 2
     task = tasksets.task_from_entry(entry)
     doc = Document.from_dict(read_document(target))
     journal = read_journal(args.journal) if args.journal else None
@@ -189,6 +204,9 @@ def cmd_human(args) -> int:
     level = args.level or "explicit"
     if args.action == "start":
         entry = _find_entry(args.task, args.taskset)
+        if "probe" in entry:
+            print("human: a probe task is graded by its own check, not the D1 verifier: run it with python -m roaddraft.eval run --taskset hard-pilots, or set one up for a person with python -m roaddraft.probes setup", file=sys.stderr)
+            return 2
         task = tasksets.task_from_entry(entry)
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
@@ -290,9 +308,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--out", default="results", help="results root (gitignored)")
     p.add_argument("--run-id")
     p.add_argument("--concurrency", type=int, default=4)
-    p.add_argument("--steps", type=int, default=Budgets.steps, help="step budget per episode")
-    p.add_argument("--wall-clock", type=float, default=Budgets.wall_clock_s / 60,
-                   help="minutes per episode")
+    p.add_argument("--steps", type=int, help=f"step budget per episode (default "
+                                              f"{Budgets.steps}; a probe set's own)")
+    p.add_argument("--wall-clock", type=float, help=f"minutes per episode (default "
+                                                    f"{Budgets.wall_clock_s / 60:g}; a probe set's own)")
     p.add_argument("--journal", help="replay agent: the journal to replay")
     p.add_argument("--model", action="append",
                    help="model id(s) to run as LLM agents (comma-separated or repeated)")
@@ -307,8 +326,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--extra-body", help="openai: JSON merged into every request")
     p.add_argument("--lms-context", type=int, help="openai: LM Studio reload guard at this context")
     p.add_argument("--dialect", action="append", choices=list(DIALECTS))
-    p.add_argument("--output-tokens", type=int, default=Budgets.output_tokens,
-                   help="output-token budget per episode")
+    p.add_argument("--output-tokens", type=int,
+                   help=f"output-token budget per episode (default {Budgets.output_tokens})")
     p.add_argument("--cost-cap", type=float, help="dollars: no new episode starts past it")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_run)

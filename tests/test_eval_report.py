@@ -221,7 +221,7 @@ def test_board_ranks_only_rankable_model_rows():
     assert [r["label"].split(" ")[0] for r in b["reference"]] == ["oracle"]
     others = {o["run_id"]: o["reasons"] for o in b["others"]}
     assert others["draft-run"] == ["spec draft-v4 is a draft"]
-    assert others["var"] == ["run on d1-variance, not d1-test"]
+    assert others["var"] == ["run on d1-variance, not a leaderboard set (d1-test, d1-real, hard-pilots)"]
     md = R.render_board(b)
     assert "**Best model 72.5/100" in md and "Published runs that are not ranked" in md
     assert "| Model · mode · prompt | Effort |" in md
@@ -233,6 +233,39 @@ def test_board_ranks_only_rankable_model_rows():
     assert "old" not in new and new.startswith("intro\n") and new.endswith(f"{R.README_END}\nafter\n")
     with pytest.raises(ValueError):
         R.replace_block("no markers", block)
+
+
+def test_d1_real_is_ranked_on_its_own_board():
+    seeded = _fake_summary("t", [_fake_row("claude-a", "anthropic", 70.0)])
+    real = _fake_summary("r", [_fake_row("claude-a", "anthropic", 55.0),
+                               _fake_row("claude-b", "anthropic", 58.0),
+                               _fake_row("oracle", "harness", 100.0)], taskset="d1-real")
+    dev = _fake_summary("rd", [_fake_row("claude-a", "anthropic", 50.0)], taskset="d1-real-dev",
+                        problems=["d1-real-dev is a development set and is never reported"])
+    b = R.board([seeded, real, dev])
+    # the top level is d1-test's, as before
+    assert [r["run_id"] for r in b["ranked"]] == ["t"] and b["leaderboard_set"] == "d1-test"
+    one = b["boards"]["d1-real"]
+    assert [r["label"].split(" ")[0] for r in one["ranked"]] == ["claude-b", "claude-a"]
+    assert [r["rank"] for r in one["ranked"]] == [1, 2]
+    assert one["headline"].startswith("best model 58.0/100 on d1-real")
+    assert [r["label"].split(" ")[0] for r in one["reference"]] == ["oracle"]
+    assert {o["run_id"]: o["reasons"] for o in b["others"]} == {
+        "rd": ["d1-real-dev is a development set and is never reported"]}
+    md = R.render_board(b)
+    assert "## `d1-test`: seeded sheets" in md and "## `d1-real`: the sample plan sheets" in md
+    assert "**Best model 58.0/100 on d1-real" in md and "**Best model 70.0/100 on d1-test" in md
+    assert "### `d1-real`" in R.render_board(b, readme=True)
+
+
+def test_a_real_set_is_judged_against_the_real_generator():
+    from roaddraft.tasks.brief import GENERATOR_VERSION
+    from roaddraft.tasks.real import REAL_GENERATOR_VERSION
+    assert R.current_versions("d1-real")["generator_version"] == REAL_GENERATOR_VERSION
+    assert R.current_versions("d1-real-dev")["generator_version"] == REAL_GENERATOR_VERSION
+    assert R.current_versions("d1-test")["generator_version"] == GENERATOR_VERSION
+    assert R.current_versions()["generator_version"] == GENERATOR_VERSION
+    assert "d1-real-dev" in R.NEVER_REPORTED and "d1-real" in R.LEADERBOARD_SETS
 
 
 def test_readme_board_is_current():

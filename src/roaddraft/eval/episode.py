@@ -414,20 +414,11 @@ class Episode:
                     observation["images"] = list(self._turn_images)
         finally:
             self.agent.close()
-        report = verify(self.session.doc, self.task.truth, journal=self.session.bus.journal,
-                        prompt_level=self.config.level)
-        audit = audit_journal(self.session.bus.journal, self.session.doc)
+        report, records = self.finish()
         elapsed_ms = int(round((time.monotonic() - started) * 1000))
         if writer:
-            journal = {"type": "journal", "baseline": self.task.baseline,
-                       "entries": list(self.session.bus.journal),
-                       "truth": self.task.truth.to_dict(),
-                       "document_name": f"{self.task.task_id}.rdoc.json"}
-            if self.task.files:
-                journal["files"] = self.task.files
-            writer.write(journal)
-            writer.write({"type": "verify", **report.to_dict()})
-            writer.write({"type": "audit", **audit})
+            for rec in records:
+                writer.write(rec)
             writer.write({"type": "end", "termination": self.termination,
                           "budget_tripped": self.budget_tripped, "error": self.error,
                           "steps": self.state.steps, "turns": n, "tool_calls": self.state.steps,
@@ -449,6 +440,22 @@ class Episode:
                              budget_tripped=self.budget_tripped, error=self.error, turns=n,
                              invalid_calls=self.invalid_calls, cost_usd=self.cost_usd,
                              implicit_submit=self.implicit_submit)
+
+    def finish(self) -> Tuple[Any, List[dict]]:
+        """Grade the episode: the report (``effective_score``, ``rubric_score``,
+        ``hard_failed``, ``to_dict``) and the records written before the end
+        record -- the journal that re-scores it, the verify report, the audit.
+        A probe task (``eval/probe_tasks.py``) grades with its own check."""
+        report = verify(self.session.doc, self.task.truth, journal=self.session.bus.journal,
+                        prompt_level=self.config.level)
+        audit = audit_journal(self.session.bus.journal, self.session.doc)
+        journal = {"type": "journal", "baseline": self.task.baseline,
+                   "entries": list(self.session.bus.journal),
+                   "truth": self.task.truth.to_dict(),
+                   "document_name": f"{self.task.task_id}.rdoc.json"}
+        if self.task.files:
+            journal["files"] = self.task.files
+        return report, [journal, {"type": "verify", **report.to_dict()}, {"type": "audit", **audit}]
 
     def _call_record(self, call: ToolCall) -> dict:
         d = call.to_dict()

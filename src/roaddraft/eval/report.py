@@ -45,11 +45,16 @@ A row is one (model, provider, effort, dialect, mode, level).  The rules:
   table) for a priced model, else taken from the episode's own figure.
 
 Publishing copies ``summary.json``, ``leaderboard.md`` and the heatmap to
-``benchmarks/runs/<run_id>/``.  A run on a draft spec or on ``d1-dev`` is
-not rankable (the plan publishes only on frozen ids and never reports the
-dev set); it is published only on request, marked with why.
-``scripts/make_leaderboard.py`` builds the README board from the published
-summaries.
+``benchmarks/runs/<run_id>/``.  A run on a draft spec or on a development
+set (``d1-dev``, ``d1-real-dev``) is not rankable (the plan publishes only on
+frozen ids and never reports the dev sets); it is published only on request,
+marked with why.  ``scripts/make_leaderboard.py`` builds the README board from
+the published summaries: one ranking per leaderboard set, ``d1-test`` (the
+seeded sheets), ``d1-real`` (the redrafted sample plan sheets) and
+``hard-pilots`` (the harder tasks, each graded pass or fail by its own check:
+``eval/probe_tasks.py``).  A run is held to its own set's generator version
+(``taskset.current_generator``): the seeded generator, the real-sheet builder,
+or the probe set's hash.
 """
 from __future__ import annotations
 
@@ -74,7 +79,13 @@ REPO = Path(__file__).resolve().parents[3]
 RUNS_DIR = REPO / "benchmarks" / "runs"
 #: the task set the leaderboard ranks on; d1-variance sizes the interval first
 LEADERBOARD_SET = "d1-test"
-NEVER_REPORTED = ("d1-dev",)
+#: every set a board ranks on, each its own ranking: the seeded sheets and the
+#: redrafted sample plan sheets (eval/taskset.py)
+LEADERBOARD_SETS = ("d1-test", "d1-real", "hard-pilots")
+#: what each board is, in a heading
+SET_TITLES = {"d1-test": "seeded sheets", "d1-real": "the sample plan sheets",
+              "hard-pilots": "the harder tasks (pass or fail)"}
+NEVER_REPORTED = ("d1-dev", "d1-real-dev")
 #: the CI half-width the v0.1 acceptance asks for, in points
 TARGET_HALF_WIDTH = 5.0
 
@@ -257,7 +268,11 @@ def load_episode(path, reverify: bool = False, check_delta: bool = True) -> Opti
         return None
     level = header.get("level", "explicit")
     scored_by = "episode"
-    if reverify and rec["journal"] is not None and (rec["journal"].get("truth") is not None):
+    if reverify and rec["journal"] is not None and rec["journal"].get("probe"):
+        from roaddraft.eval.probe_tasks import rescore  # a probe task: its own check again
+        verify_rec = rescore(path, rec["journal"])
+        scored_by = "reverify"
+    elif reverify and rec["journal"] is not None and (rec["journal"].get("truth") is not None):
         from roaddraft.eval.trajectory import reverify as _reverify
         verify_rec = _reverify(path, level=level).to_dict()
         scored_by = "reverify"
@@ -515,12 +530,14 @@ def rank_key(g: dict) -> Tuple:
 
 # ------------------------------------------------------------------- report
 
-def current_versions() -> dict:
-    from roaddraft.tasks.brief import GENERATOR_VERSION
+def current_versions(taskset: Optional[str] = None) -> dict:
+    """The versions a run on ``taskset`` is judged against: its set's own
+    generator (``taskset.current_generator``), the spec, the verifier."""
+    from roaddraft.eval.taskset import current_generator
     from roaddraft.tasks.spec_v1 import SPEC_VERSION, spec_hash
     from roaddraft.verify import VERIFIER_VERSION
     return {"spec_version": SPEC_VERSION, "spec_hash": spec_hash(),
-            "generator_version": GENERATOR_VERSION, "verifier_version": VERIFIER_VERSION}
+            "generator_version": current_generator(taskset), "verifier_version": VERIFIER_VERSION}
 
 
 def _run_meta(run_dir: Path) -> dict:
@@ -575,7 +592,7 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
     versions = {f: sorted({str(e["row"][f]) for e in eps})
                 for f in ("spec_version", "spec_hash", "generator_version", "verifier_version",
                           "harness_version")}
-    now = current_versions()
+    now = current_versions(taskset)
     stale = [f"{f} {', '.join(versions[f])} (current {now[f]})"
              for f in ("spec_hash", "generator_version", "verifier_version")
              if versions[f] != [str(now[f])]]
@@ -603,7 +620,7 @@ def publish_problems(summary: dict) -> List[str]:
     if drafts:
         out.append(f"spec {', '.join(drafts)} is a draft; the leaderboard ranks only a frozen spec")
     if summary.get("taskset") in NEVER_REPORTED:
-        out.append(f"{summary['taskset']} is the development set and is never reported")
+        out.append(f"{summary['taskset']} is a development set and is never reported")
     elif summary.get("taskset") is None:
         out.append("the run has no run.json naming its task set")
     if len(summary["versions"]["verifier_version"]) > 1 or len(summary["versions"]["spec_hash"]) > 1:
@@ -969,17 +986,27 @@ def published(runs_root=RUNS_DIR) -> List[dict]:
     return out
 
 
+def _not_a_board(taskset: Optional[str]) -> str:
+    return (f"run on {taskset}, not a leaderboard set "
+            f"({', '.join(LEADERBOARD_SETS)})")
+
+
 def board(summaries: Sequence[dict]) -> dict:
-    """Ranked rows across published runs: model rows from rankable runs on
-    the leaderboard set; harness agents (oracle, scripted, null) are kept as
-    reference rows; every other published run is listed with its reasons."""
-    ranked, reference, others = [], [], []
+    """Ranked rows across published runs, one ranking per leaderboard set
+    (``boards``): model rows from rankable runs on that set; harness agents
+    (oracle, scripted, null) are kept as reference rows; every other published
+    run is listed with its reasons.  The top-level ``headline``, ``ranked``
+    and ``reference`` are d1-test's, as before the real-sheet board."""
+    per: Dict[str, Dict[str, list]] = {name: {"ranked": [], "reference": []}
+                                       for name in LEADERBOARD_SETS}
+    others = []
     for s in summaries:
-        rankable = not s.get("publish_problems") and s.get("taskset") == LEADERBOARD_SET
+        taskset = s.get("taskset")
+        rankable = not s.get("publish_problems") and taskset in LEADERBOARD_SETS
         if not rankable:
             reasons = list(s.get("publish_problems") or [])
-            if s.get("taskset") != LEADERBOARD_SET and not any("development" in r for r in reasons):
-                reasons.append(f"run on {s.get('taskset')}, not {LEADERBOARD_SET}")
+            if taskset not in LEADERBOARD_SETS and not any("development" in r for r in reasons):
+                reasons.append(_not_a_board(taskset))
             others.append({"run_id": s["run_id"], "taskset": s.get("taskset"),
                            "episodes": s.get("episodes"), "reasons": reasons,
                            "rows": [{"label": g["label"], "effort": effort_cell(g),
@@ -994,18 +1021,26 @@ def board(summaries: Sequence[dict]) -> dict:
                                          "n_tasks", "k_min", "k_max")},
                    "effort": effort_cell(g), "run_id": s["run_id"],
                    "spec_version": ", ".join(s["versions"]["spec_version"])}
-            (reference if g["key"].get("provider") == "harness" else ranked).append(row)
-    ranked.sort(key=rank_key)
-    for i, r in enumerate(ranked):
-        r["rank"] = i + 1
-    headline = None
-    if ranked:
-        b = ranked[0]
-        headline = (f"best model {b['effective_mean']:.1f}/100 on {LEADERBOARD_SET} "
-                    f"({b['label']}, 95% CI {b['ci_low']:.1f}–{b['ci_high']:.1f}, "
-                    f"hard-fail {_p(b['hard_fail_rate'])})")
+            kind = "reference" if g["key"].get("provider") == "harness" else "ranked"
+            per[taskset][kind].append(row)
+    boards = {}
+    for name in LEADERBOARD_SETS:
+        ranked = sorted(per[name]["ranked"], key=rank_key)
+        for i, r in enumerate(ranked):
+            r["rank"] = i + 1
+        headline = None
+        if ranked:
+            b = ranked[0]
+            headline = (f"best model {b['effective_mean']:.1f}/100 on {name} "
+                        f"({b['label']}, 95% CI {b['ci_low']:.1f}–{b['ci_high']:.1f}, "
+                        f"hard-fail {_p(b['hard_fail_rate'])})")
+        boards[name] = {"title": SET_TITLES.get(name, name), "headline": headline,
+                        "ranked": ranked, "reference": per[name]["reference"]}
+    main = boards[LEADERBOARD_SET]
     return {"report_version": REPORT_VERSION, "leaderboard_set": LEADERBOARD_SET,
-            "headline": headline, "ranked": ranked, "reference": reference, "others": others}
+            "leaderboard_sets": list(LEADERBOARD_SETS),
+            "headline": main["headline"], "ranked": main["ranked"],
+            "reference": main["reference"], "boards": boards, "others": others}
 
 
 def _board_table(rows: Sequence[dict], numbered: bool = True) -> List[str]:
@@ -1026,16 +1061,33 @@ def render_board(b: dict, readme: bool = False) -> str:
     L: List[str] = []
     if not readme:
         L += ["# Track D leaderboard (D1)", ""]
-    if b["headline"]:
-        L += [f"**{b['headline'][0].upper()}{b['headline'][1:]}.**", ""]
-        L += _board_table(b["ranked"])
-    else:
-        L += [f"No ranked run yet. A row needs a published run on `{LEADERBOARD_SET}` under a "
-              "frozen spec (v0.1: spec v1, then `d1-variance` × 5 samples to size the interval, "
-              f"then `{LEADERBOARD_SET}` × at least three models)."]
-    if b["reference"]:
-        L += ["", "Reference agents on the same tasks (the harness's own checks, not ranked):", ""]
-        L += _board_table(b["reference"], numbered=False)
+    boards = b.get("boards") or {LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET],
+                                                    "headline": b["headline"],
+                                                    "ranked": b["ranked"],
+                                                    "reference": b["reference"]}}
+    for n, (name, one) in enumerate(boards.items()):
+        if n:
+            L.append("")
+        L += [f"{'###' if readme else '##'} `{name}`: {one['title']}", ""]
+        if one["headline"]:
+            L += [f"**{one['headline'][0].upper()}{one['headline'][1:]}.**", ""]
+            L += _board_table(one["ranked"])
+        elif name == LEADERBOARD_SET:
+            L += [f"No ranked run yet. A row needs a published run on `{name}` under a "
+                  "frozen spec (v0.1: spec v1, then `d1-variance` × 5 samples to size the "
+                  f"interval, then `{name}` × at least three models)."]
+        elif name == "hard-pilots":
+            L += ["No ranked run yet. A row needs a published run on `hard-pilots` on the "
+                  "current task texts; each task scores 100 on a pass and 0 on a fail. The five "
+                  "scanned-sheet pilots need a provider that passes images."]
+        else:
+            L += [f"No ranked run yet. A row needs a published run on `{name}` under a frozen "
+                  "spec, with the catalogue it was drawn from validated under the verifier "
+                  "that scores it (`d1-real-dev` first, for a smoke run)."]
+        if one["reference"]:
+            L += ["", "Reference agents on the same tasks (the harness's own checks, not ranked):",
+                  ""]
+            L += _board_table(one["reference"], numbered=False)
     if not readme and b["others"]:
         L += ["", "## Published runs that are not ranked", ""]
         for o in b["others"]:
@@ -1050,7 +1102,13 @@ def render_board(b: dict, readme: bool = False) -> str:
               "[benchmarks/runs/LEADERBOARD.md](benchmarks/runs/LEADERBOARD.md). "
               "Generated by `scripts/make_leaderboard.py`; do not edit by hand."]
     else:
-        L += ["", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
+        L += ["", "Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded "
+              "generator (one synthetic centerline per task); `d1-real` is 99 held-out tasks on "
+              "the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), nine of each "
+              "real-sheet type; `hard-pilots` is the 29 harder-task pilots on the sample sheets, "
+              "each graded pass (100) or fail (0) by its own check, with the share of its items "
+              "done as the rubric column. A model's rows on different sets are not averaged.",
+              "", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
               "samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank "
               "on the effective mean, then hard-fail rate, invalid-call rate and cost. Effort is the "
               "level the run set with `--effort`, else what the request body set, else the model's "
@@ -1069,7 +1127,8 @@ def replace_block(text: str, block: str) -> str:
     return text[:start + len(README_BEGIN)] + "\n" + block + text[end:]
 
 
-__all__ = ["REPORT_VERSION", "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
+__all__ = ["REPORT_VERSION", "LEADERBOARD_SETS", "SET_TITLES", "NEVER_REPORTED",
+           "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
            "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
            "effort_label", "effort_cell", "summarize_group", "paired", "build", "publish_problems",
            "render_markdown", "files",

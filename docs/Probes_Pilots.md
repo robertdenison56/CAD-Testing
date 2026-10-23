@@ -75,6 +75,37 @@ python -m roaddraft.runners run --profile basic --backend codex --model MODEL \
     --out benchmarks/pilot_runs/<date>-basic --label <label>
 ```
 
+## In the eval harness: the `hard-pilots` set (2026-10-22)
+
+Robert, 2026-10-22: "the harder tasks should make it into the eval set as well." All 29 pilots are
+the eval task set `hard-pilots` (`benchmarks/tasksets/hard-pilots.json`), ranked on its own board
+beside `d1-test` and `d1-real`. They stay pilots too: the `--pilot` route below is unchanged.
+
+- **How an episode runs** (`src/roaddraft/eval/probe_tasks.py`): the pilot's start project is
+  built in the episode folder, the model gets the pilot's task text as the probe runner sends it,
+  the server's instructions as its system prompt, and the MCP server's own tools served in-process
+  (autosave, `open_document`, `view_attachment` for the five scanned-sheet pilots), with paths
+  shown and resolved relative to the project folder and file access held to the episode folder.
+- **Grading** is the pilot's own check, read back from disk as `runners score` does: 100 on a
+  pass, 0 on a fail. The rubric column is the share of the check's items the document has. An
+  episode with no engine call fails and is credited no items.
+- **Re-grading.** The files an episode changed are kept under `<run>/projects/<episode>/`, and
+  `report --reverify` grades them again under the current checks.
+- **Budgets.** Track P's, unless the run sets its own: 600 steps, 12 faults in a row, 200,000
+  output tokens, 30 minutes.
+- **`run_check`** (self-correct mode) answers pass or fail and how many items are done, never the
+  check's words, which name expected values.
+- **The oracle** is each pilot's scripted solution recorded as tool calls. A second session the
+  solution opens on a base file is recorded as `open_document` of that file. Oracle 100 and null 0
+  on all 29 through the loop.
+- **Images.** The five scanned-sheet pilots need a provider that passes images. The
+  OpenAI-compatible route (Runpod, LM Studio) does not, so those models fail them.
+
+```bash
+.venv/bin/python -m roaddraft.eval run --taskset hard-pilots --agent oracle --agent null --steps 5000
+.venv/bin/python -m roaddraft.eval run --taskset hard-pilots --model MODEL [--samples 3]
+```
+
 ## Running the pilots on a model (not done; waits on Robert's go)
 
 ```bash

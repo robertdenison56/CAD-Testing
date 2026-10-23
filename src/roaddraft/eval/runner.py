@@ -117,9 +117,20 @@ def make_agent(name: str, spec: RunSpec) -> Agent:
 def run_cell(cell: Cell, spec: RunSpec, pins: Optional[dict] = None,
              agent_factory: Optional[Callable[[str, RunSpec], Agent]] = None) -> EpisodeResult:
     task = tasksets.task_from_entry(cell.entry)
-    agent = (agent_factory or make_agent)(cell.agent, spec)
     config = EpisodeConfig(level=cell.level, mode=cell.mode, dialect=cell.dialect,
                            budgets=spec.budgets, sample=cell.sample, run_id=spec.resolved_run_id())
+    if "probe" in cell.entry:  # a probe task (eval/probe_tasks.py): its own episode and oracle
+        from roaddraft.eval import probe_tasks
+        if cell.agent == "oracle" and agent_factory is None:
+            agent = probe_tasks.ProbeOracleAgent()
+        elif cell.agent in ("scripted",) and agent_factory is None:
+            raise ValueError("the scripted agent drafts D1 tasks only; on a probe task run "
+                             "oracle, null, replay or a model")
+        else:
+            agent = (agent_factory or make_agent)(cell.agent, spec)
+        return probe_tasks.ProbeEpisode(task, agent, config, out_root=spec.out_root,
+                                        pins=pins).run()
+    agent = (agent_factory or make_agent)(cell.agent, spec)
     return Episode(task, agent, config, out_root=spec.out_root, pins=pins).run()
 
 
