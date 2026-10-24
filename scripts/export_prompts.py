@@ -25,8 +25,12 @@ The task files go under ``benchmarks/prompts/tasks/<type>/<n>-sheet/seed-<n>/``
 (gitignored; regenerate with this script): the brief and truth, the starting
 document (``start.rdoc.json``, plus any base drawing shipped with the task),
 the reference solution's finished document and journal, and a PNG of every
-sheet (or the model) before and after; each pilot's reference PDF pages go
-under ``tasks/pilot/<id>/`` for its picture.  The workbook links to them by
+sheet (or the model) before and after; the eval sets' tasks the same under
+``tasks/eval/<set>/seed-<n>/``.  Each probe's and pilot's start project is
+built and plotted under ``tasks/starts/<start>/``, and its reference PDF's
+pages go under ``tasks/probe/<id>/`` or ``tasks/pilot/<id>/`` for its
+pictures.  Every task and probe row lists the base files its starting
+document attaches.  The workbook links to them by
 absolute path (``file://`` URLs to this checkout), so a copy of the workbook
 opened from anywhere on this Mac still reaches them.
 """
@@ -48,10 +52,12 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from PIL import Image as PILImage, ImageFilter
 from openpyxl.utils import get_column_letter
 
+from roaddraft.api.session import Session
+from roaddraft.document.fileformat import read_document
 from roaddraft.eval import taskset as tasksets
 from roaddraft.eval.episode import HARNESS_VERSION
 from roaddraft.eval.report import LEADERBOARD_SET, effort_cell
-from roaddraft.probes import prompting
+from roaddraft.probes import fixture, prompting
 from roaddraft.probes.pilot import PILOT_PROBES
 from roaddraft.probes.tasks import DRAFT_PROBES, FIND_PROBES, PROBES, TIER2_PROBES, TIER3_PROBES
 from roaddraft.tasks.brief import GENERATOR_VERSION, Task
@@ -73,12 +79,14 @@ D1_BOARD = Path("benchmarks/runs/leaderboard.json")
 D1_RUNS = D1_BOARD.parent
 #: where harness runs live with their episodes and report (not committed)
 RESULTS = Path("results")
+#: the 33 probes' scripted solutions (python -m roaddraft.probes reference writes them)
+PROBE_REFS = Path("benchmarks/probe_references")
 #: the pilots' scripted solutions (python -m roaddraft.probes.pilot reference writes them)
 PILOT_REFS = Path("benchmarks/pilot_references")
 #: where pilot model runs go (runners run --pilot)
 PILOT_RUNS = Path("benchmarks/pilot_runs")
-#: a pilot's picture shows at most this many pages of its reference PDF
-PILOT_PAGES = 3
+#: a probe's or pilot's pictures show at most this many pages of its PDF
+PDF_PAGES = 3
 #: the pilots by the brainstorm's numbers (docs/Probes_Pilots.md), from each id's pNN prefix
 PILOT_NAMES = {1: "Redraw an alignment from a scanned sheet", 2: "Sources that disagree",
                3: "Survey traps", 4: "Crowded annotation", 5: "The model picks the sheet breaks",
@@ -171,6 +179,92 @@ def _pictures(folder: Path, pngs: Dict[str, Optional[str]]) -> List[object]:
         thumb = thumbnail(folder, prefix) if pngs.get(prefix) else None
         out.append(Img(thumb) if thumb else missing)
     return out
+
+
+def base_files(document: Path, depth: int = 0, seen=None) -> List[str]:
+    """What ``document`` attaches as references, one ``NAME: file`` line each,
+    with what each of those attaches in turn indented under it."""
+    seen = set() if seen is None else seen
+    try:
+        refs = read_document(document).get("references") or {}
+    except (OSError, ValueError):
+        return []
+    lines = []
+    for r in refs.values():
+        path = (Path(document).parent / r["path"]).resolve()
+        lines.append("    " * depth + f"{r['name']}: {r['path']}"
+                     + ("" if path.exists() else " (missing)"))
+        if path.exists() and path not in seen:
+            seen.add(path)
+            lines += base_files(path, depth + 1, seen)
+    return lines
+
+
+def _base_cell(document: Optional[Path], baseline: Optional[dict] = None) -> str:
+    """The Base files cell: read from the written start document, plus any
+    drawing beside it that it does not attach (an attach task's base file); else
+    (no files written) the names the starting document's dict attaches."""
+    if document is not None:
+        seen = set()
+        lines = base_files(document, 0, seen)
+        skip = {Path(document).name, "finished.rdoc.json"}
+        loose = sorted(p.name for p in Path(document).parent.iterdir()
+                       if (p.name.endswith(".rdoc.json") or p.suffix == ".rdraft")
+                       and p.name not in skip and p.resolve() not in seen)
+        if loose:
+            lines.append("beside it, not attached: " + ", ".join(loose))
+    else:
+        lines = [f"{r['name']}: {r['path']}"
+                 for r in ((baseline or {}).get("references") or {}).values()]
+    return "\n".join(lines) or "none"
+
+
+def pdf_picture(pdf: Path, folder: Path, prefix: str) -> Optional[Path]:
+    """The first PDF_PAGES pages of ``pdf`` rendered into ``folder`` as
+    <prefix>-<n>.png (poppler's pdftoppm) and joined into one picture; None when
+    pdftoppm is not installed or the PDF does not render."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in folder.glob(f"{prefix}-*.png"):
+        old.unlink()
+    try:
+        subprocess.run(["pdftoppm", "-png", "-r", str(RENDER_DPI), "-l", str(PDF_PAGES),
+                        str(pdf), str(folder / prefix)], check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return thumbnail(folder, prefix)
+
+
+#: probe and pilot starts already plotted, by start name: (document, start PDF, picture)
+STARTS: Dict[str, tuple] = {}
+
+
+def plot_start(start: str, tasks_dir: Path) -> tuple:
+    """Build a probe's start project under ``tasks/starts/<start>/project/`` and
+    plot it the way its reference is plotted (print_pdf of every sheet, or model
+    space when it has none): ``(document, start PDF or None, picture or None)``."""
+    if start in STARTS:
+        return STARTS[start]
+    folder = tasks_dir / "starts" / start
+    if folder.exists():
+        shutil.rmtree(folder)
+    document = fixture.start_document(folder / "project", start)
+    session = Session.load(document, out_dir=folder / "project")
+    sheets = [sheet.name for sheet in session.doc.sheets.values()]
+    where = {"sheets": sheets} if sheets else {"space": "model"}
+    pdf = picture = None
+    if sheets or session.doc.model_entities or session.doc.references:  # else nothing to plot
+        result = session.query("print_pdf", {**where, "path": str(folder / "start.pdf")})
+        if result["ok"]:
+            pdf = Path(result["path"])
+            picture = pdf_picture(pdf, folder, "start")
+    # a scan pilot hands the model a scanned sheet beside the document: show it too
+    scans = sorted((document.parent / "scans").glob("*.png"))
+    for i, scan in enumerate(scans, start=1):
+        shutil.copy(scan, folder / f"start-scan-{i}.png")
+    if scans:
+        picture = thumbnail(folder, "start")
+    STARTS[start] = (document, pdf, picture)
+    return STARTS[start]
 
 
 def _table(ws, headers, widths, rows, wrap_cols=()):
@@ -278,6 +372,8 @@ def write_task_files(task: Task, folder: Path) -> Dict[str, Optional[str]]:
     if REUSE:
         done = _existing(task, folder)
         if done is not None:
+            # the prompts are not in the task id, so a reused folder still gets today's brief
+            (folder / "brief.json").write_text(task.brief.to_json())
             if done["start"] is None:  # a start with no sheet: its model and references
                 start = session_for_task(task, out_dir=folder)
                 done["start"] = _render(start, folder, "start", task.brief.deliverable["sheets"])
@@ -304,6 +400,26 @@ def write_task_files(task: Task, folder: Path) -> Dict[str, Optional[str]]:
 
 # -------------------------------------------------------------------- rows
 
+#: the columns task_links fills, after a task's prompts
+TASK_LINK_HEADS = ["Files", "Start", "Finished", "Base files", "Start (picture)",
+                   "Finished (picture)"]
+TASK_LINK_WIDTHS = [8, 8, 9, 30, 12, 12]
+
+
+def task_links(task: Task, folder: Optional[Path], workbook_dir: Path) -> list:
+    """A task's Files, Start and Finished links, the base files its starting
+    document attaches, and its start and finished pictures; with no ``folder``
+    (``--no-files``) only the base files' names."""
+    if folder is None:
+        return ["", "", "", _base_cell(None, task.baseline), "", ""]
+    pngs = write_task_files(task, folder)
+    rel = folder.relative_to(workbook_dir).as_posix()
+    uri = folder.resolve().as_uri()  # absolute: the workbook may be opened anywhere
+    return [Link(rel + "/", uri + "/"),
+            Link("start", f"{uri}/{pngs['start']}") if pngs["start"] else "(nothing drawn yet)",
+            Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"] else "",
+            _base_cell(folder / "start.rdoc.json"), *_pictures(folder, pngs)]
+
 
 def d1_rows(seeds, tasks_dir: Optional[Path], workbook_dir: Path):
     rows = []
@@ -317,20 +433,13 @@ def d1_rows(seeds, tasks_dir: Optional[Path], workbook_dir: Path):
                                          sheets=sheets)
                 except ValueError as why:  # a seed this type cannot be made from
                     rows.append([ttype.name, sheets, seed, "", ttype.summary, _given(ttype), "",
-                                 "", "", "", "", f"(no task: {why})", "", "", "", "", "", ""])
+                                 "", "", "", "", f"(no task: {why})", "",
+                                 *[""] * len(TASK_LINK_HEADS)])
                     continue
                 b, t = task.brief, task.truth
-                links = ["", "", "", "", ""]
-                if tasks_dir is not None:
-                    folder = tasks_dir / ttype.name / f"{sheets}-sheet" / f"seed-{seed}"
-                    pngs = write_task_files(task, folder)
-                    rel = folder.relative_to(workbook_dir).as_posix()
-                    uri = folder.resolve().as_uri()  # absolute: the workbook may be opened anywhere
-                    links = [Link(rel + "/", uri + "/"),
-                             Link("start", f"{uri}/{pngs['start']}") if pngs["start"]
-                             else "(nothing drawn yet)",
-                             Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"]
-                             else "", *_pictures(folder, pngs)]
+                folder = (None if tasks_dir is None else
+                          tasks_dir / ttype.name / f"{sheets}-sheet" / f"seed-{seed}")
+                links = task_links(task, folder, workbook_dir)
                 rows.append([
                     ttype.name, sheets, seed, b.task_id, ttype.summary, _given(ttype),
                     ", ".join(t.scope), ", ".join(graded), sum(WEIGHTS[c] for c in graded),
@@ -391,18 +500,15 @@ def real_rows(catalog: dict, tasks_dir: Optional[Path], workbook_dir: Path):
         graded = checks_in_scope(ttype.asks, list(WEIGHTS))
         D = task.brief.deliverable
         src = D["source"]
-        links = ["", "", "", "", ""]
-        if tasks_dir is not None:
-            folder = (tasks_dir / "real" / t["agency"] / t["sheet_id"]
-                      / ("whole-sheet" if t.get("per_sheet") else t["alignment"].replace(" ", "-"))
-                      / t["type"])
-            pngs = write_task_files(task, folder)
-            rel = folder.relative_to(workbook_dir).as_posix()
-            uri = folder.resolve().as_uri()
-            links = [Link(rel + "/", uri + "/"),
-                     Link("start", f"{uri}/{pngs['start']}") if pngs["start"] else "",
-                     Link("finished", f"{uri}/{pngs['finished']}") if pngs["finished"] else "",
-                     *_pictures(folder, pngs)]
+        folder = (None if tasks_dir is None else
+                  tasks_dir / "real" / t["agency"] / t["sheet_id"]
+                  / ("whole-sheet" if t.get("per_sheet") else t["alignment"].replace(" ", "-"))
+                  / t["type"])
+        links = task_links(task, folder, workbook_dir)
+        # the published redraft the task's sheet and base files were copied from
+        source = Path(src["folder"])
+        links.insert(4, Link(source.name + "/", source.resolve().as_uri() + "/")
+                     if source.exists() else src["folder"])
         rows.append([
             src["agency_name"], t["sheet_id"], t["sheet"], src["family"],
             f"1\" = {D['feet_per_inch']:g}'", t["twist_deg"],
@@ -476,8 +582,9 @@ def _mean(samples: List[Optional[float]]) -> Optional[float]:
     return sum(done) / len(done) if done else None
 
 
-def eval_set_rows(cols) -> List[list]:
-    """One row per task of d1-dev and d1-test (d1-variance is d1-test's first 20)."""
+def eval_set_rows(cols, tasks_dir: Optional[Path], workbook_dir: Path) -> List[list]:
+    """One row per task of d1-dev and d1-test (d1-variance is d1-test's first 20),
+    its files under ``tasks/eval/<set>/seed-<seed>/``."""
     variance = {t["task_id"] for t in tasksets.load("d1-variance")["tasks"]}
     rows = []
     for name in ("d1-dev", "d1-test"):
@@ -500,7 +607,9 @@ def eval_set_rows(cols) -> List[list]:
                 (f"dialed {dialed['task_type']} on {dialed['sheets']} sheet(s), which this seed "
                  "cannot make" if dialed else ""),
                 ", ".join(graded), sum(WEIGHTS[c] for c in graded), *cells,
-                task.brief.prompts["explicit"], task.brief.prompts["vague"]])
+                task.brief.prompts["explicit"], task.brief.prompts["vague"],
+                *task_links(task, None if tasks_dir is None else
+                            tasks_dir / "eval" / name / f"seed-{entry['seed']}", workbook_dir)])
     return rows
 
 
@@ -561,42 +670,51 @@ def pilot_number(probe) -> int:
     return int(probe.id.split("-")[0][1:])
 
 
-def pilot_picture(pdf: Path, folder: Path) -> Optional[Path]:
-    """The first PILOT_PAGES pages of a pilot's reference PDF, rendered into
-    ``folder`` as finished-<n>.png (poppler's pdftoppm) and joined into one
-    picture; None when pdftoppm is not installed."""
-    if folder.exists():
-        shutil.rmtree(folder)
-    folder.mkdir(parents=True)
-    try:
-        subprocess.run(["pdftoppm", "-png", "-r", str(RENDER_DPI), "-l", str(PILOT_PAGES),
-                        str(pdf), str(folder / "finished")], check=True, capture_output=True)
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return thumbnail(folder, "finished")
+#: the columns probe_links fills
+PROBE_LINK_HEADS = ["Scripted solution", "Base files", "Start files", "Reference", "PDF",
+                    "Start (picture)", "Reference (picture)"]
+PROBE_LINK_WIDTHS = [44, 30, 14, 12, 6, 12, 12]
+
+
+def probe_links(probe, refs: Path, kind: str, tasks_dir: Optional[Path]) -> list:
+    """A probe's (or pilot's) scripted-solution verdict, the base files its start
+    document attaches, links to its start project, reference folder and PDF, and
+    pictures of its start and of its reference, both plotted with print_pdf.
+    The pictures go under ``tasks/<kind>/<id>/``, the start under ``tasks/starts/``."""
+    folder = refs / probe.id
+    ref = (json.loads((folder / "reference.json").read_text())
+           if (folder / "reference.json").exists() else None)
+    verdict = ((("PASS: " if ref["passed"] else "FAIL: ") + ref["detail"]) if ref
+               else f"(no reference under {refs})")
+    uri = folder.resolve().as_uri()
+    ref_link = Link(f"{probe.id}/", uri + "/") if ref else ""
+    pdf_link = Link("PDF", f"{uri}/{ref['pdf']}") if ref and ref.get("pdf") else ""
+    if tasks_dir is None:
+        base = _base_cell(folder / ref["document"]) if ref else ""
+        return [verdict, base, "", ref_link, pdf_link, "", ""]
+    document, start_pdf, start_pic = plot_start(probe.start, tasks_dir)
+    start_link = Link(f"{probe.start}/", document.parent.resolve().as_uri() + "/")
+    finished = None
+    if ref and ref.get("pdf"):
+        finished = pdf_picture(folder / ref["pdf"], tasks_dir / kind / probe.id, "finished")
+    return [verdict, _base_cell(document), start_link, ref_link, pdf_link,
+            Img(start_pic) if start_pic else "(nothing drawn yet)",
+            Img(finished) if finished else ""]
+
+
+def probe_rows(marks, tasks_dir: Optional[Path]) -> List[list]:
+    """One row per Track P probe, with every ranked model's marks on it."""
+    return [[p.id, probe_set(p), ", ".join(p.tags), p.start, p.prompt,
+             *[m.get(p.id, "") for _, m in marks],
+             *probe_links(p, PROBE_REFS, "probe", tasks_dir)] for p in PROBES]
 
 
 def pilot_rows(tasks_dir: Optional[Path]) -> List[list]:
     """One row per pilot, by the brainstorm's numbers, with its scripted solution."""
-    rows = []
-    for p in sorted(PILOT_PROBES, key=lambda p: (pilot_number(p), p.id)):
-        n = pilot_number(p)
-        folder = PILOT_REFS / p.id
-        ref = (json.loads((folder / "reference.json").read_text())
-               if (folder / "reference.json").exists() else None)
-        links = ["", "", ""]
-        if ref:
-            uri = folder.resolve().as_uri()
-            links = [Link(f"{p.id}/", uri + "/"),
-                     Link("PDF", f"{uri}/{ref['pdf']}") if ref.get("pdf") else "", ""]
-            if tasks_dir is not None and ref.get("pdf"):
-                thumb = pilot_picture(folder / ref["pdf"], tasks_dir / "pilot" / p.id)
-                links[2] = Img(thumb) if thumb else "(pdftoppm not installed)"
-        rows.append([n, PILOT_NAMES.get(n, ""), p.id, ", ".join(t for t in p.tags if t != "pilot"),
-                     p.prompt, p.note,
-                     (("PASS: " if ref["passed"] else "FAIL: ") + ref["detail"]) if ref
-                     else f"(no reference under {PILOT_REFS})", *links])
-    return rows
+    return [[pilot_number(p), PILOT_NAMES.get(pilot_number(p), ""), p.id,
+             ", ".join(t for t in p.tags if t != "pilot"), p.start, p.prompt, p.note,
+             *probe_links(p, PILOT_REFS, "pilot", tasks_dir)]
+            for p in sorted(PILOT_PROBES, key=lambda p: (pilot_number(p), p.id))]
 
 
 def pilot_runs() -> List[str]:
@@ -696,14 +814,20 @@ def main(argv=None) -> int:
         ("Task types", f"The {len(TASK_TYPES)} D1 task types: what the drafter starts with, what "
                        "is asked for, and which checks are graded (renormalised to 100)."),
         ("D1 tasks", f"One row per D1 task: each type on one and two sheets, seeds "
-                     f"{seeds[0]}-{seeds[-1]}. Each task has an EXPLICIT prompt (the standards it "
-                     "touches spelled out, graded exactly) and a VAGUE prompt (the request in a "
-                     "sentence; unstated conventions graded leniently). The gap between the two "
+                     f"{seeds[0]}-{seeds[-1]}. Each task has an EXPLICIT prompt (the request as a "
+                     "PE would brief a drafter: a few plain sentences that guide the work and name "
+                     "the standards it is graded on, such as scale, layers, text heights, label "
+                     "forms by example, table columns and title-block values; graded exactly) and "
+                     "a VAGUE prompt (the request in a sentence; unstated conventions graded "
+                     "leniently). The gap between the two "
                      "scores, paired by task, is the prompt-gap metric. Files, Start and "
                      "Finished link to the task's folder and full-size renders of what the "
                      "drafter starts with and of the reference solution's finished sheet; the "
                      "last two columns show those two renders as pictures (both sheets side by "
-                     "side on a two-sheet task). Click a picture and enlarge it to read it."),
+                     "side on a two-sheet task). Click a picture and enlarge it to read it. Base "
+                     "files lists what the starting document attaches as references (NAME: file, "
+                     "anything those attach in turn indented under them); the files are beside "
+                     "start.rdoc.json in the task's folder."),
         ("Task files", f"{TASKS_ROOT}/<type>/<n>-sheet/seed-<n>/: brief.json, "
                        "truth.json, start.rdoc.json (the starting document; any base drawing "
                        "beside it), finished.rdoc.json and reference.journal.jsonl (the reference "
@@ -720,7 +844,9 @@ def main(argv=None) -> int:
                              "published annotation is removed from the copies the task ships. "
                              "Only pairings whose reference solution verifies 100 and starting "
                              f"file 0 are kept ({len(real['excluded'])} left out; "
-                             f"{REAL_CATALOG} lists why)."),
+                             f"{REAL_CATALOG} lists why). Base files lists the real base files "
+                             "the starting sheet attaches; the Redraft column links to the "
+                             "published redraft folder under examples/ they were copied from."),
         ("Real task files", f"{TASKS_ROOT}/real/<agency>/<sheet>/<alignment>/<type>/: as for the "
                             "D1 tasks, plus the real base files beside start.rdoc.json."),
         ("Eval sets", f"The D1 task sets the eval harness runs, as their manifests pin them "
@@ -731,7 +857,9 @@ def main(argv=None) -> int:
                       f"on seeds 1000-1099, the set the {LEADERBOARD_SET} leaderboard ranks on; "
                       f"d1-variance = d1-test's first {len(sets['d1-variance']['tasks'])} tasks, "
                       "sampled k = 5 times to size the interval. One row per task with its dials, "
-                      "both prompts and every published run's score on it: the mean effective "
+                      "both prompts, its files, base files and start and finished pictures as on "
+                      f"the D1 tasks sheet ({TASKS_ROOT}/eval/<set>/seed-<n>/), and every "
+                      "published run's score on it: the mean effective "
                       "score over its samples, then the samples in order (a sample that errored "
                       "shows as error and is left out of the mean, as the run's report does)."),
         ("D1 runs", f"The {len(runs)} published D1 run(s) (benchmarks/runs/<run>/summary.json): "
@@ -744,7 +872,12 @@ def main(argv=None) -> int:
         ("Probes", f"The {len(PROBES)} Track P capability probes (the current leaderboard), "
                    "each a single natural-language request. One column per ranked model "
                    "shows its k = 3 attempts on that probe, in order: P = passed, · = failed, "
-                   "B = ended by budget (counts as a failure), X = excluded (infrastructure)."),
+                   "B = ended by budget (counts as a failure), X = excluded (infrastructure). "
+                   "Then the scripted solution's verdict, the base files the start document "
+                   "attaches, links to the start project (" + TASKS_ROOT + "/starts/<start>/"
+                   f"project/), the reference folder ({PROBE_REFS}/<id>/: the finished "
+                   "document, journal, PDF and DXF) and its PDF, and pictures of the start and "
+                   f"of the reference, both plotted with print_pdf (up to {PDF_PAGES} pages)."),
         ("Probe rules", "The rules and report request wrapped around each probe prompt."),
         ("Leaderboard", ("The Track P leaderboard as of "
                          f"{board['as_of']} (k = {board['k']}, {board['probes']} probes, probe "
@@ -760,9 +893,11 @@ def main(argv=None) -> int:
                          "decisions, changes that ripple, problems nobody named. Off the board: "
                          "the Probes sheet, the probe-set hash and the leaderboard do not include "
                          "them. Each row has the brainstorm's number and name, the prompt, the "
-                         "note (what is planted, what a naive answer gets wrong), the scripted "
-                         f"solution's verdict and a picture of up to {PILOT_PAGES} pages of its "
-                         f"PDF ({PILOT_REFS}/<id>/ holds the finished project). Pilot 16 (the 33 "
+                         "note (what is planted, what a naive answer gets wrong), then the same "
+                         "columns as the Probes sheet: verdict, base files, start project, "
+                         f"reference ({PILOT_REFS}/<id>/) and the two pictures; a scan pilot's "
+                         "start picture also shows the scanned sheet it hands the model "
+                         "(scans/ in its start project). Pilot 16 (the 33 "
                          "probes on the basic tool profile) has no rows of its own. Model runs: "
                          + (", ".join(pilot_done) if pilot_done else "none yet") + "."),
         ("", None),
@@ -801,18 +936,19 @@ def main(argv=None) -> int:
     ws = wb.create_sheet("D1 tasks")
     _table(ws, ["Type", "Sheets", "Seed", "Task ID", "What it asks", "Starts with",
                 "Graded groups", "Checks graded", "Points", "Curves", "Station equation",
-                "EXPLICIT prompt", "VAGUE prompt", "Files", "Start", "Finished",
-                "Start (picture)", "Finished (picture)"],
-           [15, 7, 6, 24, 30, 36, 28, 30, 7, 7, 12, 95, 40, 8, 8, 9, 12, 12],
-           d1_rows(seeds, tasks_dir, out.parent), wrap_cols=(5, 6, 7, 8, 12, 13))
+                "EXPLICIT prompt", "VAGUE prompt", *TASK_LINK_HEADS],
+           [15, 7, 6, 24, 30, 36, 28, 30, 7, 7, 12, 95, 40, *TASK_LINK_WIDTHS],
+           d1_rows(seeds, tasks_dir, out.parent), wrap_cols=(5, 6, 7, 8, 12, 13, 17))
 
     ws = wb.create_sheet("Real-sheet tasks")
     _table(ws, ["Agency", "Sample sheet", "Sheet", "Kind", "Scale", "Twist °", "Alignment",
                 "Other alignments", "Type", "Task ID", "Graded groups", "Checks graded",
                 "Points", "Tangents", "Curves", "Labels", "EXPLICIT prompt", "VAGUE prompt",
-                "Files", "Start", "Finished", "Start (picture)", "Finished (picture)"],
-           [16, 22, 9, 12, 9, 8, 10, 18, 18, 24, 28, 30, 7, 8, 7, 7, 95, 40, 8, 8, 9, 12, 12],
-           real_rows(real, tasks_dir, out.parent), wrap_cols=(8, 11, 12, 17, 18))
+                *TASK_LINK_HEADS[:4], "Redraft (source of the sheet and base files)",
+                *TASK_LINK_HEADS[4:]],
+           [16, 22, 9, 12, 9, 8, 10, 18, 18, 24, 28, 30, 7, 8, 7, 7, 95, 40,
+            *TASK_LINK_WIDTHS[:4], 24, *TASK_LINK_WIDTHS[4:]],
+           real_rows(real, tasks_dir, out.parent), wrap_cols=(8, 11, 12, 17, 18, 22, 23))
 
     ws = wb.create_sheet("Eval sets")
     cols = run_columns(runs)
@@ -820,10 +956,11 @@ def main(argv=None) -> int:
     n = 12 + len(score_heads)
     _table(ws, ["Set", "#", "Seed", "Type", "Sheets", "Curves", "Station equation", "Task ID",
                 "In d1-variance", "Dial fallback", "Checks graded", "Points", *score_heads,
-                "EXPLICIT prompt", "VAGUE prompt"],
-           [8, 5, 6, 16, 7, 7, 11, 24, 10, 22, 30, 7, *[14, 22] * len(cols), 95, 40],
-           eval_set_rows(cols),
-           wrap_cols=(10, 11, *range(14, n + 1, 2), n + 1, n + 2))
+                "EXPLICIT prompt", "VAGUE prompt", *TASK_LINK_HEADS],
+           [8, 5, 6, 16, 7, 7, 11, 24, 10, 22, 30, 7, *[14, 22] * len(cols), 95, 40,
+            *TASK_LINK_WIDTHS],
+           eval_set_rows(cols, tasks_dir, out.parent),
+           wrap_cols=(10, 11, *range(14, n + 1, 2), n + 1, n + 2, n + 6))
     ws.row_dimensions[1].height = 56
 
     ws = wb.create_sheet("D1 runs")
@@ -854,10 +991,11 @@ def main(argv=None) -> int:
 
     ws = wb.create_sheet("Probes")
     marks = probe_marks(board) if board else []
-    rows = [[p.id, probe_set(p), ", ".join(p.tags), p.start, p.prompt,
-             *[m.get(p.id, "") for _, m in marks]] for p in PROBES]
-    _table(ws, ["Probe ID", "Set", "Tags", "Starts from", "Prompt", *[h for h, _ in marks]],
-           [26, 10, 28, 12, 100, *[14] * len(marks)], rows, wrap_cols=(5,))
+    m = len(marks)
+    _table(ws, ["Probe ID", "Set", "Tags", "Starts from", "Prompt", *[h for h, _ in marks],
+                *PROBE_LINK_HEADS],
+           [26, 10, 28, 12, 100, *[14] * m, *PROBE_LINK_WIDTHS], probe_rows(marks, tasks_dir),
+           wrap_cols=(5, 6 + m, 7 + m))
     ws.row_dimensions[1].height = 42
 
     if board:
@@ -912,9 +1050,10 @@ def main(argv=None) -> int:
             ["T2 report (all others)", prompting.T2_REPORT]], wrap_cols=(2,))
 
     ws = wb.create_sheet("Pilot probes")
-    _table(ws, ["#", "Pilot", "Probe ID", "Tags", "Prompt", "Note", "Scripted solution",
-                "Reference", "PDF", "Reference (picture)"],
-           [5, 22, 28, 24, 90, 60, 44, 12, 6, 12], pilot_rows(tasks_dir), wrap_cols=(2, 4, 5, 6, 7))
+    _table(ws, ["#", "Pilot", "Probe ID", "Tags", "Starts from", "Prompt", "Note",
+                *PROBE_LINK_HEADS],
+           [5, 22, 28, 24, 16, 90, 60, *PROBE_LINK_WIDTHS], pilot_rows(tasks_dir),
+           wrap_cols=(2, 4, 5, 6, 7, 8, 9))
 
     wb.save(out)
     print(f"wrote {out}: {len(TASK_TYPES)} types x 2 sheet counts x {len(seeds)} seeds x 2 "

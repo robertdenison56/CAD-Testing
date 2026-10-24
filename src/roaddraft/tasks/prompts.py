@@ -3,9 +3,13 @@
 A task is handed to a model the way a PE hands work to a drafter, in words,
 at one of the spec's ``prompt_levels``:
 
-- ``explicit`` -- the request with the drafting standards it touches spelled
-  out: scale, layers, text heights, tick length, label wording, table
-  columns, title-block values.  Graded exactly.
+- ``explicit`` -- the request as a PE would brief a drafter, in a few plain
+  sentences that guide the work and name the standards it is graded on:
+  scale, layers, text heights, tick length, label forms (by example), table
+  columns, title-block values.  It leaves out what a drafter knows or the
+  engine does (layer colours and weights, one arc per curve, keeping clear of
+  the border) and names no tool or parameter the vague prompt does not.
+  Graded exactly.
 - ``vague`` -- the request in a sentence.  What belongs on a layout sheet is
   the drafter's to know, and a convention the prompt did not state is graded
   by the spec's lenient rules.
@@ -100,100 +104,103 @@ class _Words:
         return f"each of {self.sheet_list}" if self.many else self.sheet_list
 
     def layer(self, role: str) -> str:
-        return f"layer {self.layer_name(self.layers[role])}"
+        """The layer a role's work goes on, by name (its colour and weight are the
+        layer's own, so only the layer-setup prompt states them)."""
+        return self.layers[role]
 
     @property
     def label_h(self) -> str:
-        return f"{self.text['label_height_in']:.2f} in high on paper"
+        return f"{self.text['label_height_in']:.2f} in"
 
-    # -- standards, each a clause
+    # -- the standards, each a sentence a PE would say (no closing period)
     def linework(self) -> str:
-        return (f"the centerline of {self.A}: one line per tangent and one arc per curve, on "
-                f"the design geometry exactly, on {self.layer('alignment')}")
+        return f"Draw the centerline of {self.A} on {self.layer('alignment')}"
 
-    def ticks(self) -> str:
-        return (f"a station tick every {self.st['interval_ft']:g} ft, "
-                f"{2 * float(self.st['tick_half_len_in']):.2f} in long on paper and centered on "
-                f"the line, on {self.layer('ticks')}")
-
-    def station_labels(self) -> str:
+    def stationing(self, it: str, verb: str = "Station") -> str:
         every = int(self.st.get("full_station_every_ft", 500))
-        return (f"its station number under each tick, {self.st['label_side']} the line and "
-                f"reading along it, lettered the Caltrans way: the whole station number at every "
-                f"{every} ft station (30, 35) and only the ones digit at the others (1, 2, 3, 4), "
-                f"{self.label_h}, on {self.layer('labels')}")
+        ticks = (f" on {self.layer('ticks')}" if self.layer("ticks") != self.layer("labels")
+                 else "")
+        return (f"{verb} {it} every {self.st['interval_ft']:g} ft with "
+                f"{2 * float(self.st['tick_half_len_in']):.2f} in ticks{ticks}, numbered "
+                f"{self.st['label_side']} the line the Caltrans way: the full station every "
+                f"{every} ft and just the ones digit in between")
 
     def curve_points(self) -> str:
         pp = self.labels["pc_pt"]
-        return (f"the beginning and end of every curve lettered with its station to the "
-                f"hundredth followed by BC or EC ({pp['format']} form), square to the line on its "
-                f"{pp['side']} and reading {pp.get('reads', 'bottom to top')}, {self.label_h}")
+        text = (f"Letter each curve's BC and EC with its station, square to the line on its "
+                f"{pp['side']} and reading {pp.get('reads', 'bottom to top')} "
+                f"({pp['format']})")
+        if self.has_eq:
+            text += f", and the station equation the same way ({self.labels['equation']['format']})"
+        return text
 
-    def equation(self) -> str:
-        eq = self.labels["equation"]
-        return (f"the station equation, lettered in {eq['format']} form square to the line on "
-                f"its {eq.get('side', 'left')}, reading bottom to top")
-
-    def callouts(self) -> str:
+    def callouts(self, of: str = "") -> str:
         mc = self.labels["mc"]
-        return (f"the number of every curve (1, 2, ... along the line) in a bubble off the middle "
-                f"of the curve on its {mc.get('side', 'right')}, with a leader from the bubble to "
-                f"the curve, {self.label_h}, on {self.layer('labels')}")
+        return (f"Number the curves{of} in order along the line (1, 2, ...), each in a bubble "
+                f"off the {mc.get('side', 'right')} of the curve with a leader to it")
 
-    def bearings(self) -> str:
+    def bearings(self, of: str = "") -> str:
         b = self.labels["bearing"]
         example = b.get("example", "N 45°30'15\" E 1234.56'")
-        return (f"the bearing and length of every tangent as one line of text at its middle, "
-                f"{b['side']} the line and parallel to it (quadrant bearing to the second and "
-                f"length to 0.01 ft: {example} form), {self.label_h}, on {self.layer('labels')}")
+        return (f"Letter the bearing and length of each tangent{of} {b['side']} the line at its "
+                f"middle, like {example}")
+
+    def lettering(self) -> str:
+        """Where the alignment's lettering goes: one height and layer for all of it."""
+        what = "The ticks and all of that lettering go" if (
+            self.layer("ticks") == self.layer("labels")) else "All of that lettering goes"
+        return f"{what} on {self.layer('labels')}, in {self.label_h} text"
 
     def table(self) -> str:
-        headers = ", ".join(CURVE_COLUMNS[c][0] for c in self.D["curve_table_columns"])
+        headers = [CURVE_COLUMNS[c][0] for c in self.D["curve_table_columns"]]
         with_curves = [sh["name"] for sh in self.sheets if sh["curves"]]
-        if len(with_curves) == 1:
-            where = f"a {self.S['curve_table']['title']} table on sheet {with_curves[0]}"
-            rows = "one row per curve"
-        else:
-            where = (f"a {self.S['curve_table']['title']} table on each of sheets "
-                     + ", ".join(with_curves[:-1]) + f" and {with_curves[-1]}")
-            rows = "one row per curve that sheet shows"
-        return (f"{where}: {rows}, columns {headers}, lengths to 0.01 ft and angles in "
-                f"degrees-minutes-seconds, text {self.text['table_height_in']:.2f} in high, on "
-                f"{self.layer('tables')}, inside the border and clear of the plan and the title "
-                f"block")
+        title = self.S["curve_table"]["title"]
+        where = (f"on {with_curves[0]}" if len(with_curves) == 1 else
+                 "on each of " + ", ".join(with_curves[:-1]) + f" and {with_curves[-1]}, "
+                 "listing the curves that sheet shows")
+        return (f"Add a {title} table {where}, with columns {', '.join(headers[:-1])} and "
+                f"{headers[-1]} (Δ in degrees, minutes and seconds, lengths to the hundredth), in "
+                f"{self.text['table_height_in']:.2f} in text on {self.layer('tables')}")
 
     def north(self) -> str:
         block = self.S["sheet"]["north_arrow"]["block"]
-        on = f", on {self.layer('symbols')}" if "symbols" in self.layers else ""
-        return (f"a north arrow (the {block} block) in the upper right of "
-                f"{self.each_sheet()}, inside the border{on}")
+        on = f" on {self.layer('symbols')}" if "symbols" in self.layers else ""
+        where = "each sheet" if self.many else "the sheet"
+        return f"Put the {block} block in the upper right of {where}{on}"
 
     def title(self) -> str:
-        parts = []
-        for sh in self.sheets:
-            tb = sh["title_block_fields"]
-            parts.append(
-                f"the title block of {sh['name']}: project {tb['project']}, agency {tb['agency']}, "
-                f"sheet title {tb['sheet_title']}, sheet {tb['sheet_number']} of "
-                f"{tb['total_sheets']}, designed by {tb['designed_by']}, drawn by "
-                f"{tb['drawn_by']}, checked by {tb['checked_by']}, date {tb['date']}, scale "
-                f"{tb['scale']}")
-        return "; ".join(parts)
+        fields = [sh["title_block_fields"] for sh in self.sheets]
+        common = {k: v for k, v in fields[0].items()
+                  if k != "sheet_number" and all(f.get(k) == v for f in fields)}
+        if len(common) != len(fields[0]) - 1:  # the sheets differ in more than their numbers
+            return "; ".join(f"on {sh['name']}, " + self._title_of(sh["title_block_fields"])
+                             for sh in self.sheets)
+        numbers = " and ".join(f["sheet_number"] for f in fields)
+        return self._title_of({**fields[0], "sheet_number": numbers},
+                              plural=len(fields) > 1)
+
+    @staticmethod
+    def _title_of(tb: dict, plural: bool = False) -> str:
+        roles = {}
+        for role in ("designed", "drawn", "checked"):
+            roles.setdefault(tb[f"{role}_by"], []).append(role)
+        people = ", ".join(" and ".join(r) + f" by {who}" for who, r in roles.items())
+        return (f"project {tb['project']}, agency {tb['agency']}, sheet title "
+                f"{tb['sheet_title']}, sheet{'s' if plural else ''} {tb['sheet_number']} of "
+                f"{tb['total_sheets']}, {people}, dated {tb['date']}, scale {tb['scale']}")
 
     def viewports(self) -> str:
         if not self.many:
-            return (f"one viewport at {self.scale} showing all of {self.A}, inside the border "
-                    f"and clear of the title block")
-        return (f"a viewport at {self.scale} on each sheet showing its part of {self.A}, inside "
-                f"the border and clear of the title block")
+            return f"one viewport at {self.scale} showing all of {self.A}"
+        return f"a viewport at {self.scale} on each sheet showing its part of {self.A}"
 
     def match_line(self) -> str:
         m = self.match
         on = self.layer("match") if "match" in self.layers else self.layer("ticks")
-        return (f"a match line across the centerline at station {m['station_text']}, "
-                f"{m['half_width_ft']:g} ft each side, and on each sheet a label reading MATCH "
-                f"LINE STA {m['station_text']} SEE SHEET <the other sheet>, {self.label_h}, at the "
-                f"end of the match line, both on {on}")
+        return (f"Draw a match line square across the centerline at {m['station_text']}, "
+                f"{m['half_width_ft']:g} ft each side, and label it at its end on each sheet "
+                f"MATCH LINE STA {m['station_text']} SEE SHEET <the other sheet> in "
+                f"{self.label_h} text, both on {on}")
 
     def breaking(self) -> str:
         return f", breaking at station {self.match['station_text']}" if self.match else ""
@@ -206,15 +213,15 @@ class _Words:
 
     def edges(self) -> str:
         half = self.pave.get("half_width_ft", 12)
-        return (f"its edges of pavement: a constant offset of the centerline {half:g} ft each "
-                f"side, following it through the curves, on {self.layer('edges')}")
+        return (f"Draw the edges of pavement {half:g} ft either side of the centerline, "
+                f"following it through the curves, on {self.layer('edges')}")
 
     def widths(self) -> str:
         width = self.section.get("pavement_width_ft", 24)
-        where = ", ".join(f"{wd['station_text']} on {wd['ref']}" for wd in self.width_dims)
-        return (f"the pavement width across each tangent: an aligned dimension between the two "
-                f"edges of pavement at station {where}, text {self.label_h}, reading "
-                f"{width:.2f}', on {self.layer('dims')}")
+        at = [f"{wd['station_text']} on {wd['ref']}" for wd in self.width_dims]
+        where = at[0] if len(at) == 1 else ", ".join(at[:-1]) + f" and {at[-1]}"
+        return (f"dimension the {width:.2f}' pavement width edge to edge across each tangent, "
+                f"at {where}, in {self.label_h} text on {self.layer('dims')}")
 
     @property
     def layer_set(self) -> List[str]:
@@ -241,24 +248,24 @@ class _Words:
         return "; ".join(parts)
 
     def layer_list(self, with_props: bool) -> str:
-        if with_props:
-            return "; ".join(self.layer_name(name) for name in self.layer_set)
+        if with_props:  # grouped by their colour, linetype and weight, as a PE would read them off
+            groups: Dict[str, List[str]] = {}
+            for name in self.layer_set:
+                groups.setdefault(self.layer_props(name), []).append(name)
+            return "; ".join(f"{', '.join(names)} in {props}" for props, names in groups.items())
         return ", ".join(self.layer_set)
 
-    def layer_name(self, name: str) -> str:
+    def layer_props(self, name: str) -> str:
         p = self.props[name]
-        bits = [p["color"]]
-        if "linetype" in p:
-            bits.append(f"{p['linetype']} linetype")
-        bits.append(f"{p['lineweight_mm']:g} mm")
-        return f"{name} ({', '.join(bits)})"
+        linetype = f" {p['linetype']} linetype" if "linetype" in p else ""
+        return f"{p['color']}{linetype} at {p['lineweight_mm']:g} mm"
 
     # -- what is already there
     def done(self) -> str:
         given = [p for p in PHASE_ORDER if p in self.type.given and p not in ("layers", "design")]
         if not given:
             return ""
-        words = {"design": "", "linework": "the centerline linework", "edges": "the pavement edges",
+        words = {"design": "", "linework": "the centerline", "edges": "the pavement edges",
                  "stationing": "the stationing", "bearings": "the bearings",
                  "callouts": "the curve callouts", "widths": "the width dimensions",
                  "sheet": f"{self.sheet_list} with {'their viewports' if self.many else 'its viewport'}"
@@ -276,46 +283,58 @@ def _bullets(items: List[str]) -> str:
     return "\n".join(f"- {s[0].upper()}{s[1:]}." for s in items)
 
 
+def _sentences(items: List[str]) -> str:
+    return " ".join(f"{s[0].upper()}{s[1:]}." for s in items)
+
+
+def _alignment_data(w: _Words, it: str, table: bool = True) -> List[str]:
+    """The alignment data a sheet letters: stationing, curve points, callouts,
+    bearings, the one height and layer they share, then the curve table."""
+    items = [w.stationing(it), w.curve_points(), w.callouts(), w.bearings(), w.lettering()]
+    return items + ([w.table()] if table else [])
+
+
 # ----------------------------------------------------------------- prompts
 
 
 def _draw_alignment(w: _Words, explicit: bool) -> str:
     if explicit:
-        return (f"Draw alignment {w.A} in model space: one line per tangent and one arc per "
-                f"curve, on the design geometry exactly, on {w.layer('alignment')}. The layers "
-                f"exist; draw nothing else.")
+        return (f"Draw the centerline of {w.A} in model space on {w.layer('alignment')}, right on "
+                f"the design geometry. The layers exist; draw nothing else.")
     return f"Draw {w.A}."
 
 
 def _stationing(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Station {w.A}."
-    items = [w.ticks(), w.station_labels(), w.curve_points()] + ([w.equation()] if w.has_eq else [])
-    return (f"Station alignment {w.A} in model space, where {w.sheet_list} shows it:\n"
-            f"{_bullets(items)}\n{w.done().strip()}")
+    shows = "show" if w.many else "shows"
+    return (f"Working in model space where {w.sheet_list} {shows} it, "
+            f"{w.stationing(w.A, 'station')}. {_sentences([w.curve_points(), w.lettering()])}"
+            f"{w.done()}")
 
 
 def _callouts(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"Add {w.callouts()}.{w.done()}"
+        return f"{w.callouts(f' of {w.A}')}, in {w.label_h} text on {w.layer('labels')}.{w.done()}"
     return f"Number the curves on {w.A}."
 
 
 def _bearings(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"Label {w.A}'s tangents: {w.bearings()}.{w.done()}"
+        return f"{w.bearings(f' of {w.A}')}, in {w.label_h} text on {w.layer('labels')}.{w.done()}"
     return f"Add bearings to {w.A}."
 
 
 def _curve_table(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"Add {w.table()}.{w.done()}"
+        return f"{w.table()}.{w.done()}"
     return f"Put the curve data on {w.sheet_list}."
 
 
 def _title_block(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"Fill in {w.title()}. Insert {w.north()}.{w.done()}"
+        blocks = "title blocks" if w.many else "title block"
+        return f"Fill in the {blocks}: {w.title()}. {w.north()}.{w.done()}"
     arrows = "north arrows" if w.many else "a north arrow"
     blocks = "title blocks" if w.many else "title block"
     return f"Finish the {blocks} on {w.sheet_list} and add {arrows}."
@@ -326,38 +345,33 @@ def _sheet_setup(w: _Words, explicit: bool) -> str:
         verb = "Set up plan " + w.sheet_list
         return f"{verb} for {w.A}{w.breaking()}."
     if not w.many:
-        return (f"Create plan {w.sheet_list}, {w.size}, with {w.viewports()}.{w.done()}")
-    return (f"Lay out {w.A} on {len(w.sheets)} {w.size} plan sheets, {w.sheet_list[7:]}, at "
-            f"{w.scale}{w.breaking()}:\n{_bullets([w.viewports(), w.match_line()])}\n"
-            f"{w.done().strip()}")
-
-
-def _annotation_items(w: _Words) -> List[str]:
-    items = [w.ticks(), w.station_labels(), w.curve_points()]
-    if w.has_eq:
-        items.append(w.equation())
-    items += [w.callouts(), w.bearings(), w.table(), w.north(), w.title()]
-    return items
+        return f"Set up plan {w.sheet_list}, {w.size}, with {w.viewports()}.{w.done()}"
+    return (f"Lay out {w.A} on {_COUNT.get(len(w.sheets), len(w.sheets))} {w.size} plan sheets, "
+            f"{w.sheet_list[7:]}, at {w.scale}{w.breaking()}, with a viewport on each sheet "
+            f"showing its part of the line. {w.match_line()}.{w.done()}")
 
 
 def _annotate_sheet(w: _Words, explicit: bool) -> str:
     is_are = "are" if w.many else "is"
     if not explicit:
         return f"{w.Sheet_list} {is_are} blank. Annotate {'them' if w.many else 'it'}."
-    match = f" and a match line at station {w.match['station_text']}" if w.match else ""
-    return (f"{w.Sheet_list} {is_are} set up with a viewport on {w.A} at {w.scale}{match}, and "
-            f"the centerline is drawn, but there is no annotation. Annotate "
-            f"{'them' if w.many else 'it'} completely:\n{_bullets(_annotation_items(w))}")
+    match = f" and a match line at {w.match['station_text']}" if w.match else ""
+    them = "them" if w.many else "it"
+    views = "viewports" if w.many else "a viewport"
+    return (f"{w.Sheet_list} {is_are} set up with {views} on {w.A} at {w.scale}{match}, and the "
+            f"centerline is drawn, but nothing is annotated yet. Annotate {them} fully:\n"
+            f"{_bullets(_alignment_data(w, 'the line') + [w.north(), 'Fill in the title block' + ('s' if w.many else '') + ': ' + w.title()])}")
 
 
 def _plan_sheet(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Draft plan {w.sheet_list} for {w.A}{w.breaking()}."
-    items = [w.linework()] + _annotation_items(w)
-    layout = w.viewports() + (f"; {w.match_line()}" if w.match else "")
-    return (f"Draft plan {w.sheet_list} for the {w.P['name']} project ({w.P['agency']}, "
-            f"{w.P['county']}): {w.size}, {w.scale}, showing alignment {w.A}, which is already "
-            f"in the design{w.breaking()}. Set up {layout}. Show:\n{_bullets(items)}")
+    setup = f"Set up {w.viewports()}" + (f". {w.match_line()}" if w.match else "")
+    items = ([setup, w.linework()] + _alignment_data(w, "it")
+             + [w.north(), "Fill in the title block" + ("s" if w.many else "") + ": " + w.title()])
+    return (f"Draft plan {w.sheet_list} for {w.A} on the {w.P['name']} project ({w.P['agency']}, "
+            f"{w.P['county']}): {w.size} at {w.scale}{w.breaking()}. {w.A} is already in the "
+            f"design.\n{_bullets(items)}")
 
 
 # -- plan prep
@@ -365,56 +379,50 @@ def _plan_sheet(w: _Words, explicit: bool) -> str:
 
 def _layer_setup(w: _Words, explicit: bool) -> str:
     if explicit:
-        return (f"Create the Caltrans named levels a layout sheet file carries, as layers of this "
+        return (f"Set up the Caltrans named levels a layout sheet file carries as layers of this "
                 f"drawing: {w.layer_list(with_props=True)}. Nothing is drawn yet; draw nothing.")
     return f"Set up the standard Caltrans levels: {w.layer_list(with_props=False)}."
 
 
 def _pavement_edges(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"{w.section_words()}. Draw {w.edges()}.{w.done()}"
+        return f"{w.section_words()}. {w.edges()}.{w.done()}"
     return f"{w.section_words()}. Draw the pavement edges."
 
 
 def _pavement_widths(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"{w.section_words()}. Dimension {w.widths()}.{w.done()}"
+        text = w.widths()
+        return f"{w.section_words()}. {text[0].upper()}{text[1:]}.{w.done()}"
     return f"Dimension the pavement width on each tangent of {w.A}."
 
 
 def _pavement(w: _Words, explicit: bool) -> str:
     if explicit:
-        return (f"{w.section_words()}. Draw {w.edges()}, then dimension {w.widths()}."
-                f"{w.done()}")
+        return f"{w.section_words()}. {w.edges()}, then {w.widths()}.{w.done()}"
     return f"{w.section_words()}. Draw the pavement edges and dimension the width on each tangent."
 
 
 def _annotate_base(w: _Words, explicit: bool) -> str:
     ref = w.S.get("reference", {}).get("name", "BASE")
-    items = [w.ticks(), w.station_labels(), w.curve_points()]
-    if w.has_eq:
-        items.append(w.equation())
-    items += [w.callouts(), w.bearings(), w.table()]
     if not explicit:
         return (f"The base drawing is attached as {ref}. Add the alignment data of {w.A} to "
                 f"{w.sheet_list}.")
-    return (f"This is the sheet file for {w.sheet_list}: the sheet{'s' if w.many else ''} and "
-            f"{'their viewports' if w.many else 'its viewport'} on {w.A} are set up, and the "
-            f"base drawing {w.basefile} is attached as reference {ref} at its own coordinates. "
-            f"The design, alignment {w.A}, lives in the base: this file does not own it, and "
-            f"the labelers reach it through the reference as {ref}:{w.A}. Letter its alignment "
-            f"data in this file, anchored through the reference:\n{_bullets(items)}")
+    return (f"{w.Sheet_list} and {'their viewports' if w.many else 'its viewport'} on {w.A} are "
+            f"set up in this file, and the base drawing {w.basefile} is attached as {ref}. {w.A} "
+            f"lives in the base, not in this file, so reach it as {ref}:{w.A}. Letter its "
+            f"alignment data here:\n{_bullets(_alignment_data(w, 'it'))}")
 
 
 def _attach_reference(w: _Words, explicit: bool) -> str:
     ref = w.S.get("reference", {})
     if explicit:
-        return (f"This is the sheet file for {w.sheet_list}: the sheet{'s' if w.many else ''} and "
-                f"{'their viewports' if w.many else 'its viewport'} on {w.A} are set up, but the "
-                f"drawing itself lives in the base file {w.basefile} beside it. Attach that file "
-                f"as a reference named {ref.get('name', 'BASE')} into {ref.get('space', 'model')} "
-                f"space at its own coordinates (no offset, rotation or scale), visible and "
-                f"unclipped, so it shows through the viewport{'s' if w.many else ''}.")
+        many = w.many
+        return (f"{w.Sheet_list} and {'their viewports' if many else 'its viewport'} on {w.A} are "
+                f"set up in this file, but the drawing lives in the base file {w.basefile} beside "
+                f"it. Attach that file as {ref.get('name', 'BASE')} in {ref.get('space', 'model')} "
+                f"space at its own coordinates, so it shows through the "
+                f"viewport{'s' if many else ''}.")
     return f"Attach the base drawing {w.basefile} to this sheet file."
 
 
@@ -423,39 +431,55 @@ def _attach_reference(w: _Words, explicit: bool) -> str:
 
 def _create_alignment(w: _Words, explicit: bool) -> str:
     if explicit:
-        return (f"Create alignment {w.A} and draw it. {w.A} {w.geometry()}. Coordinates are "
-                f"northing and easting in US survey feet. Create it in the design from its PIs "
-                f"(create_alignment: the PI points with the radius of the curve at each), then "
-                f"draw it in model space: one line per tangent and one arc per curve, on "
+        return (f"Create alignment {w.A} in the design and draw its centerline. {w.A} "
+                f"{w.geometry()}. Coordinates are northing and easting in US survey feet; build "
+                f"it from the PIs and the curve radius at each, then draw it in model space on "
                 f"{w.layer('alignment')}. The layers exist; draw nothing else.")
     return f"{w.A} {w.geometry()}. Create it and draw it."
+
+
+_COUNT = {2: "two", 3: "three", 4: "four"}
 
 
 # -- real plan sheets (tasks.real): one alignment of a redrafted sample sheet
 
 
+def _a(word: str) -> str:
+    """``word`` with its article: an ANSI, an FHWA (said letter by letter), a Caltrans."""
+    first = word.split()[0] if word.split() else word
+    initials = first.isupper() and len(first) > 1
+    vowel = first[:1].upper() in ("AEFHILMNORSX" if initials else "AEIOU")
+    return ("an " if vowel else "a ") + word
+
+
 def _real_context(w: _Words) -> str:
-    """Where the drafter is: the real sheet, its base drawing, what else it shows."""
+    """Where the drafter is: the real sheet, and the base drawing its alignment lives in."""
     src = w.source
     others = src.get("other_alignments") or []
-    also = (f", which also holds alignment{'s' if len(others) > 1 else ''} "
-            + ", ".join(others) if others else "")
-    return (f"This is the sheet file for sheet {w.names[0]} of a {src.get('agency_name', '')} "
-            f"plan set ({w.P['name']}): a {w.size} {src.get('family', 'plan')} sheet at "
-            f"{w.scale}. Its viewport shows the base drawing {w.D.get('design_file')}, attached "
-            f"as reference {w.ref_name}{also}, over the corridor and survey. Alignment {w.A} "
-            f"lives in that base: this file does not own it, and the labelers reach it through "
-            f"the reference as {w.ref_name}:{w.A}. Keep everything already on the sheet."
-            + _real_reading(w))
+    also = (" along with " + (others[0] if len(others) == 1 else
+                              ", ".join(others[:-1]) + f" and {others[-1]}") if others else "")
+    return (f"Sheet {w.names[0]} is {_a(w.size)} {src.get('family', 'plan')} sheet at {w.scale} "
+            f"from {_real_set(w)}. {w.A} is not in this file: it lives in the base drawing "
+            f"{w.D.get('design_file')}, attached as {w.ref_name}{also}, so reach it as "
+            f"{w.ref_name}:{w.A}." + _real_reading(w))
 
 
-def _real_reading(w: _Words) -> str:
-    twist = float(w.D.get("view_rotation") or 0.0)
-    turned = (f" The viewport is turned {twist:.2f}°: letter model-space labels to read upright "
-              f"on the sheet as plotted (the labelers' view_rotation)." if abs(twist) > 1e-6
-              else "")
-    return (f"{turned} Where a label would land on something already on the sheet, put it on "
-            f"the other side of the line or further off it.")
+def _real_reading(w: _Words, stated: bool = False) -> str:
+    """The twist and what it asks of the lettering; ``stated`` when the prompt has
+    already given the viewport's turn."""
+    twist = _real_twist(w)
+    if abs(twist) <= 1e-6:
+        return ""
+    if stated:
+        return " Letter model-space labels to read upright on the plotted sheet."
+    return (f" The viewport is turned {twist:.2f}°, so letter model-space labels to read upright "
+            f"on the plotted sheet.")
+
+
+def _real_turned(w: _Words) -> str:
+    """The existing viewport's turn, when it has one."""
+    twist = _real_twist(w)
+    return f" turned {twist:.2f}°" if abs(twist) > 1e-6 else ""
 
 
 def _real_given(w: _Words) -> str:
@@ -477,39 +501,35 @@ def _real_given(w: _Words) -> str:
 def _real_stationing(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Station the {w.A} line on sheet {w.names[0]}."
-    items = [w.ticks(), w.station_labels(), w.curve_points()]
-    return (f"{_real_context(w)}\nStation {w.A} in model space, anchored through the "
-            f"reference:\n{_bullets(items)}\n{_real_given(w).strip()}")
+    return (f"{_real_context(w)}\nWorking in model space, {w.stationing(w.A, 'station')}. "
+            f"{_sentences([w.curve_points(), w.lettering()])}{_real_given(w)}")
 
 
 def _real_bearings(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Add the bearings of the {w.A} line to sheet {w.names[0]}."
-    return (f"{_real_context(w)}\nLabel {w.A}'s tangents, anchored through the reference: "
-            f"{w.bearings()}.{_real_given(w)}")
+    return (f"{_real_context(w)}\n{w.bearings(f' of {w.A}')}, in {w.label_h} text on "
+            f"{w.layer('labels')}.{_real_given(w)}")
 
 
 def _real_callouts(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Number the curves of the {w.A} line on sheet {w.names[0]}."
-    return (f"{_real_context(w)}\nAdd, anchored through the reference, {w.callouts()}."
-            f"{_real_given(w)}")
+    return (f"{_real_context(w)}\n{w.callouts(f' of {w.A}')}, in {w.label_h} text on "
+            f"{w.layer('labels')}.{_real_given(w)}")
 
 
 def _real_curve_table(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Put the curve data of the {w.A} line on sheet {w.names[0]}."
-    return (f"{_real_context(w)}\nAdd, anchored through the reference, {w.table()}, listing "
-            f"the curves of {w.A}.{_real_given(w)}")
+    return (f"{_real_context(w)}\n{w.table()}, listing the curves of {w.A}.{_real_given(w)}")
 
 
 def _real_alignment_data(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Letter the alignment data of the {w.A} line on sheet {w.names[0]}."
-    items = [w.ticks(), w.station_labels(), w.curve_points(), w.callouts(), w.bearings(),
-             w.table()]
-    return (f"{_real_context(w)}\n{w.A} has no annotation on this sheet. Letter its alignment "
-            f"data in this file, anchored through the reference:\n{_bullets(items)}")
+    return (f"{_real_context(w)}\n{w.A} has no annotation on this sheet yet. Letter its "
+            f"alignment data:\n{_bullets(_alignment_data(w, 'it'))}")
 
 
 # -- real plan sheets: the sheet's own jobs and the sheet from scratch
@@ -517,7 +537,7 @@ def _real_alignment_data(w: _Words, explicit: bool) -> str:
 
 def _real_set(w: _Words) -> str:
     src = w.source
-    return f"a {src.get('agency_name', '')} plan set ({w.P['name']})"
+    return f"{_a(src.get('agency_name', ''))} plan set ({w.P['name']})"
 
 
 def _real_twist(w: _Words) -> float:
@@ -567,45 +587,36 @@ def _real_north(w: _Words) -> str:
     na = w.sheets[0].get("north_arrow") or {}
     block = w.S["sheet"]["north_arrow"]["block"]
     turn = float(na.get("rotation_deg", 0.0))
-    return (f"a north arrow (the {block} block) pointing to true north, which is turned "
-            f"{turn:.2f}° on this sheet, inside the border and clear of the title block and "
-            f"the plan, on {w.layer('symbols')}")
-
-
-def _real_lettering(w: _Words) -> str:
-    twist = _real_twist(w)
-    turned = (f", model labels lettered to read upright on the sheet as plotted "
-              f"(view_rotation {twist:.2f})" if abs(twist) > 1e-6 else "")
-    return f"anchored through the reference as {w.ref_name}:{w.A}{turned}"
+    turned = f" (turned {turn:.2f}° here)" if abs(turn) > 1e-6 else ""
+    return (f"Put the {block} block on the sheet pointing to true north{turned}, clear of the "
+            f"title block and the plan, on {w.layer('symbols')}")
 
 
 def _real_draw_alignment(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Draw the {w.A} line in this alignment file."
-    return (f"This is {w.D.get('design_file')}, the alignment base file of {_real_set(w)}; "
-            f"sheet {w.names[0]} shows it at {w.scale}. Alignment {w.A} is in its design but "
-            f"is not drawn. Draw {w.linework()}. The layers exist; keep everything already in "
-            f"the file and draw nothing else.")
+    return (f"This is {w.D.get('design_file')}, the alignment base file of {_real_set(w)}, "
+            f"shown on sheet {w.names[0]} at {w.scale}. {w.A} is in its design but is not drawn "
+            f"yet. {w.linework()}, right on the design geometry. The layers exist; draw nothing "
+            f"else.")
 
 
 def _real_attach_reference(w: _Words, explicit: bool) -> str:
     refs = w.D.get("references") or []
     if not explicit:
         return f"Attach the base files {_real_files(w)} to sheet {w.names[0]}."
-    each = "; ".join(f"{r['file']} as {r['name']}" for r in refs)
-    return (f"This is the sheet file for sheet {w.names[0]} of {_real_set(w)}: its border, "
-            f"title block, notes and callouts are drawn, but its viewport shows nothing because "
-            f"the base files beside it are not attached. Attach each into {refs[0]['space']} "
-            f"space at its own coordinates (no offset, rotation or scale), visible and "
-            f"unclipped, under the name given: {each}.")
+    each = [f"{r['file']} as {r['name']}" for r in refs]
+    each = each[0] if len(each) == 1 else ", ".join(each[:-1]) + f" and {each[-1]}"
+    return (f"Sheet {w.names[0]} of {_real_set(w)} is drawn, border, notes and all, but its "
+            f"viewport shows nothing: the base files beside it are not attached. Attach "
+            f"{each}, in {refs[0]['space']} space at their own coordinates.")
 
 
 def _real_title_block(w: _Words, explicit: bool) -> str:
     if not explicit:
         return f"Fill in the title block of sheet {w.names[0]}: {_real_title_vague(w)}."
-    tpl = w.sheets[0].get("template") or "standard"
-    return (f"Fill in the title block of sheet {w.names[0]} of {_real_set(w)}, on its {tpl} "
-            f"border (the fill_title_block key in brackets): {_real_title(w, True)}.")
+    return (f"Fill in the title block of sheet {w.names[0]} of {_real_set(w)}: "
+            f"{_real_title(w, False)}.")
 
 
 def _real_sheet_setup(w: _Words, explicit: bool) -> str:
@@ -613,28 +624,26 @@ def _real_sheet_setup(w: _Words, explicit: bool) -> str:
     if not explicit:
         return (f"Set up plan sheet {w.names[0]} for the {w.A} line: {w.size}, on "
                 f"{_real_border(w)}, the viewport turned {twist:.2f}° as published.")
-    return (f"This is the sheet file of {_real_set(w)}: the base files {_real_files(w)} are "
-            f"attached, and alignment {w.A} is drawn and annotated in model space, its labels "
-            f"lettered to read on a sheet turned {twist:.2f}°, but there is no sheet. Create plan "
-            f"sheet {w.names[0]}: {w.size}, on {_real_border(w)}, with one viewport at {w.scale}, "
-            f"turned {twist:.2f}°, showing all of {w.A} inside the border and clear of the title "
-            f"block.")
+    return (f"This sheet file of {_real_set(w)} has its base files {_real_files(w)} attached "
+            f"and {w.A} drawn and annotated in model space, lettered for a sheet turned "
+            f"{twist:.2f}°, but no sheet yet. Set up plan sheet {w.names[0]}, {w.size}, on "
+            f"{_real_border(w)}, with one viewport at {w.scale} turned {twist:.2f}° showing all of "
+            f"{w.A}.")
 
 
 def _real_sheet_items(w: _Words) -> List[str]:
-    return [w.ticks(), w.station_labels(), w.curve_points(), w.callouts(), w.bearings(),
-            w.table(), _real_north(w), f"the title block: {_real_title(w, True)}"]
+    return _alignment_data(w, "it") + [_real_north(w),
+                                       f"Fill in the title block: {_real_title(w, False)}"]
 
 
 def _real_annotate_sheet(w: _Words, explicit: bool) -> str:
-    twist = _real_twist(w)
     if not explicit:
         return (f"Sheet {w.names[0]} is blank. Annotate the {w.A} line and finish the sheet; "
                 f"title block: {_real_title_vague(w)}.")
     return (f"Sheet {w.names[0]} of {_real_set(w)} is set up on {_real_border(w)} with a "
-            f"viewport at {w.scale}, turned {twist:.2f}°, on the attached base files; alignment "
-            f"{w.A} is drawn, but nothing on the sheet is lettered and the sheet itself is "
-            f"blank. Annotate it completely, {_real_lettering(w)}:\n"
+            f"viewport at {w.scale}{_real_turned(w)} on the attached base files, and {w.A} is "
+            f"drawn, but nothing is lettered yet. {w.A} lives in the base, so reach it as "
+            f"{w.ref_name}:{w.A}.{_real_reading(w, stated=True)} Annotate the sheet fully:\n"
             f"{_bullets(_real_sheet_items(w))}")
 
 
@@ -645,9 +654,10 @@ def _real_plan_sheet(w: _Words, explicit: bool) -> str:
                 f"{_real_border(w)}, turned {twist:.2f}° as published; title block: "
                 f"{_real_title_vague(w)}.")
     return (f"Draft plan sheet {w.names[0]} of {_real_set(w)} from the attached base files "
-            f"{_real_files(w)}: {w.size}, on {_real_border(w)}, with one viewport at {w.scale}, "
-            f"turned {twist:.2f}°, showing all of {w.A} inside the border and clear of the title "
-            f"block. Show, {_real_lettering(w)}:\n{_bullets(_real_sheet_items(w))}")
+            f"{_real_files(w)}: {w.size}, on {_real_border(w)}, with one viewport at {w.scale} "
+            f"turned {twist:.2f}° showing all of {w.A}. {w.A} lives in the base, so reach it as "
+            f"{w.ref_name}:{w.A}.{_real_reading(w, stated=True)}\n"
+            f"{_bullets(_real_sheet_items(w))}")
 
 
 PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
