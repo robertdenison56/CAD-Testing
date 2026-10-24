@@ -106,6 +106,37 @@ beside `d1-test` and `d1-real`. They stay pilots too: the `--pilot` route below 
 .venv/bin/python -m roaddraft.eval run --taskset hard-pilots --model MODEL [--samples 3]
 ```
 
+## What the first model run found (2026-10-23)
+
+GPT-6-Astra (Codex, medium) ran six pilots before the ChatGPT Plus usage limit stopped the run;
+Robert cancelled the rest until the harness defects it exposed were fixed. The two WFL sources
+pilots passed. The three QA-review fails were all the harness's: Astra found every planted error
+(6 of 6 on L-1, 3 of 3 on D.10) and lost on marks that were right.
+
+- **Labels laid out again through no twist.** The pilot gap-fix branch's `follow_design` re-posed
+  a stationing set after a design change with `view_rotation` 0 when the labels (lettered before
+  the anchor recorded it) carried none, so L-1's TB1 numbers, on a line running 93.96° in the
+  model under a -89.94° twist, turned round: upside down on the paper, nine marks on the clean
+  control. `label_updates._view_rotation` now reads the twist off the label's pose.
+- **The redraft's leftovers**, repaired at staging by `probes/pilot/repairs.py` for every pilot
+  on the sheet (`common.stage`), the example files themselves unchanged: stroke lettering under
+  real text (PD-1's notes and title printed twice) and the notes' second lines set over their
+  first; "Orchard Creek" in seven pieces, one 0.5 in tall; TB1's bearing and length digitised as
+  strokes, stale against the design (L-1); two "See Section X for details" placeholders, a leader
+  landing drawn twice and the 153+00 station number under the plan/profile divider (D.10).
+- **What stripping a line left** (`layout._strip`): curve bubbles digitised as rings of vertices,
+  which `strip_alignment` does not see (it looks for circles), and the published BC callout of
+  L-7's F3 that survives only as strokes.
+- **The L-1 redline start** (`redlines._restore_tb2`): the real task's strip takes the CURVE DATA
+  table that held both lines' curves and the reference letters TB1's alone, so TB2's row and its
+  bubble number come back (its curve numbered 2, TB1's anchored bubble being 1). The same loss
+  sits in the E1 real-task starts of every sheet whose table tabulates several lines; not fixed
+  there.
+
+Left as the sample has it: blank title-block fields, the match line with no sheet number, FLH's
+leaders without arrowheads, a plan with no scale note (D.10). Astra's marks on these count against
+the one false alarm allowed, which is the family's whole difficulty so far.
+
 ## Running the pilots on a model (not done; waits on Robert's go)
 
 ```bash

@@ -224,19 +224,10 @@ PPM_SHEET_TEXT = {
     "TX-115": '"TB1" 647+73.40 POT=\n63.32’ Rt "D13" 647+73.40 POT',
     "TX-031": "ROUTE 65",
 }
-#: paper boxes of the two labels the redraft digitised as strokes on V-ROAD in AA01:
-#: N 01°05'14" W along "TB1" ahead of its curve, and 328.15' further on
-PPM_STROKES = {"bearing": (16.25, 8.12, 18.10, 8.45), "length": (21.15, 8.20, 22.20, 8.48),
-               "quotes": (14.30, 8.22, 15.15, 8.40)}   # a second pair of quotes on "TB1" LINE
-#: the layers the digitiser put those strokes on, per file (the ticks on V-ANNO-STAT stay)
-PPM_STROKE_LAYERS = {"AA01": ("V-ROAD", "V-ROAD-HTCH", "V-ANNO-TRACE"),
-                     "BB01": ("E-TOPO-SYMB", "E-TOPO-TRACE")}
+#: the stroked labels, their layers and the creek's pieces: repairs.py (applied at staging)
+from roaddraft.probes.pilot.repairs import PPM_CREEK, PPM_STROKES, PPM_STROKE_LAYERS  # noqa: E402
 #: where the north arrow sits on L-1 (S-ANNO-SYMB lines and polylines)
 PPM_NORTH_BOX = (20.0, 18.3, 24.0, 19.3)
-#: the pieces of "Orchard Creek" (the C was in AA01)
-PPM_CREEK = {"TX-089": "O", "TX-090": "rcha", "TX-091": "r", "TX-092": "d", "TX-094": "r",
-             "TX-095": "eek"}
-#: the curve bubbles (closed polylines on S-ANNO-TAG) and their numbers
 PPM_BUBBLES = {"PL-004": "1", "PL-005": "2"}
 
 
@@ -320,23 +311,7 @@ def prepare_ppm045(out: Path) -> Path:
     for eid, key in (("TX-029", "D13 T-1 bearing"), ("TX-031", "TB2 T-1 bearing"),
                      ("TX-036", "TB1 T-1 bearing")):
         _ok(aa.execute("modify_entity", {"id": eid, "changes": {"content": v[key]}}))
-    # the two labels drawn as strokes: the strokes go, the values come back as text
-    to_paper = sheet.viewports[0].transform().to_paper
-    bb = c.load(out / PPM_BB01)
-    found = 0
-    for doc_session, layers in ((aa, PPM_STROKE_LAYERS["AA01"]), (bb, PPM_STROKE_LAYERS["BB01"])):
-        ids = []
-        for e in doc_session.doc.model_entities.values():
-            if e.layer in layers and isinstance(e, (Line, Polyline)):
-                pts = [to_paper(p) for p in _points(e)]
-                if any(_within(pts, box) for box in PPM_STROKES.values()):
-                    ids.append(e.id)
-        if ids:
-            _ok(doc_session.execute("delete_entities", {"ids": ids}))
-        found += len(ids)
-    if found < 24:
-        raise RuntimeError(f"L-1: only {found} strokes of the two stroked labels were found")
-    c.save(bb, out / PPM_BB01)
+    # TB1's two stroked labels went at staging (repairs.py); their values come back as text
     _expect(aa.doc.model_entities.get("TX-035"), "C", "AA01 TX-035")
     _ok(aa.execute("delete_entities", {"ids": ["TX-035"]}))   # the C of Creek, see below
     t2 = next(t for t in _rows(aa, "tangents", "TB1") if t["ref"] == "T-2")
@@ -369,16 +344,6 @@ def prepare_ppm045(out: Path) -> Path:
                       ("TX-115", v["TB1 POT"])):
         _ok(s.execute("modify_entity", {"id": eid, "changes": {"content": text}}))
     _reaim_curve_points(s)
-    # the creek's name was digitised in seven pieces, one 0.5 in tall, over each other
-    for eid, text in PPM_CREEK.items():
-        _expect(sheet.entities.get(eid), text, f"L-1 {eid}")
-    o = sheet.entities["TX-089"]
-    _ok(s.execute("delete_entities", {"ids": list(PPM_CREEK)}))
-    _ok(s.execute("place_text", {"space": PPM_SHEET, "layer": o.layer, "position": list(o.position),
-                                 "rotation_deg": float(o.rotation_deg), "height": 0.14,
-                                 "content": "Orchard Creek"}))
-    # an 8' width lettered over the 12' above it
-    _ok(s.execute("move_entities", {"ids": ["TX-098"], "delta": [0.0, -0.04]}))
     for pid, number in PPM_BUBBLES.items():
         verts = sheet.entities[pid].vertices
         centre = [sum(p[0] for p in verts) / len(verts), sum(p[1] for p in verts) / len(verts)]

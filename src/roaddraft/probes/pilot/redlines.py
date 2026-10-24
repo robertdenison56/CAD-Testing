@@ -109,7 +109,8 @@ from roaddraft.document.document import Document
 from roaddraft.document.entities import Arc, Line, Polyline, Table, Text
 from roaddraft.document.references import find_reference_alignment, resolve_reference
 from roaddraft.probes.base import Probe, Result, Tally
-from roaddraft.probes.pilot import common
+from roaddraft.core import geometry as geo
+from roaddraft.probes.pilot import common, repairs
 from roaddraft.tasks.brief import GroundTruth, Task, TaskBrief
 from roaddraft.tasks.ground_truth import compute_ground_truth
 from roaddraft.tasks.real import build_real_task
@@ -297,8 +298,45 @@ def _builder(inst: Redline):
         for key in ("task_id", "spec_version"):
             session.doc.meta.pop(key, None)
         plant_redline(inst, session)
-        return common.save(session, out / common.sheet_file(inst.sheet_id))
+        path = common.save(session, out / common.sheet_file(inst.sheet_id))
+        repairs.apply(out, inst.sheet_id)      # what the redraft left (repairs.py)
+        if inst.id == STATION.id:
+            _restore_tb2(out)
+        return path
     return build
+
+
+#: L-1's other curve: the real task strips the CURVE DATA table that held both lines'
+#: curves and the reference letters TB1's alone, so TB2's row and bubble come back
+TB2_RING = "PL-004"       # TB2's bubble ring on the sheet (its number the redraft lost)
+TB1_RING = "PL-005"       # TB1's published ring, empty beside the reference's bubble
+TB2_NUMBER = "2"          # TB1's anchored bubble is 1, so TB2's curve is 2
+TABLE_GAP_IN = 0.25
+
+
+def _restore_tb2(out: Path) -> None:
+    s = common.load(out / common.sheet_file(STATION.sheet_id))
+    sheet = next(iter(s.doc.sheets.values()))
+    table = next(e for e in sheet.entities.values() if isinstance(e, Table))
+    ring = sheet.entities[TB2_RING]
+    centre = [sum(p[0] for p in ring.vertices) / len(ring.vertices),
+              sum(p[1] for p in ring.vertices) / len(ring.vertices)]
+    common.ok(s.execute("place_text", {"space": sheet.name, "layer": ring.layer, "position": centre,
+                                       "height": 0.12, "halign": "center", "valign": "middle",
+                                       "content": TB2_NUMBER}))
+    old = sheet.entities[TB1_RING]
+    oc = [sum(p[0] for p in old.vertices) / len(old.vertices),
+          sum(p[1] for p in old.vertices) / len(old.vertices)]
+    gone = [TB1_RING] + [e.id for e in sheet.entities.values() if isinstance(e, Line)
+                         and min(geo.distance(e.start, oc), geo.distance(e.end, oc)) <= 0.25]
+    common.ok(s.execute("delete_entities", {"ids": gone}))
+    bb = table.bbox(s.doc)
+    common.ok(s.execute("place_curve_table", {
+        "space": sheet.name, "alignment": f"{DESIGN_REF}:TB2",
+        "position": [bb[0], bb[1] - TABLE_GAP_IN],
+        "text_height": float(table.text_height), "layer": table.layer,
+        "first_curve_number": int(TB2_NUMBER)}))
+    common.save(s, out / common.sheet_file(STATION.sheet_id))
 
 
 for _inst in INSTANCES:
@@ -701,13 +739,14 @@ def _unchanged_problem(baseline: Session, submitted: Session, inst: Redline, ski
                 continue
             what = f"the text {_quote(e.content)}" if isinstance(e, Text) else f"{type(e).__name__} {i}"
             return f"{what} in {where} was changed or removed, and the redline did not touch it"
-    # the base files
+    # the base files, against the start's own copies (repaired at staging: repairs.py)
     refs = _references(submitted)
+    shipped = _references(baseline)
     for name, fname in ((DESIGN_REF, DESIGN_FILE), ("BB01", "0000000000bb01.rdraft")):
         base = refs.get(name)
         if base is None:
             return f"{name} is no longer attached"
-        pristine = _pristine(inst.id, fname)
+        pristine = shipped.get(name) or _pristine(inst.id, fname)
         drawn = set(_centerline_ids(inst, pristine)) if name == DESIGN_REF else set()
         for i, e in pristine.model_entities.items():
             if i in drawn:

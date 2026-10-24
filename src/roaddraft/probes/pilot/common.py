@@ -74,8 +74,8 @@ def source_pdf(sheet_id: str) -> Path:
 
 
 def stage(out: Path, sheet_id: str) -> Dict[str, Path]:
-    """Copy the sheet's ``.rdraft`` set into ``out``: ``{file name: path}``.
-    References are relative, so the copies find each other."""
+    """Copy the sheet's ``.rdraft`` set into ``out``: ``{file name: path}``,
+    repaired (repairs.py). References are relative, so the copies find each other."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     copied = {}
@@ -83,6 +83,8 @@ def stage(out: Path, sheet_id: str) -> Dict[str, Path]:
         dst = out / src.name
         shutil.copyfile(src, dst)
         copied[src.name] = dst
+    from roaddraft.probes.pilot import repairs   # what the redraft left (repairs.py)
+    repairs.apply(out, sheet_id)
     return copied
 
 
