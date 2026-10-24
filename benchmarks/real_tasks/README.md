@@ -42,16 +42,25 @@ are one per alignment.
    the task ships: stationing anchored to it in the base, plain-text station
    numbers and ticks at its stations, BC/EC labels, bearings and tangent lengths
    that match its values and stand beside it, curve bubbles at its curve
-   midpoints, and a curve data table or block (Caltrans grid, FDOT and CFL
-   stacked lines) that lists one of its radii. Leaders of what is removed go too.
+   midpoints (circles; on the sheet also the rings of vertices the Caltrans sheets
+   digitised them as, one per curve, when a leader runs from the ring to the curve,
+   since the sheets' note tags are rings too), and its rows of a curve data table
+   or block (Caltrans grid, FDOT and CFL stacked lines). A table that tabulates other lines' curves too (L-1 lists
+   TB1's and TB2's, L-7 four lines') keeps their rows: the alignment's rows go,
+   the rows below close up, and the table stays. A row is the alignment's when its
+   R is within 5 % of one of its curves; where the sheet's lines have curves of
+   nearly one radius (L-3's ramps, 4,850 to 5,000 ft), each curve takes the row it
+   fits best by radius, then by length. Leaders of what is removed go too.
    Everything else on the sheet stays.
 4. **Poses.** Each label takes the spec's side and offset unless that lands on
    the sheet's own text, a referenced base's text or a label already placed; then
    the other side of the line, then further off. Station numbers move as a set.
    Side and offset are not graded, so a model may make the same moves.
 5. **Table spot.** The clear space nearest the published table it replaces, else
-   the lower right, on an occupancy grid of everything the finished sheet shows.
-   A sheet with no room starts without a table when the table is not the task.
+   the lower right, on an occupancy grid of everything the finished sheet shows;
+   when the published table stays for the other lines' rows, the clear space
+   below it (`curve_table_replaces` is then false). A sheet with no room starts
+   without a table when the table is not the task.
 6. **Start.** The stripped sheet file with the spec layers and the given phases
    drafted on it.
 
@@ -127,6 +136,16 @@ with each task's prompts and links to its start and finished files.
   642+81.23 published). The truth is the rebuilt design in the base file.
 - Station numbers move only as a set, so a sheet where one station number would
   land on existing text is left out rather than hand-placed.
+- A kept shared table still numbers the other lines' curves as published (L-1's
+  TB2 curve is No. 1 there) while the reference numbers the stripped line's own
+  curves from 1, so a sheet can show two curves numbered 1; the digits inside the
+  published ring bubbles were lost in the redraft, so no bubble on the start says
+  which. The pilot probes renumber (`probes/pilot/redlines.py` on the
+  `pilot-astra` branch); the catalogue does not.
+- Rows of a shared table that the redraft fitted differently from the published
+  values (L-7's curve 44, R 3280' published against 3175' rebuilt) are matched by
+  the 5 % radius rule with the length as tie-break; a published row whose curve the
+  redraft does not have at all (L-3's curve 30 when IN3 is stripped) stays.
 - Each sample sheet has its own copy of its base files, so real tasks are
   one sheet each; consecutive sheets do not share one continuous alignment.
 - The base alignments' curves store ends a few hundredths of a foot off their own

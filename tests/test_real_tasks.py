@@ -12,8 +12,10 @@ from roaddraft.design.anchors import parse_anchor, resolve_anchor
 from roaddraft.design.horizontal import Alignment
 from roaddraft.design.labels import compile_label, stationing_plan
 from roaddraft.document.document import Document
+from roaddraft.document.entities import Line, Polyline, Table, Text
 from roaddraft.tasks.real import (
-    AGENCIES, build_real_task, candidates, real_sheets, usable_alignment, validate,
+    AGENCIES, TABLE_TITLE, _Targets, _own_rows, build_real_task, candidates, real_sheets,
+    usable_alignment, validate,
 )
 from roaddraft.tasks.reference import reference_solution, session_for_task
 from roaddraft.tasks.types import REAL_TASK_TYPES, TASK_TYPES, task_type
@@ -108,12 +110,97 @@ def test_the_alignments_own_annotation_is_stripped_and_the_rest_kept(l1_task):
     stripped = l1_task.truth.sheets[0]["stripped"]
     assert stripped["sheet"]["curve_points"] and stripped["sheet"]["table"]
     start = Document.from_dict(l1_task.baseline)
-    texts = [e.content for e in start.sheet_by_ref("L-1").entities.values()
-             if hasattr(e, "content")]
+    sheet = start.sheet_by_ref("L-1")
+    texts = [e.content for e in sheet.entities.values() if hasattr(e, "content")]
     assert not any("642+81.23 BC" in t for t in texts)
     assert "NOTES:" in texts  # the sheet's own notes stay
-    # the table goes where the sheet's real CURVE DATA table was
-    assert l1_task.brief.deliverable["sheets"][0]["curve_table_replaces"]
+    # L-1's CURVE DATA table tabulates TB2's curve (No. 1, R 835') and TB1's (No. 2,
+    # R 3280'): TB1's row goes, TB2's stays, and the table stays with it
+    assert "CURVE DATA" in texts and "835’" in texts and "3280’" not in texts
+    assert stripped["sheet"]["table_rows"] == ["TX-015:2"]
+    sh = l1_task.brief.deliverable["sheets"][0]
+    assert not sh["curve_table_replaces"]
+    # the reference's table for TB1 goes below the kept one
+    kept_bottom = min(e.start[1] for e in sheet.entities.values()
+                      if isinstance(e, Line) and e.layer == "S-LINE-035"
+                      and 7.0 < e.start[0] < 15.0 and 2.5 < e.start[1] < 4.5)
+    assert sh["curve_table_position"][1] < kept_bottom
+    assert sh["curve_table_position"][0] == pytest.approx(7.15, abs=0.1)
+
+
+def test_a_shared_curve_table_loses_only_the_lines_rows_and_closes_up():
+    """L-7's CURVE DATA table lists six curves of four lines; stripping F3 takes
+    its two rows (43 and 47, R 855' and 265'), the rows below move up and the
+    grid shrinks by two rows, title and headers in place."""
+    task = build_real_task("PPM-050", "F3", "real-curve-table")
+    sheet = Document.from_dict(task.baseline).sheet_by_ref("L-7")
+    texts = {e.id: e for e in sheet.entities.values() if isinstance(e, Text)}
+    cells = {t.content: t for t in texts.values() if 2.6 < t.position[0] < 10.4
+             and 17.0 < t.position[1] < 19.3}
+    assert "855’" not in cells and "265’" not in cells
+    assert {"3280’", "180’", "460’", "1500’", "No.", "R", "T", "L"} <= set(cells)
+    rows = sorted({round(cells[k].position[1], 1) for k in ("3280’", "180’", "460’", "1500’")},
+                  reverse=True)
+    assert rows == pytest.approx([18.6, 18.3, 18.0, 17.8], abs=0.1)  # 44 45 46 48, closed up
+    assert cells["R"].position[1] == pytest.approx(18.93, abs=0.02)   # the header did not move
+    rules = sorted({round(e.start[1], 2) for e in sheet.entities.values() if isinstance(e, Line)
+                    and abs(e.start[1] - e.end[1]) < 0.02 and 2.6 < e.start[0] < 10.4
+                    and 17.0 < e.start[1] < 19.3}, reverse=True)
+    assert rules == pytest.approx([19.21, 18.82, 18.54, 18.26, 17.98], abs=0.02)
+    border = next(e for e in sheet.entities.values() if isinstance(e, Polyline)
+                  and e.layer == "S-LINE-050" and len(e.vertices) == 4 and e.vertices[0][0] < 3)
+    assert min(v[1] for v in border.vertices) == pytest.approx(17.70, abs=0.02)
+    stripped = task.truth.sheets[0]["stripped"]["sheet"]
+    assert len(stripped["table_rows"]) == 2 and len(stripped["table"]) == 12  # 10 cells, 2 rules
+    sh = task.brief.deliverable["sheets"][0]
+    assert sh["curve_table_position"][1] < 17.70 and not sh["curve_table_replaces"]
+    assert validate(task)["ok"]
+
+
+def test_a_table_entity_shared_by_two_lines_keeps_the_other_lines_row():
+    task = build_real_task("PPM-048", "IN4", "real-curve-table")
+    sheet = Document.from_dict(task.baseline).sheet_by_ref("L-4")
+    table = next(e for e in sheet.entities.values() if isinstance(e, Table))
+    assert [r[0] for r in table.rows] == ["3"]  # D13's curve stays, IN4's (No. 36) went
+    assert task.truth.sheets[0]["stripped"]["sheet"]["table_rows"] == ["TB-001:1"]
+    assert "TB-001" in task.truth.sheets[0]["given_entities"]
+
+
+def test_ring_bubbles_go_with_their_digit_and_leader_and_the_other_lines_stay(l1_task):
+    """L-1's bubbles are rings of 20 vertices (S-ANNO-TAG), not circles: TB1's
+    ring and its leader go, TB2's ring stays."""
+    stripped = l1_task.truth.sheets[0]["stripped"]["sheet"]
+    assert stripped["bubbles"] == ["PL-005"] and "LN-023" in stripped["leaders"]
+    sheet = Document.from_dict(l1_task.baseline).sheet_by_ref("L-1")
+    assert "PL-004" in sheet.entities and "PL-005" not in sheet.entities
+    assert "LN-023" not in sheet.entities
+
+
+def test_table_rows_go_to_the_curves_they_fit_best():
+    """Route 65 L-3's ramps have curves of 4,850 to 5,000 ft beside D13's 5,000
+    ft curve: each curve takes the one row it fits best by radius, then by
+    length, so the three lines split the six rows without a row counted twice."""
+    headers = ["No.", "R", "Δ", "T", "L"]
+    rows = [["3", "5000’", "41°17’58\"", "1884.32’", "3604.04’"],
+            ["30", "4935’", "03°48’22\"", "164.03’", "327.93’"],
+            ["31", "5065’", "03°03’45\"", "135.34’", "270.62’"],
+            ["32", "4600’", "09°12’24\"", "369.83’", "738.07’"],
+            ["33", "3280’", "02°51’53\"", "82.04’", "164.04’"],
+            ["34", "855’", "40°58’06\"", "318.66’", "609.94’"]]
+    d13 = [(4998.85, 1178.66)]
+    in4 = [(4847.25, 192.52), (4586.62, 486.94)]
+    in3 = [(4914.34, 258.13), (3148.05, 164.01), (853.02, 432.4)]
+
+    def own(mine, others):
+        tg = _Targets([], [], [], [r for r, _l in mine], 1.0, [], mine, others)
+        return _own_rows(rows, headers, tg)
+
+    assert own(d13, in4 + in3) == [0]
+    assert own(in4, d13 + in3) == [1, 3]
+    assert own(in3, d13 + in4) == [2, 4, 5]
+    # alone on a sheet, a line within 5 % takes the row; a stranger's radius does not
+    assert own([(3280.0, 164.0)], []) == [4]
+    assert own([(2000.0, 500.0)], []) == []
 
 
 def test_legibility_counts_new_work_only_and_flags_upside_down_labels(l1_task):

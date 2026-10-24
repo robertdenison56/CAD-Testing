@@ -28,13 +28,16 @@ A lettering task is made from (sheet, alignment, task type):
    task ships (``strip_alignment``): the stationing anchored to it in the
    base; text whose station or bearing is one of its curve points or
    tangents and that stands next to it; the bubbles at its curve
-   midpoints; a CURVE DATA table that lists its radii.  The leaders of what
-   is removed go with it.
+   midpoints (a Circle, or a ring of vertices as the Caltrans sheets were
+   digitised); its rows of a CURVE DATA table.  The leaders of what is
+   removed go with it.  A table that tabulates other lines' curves too
+   (Route 65 L-1 lists TB1's and TB2's) keeps their rows, closed up.
 4. The phases the task gives are drafted on the sheet file in the spec's
    conventions; the phases it asks for are left to the drafter.
 5. The curve table goes in the clear space nearest the real table it
    replaces (else the lower right), found on an occupancy grid of
-   everything the finished sheet shows.
+   everything the finished sheet shows; when the real table stays for the
+   other lines' rows, the new one goes below it.
 
 Legibility on a real sheet judges the drafter's work, not the original
 drafters': each truth sheet lists ``given_entities`` (what the starting
@@ -135,6 +138,10 @@ POINT_LABEL_REACH_IN = 1.0    # a curve-point label's box within this of its poi
 BEARING_REACH_IN = 1.0        # a bearing's box within this of its tangent
 BUBBLE_MAX_RADIUS_IN = 0.5    # a curve bubble is a circle no bigger than this
 BUBBLE_REACH_IN = 2.5         # ... centred within this of the curve's midpoint
+RING_MIN_IN = 0.15            # a bubble digitised as a ring of vertices is at least this across
+RING_MAX_IN = 0.5             # ... and at most this, round to 10 %, of RING_MIN_VERTICES or more
+RING_MIN_VERTICES = 8         # ... on the sheet, with a leader from it that ends on the curve
+LEADER_TIP_IN = 0.2           # a bubble's leader ends within this of the curve it calls out
 LEADER_REACH_IN = 0.12        # a leader ends within this of what it points from
 LEADER_MAX_IN = 4.0           # ... and is no longer than this
 # the base files' alignments are rebuilt from the published linework, so their values
@@ -142,6 +149,9 @@ LEADER_MAX_IN = 4.0           # ... and is no longer than this
 # R 3242.93 against 3280'): real annotation is matched loosely, and by where it stands
 STATION_TOL_FT = 2.0          # a lettered station within this of the rebuilt one
 RADIUS_TOL = 0.03             # a tabulated radius within 3 % of the rebuilt one
+ROW_RADIUS_TOL = 0.05         # a table row is a curve's within 5 % (the redraft's fit of a curve
+                              # the sheet clips drifts further than its table names it)
+RULE_TOL_IN = 0.02            # a table rule lies along a row's edge within this
 BEARING_TOL_MIN = 15          # a lettered bearing within 15 minutes of the rebuilt one
 LENGTH_MIN_FT = 50.0          # a lettered tangent length, not a lane width
 LENGTH_ALONG_DEG = 5.0        # ... set along its tangent
@@ -387,18 +397,23 @@ class _Targets:
     radii: List[float]
     unit: float                                      # space units per paper inch
     stations: List[Tuple[int, str, List[float]]] = field(default_factory=list)  # (hundreds, text, point)
+    curves: List[Tuple[float, float]] = field(default_factory=list)   # (radius, length) of each curve
+    others: List[Tuple[float, float]] = field(default_factory=list)   # the sheet's other lines' curves
+    curve_paths: List[List[List[float]]] = field(default_factory=list)  # each curve, sampled
 
 
-def _targets(align: Alignment, truth_labels: Sequence[dict], to, unit: float) -> _Targets:
+def _targets(align: Alignment, truth_labels: Sequence[dict], to, unit: float,
+             others: Sequence[Alignment] = ()) -> _Targets:
     points = [(float(l["station"]), to(align.station_to_xy(float(l["station"]))[0]))
               for l in truth_labels if l["kind"] in ("pc", "pt", "pcc", "prc")]
     bearings = [_bearings_in(l["content"])[0] for l in truth_labels
                 if l["kind"] == "bearing" and _bearings_in(l["content"])]
     tangents = [(b, to(t.start), to(t.end), float(t.length))
                 for b, t in zip(bearings, align.tangents())]
-    mids = []
+    mids, paths = [], []
     for c in align.curves():
         mids.append(to(align.point_at((c.start_dist + c.end_dist) / 2.0)))
+        paths.append([to(align.point_at(c.start_dist + c.length * k / 40.0)) for k in range(41)])
     st = align.stations()
     stations = []
     for l in truth_labels:
@@ -406,8 +421,9 @@ def _targets(align: Alignment, truth_labels: Sequence[dict], to, unit: float) ->
             disp, _region = st.to_display(float(l["station"]))
             stations.append((int(round(disp / 100.0)), l["anchor"],
                              to(align.station_to_xy(float(l["station"]))[0])))
-    return _Targets(points, tangents, mids, [float(c.radius) for c in align.curves()], unit,
-                    stations)
+    curves = [(float(c.radius), float(c.length)) for c in align.curves()]
+    return _Targets(points, tangents, mids, [r for r, _l in curves], unit, stations, curves,
+                    [(float(c.radius), float(c.length)) for o in others for c in o.curves()], paths)
 
 
 def _is_point_label(text: Text, quad, tg: _Targets) -> bool:
@@ -509,35 +525,188 @@ def _is_bearing(text: Text, quad, tg: _Targets) -> bool:
     return False
 
 
-def _bubbles(ents: Dict[str, object], doc: Document, tg: _Targets, quad_of) -> List[str]:
-    """Curve bubbles at the alignment's curve midpoints: the circle, the
-    number in it."""
-    out = []
+def _ring(e, unit: float):
+    """A curve bubble digitised as a closed ring of vertices (the Caltrans
+    sheets' S-ANNO-TAG polylines): its centre and radius, else None."""
+    if not isinstance(e, Polyline) or len(e.vertices) < RING_MIN_VERTICES:
+        return None
+    pts = [list(v) for v in e.vertices]
+    if not (e.closed or geo.distance(pts[0], pts[-1]) <= RULE_TOL_IN * unit):
+        return None
+    bb = geo.bbox_of_points(pts)
+    w, h = bb[2] - bb[0], bb[3] - bb[1]
+    across = max(w, h)
+    if not (RING_MIN_IN * unit <= across <= RING_MAX_IN * unit and abs(w - h) <= 0.1 * across):
+        return None
+    return [(bb[0] + bb[2]) / 2.0, (bb[1] + bb[3]) / 2.0], across / 2.0
+
+
+def _square(center, r: float) -> List[List[float]]:
+    x, y = center
+    return [[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]]
+
+
+def _dist_to_path(p, path) -> float:
+    return min(geo.dist_point_to_segment(p, a, b) for a, b in zip(path, path[1:]))
+
+
+def _called_out(ents: Dict[str, object], square, tg: _Targets) -> bool:
+    """A leader runs from the box ``square`` to one of the alignment's curves."""
     for e in ents.values():
-        if not isinstance(e, Circle) or e.radius > BUBBLE_MAX_RADIUS_IN * tg.unit:
+        ends = _ends(e)
+        if not ends or _length(e) > LEADER_MAX_IN * tg.unit:
             continue
-        if not any(geo.distance(e.center, m) <= BUBBLE_REACH_IN * tg.unit for m in tg.midpoints):
+        for a, b in ((ends[0], ends[1]), (ends[1], ends[0])):
+            if (_dist_to_poly(a, square) <= LEADER_REACH_IN * tg.unit
+                    and any(_dist_to_path(b, path) <= LEADER_TIP_IN * tg.unit
+                            for path in tg.curve_paths)):
+                return True
+    return False
+
+
+def _bubbles(ents: Dict[str, object], doc: Document, tg: _Targets, quad_of
+             ) -> Tuple[List[str], List[list]]:
+    """Curve bubbles at the alignment's curve midpoints, and the number in
+    each: a Circle within reach of a midpoint; on the sheet also a ring of
+    vertices within reach whose leader ends on one of the alignment's curves
+    (the sheets' note tags are rings too, so reach alone does not name one;
+    in a base file a ring that size is a road symbol).  Returns the ids and
+    the bubbles' boxes (what their leaders end on)."""
+    out, quads = [], []
+    rings = []  # (midpoint index, distance, id, center, radius): each curve takes the nearest
+    for e in ents.values():
+        if isinstance(e, Circle):
+            if e.radius > BUBBLE_MAX_RADIUS_IN * tg.unit:
+                continue
+            center, radius = list(e.center), float(e.radius)
+            if not any(geo.distance(center, m) <= BUBBLE_REACH_IN * tg.unit for m in tg.midpoints):
+                continue
+            out.append(e.id)
+            quads.append(_square(center, radius))
+        else:
+            ring = _ring(e, tg.unit) if tg.unit == 1.0 else None
+            if ring is None:
+                continue
+            center, radius = ring
+            if not _called_out(ents, _square(center, radius), tg):
+                continue
+            near = [(geo.distance(center, m), k) for k, m in enumerate(tg.midpoints)
+                    if geo.distance(center, m) <= BUBBLE_REACH_IN * tg.unit]
+            if near:
+                d, k = min(near)
+                rings.append((k, d, e.id, center, radius))
+    taken = set()
+    for k, _d, rid, center, radius in sorted(rings, key=lambda r: (r[0], r[1])):
+        if k in taken:
             continue
-        out.append(e.id)
+        taken.add(k)
+        out.append(rid)
+        quads.append(_square(center, radius))
+    digits = []
+    for rid, square in zip(out, quads):
+        center = [(square[0][0] + square[2][0]) / 2.0, (square[0][1] + square[2][1]) / 2.0]
+        radius = (square[2][0] - square[0][0]) / 2.0
         for t in ents.values():
             if (isinstance(t, Text) and t.content.strip().isdigit()
-                    and geo.distance(t.position, e.center) <= 1.3 * e.radius):
-                out.append(t.id)
-    return out
+                    and geo.distance(t.position, center) <= 1.3 * radius):
+                digits.append(t.id)
+    return out + digits, quads
 
 
-def _table_texts(ents: Dict[str, object], doc: Document, tg: _Targets) -> Tuple[List[str], Optional[List[float]]]:
-    """A curve data table that tabulates one of the alignment's radii: its
-    title, grid and cells; and its top-left corner."""
-    for e in ents.values():
-        if isinstance(e, Table):
-            heads = " ".join(str(c.get("header", "")) for c in e.columns)
-            cells = [str(x) for row in e.rows for x in row]
-            if (TABLE_TITLE.search(str(getattr(e, "title", "") or "")) or "Δ" in heads) and any(
-                    abs(v - r) <= RADIUS_TOL * r for c in cells for v in _numbers_in(c)
-                    for r in tg.radii):
-                bb = e.bbox(doc)
-                return [e.id], ([bb[0], bb[3]] if bb else None)
+# ------------------------------------------------------------- the curve table
+
+_R_HEADER = re.compile(r"^\s*R(ADIUS)?\b", re.I)
+_L_HEADER = re.compile(r"^\s*L(ENGTH)?\b", re.I)
+_DMS = re.compile(r"[°º]")
+
+
+def _cell_value(cell: str) -> Optional[float]:
+    """The number a table cell states, unless it is an angle."""
+    if _DMS.search(cell):
+        return None
+    nums = _numbers_in(cell)
+    return nums[0] if nums else None
+
+
+def _own_rows(rows: Sequence[Sequence[str]], headers: Sequence[str], tg: _Targets) -> List[int]:
+    """Indices of the rows that tabulate the alignment's curves.  A row is a
+    curve's when its R is within ROW_RADIUS_TOL of the curve's radius.  Where
+    the sheet's lines have curves of nearly one radius (Route 65's ramps run
+    4,850 to 5,000 ft), each curve on the sheet takes the one row it fits
+    best, by radius then by length, the best fits first."""
+    r_col = next((i for i, h in enumerate(headers) if _R_HEADER.match(h)), None)
+    l_col = next((i for i, h in enumerate(headers) if _L_HEADER.match(h)), None)
+    pairs = []
+    for ri, row in enumerate(rows):
+        if r_col is not None and r_col < len(row):
+            value = _cell_value(row[r_col])
+            radii = [value] if value is not None else []
+        else:  # no R header: any plain number in the row may be the radius
+            radii = [v for v in (_cell_value(c) for c in row) if v is not None]
+        length = _cell_value(row[l_col]) if l_col is not None and l_col < len(row) else None
+        for mine, curves in ((True, tg.curves), (False, tg.others)):
+            for ci, (cr, cl) in enumerate(curves):
+                for value in radii:
+                    if abs(value - cr) <= ROW_RADIUS_TOL * cr:
+                        score = abs(value - cr) / cr
+                        if length is not None and cl:
+                            score += abs(length - cl) / cl
+                        pairs.append((score, ri, mine, ci))
+    taken_rows, taken_curves, own = set(), set(), []
+    for _score, ri, mine, ci in sorted(pairs):
+        if ri in taken_rows or (mine, ci) in taken_curves:
+            continue
+        taken_rows.add(ri)
+        taken_curves.add((mine, ci))
+        if mine:
+            own.append(ri)
+    return sorted(own)
+
+
+@dataclass
+class _TableCut:
+    """What ``_table_cut`` did to a curve data table."""
+
+    ids: List[str] = field(default_factory=list)       # entities removed
+    rows: List[str] = field(default_factory=list)      # rows removed from a kept table
+    corner: Optional[List[float]] = None               # the published table's top-left corner
+    kept: Optional[List[float]] = None                 # the kept table's box, when rows remain
+
+
+def _is_rule(e, bb, horizontal: bool, span: float) -> bool:
+    """A grid rule: a Line along one axis at least half the grid's span."""
+    if not isinstance(e, Line):
+        return False
+    w, h = bb[2] - bb[0], bb[3] - bb[1]
+    return (h <= RULE_TOL_IN and w >= 0.5 * span) if horizontal else (w <= RULE_TOL_IN and h >= 0.5 * span)
+
+
+def _shifted(p, dy: float):
+    return [float(p[0]), float(p[1]) + dy]
+
+
+def _table_cut(ents: Dict[str, object], doc: Document, tg: _Targets) -> _TableCut:
+    """A curve data table that tabulates one of the alignment's curves.  Only
+    the alignment's rows go: when the table tabulates other lines' curves too
+    (L-1's lists TB1's and TB2's), their rows stay and the table is kept,
+    the rows below the cut closed up; a table that tabulates nothing else
+    goes whole.  Works on a Table entity, or on a title with a grid of lines
+    and text cells under it (the redrafted Caltrans sheets)."""
+    for e in list(ents.values()):
+        if not isinstance(e, Table):
+            continue
+        heads = [str(c.get("header", "")) for c in e.columns]
+        if not (TABLE_TITLE.search(str(getattr(e, "title", "") or "")) or "Δ" in " ".join(heads)):
+            continue
+        own = _own_rows(e.rows, heads, tg)
+        if not own:
+            continue
+        bb = e.bbox(doc)
+        corner = [bb[0], bb[3]]
+        if len(own) == len(e.rows):
+            return _TableCut(ids=[e.id], corner=corner)
+        e.rows = [r for i, r in enumerate(e.rows) if i not in own]
+        return _TableCut(rows=[f"{e.id}:{i}" for i in own], corner=corner, kept=list(e.bbox(doc)))
     for title in ents.values():
         if not (isinstance(title, Text) and TABLE_TITLE.search(title.content)):
             continue
@@ -573,11 +742,76 @@ def _table_texts(ents: Dict[str, object], doc: Document, tg: _Targets) -> Tuple[
         cells = [t for t in ents.values() if isinstance(t, Text) and t.id != title.id
                  and geo.bbox_contains(region, (t.position[0], t.position[1],
                                                 t.position[0], t.position[1]))]
-        if any(abs(v - r) <= RADIUS_TOL * r for t in cells for v in _numbers_in(t.content)
-               for r in tg.radii):
-            corner = [min(region[0], tb[0]), max(region[3], tb[3])]
-            return [title.id] + sorted(grid) + [t.id for t in cells], corner
-    return [], None
+        boxes = {lid: bb for lid, bb in lines if lid in grid}
+        span_x, span_y = region[2] - region[0], region[3] - region[1]
+        # the rows are the bands between the horizontal rules, the columns the
+        # gaps between the vertical ones
+        ys = sorted({round(bb[1], 3) for lid, bb in boxes.items()
+                     if _is_rule(ents[lid], bb, True, span_x)
+                     and region[1] + RULE_TOL_IN < bb[1] < region[3] - RULE_TOL_IN}, reverse=True)
+        edges = [region[3]] + ys + [region[1]]
+        bands = [(edges[i + 1], edges[i]) for i in range(len(edges) - 1)]  # (lo, hi), top first
+        xs = sorted({round(bb[0], 3) for lid, bb in boxes.items()
+                     if _is_rule(ents[lid], bb, False, span_y)
+                     and region[0] + RULE_TOL_IN < bb[0] < region[2] - RULE_TOL_IN})
+        col_edges = [region[0]] + xs + [region[2]]
+
+        def col_of(t: Text) -> int:
+            return max(0, min(len(col_edges) - 2,
+                              sum(1 for x in col_edges[1:-1] if t.position[0] >= x)))
+
+        band_cells = [[t for t in cells if lo <= t.position[1] < hi] for lo, hi in bands]
+        header_i = next((i for i, bc in enumerate(band_cells)
+                         if any(_R_HEADER.match(t.content) or "Δ" in t.content for t in bc)), None)
+        headers = [""] * (len(col_edges) - 1)
+        if header_i is not None:
+            for t in band_cells[header_i]:
+                headers[col_of(t)] = (headers[col_of(t)] + " " + t.content).strip()
+        data_i = [i for i, bc in enumerate(band_cells) if bc and i != header_i]
+        rows = []
+        for i in data_i:
+            row = [""] * len(headers)
+            for t in band_cells[i]:
+                row[col_of(t)] = (row[col_of(t)] + " " + t.content).strip()
+            rows.append(row)
+        own = _own_rows(rows, headers, tg)
+        if not own:
+            continue
+        corner = [min(region[0], tb[0]), max(region[3], tb[3])]
+        if len(own) == len(data_i):
+            return _TableCut(ids=[title.id] + sorted(grid) + [t.id for t in cells], corner=corner)
+        # cut the alignment's rows: their cells and one rule each (the one along
+        # the row's bottom edge, else its top, which the border below then
+        # takes over), and close the rows below up by the height removed
+        drop = [bands[data_i[k]] for k in own]
+        gone: List[str] = []
+        for lo, hi in drop:
+            gone += [t.id for t in band_cells[bands.index((lo, hi))]]
+            for edge in (lo, hi):
+                rule = [lid for lid, bb in boxes.items() if _is_rule(ents[lid], bb, True, span_x)
+                        and abs(bb[1] - edge) <= RULE_TOL_IN and lid not in gone]
+                if rule:
+                    gone += rule
+                    break
+
+        def shift(y: float) -> float:
+            return sum(hi - lo for lo, hi in drop if y <= lo + RULE_TOL_IN)
+
+        for lid in grid:
+            e = ents[lid]
+            if lid in gone:
+                continue
+            if isinstance(e, Line):
+                e.start, e.end = _shifted(e.start, shift(e.start[1])), _shifted(e.end, shift(e.end[1]))
+            elif isinstance(e, Polyline):
+                e.vertices = [_shifted(v, shift(v[1])) for v in e.vertices]
+        for t in cells:
+            if t.id not in gone:
+                t.position = _shifted(t.position, shift(t.position[1]))
+        closed = sum(hi - lo for lo, hi in drop)
+        return _TableCut(ids=gone, rows=[f"{title.id}:{data_i[k]}" for k in own], corner=corner,
+                         kept=[region[0], region[1] + closed, region[2], max(region[3], tb[3])])
+    return _TableCut()
 
 
 def _leaders(ents: Dict[str, object], removed_quads: List[list], unit: float) -> List[str]:
@@ -614,9 +848,11 @@ def _strip_space(ents: Dict[str, object], doc: Document, tg: _Targets, name: str
                              if _is_bearing(ents[i], q, tg) or _is_length(ents[i], q, tg))
     gone["stations"] = fresh(i for i, q in quads.items() if _is_station_number(ents[i], q, tg))
     gone["ticks"] = fresh(_ticks(ents, tg))
-    gone["bubbles"] = fresh(_bubbles(ents, doc, tg, quad_of))
-    table, corner = _table_texts(ents, doc, tg) if tg.unit == 1.0 else ([], None)
-    if tg.unit == 1.0 and not table:
+    bubbles, bubble_quads = _bubbles(ents, doc, tg, quad_of)
+    gone["bubbles"] = fresh(bubbles)
+    cut = _table_cut(ents, doc, tg) if tg.unit == 1.0 else _TableCut()
+    table, corner = cut.ids, cut.corner
+    if tg.unit == 1.0 and not table and not cut.rows:
         table = _curve_data_block(ents, doc, tg)
         if table:
             bb = None
@@ -624,9 +860,9 @@ def _strip_space(ents: Dict[str, object], doc: Document, tg: _Targets, name: str
                 bb = geo.bbox_union(bb, geo.bbox_of_points(quads[i]))
             corner = [bb[0], bb[3]]
     gone["table"] = fresh(table)
+    gone["table_rows"] = list(cut.rows)
     removed_quads = [quads[i] for k in ("curve_points", "bearings", "stations") for i in gone[k]]
-    removed_quads += [geo_circle_quad(ents[i]) for i in gone["bubbles"]
-                      if isinstance(ents.get(i), Circle)]
+    removed_quads += bubble_quads
     taken = {i for ids in gone.values() for i in ids}
     gone["leaders"] = [i for i in _leaders({k: v for k, v in ents.items() if k not in taken},
                                            removed_quads, tg.unit)]
@@ -635,13 +871,13 @@ def _strip_space(ents: Dict[str, object], doc: Document, tg: _Targets, name: str
             ents.pop(i, None)
     if corner is not None:
         gone["_table_corner"] = corner  # type: ignore[assignment]
+    if cut.kept is not None:
+        gone["_table_kept"] = cut.kept  # type: ignore[assignment]
     return {k: v for k, v in gone.items() if v}
 
 
 def geo_circle_quad(c: Circle) -> List[List[float]]:
-    r = float(c.radius)
-    x, y = c.center
-    return [[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]]
+    return _square(c.center, float(c.radius))
 
 
 def strip_alignment(sheet_doc: Document, bases: Dict[str, Document], design_file: str,
@@ -649,15 +885,20 @@ def strip_alignment(sheet_doc: Document, bases: Dict[str, Document], design_file
                     linework: bool = False) -> dict:
     """Remove ``align``'s own real annotation from the sheet file and the base
     files (in place), and with ``linework`` its drawn centerline too; returns
-    what went, by file and kind, and the corner of any curve table removed."""
+    what went, by file and kind, the top-left corner of the curve table it
+    was tabulated in (``table_corner``), and that table's box when it stays
+    for the other lines' rows (``table_kept``, else None)."""
     sheet = _only_sheet(sheet_doc)
     vp = sheet.viewports[0]
     t = vp.transform()
     fpi = float(vp.feet_per_inch)
     report: Dict[str, dict] = {}
     corner = None
+    # the sheet's other lines, whose rows of a shared curve table stay
+    others = [a for base in bases.values() for a in base.design.alignments.values()
+              if a.name != align.name]
     # model space of every base: model units, one paper inch = fpi feet
-    tg_model = _targets(align, truth_labels, lambda p: list(p), fpi)
+    tg_model = _targets(align, truth_labels, lambda p: list(p), fpi, others)
     for fname, base in bases.items():
         got = _strip_space(base.model_entities, base, tg_model, align.name,
                            lambda e, b=base: _quad(e, b), own_anchor=(fname == design_file),
@@ -665,13 +906,14 @@ def strip_alignment(sheet_doc: Document, bases: Dict[str, Document], design_file
         if got:
             report[fname] = got
     # the sheet: paper inches
-    tg_paper = _targets(align, truth_labels, lambda p: list(t.to_paper(p)), 1.0)
+    tg_paper = _targets(align, truth_labels, lambda p: list(t.to_paper(p)), 1.0, others)
     got = _strip_space(sheet.entities, sheet_doc, tg_paper, align.name,
                        lambda e: _quad(e, sheet_doc), own_anchor=False)
     corner = got.pop("_table_corner", None)
+    kept = got.pop("_table_kept", None)
     if got:
         report["sheet"] = got
-    return {"removed": report, "table_corner": corner}
+    return {"removed": report, "table_corner": corner, "table_kept": kept}
 
 
 # ===================================================================== clear space
@@ -1097,7 +1339,7 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
     # -- the shipped copies: the base files, and the sheet file cut for the task
     bases = {name: _load(src.folder / name) for name in src.files if name != src.sheet_file}
     work = _load(src.folder / src.sheet_file)
-    stripped = {"removed": {}, "table_corner": None}
+    stripped = {"removed": {}, "table_corner": None, "table_kept": None}
     if kind in ("letter", "draw", "setup", "blank", "scratch"):
         stripped = strip_alignment(work, bases, design_file, align, truth.labels,
                                    linework=(kind == "draw"))
@@ -1134,14 +1376,21 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
             from roaddraft.tasks.generator import _table_size
             w, h = _table_size(align, sh["curves"], D["curve_table_columns"],
                                D["text_heights"]["sheet_table_in"])
-            prefer = stripped["table_corner"] or [usable[2] - w - 0.25, usable[1] + h + 0.25]
+            # where the published table was; below it when it stays on the sheet
+            # for the other lines' rows (a blank sheet has lost it with the rest)
+            kept = stripped["table_kept"] if kind == "letter" else None
+            if kept:
+                prefer = [kept[0], kept[1] - TABLE_MARGIN_IN]
+            else:
+                prefer = stripped["table_corner"] or [usable[2] - w - 0.25, usable[1] + h + 0.25]
             spot = table_spot(grid, usable, w, h, prefer)
             if spot is None and "table" in ttype.asks:
                 raise ValueError(f"{src.id} {alignment}: no clear space for the curve table")
             # a sheet too full for the table starts without one when the task is not the table
             D["table_given"] = spot is not None and "table" in ttype.given
             sh["curve_table_position"] = spot or [round(v, 2) for v in prefer]
-            sh["curve_table_replaces"] = bool(stripped["table_corner"]) and spot is not None
+            sh["curve_table_replaces"] = (bool(stripped["table_corner"]) and spot is not None
+                                          and not kept)
             if spot is not None:
                 grid.fill([[spot[0], spot[1] - h], [spot[0] + w, spot[1] - h],
                            [spot[0] + w, spot[1]], [spot[0], spot[1]]])
