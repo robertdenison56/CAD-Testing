@@ -229,7 +229,8 @@ PPM_SHEET_TEXT = {
 PPM_STROKES = {"bearing": (16.25, 8.12, 18.10, 8.45), "length": (21.15, 8.20, 22.20, 8.48),
                "quotes": (14.30, 8.22, 15.15, 8.40)}   # a second pair of quotes on "TB1" LINE
 #: the layers the digitiser put those strokes on, per file (the ticks on V-ANNO-STAT stay)
-PPM_STROKE_LAYERS = {"AA01": ("V-ROAD", "V-ROAD-HTCH"), "BB01": ("E-TOPO-SYMB",)}
+PPM_STROKE_LAYERS = {"AA01": ("V-ROAD", "V-ROAD-HTCH", "V-ANNO-TRACE"),
+                     "BB01": ("E-TOPO-SYMB", "E-TOPO-TRACE")}
 #: where the north arrow sits on L-1 (S-ANNO-SYMB lines and polylines)
 PPM_NORTH_BOX = (20.0, 18.3, 24.0, 19.3)
 #: the pieces of "Orchard Creek" (the C was in AA01)
