@@ -145,6 +145,10 @@ DESIGN_SCHEMAS = {
                                    "drawn elements to the new geometry, on the "
                                    "layer they were drawn on (default false)"}},
         ["name", "changes"]),
+    "update_labels": obj(
+        {"alignment": {**NSTR, "description": "the alignment whose labels to bring up to "
+                                              "date: this document's, or a referenced one "
+                                              "as 'BASE:RTE-7'; omit for every one"}}),
     "delete_alignment": obj(
         {"name": NSTR,
          "cascade": {"type": "boolean",
@@ -251,6 +255,7 @@ DESIGN_EXAMPLES = {
                          "pis": [[4100, 7300], [4914.359354, 7300, 800],
                                  [5533.012702, 7657.179677]]},
     "modify_alignment": {"name": "ALIGN-1", "changes": {"begin_station": "90+00"}},
+    "update_labels": {"alignment": "BASE:ALIGN-1"},
     "delete_alignment": {"name": "ALIGN-1"},
     "create_profile": {"name": "PROF-1", "alignment": "ALIGN-1",
                        "pvis": [[8000, 100], [8800, 120, 400], [9400, 90]]},

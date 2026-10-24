@@ -449,6 +449,7 @@ class WebApp:
                                               show_viewport_frames=frames)
                 meta = {"kind": "sheet",
                         "size_in": [sheet.width_in, sheet.height_in]}
+            mpl_render.hold_text_legible(fig, dpi)
             fig.savefig(buf, format="png", dpi=dpi,
                         facecolor=fig.get_facecolor())
             mpl_render.plt.close(fig)

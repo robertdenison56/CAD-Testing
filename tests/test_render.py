@@ -64,3 +64,34 @@ def test_export_pdf_no_sheets_fails_cleanly(tmp_path):
     s = Session(out_dir=str(tmp_path))
     r = s.query("export_pdf", {})
     assert not r["ok"] and "create_sheet" in r["error"]["hint"]
+
+
+def test_render_at_the_lowest_dpi_letters_tiny_text_instead_of_crashing(tmp_path):
+    """A model view of a long project shrinks its lettering to the 1 pt floor,
+    which at 30 dpi is under half a pixel: matplotlib raised 'Could not set the
+    fontsize (invalid ppem value)' (pilot work, 2026-10-19). Text is now held
+    at a pixel or more for the dpi it is saved at."""
+    from roaddraft.render import mpl as mpl_render
+
+    s = Session(project_name="LowDpi", out_dir=str(tmp_path))
+    s.execute("draw_line", {"space": "model", "start": [0, 0], "end": [20000, 0]})
+    s.execute("place_text", {"space": "model", "position": [100, 10],
+                             "content": "TINY", "height": 0.1})
+    s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"})
+    s.execute("place_text", {"space": "C-101", "position": [5, 5],
+                             "content": "TINY", "height": 0.001})
+    for dpi in (30, 45):
+        r = s.query("render_model", {"dpi": dpi})
+        assert r["ok"], r
+        r = s.query("render_sheet", {"sheet": "C-101", "dpi": dpi})
+        assert r["ok"], r
+
+    # the floor is a pixel at the dpi asked for, and nothing moves from 72 up
+    fig, _bounds = mpl_render.model_figure(s.doc)
+    sizes = [t.get_fontsize() for t in fig.texts + fig.axes[0].texts]
+    assert sizes == [1.0]
+    mpl_render.hold_text_legible(fig, 150)
+    assert [t.get_fontsize() for t in fig.axes[0].texts] == [1.0]
+    mpl_render.hold_text_legible(fig, 30)
+    assert [t.get_fontsize() for t in fig.axes[0].texts] == [2.4]
+    mpl_render.plt.close(fig)

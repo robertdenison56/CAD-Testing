@@ -67,6 +67,15 @@ def linetype(dash):
     return "dashed"
 
 
+#: lettering the published sheet draws as linework (traced.py): each base file keeps
+#: it on a layer of its own, as drawn
+TRACE_DESC = "Lettering the published sheet draws as linework, kept as drawn (no text layer)"
+
+
+def trace_layer(d, name):
+    return d.layer(name, 0.18, None, TRACE_DESC)
+
+
 def simplify(pts, tol=0.0015):
     if len(pts) < 3:
         return list(pts)
@@ -343,6 +352,10 @@ def build_bases(dig, out, names, title):
         for p in bbp:
             if p.get("_in_group"):
                 continue
+            if p.get("traced"):
+                draw(d, "model", p["pts"], trace_layer(d, "E-TOPO-TRACE"), is_closed(p["pts"]),
+                     linetype(p["dash"]), p["fill"], xf)
+                continue
             if p["dash"]:
                 lay = d.layer("E-TOPO-HVY" if p["lw"] > 0.9 else "E-TOPO", 0.35 if p["lw"] > 0.9 else 0.18,
                               "dot", "Existing topography (dropped out)")
@@ -353,7 +366,9 @@ def build_bases(dig, out, names, title):
                 lt = None
             draw(d, "model", p["pts"], lay, is_closed(p["pts"]), lt, p["fill"], xf)
         for g in groups:
-            draw_filled(d, "model", g, d.layer("E-TOPO-SYMB", 0.18, None, "Existing features drawn solid"), xf)
+            lay = trace_layer(d, "E-TOPO-TRACE") if all(q.get("traced") for q in g) else \
+                d.layer("E-TOPO-SYMB", 0.18, None, "Existing features drawn solid")
+            draw_filled(d, "model", g, lay, xf)
         for r in bbt:
             text_in(d, "model", r, d.layer("E-TOPO-TEXT", 0.18, None, "Contour elevations, names"), xf)
         path = out / f"{project}bb01.rdraft"
@@ -368,8 +383,9 @@ def build_bases(dig, out, names, title):
               f"{names[3]} -- pipes, culverts, inlets, end sections." + desc_tail}})
         d.run("set_annotation_scale", {"scale": dig["fpi"]})
         for p in dp:
-            lay = d.layer("D-DRAIN" if p["lw"] >= 1.85 else "D-DRAIN-SYMB",
-                          0.70 if p["lw"] >= 1.85 else 0.35, None, "Drainage system")
+            lay = trace_layer(d, "D-DRAIN-TRACE") if p.get("traced") else \
+                d.layer("D-DRAIN" if p["lw"] >= 1.85 else "D-DRAIN-SYMB",
+                        0.70 if p["lw"] >= 1.85 else 0.35, None, "Drainage system")
             draw(d, "model", p["pts"], lay, is_closed(p["pts"]), linetype(p["dash"]), p["fill"], xf)
         path = out / f"{project}aa02.rdraft"
         d.save(path)
@@ -481,6 +497,10 @@ def build_bases(dig, out, names, title):
                 text_in(d, "model", r, d.layer("V-ANNO-TEXT", 0.25, None, "R/W, catch points"), xf)
         row = row_ids(dig, ap)
         for p in ap:
+            if p.get("traced"):
+                draw(d, "model", p["pts"], trace_layer(d, "V-ANNO-TRACE"), is_closed(p["pts"]),
+                     linetype(p["dash"]), p["fill"], xf)
+                continue
             lay = d.layer("V-ROW", 0.35, None, "Right of way") if p["id"] in row or \
                 p.get("symbol_of") in row else model_layer(d, p, s)
             lt = linetype(p["dash"])

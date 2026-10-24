@@ -1384,15 +1384,31 @@ def modify_reference(doc: Document, p: dict):
 
 
 def reload_references(doc: Document, p: dict):
+    from roaddraft.commands.label_updates import stale_labels
     doc._ref_cache.clear()
     count = len(doc.references)
+    # labels lettered through a reference do not see its basefile change
+    warnings = [f"{_plural_n(n, 'label')} anchored to {name} no longer stand where its "
+                f"design puts them; update_labels alignment={name!r} brings them up to date"
+                for name, n in stale_labels(doc).items()]
     return (f"reference cache cleared; {count} reference(s) will reload from "
-            f"disk on next use", _diff(), [])
+            f"disk on next use", _diff(), warnings)
+
+
+def _plural_n(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
 
 
 def fill_title_block(doc: Document, p: dict):
+    from roaddraft.render.titleblock import keys_text, template_keys
     sheet = _sheet(doc, p["sheet"])
     fields = {k: str(v) for k, v in p["fields"].items()}
     sheet.title_block_fields.update(fields)
+    warnings = []
+    template = (sheet.title_block_template or "standard").lower()
+    unlettered = [k for k in fields if k not in template_keys(template)]
+    if unlettered and template != "none":
+        warnings.append(f"the {template} border letters no {', '.join(unlettered)} (kept with "
+                        f"the sheet's fields, but not drawn); it letters: {keys_text(template)}")
     return (f"title block of {sheet.name} updated: {', '.join(sorted(fields))}",
-            _diff(modified=[sheet.id]), [])
+            _diff(modified=[sheet.id]), warnings)

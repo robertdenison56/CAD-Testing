@@ -289,3 +289,29 @@ def test_autosave_stays_with_the_opened_file_when_the_agent_saves_a_copy(tmp_pat
     assert not call(srv, "create_layer", name="L9", color="black")["isError"]
     assert "L9" in Session.load(other, out_dir=tmp_path).doc.layers
     assert "L9" not in Session.load(sheets, out_dir=tmp_path).doc.layers
+
+
+def test_a_file_opened_again_keeps_its_journal(tmp_path):
+    """Autosave wrote a file's journal from the session that opened it, so an
+    agent that went to a base file and came back started the sheet's journal
+    over, losing what it had done there first (2026-10-20). A file opened again
+    now carries its earlier passes: the journal holds every command, each pass
+    from an init with the file as it was then, and replays to the file."""
+    from roaddraft.document.fileformat import journal_path
+    from roaddraft.probes import fixture
+    model, sheets = fixture.build(tmp_path)
+    srv = RoadDraftMCP(Session.load(sheets, out_dir=tmp_path), autosave=True)
+    assert not call(srv, "create_layer", name="FIRST")["isError"]
+    assert not call(srv, "open_document", path=str(model))["isError"]
+    assert not call(srv, "create_layer", name="IN-BASE")["isError"]
+    assert not call(srv, "open_document", path=str(sheets))["isError"]
+    assert not call(srv, "create_layer", name="SECOND")["isError"]
+
+    records = [json.loads(line) for line in journal_path(sheets).read_text().splitlines()]
+    assert [r["type"] for r in records] == ["init", "command", "init", "command"]
+    assert [r["params"]["name"] for r in records if r["type"] == "command"] == ["FIRST", "SECOND"]
+    replayed = Session.replay_journal(journal_path(sheets))
+    assert replayed.doc.to_dict() == Session.load(sheets).doc.to_dict()
+    assert {"FIRST", "SECOND"} <= set(replayed.doc.layers)
+    base = [json.loads(line) for line in journal_path(model).read_text().splitlines()]
+    assert [r.get("params", {}).get("name") for r in base] == [None, "IN-BASE"]
