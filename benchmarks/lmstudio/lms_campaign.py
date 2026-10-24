@@ -55,6 +55,8 @@ BASE_URL = "http://localhost:1234/v1"
 MODELS_URL = "http://localhost:1234/api/v0/models"
 DEVICE = "RobertsPC"
 CONTEXT = 65536
+LOAD_TIMEOUT_S = 300  # lms load over LM Link: 6-10 s when it works, hung for good when it does not
+
 BUDGET_MIN, MAX_TURNS = 30, 120     # the hosted open-weight setting of the Runpod rows
 CLEAN_TOOLS, CLEAN_INSTRUCTIONS = "sha256:60eeeb2195be", "sha256:4dff2849f3c5"
 SPEED_TEXT = REPO / "benchmarks" / "runpod" / "README.md"   # the 2026-10-20 timing prompt (80,000 chars)
@@ -131,11 +133,41 @@ def file_problem(m: dict) -> Optional[str]:
     return None
 
 
+def wait_state(key: str, want: str, seconds: int) -> bool:
+    """Poll the server until ``key`` is in state ``want`` (``not-loaded`` after an unload, ``loaded`` after a load)."""
+    for _ in range(seconds):
+        try:
+            rows = {s["id"]: s.get("state") for s in served()}
+        except Exception:  # noqa: BLE001  the server answers again in a moment
+            rows = {}
+        if rows.get(key, "not-loaded") == want:
+            return True
+        time.sleep(1)
+    return False
+
+
 def load_alone(m: dict, gpu: Optional[str] = None) -> subprocess.CompletedProcess:
-    """Everything else unloaded, the spec's model at CONTEXT, parallel 1 (the runner guard's own load)."""
+    """Everything else unloaded, the spec's model at CONTEXT, parallel 1 (the runner guard's own load).
+
+    Oct 23 2026: a ``load`` issued right behind ``unload --all`` over LM Link sat at "97%" for eight minutes with the
+    server reporting ``loading``, and the CLI never returned; a second load after the unload had settled took 6 s.
+    So wait for the unload to show on the server, give the CLI a deadline, and trust the server's state over the
+    CLI's exit: the load counts when the server says ``loaded``.
+    """
     lms("unload", "--all")
-    args = ["load", m["lms_key"], "--context-length", str(CONTEXT), "--parallel", "1", "-y"]
-    return lms(*args, *(["--gpu", gpu] if gpu else []))
+    wait_state(m["lms_key"], "not-loaded", 60)
+    args = [LMS, "load", m["lms_key"], "--context-length", str(CONTEXT), "--parallel", "1", "-y"]
+    args += ["--gpu", gpu] if gpu else []
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=LOAD_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        out = (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        r = subprocess.CompletedProcess(args, 124, out, f"lms load gave no answer in {LOAD_TIMEOUT_S} s")
+    if r.returncode != 0 and wait_state(m["lms_key"], "loaded", 30):
+        r = subprocess.CompletedProcess(args, 0, r.stdout, r.stderr)
+    elif r.returncode == 0:
+        wait_state(m["lms_key"], "loaded", 30)
+    return r
 
 
 def loaded_problem(m: dict) -> Optional[str]:

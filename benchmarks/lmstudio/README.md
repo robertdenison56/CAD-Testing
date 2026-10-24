@@ -5,7 +5,11 @@ LM Studio serves the PC's models to the Mac over LM Link (`localhost:1234`), so 
 `--backend openai` (probes) and `--provider openai` (E3) with the `--lms-context 65536` reload guard.
 `models.json` holds the specs and `lms_campaign.py` the commands, built like the Runpod rig next door.
 
-**Status, 2026-10-20 night: set up, nothing run.** Runs start on Robert's word.
+**Status, 2026-10-23 evening: first run going.** A single d1-dev test episode on the 9B ran clean through the
+harness (20-min wall clock, score 0), then Robert started `e3 qwen3.5-9b` (d1-variance x 5, run id
+`e3-d1-variance-qwen3.5-9b-q4km-lms-single`). Found on the way: `lms load` right behind `lms unload --all`
+can hang at "97%" for good; `load_alone` now waits for the unload, gives the CLI a deadline and trusts the
+server's `loaded` state.
 
 ## Which leaderboard models fit (2026-10-20)
 
