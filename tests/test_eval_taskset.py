@@ -64,8 +64,8 @@ def test_real_sets_draw_every_type_and_agency_from_the_catalogue():
     from roaddraft.tasks.types import REAL_TASK_TYPES
     catalogue = {t["task_id"]: t for t in tasksets.load_catalog()["tasks"]}
     real, dev = (tasksets.load(n)["tasks"] for n in tasksets.REAL_NAMES)
-    assert len(real) == tasksets.REAL_PER_TYPE * len(REAL_TASK_TYPES) == 99
-    assert len(dev) == tasksets.REAL_DEV_PER_TYPE * len(REAL_TASK_TYPES) == 22
+    assert len(real) == tasksets.REAL_PER_TYPE * len(REAL_TASK_TYPES) == 108
+    assert len(dev) == tasksets.REAL_DEV_PER_TYPE * len(REAL_TASK_TYPES) == 24
     for rows, per in ((real, tasksets.REAL_PER_TYPE), (dev, tasksets.REAL_DEV_PER_TYPE)):
         assert Counter(t["task_type"] for t in rows) == {ty: per for ty in REAL_TASK_TYPES}
         assert len({t["task_id"] for t in rows}) == len(rows)
@@ -74,7 +74,7 @@ def test_real_sets_draw_every_type_and_agency_from_the_catalogue():
             assert (c["sheet_id"], c["alignment"], c["type"]) == (t["sheet_id"], t["alignment"],
                                                                    t["task_type"])
             assert t["sheets"] == 1 and t["task_id"].startswith("D1-")
-    # the held-out set reaches every agency; the first eleven are one of each type
+    # the held-out set reaches every agency; the first twelve are one of each type
     assert {t["agency"] for t in real} == {t["agency"] for t in catalogue.values()}
     assert {t["task_type"] for t in real[:len(REAL_TASK_TYPES)]} == set(REAL_TASK_TYPES)
     # dev and held-out never share a sheet

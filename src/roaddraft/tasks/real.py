@@ -10,12 +10,14 @@ drafter letters one of the sheet's alignments to the spec; everything else
 on the sheet -- the other alignments, the corridor, notes, callouts,
 legend, border and title block -- is the real sheet's and stays.
 
-Eleven types: five letter one alignment around the sheet's own work
+Twelve types: five letter one alignment around the sheet's own work
 (stationing, bearings, curve callouts, curve table, all of it); the rest are
 the sheet's other jobs on the same sets -- draw the alignment in its base
 file, re-attach the sheet's base files, fill its title block, lay the sheet
-out on the annotated model, annotate it blank, or draft it from the base
-files alone (``START_KIND`` says how each starts).
+out on the annotated model, annotate it blank, draft it from the base files
+alone, or re-place its construction callouts (``tasks.real_callouts``: the
+published notes taken off the sheet and handed back with a station and
+offset each; ``START_KIND`` says how each starts).
 
 A lettering task is made from (sheet, alignment, task type):
 
@@ -93,16 +95,21 @@ AGENCIES: Dict[str, str] = {
 #: base file without its centerline; ``attach`` the sheet file with no references;
 #: ``title`` the sheet file with its title block emptied; ``setup`` the sheet file with
 #: its sheet gone and the alignment annotated in the model; ``blank`` the sheet emptied;
-#: ``scratch`` the sheet file with its sheet gone
+#: ``scratch`` the sheet file with its sheet gone; ``notes`` the sheet file with a spread
+#: of its construction callouts removed
 START_KIND = {
     "real-stationing": "letter", "real-bearings": "letter", "real-callouts": "letter",
     "real-curve-table": "letter", "real-alignment-data": "letter",
     "real-draw-alignment": "draw", "real-attach-reference": "attach",
     "real-title-block": "title", "real-sheet-setup": "setup",
     "real-annotate-sheet": "blank", "real-plan-sheet": "scratch",
+    "real-construction-callouts": "notes",
 }
 #: types about the sheet itself, not one of its alignments: one task per sheet
-SHEET_TYPES = ("real-attach-reference", "real-title-block")
+SHEET_TYPES = ("real-attach-reference", "real-title-block", "real-construction-callouts")
+#: types whose targets may sit on any referenced line, traced centerlines included: the
+#: alignment named is the task's primary line, not the one lettered
+ANY_LINE_TYPES = ("real-construction-callouts",)
 #: the fields of each border a drafter fills for a sheet (key, how the prompt names it),
 #: and the two a vague prompt still states (the rest need only be filled)
 TITLE_FIELDS = {
@@ -280,10 +287,12 @@ def candidates() -> List[Tuple[RealSheet, str, str]]:
         fpi = float(sheet.viewports[0].feet_per_inch)
         if fpi not in [float(f) for f in DRAFTING_SPEC_V1["sheet"]["allowed_feet_per_inch"]]:
             continue  # a scale the spec does not draft at
-        aligns = [align for _ref, _base, align, placement in reference_alignments(doc)
-                  if placement.is_identity and not usable_alignment(align)]
+        every = [align for _ref, _base, align, placement in reference_alignments(doc)
+                 if placement.is_identity]
+        aligns = [align for align in every if not usable_alignment(align)]
         for name, ttype in REAL_TASK_TYPES.items():
-            fits = [a for a in aligns if not type_fits(a, ttype)]
+            pool = every if name in ANY_LINE_TYPES else aligns
+            fits = [a for a in pool if not type_fits(a, ttype)]
             for align in fits[:1] if name in SHEET_TYPES else fits:
                 out.append((src, align.name, name))
     return out
@@ -942,6 +951,30 @@ def _draft(task: Task, phases: Iterable[str]):
     return session
 
 
+def _notes_through_text(task: Task) -> List[int]:
+    """Indexes of the task's construction callouts (``D["callouts"]``) that the
+    reference cannot place legibly on the stripped sheet: a leader through
+    the sheet's own text, or a note on another item.  Of two new notes on each
+    other, the later one goes."""
+    from roaddraft.tasks.reference import phase_commands
+    from roaddraft.verify import verify
+    session = _session(task)
+    made: Dict[str, int] = {}
+    for n, (name, params) in enumerate(phase_commands(task, ["notes"])):
+        result = session.execute(name, params)
+        if not result["ok"]:
+            raise ValueError(f"placing note {n + 1} on "
+                             f"{task.brief.deliverable['source']['sheet']}: "
+                             f"{result['error']['message']}")
+        made[result["created"][-1]] = n  # the callout's text is created last
+    bad = set()
+    for finding in verify(session.doc, task.truth).check("D1-08").findings:
+        mine = sorted(made[i] for i in finding.entity_ids if i in made)
+        if mine:
+            bad.add(mine[-1])
+    return sorted(bad)
+
+
 def _project(src: RealSheet, sheet) -> dict:
     tb = dict(sheet.title_block_fields or {})
     name = src.project or tb.get("project") or tb.get("project_name") or src.id
@@ -1057,9 +1090,17 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
     if not found:
         raise ValueError(f"{src.id}: no alignment {alignment!r} through a reference at identity")
     ref, base, align = found[0]
-    why = usable_alignment(align) or type_fits(align, ttype)
+    why = (None if ttype.name in ANY_LINE_TYPES else usable_alignment(align)) \
+        or type_fits(align, ttype)
     if why:
         raise ValueError(f"{src.id} {alignment}: {why}")
+    notes: list = []
+    if kind == "notes":
+        from roaddraft.tasks.real_callouts import MIN_NOTES, published_callouts, task_notes
+        notes = task_notes(published_callouts(sheet_doc, sheet))
+        if len(notes) < MIN_NOTES:
+            raise ValueError(f"{src.id}: {len(notes)} construction callouts point at a referenced "
+                             f"line inside the plan view (fewer than {MIN_NOTES})")
     template = getattr(sheet, "title_block_template", None) or "standard"
     title = _title(sheet, template)
     if "title" in ttype.asks and not title:
@@ -1073,9 +1114,17 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
     design = {"alignments": {align.name: align.to_dict()},
               "profiles": {name: p.to_dict() for name, p in base.design.profiles.items()
                            if p.alignment == align.name}}
+    if notes:  # every line a note points at joins the design the truth is drawn from
+        lines = {al.name: al for _r, _b, al, _p in reference_alignments(sheet_doc)}
+        for c in notes:
+            design["alignments"].setdefault(c.target[1], lines[c.target[1]].to_dict())
     project = _project(src, sheet)
     D = _deliverable(src, sheet, vp, align, ref.name, design_file, ttype, others)
     D["start"] = kind
+    if notes:
+        from roaddraft.tasks.real_callouts import note_rows
+        D["callouts"] = note_rows(notes, {n: Alignment.from_dict(a)
+                                          for n, a in design["alignments"].items()})
     D["base_files"] = [Path(r.path).name for r in sheet_doc.references.values()]
     sh = D["sheets"][0]
     sh["template"] = template
@@ -1102,6 +1151,11 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
         stripped = strip_alignment(work, bases, design_file, align, truth.labels,
                                    linework=(kind == "draw"))
     work_sheet = work.sheet_by_ref(sheet.name)
+    if kind == "notes":  # the chosen callouts go: note, leader and arrowhead
+        gone = [i for c in notes for i in c.ids]
+        for i in gone:
+            work_sheet.entities.pop(i, None)
+        stripped["removed"]["sheet"] = {"notes": gone}
     if kind in ("setup", "blank", "scratch"):
         work_sheet.entities.clear()  # the finished sheet holds only the drafter's work
     if kind in ("blank", "scratch") or kind == "title":
@@ -1113,6 +1167,31 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
         return {name: doc.to_dict() for name, doc in bases.items() if name != doc_name}
 
     files = files_for(None)
+    if kind == "notes":
+        # a published note whose leader the real sheet ran through its own lettering, or
+        # that lands on another note, stays on the sheet: the task asks only for notes
+        # the reference places legibly
+        for tsh in truth.sheets:  # legibility judges new work against what is handed over
+            tsh["given_entities"] = sorted(set(work_sheet.entities) | set(work.model_entities))
+        bad = _notes_through_text(Task(brief=brief, truth=truth, baseline=work.to_dict(),
+                                       files=files))
+        if bad:
+            from roaddraft.tasks.real_callouts import MIN_NOTES, note_rows
+            back = [c for i, c in enumerate(notes) if i in bad]
+            notes = [c for i, c in enumerate(notes) if i not in bad]
+            if len(notes) < MIN_NOTES:
+                raise ValueError(f"{src.id}: {len(notes)} construction callouts can be re-placed "
+                                 f"clear of the sheet's lettering (fewer than {MIN_NOTES})")
+            published = _only_sheet(_load(src.folder / src.sheet_file))
+            for c in back:
+                for i in c.ids:
+                    work_sheet.entities[i] = published.entities[i]
+            stripped["removed"]["sheet"] = {"notes": [i for c in notes for i in c.ids]}
+            D["callouts"] = note_rows(notes, {n: Alignment.from_dict(a)
+                                              for n, a in design["alignments"].items()})
+            brief = _brief(src, ttype, project, design, D)
+            truth = compute_ground_truth(brief)
+            work.meta.update(task_id=brief.task_id)
     lettered = kind in ("letter", "setup", "blank", "scratch")
     if lettered:
         # -- where its labels go: clear of the sheet's own work
@@ -1179,7 +1258,7 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
                                 and (p != "table" or D.get("table_given"))]
     elif kind == "setup":
         drafted = ["layers", "stationing", "bearings", "callouts"]
-    elif kind in ("draw", "blank", "scratch"):
+    elif kind in ("draw", "blank", "scratch", "notes"):
         drafted = ["layers"]
     else:  # attach, title: the published sheet file as it is
         drafted = []
@@ -1249,6 +1328,8 @@ def catalog(progress=None) -> dict:
                        twist_deg=round(task.brief.deliverable["view_rotation"], 2),
                        tangents=len(align.tangents()), curves=len(align.curves()),
                        labels=len(task.truth.labels), ticks=len(task.truth.ticks))
+            if task.truth.callouts:
+                row["callouts"] = len(task.truth.callouts)
             if v["ok"]:
                 tasks.append(row)
             else:
@@ -1262,6 +1343,7 @@ def catalog(progress=None) -> dict:
             "tasks": tasks, "excluded": excluded}
 
 
-__all__ = ["REAL_GENERATOR_VERSION", "REDRAFT_ROOT", "AGENCIES", "RealSheet", "real_sheets",
+__all__ = ["REAL_GENERATOR_VERSION", "REDRAFT_ROOT", "AGENCIES", "START_KIND", "SHEET_TYPES",
+           "ANY_LINE_TYPES", "RealSheet", "real_sheets",
            "real_sheet", "usable_alignment", "type_fits", "candidates", "strip_alignment",
            "occupancy", "table_spot", "choose_poses", "build_real_task", "validate", "catalog"]

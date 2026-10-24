@@ -10,7 +10,7 @@ import pytest
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
 from roaddraft.tasks.types import LAYOUT_GROUPS
 from roaddraft.verify import FINDING_CODES, VALUE_CODES, VERIFIER_VERSION, Finding, verify
-from roaddraft.verify.checks import CHECKS
+from roaddraft.verify.checks import CHECKS, EXTRA_CHECKS
 from roaddraft.verify.rubric import score_checks
 from tests.verify_mutations import BASE, MUTATIONS, Base
 
@@ -44,7 +44,9 @@ def test_report_shape():
 
 
 def test_every_spec_check_has_a_formula_and_unknown_ones_are_refused():
-    assert [c["id"] for c in DRAFTING_SPEC_V1["checks"]] == sorted(CHECKS)
+    # the spec's list, plus the verifier's own checks (EXTRA_CHECKS), is every formula
+    assert ([c["id"] for c in DRAFTING_SPEC_V1["checks"]] + [c["id"] for c in EXTRA_CHECKS]
+            == sorted(CHECKS))
     spec = json.loads(json.dumps(DRAFTING_SPEC_V1))
     spec["checks"].append({"id": "D1-99", "name": "x", "weight": 1, "hard_fail": False})
     with pytest.raises(ValueError, match="D1-99"):

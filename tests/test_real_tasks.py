@@ -190,3 +190,130 @@ def test_a_layout_turned_off_the_published_twist_loses_the_fit():
     report = verify(session.doc, task.truth)
     assert report.check("D1-00").credit < 1.0
     assert any(f.code == "not_fitted" for f in report.check("D1-00").findings)
+
+
+# ------------------------------------------------------------- construction callouts
+
+
+NOTES = ("PPM-045", "TB1", "real-construction-callouts")
+
+
+@pytest.fixture(scope="module")
+def notes_task():
+    return build_real_task(*NOTES)
+
+
+def _placed(task):
+    session = session_for_task(task)
+    reference_solution(task, session)
+    return session
+
+
+def test_the_published_callouts_read_back_with_their_targets():
+    from roaddraft.tasks.real import _load, _only_sheet, real_sheet
+    from roaddraft.tasks.real_callouts import MAX_NOTES, published_callouts, task_notes
+    src = real_sheet("PPM-045")
+    doc = _load(src.folder / src.sheet_file)
+    found = published_callouts(doc, _only_sheet(doc))
+    assert len(found) >= 10
+    by_note = {c.content: c for c in found}
+    # a two-line note is one callout (whether the redraft kept it as one text or two); its
+    # tip projects onto the line it stands beside
+    two = by_note["ALTERNATIVE FLARED\nTERMINAL SYSTEM"]
+    assert two.content.count("\n") == 1 and two.target[0] == "AA01"
+    assert two.target[1] in ("D13", "TB1")
+    # the ramp's own EC callout points at the curve's end
+    ec = by_note['"TB1" 644+45.25 EC']
+    assert ec.target[1] == "TB1" and abs(ec.target[3]) < 0.1
+    assert abs(ec.target[2] - 64445.25) < 0.05
+    chosen = task_notes(found)
+    assert 3 <= len(chosen) <= MAX_NOTES
+    assert all(c.on_sheet and abs(c.target[3]) <= 200.0 for c in chosen)
+
+
+def test_a_construction_callout_task_verifies_100_and_its_start_0(notes_task):
+    v = validate(notes_task)
+    assert v["ok"], v
+    truth = notes_task.truth
+    assert truth.scope == ["notes"] and len(truth.callouts) >= 3
+    c = truth.callouts[0]
+    assert {"ref", "content", "alignment", "station_text", "offset", "tip_paper", "tip_model"} <= set(c)
+    # the stripped sheet keeps everything but the chosen notes
+    gone = set(truth.sheets[0]["stripped"]["sheet"]["notes"])
+    start = Document.from_dict(notes_task.baseline).sheet_by_ref("L-1")
+    assert not gone & set(start.entities) and "NOTES:" in [
+        e.content for e in start.entities.values() if hasattr(e, "content")]
+    assert set(truth.sheets[0]["given_entities"]) == set(start.entities)
+    # the prompts carry every note and its target at both levels
+    for level in ("explicit", "vague"):
+        text = notes_task.brief.prompts[level]
+        for c in truth.callouts:
+            assert c["content"].split("\n")[0] in text and c["station_text"] in text
+    assert "place_callout" in notes_task.brief.prompts["explicit"]
+    assert "place_callout" not in notes_task.brief.prompts["vague"]
+    # the verifier's own check is in play, and only here
+    report = verify(_placed(notes_task).doc, truth)
+    assert [c.id for c in report.in_scope()] == ["D1-08", "D1-16"]
+    assert report.check("D1-16").credit == 1.0 and report.effective_score == 100.0
+
+
+def test_a_hand_typed_note_earns_nothing_and_a_wrong_note_hard_fails(notes_task):
+    from roaddraft.tasks.reference import solution_commands
+    truth = notes_task.truth
+    first = truth.callouts[0]
+    # the note typed as text with its own lines: unanchored, no credit
+    session = session_for_task(notes_task)
+    for name, params in solution_commands(notes_task)[2:]:  # all but set_meta and the first
+        assert session.execute(name, params)["ok"]
+    tip = first["tip_paper"]
+    assert session.execute("place_text", {"space": "L-1", "position": [tip[0] + 1.0, tip[1]],
+                                          "content": first["content"], "height": 0.14})["ok"]
+    assert session.execute("draw_line", {"space": "L-1", "start": tip,
+                                         "end": [tip[0] + 1.0, tip[1]]})["ok"]
+    report = verify(session.doc, truth)
+    d16 = report.check("D1-16")
+    assert d16.credit == pytest.approx((len(truth.callouts) - 1) / len(truth.callouts))
+    assert any(f.code == "unanchored" and f.anchor["ref"] == first["ref"] for f in d16.findings)
+    assert not report.hard_failed
+    # a callout at the first note's point reading another note: wrong work, hard fail
+    session = session_for_task(notes_task)
+    for name, params in solution_commands(notes_task)[2:]:
+        assert session.execute(name, params)["ok"]
+    params = dict(solution_commands(notes_task)[1][1], content="SEE NOTE 7")
+    assert session.execute("place_callout", params)["ok"]
+    report = verify(session.doc, truth)
+    assert any(f.code == "wrong_value" for f in report.check("D1-16").findings)
+    assert report.hard_failed and report.effective_score == 0.0
+
+
+def test_a_callout_off_its_point_is_misplaced_and_a_moved_note_loses_its_leader(notes_task):
+    from roaddraft.tasks.reference import solution_commands
+    truth = notes_task.truth
+    first = truth.callouts[0]
+    session = session_for_task(notes_task)
+    for name, params in solution_commands(notes_task)[2:]:
+        assert session.execute(name, params)["ok"]
+    # aimed 0.3 in (15 ft) off: the note is there, the tip is not
+    tip = first["tip_paper"]
+    params = dict(solution_commands(notes_task)[1][1])
+    params.pop("target_anchor"); params.pop("alignment")
+    params["target"] = [tip[0] + 0.3, tip[1]]
+    r = session.execute("place_callout", params)
+    assert r["ok"]
+    report = verify(session.doc, truth)
+    finding = next(f for f in report.check("D1-16").findings if f.anchor["ref"] == first["ref"])
+    assert finding.code == "misplaced" and "0.30 in" in finding.note
+    # the same note dragged off its leader: no line reaches it any more
+    text_id = r["created"][-1]
+    assert session.execute("move_entities", {"ids": [text_id], "delta": [0.0, 0.5]})["ok"]
+    report = verify(session.doc, truth)
+    finding = next(f for f in report.check("D1-16").findings if f.anchor["ref"] == first["ref"])
+    assert finding.code == "misplaced" and "leader" in finding.note
+
+
+def test_an_old_truth_reads_back_without_the_callouts_field(notes_task):
+    from roaddraft.tasks.brief import GroundTruth
+    d = notes_task.truth.to_dict()
+    d.pop("callouts")
+    old = GroundTruth.from_dict(d)
+    assert old.callouts == [] and old.task_id == notes_task.task_id

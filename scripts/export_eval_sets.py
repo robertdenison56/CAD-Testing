@@ -149,7 +149,7 @@ def main(argv=None) -> int:
                     f"In d1-variance marks the first {len(sets['d1-variance']['tasks'])}, the "
                     "d1-variance set sampled k = 5 times to size the interval."),
         ("d1-real", f"{len(sets['d1-real']['tasks'])} held-out tasks on the redrafted sample "
-                    "plan sheets (Caltrans, FHWA WFL and CFL, FDOT), nine of each of the eleven "
+                    "plan sheets (Caltrans, FHWA WFL and CFL, FDOT), nine of each of the twelve "
                     "real-sheet types. Ranked beside d1-test."),
         ("d1-real-dev", f"{len(sets['d1-real-dev']['tasks'])} tasks, two of each real type, on "
                         "Caltrans sheets d1-real never uses. For smoke runs; never reported."),

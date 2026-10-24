@@ -8,7 +8,7 @@ its own base files (alignments, corridor, survey) through a viewport at the
 published scale and twist, and carries the published border, title block,
 notes, legend and callouts.
 
-Eleven task types cover a plan sheet's jobs. `catalog.json` lists every task
+Twelve task types cover a plan sheet's jobs. `catalog.json` lists every task
 that validates, and every candidate left out with the reason.
 
 ## Task types
@@ -26,10 +26,11 @@ that validates, and every candidate left out with the reason.
 | `real-sheet-setup` | the base files attached, the alignment annotated in the model to read on the published twist, no sheet | the sheet on the agency border and a viewport at the published scale and twist |
 | `real-annotate-sheet` | the sheet set up on its border at the published scale and twist, but blank | the alignment's data, the table, a north arrow pointing north, the title block |
 | `real-plan-sheet` | the base files attached and nothing else | the sheet and viewport, then all of the above |
+| `real-construction-callouts` | the sheet file as published with a spread of its construction callouts removed (note, leader, arrowhead) | each note back on the sheet as a callout, its leader tip on the station and offset called out |
 
 The first five letter one alignment around everything the published sheet already
-shows. `real-attach-reference` and `real-title-block` are one task per sheet; the rest
-are one per alignment.
+shows. `real-attach-reference`, `real-title-block` and `real-construction-callouts`
+are one task per sheet; the rest are one per alignment.
 
 ## How a lettering task is made (`src/roaddraft/tasks/real.py`)
 
@@ -70,16 +71,56 @@ three additions, each read only from a real truth sheet:
 - **North arrow.** On a turned sheet it must point to north, so it is inserted turned
   by the twist; one pointing up the paper earns half.
 
+## How a callout task is made (`src/roaddraft/tasks/real_callouts.py`, 2026-10-24)
+
+The redraft pipelines placed every published note with `place_callout` on a layer of
+its own (`S-ANNO-CALL`, `S_ANNO_CALLOUT`) and then lettered it as the sheet does, so the
+files record no target. The builder reads it back from the geometry:
+
+1. **Leaders.** The strokes on the callout layer are grouped by the ends they share (or
+   an end on another stroke). A group's free end nearest a text is the note's end; the
+   arrowhead's apex, or the free end farthest from the note, is the tip. Lines of a note
+   lettered under its head (same left edge, a line's gap below) belong to it. A leader
+   with two arrowheads or no text is left alone.
+2. **Targets.** The tip goes through the viewport to the model and onto every referenced
+   alignment at identity; the nearest gives the station and offset. A note counts when
+   its tip is inside the plan view, within 200 ft of a line, reads as words and is not
+   lettered at an angle. Traced centerlines count here too (a note may point at the WFL
+   `MAIN 01`), which is why this type is catalogued on sheets the lettering types skip.
+3. **Spread.** Up to twelve notes a sheet, spread in station order (an episode has 150
+   steps); at least three, or the sheet makes no task. The rest stay on the sheet.
+4. **Fit.** The reference places the chosen notes on the stripped sheet; a note whose
+   leader runs through the sheet's own text, or that lands on another note, goes back on
+   the sheet as given (the published layout's doing, not the drafter's).
+5. **Start.** The sheet file with those notes, leaders and arrowheads removed. The brief
+   gives each note's text, line, station and offset (to the hundredth and the tenth of a
+   foot); the oracle re-places it with `place_callout`, `target_anchor` and the line named
+   through the reference, at the box the published note stood in.
+
+The 2026-10-24 catalogue holds 32 callout tasks with 238 notes (Caltrans 14, WFL 13, FDOT
+3, CFL 2); 24 more plan sheets carry fewer than three qualifying notes. Every pairing that
+reached validation passed.
+
+Graded by the verifier's own check **D1-16** (`verify/checks.py`, `EXTRA_CHECKS`, weight
+14, hard fail) beside D1-08. The spec's frozen v1 check list is untouched, so its hash and
+every task id stand; D1-16 joins a rubric only through the `notes` group, which only this
+type asks for. Credit per note: a text carrying the `callout` record `place_callout` now
+writes (kind, what it was aimed at, where the tip landed), reading the note as given
+(whitespace and quotes folded), visible on the sheet, its leader tip read from the drawn
+lines within 0.05 in of the station and offset. A note typed as text is `unanchored`; a
+tip off its point or a note dragged off its leader is `misplaced`; a callout on one of
+the points that reads none of the notes is `wrong_value`, a hard fail.
+
 ## The eval sets drawn from it
 
 The harness runs two task sets from this catalogue (`src/roaddraft/eval/taskset.py`,
 manifests under `benchmarks/tasksets/`):
 
-- **`d1-real`**: 99 held-out tasks, nine of each type. Within a type every agency
-  that has the type is drawn once before any is drawn again, then the sheet the set
-  has used least, so it holds 66 Caltrans tasks and 11 each of WFL, CFL and FDOT,
-  on 42 sheets. Ranked on its own board beside the seeded `d1-test`.
-- **`d1-real-dev`**: 22 tasks, two of each type, on three Caltrans sheets that
+- **`d1-real`**: 108 held-out tasks, nine of each of the twelve types. Within a type
+  every agency that has the type is drawn once before any is drawn again, then the
+  sheet the set has used least. Ranked on its own board beside the seeded `d1-test`.
+  (Until 2026-10-24 it was 99 tasks of eleven types; no model had run it.)
+- **`d1-real-dev`**: 24 tasks, two of each type, on a few Caltrans sheets that
   `d1-real` never uses. For smoke runs; never reported.
 
 ```bash
@@ -102,6 +143,11 @@ with each task's prompts and links to its start and finished files.
 
 ## Engine and verifier changes these tasks needed
 
+- **A callout's record.** `place_callout` now stamps its text with an anchor record
+  (`kind` callout, the alignment, station and offset or entity it was aimed at, the
+  tip's point) and its leader, shoulder and arrowhead with `callout_leader`, as a label
+  carries its anchor; the bus stamps `placed_by`. The verifier credits a construction
+  callout only through that record, as it credits labels only through theirs.
 - **`view_rotation`** on `place_label` and `annotate_stationing`. Most real
   viewports are twisted (Route 65 L-1 is turned -89.94°), and model-space labels
   were lettered upright in the model, so they printed upside down on the sheet.
@@ -132,6 +178,8 @@ with each task's prompts and links to its start and finished files.
 - The base alignments' curves store ends a few hundredths of a foot off their own
   circles (L-1's TB1: 0.056 ft). The verifier takes a curve to be its circle, so a
   drawn arc matches it.
+- A callout task hands back at most twelve notes, spread along the lines; the rest of the
+  sheet's callouts stay as given, so a crowded sheet is never asked for in full.
 - Still seeded only: pavement edges and widths (the real corridors have varying
   widths, curbs and tapers, not one typical section), create-alignment (the rebuilt
   alignments store no PIs to dictate), two-sheet layouts, and layer setup.

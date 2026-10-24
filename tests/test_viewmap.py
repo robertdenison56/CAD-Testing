@@ -264,7 +264,10 @@ def test_a_sheet_callout_names_a_referenced_entity_and_lands_on_it(project):
     assert not s.doc.model_entities
     text = next(sheet.entities[eid] for eid in r["created"]
                 if isinstance(sheet.entities[eid], Text))
-    assert text.height == pytest.approx(0.10) and text.anchor is None
+    assert text.height == pytest.approx(0.10)
+    # ... its record names the entity it was aimed at and where the tip landed on paper
+    assert text.anchor["kind"] == "callout" and text.anchor["ref"] == row["id"]
+    assert text.anchor["alignment"] == "" and text.anchor["tip"] == pytest.approx(tip, abs=1e-4)
 
 
 def test_the_same_curve_is_called_out_on_both_sheets_it_straddles(project):
@@ -327,9 +330,16 @@ def test_a_station_and_offset_is_a_target_too(project):
     want = s.query("station_to_xy", {"alignment": REF_ALIGN, "station": "18+00",
                                      "offset": 12})["point"]
     assert vp.transform().to_model(tip) == pytest.approx(want, abs=1e-6)
-    # reading a referenced design is not owning it: nothing is anchored
+    # reading a referenced design is not owning it: the callout's record says what it was
+    # aimed at (the referenced line, by its qualified name) without anchoring a label to it
     sheet = s.doc.sheet_by_ref("C-101")
-    assert all(sheet.entities[eid].anchor is None for eid in r["created"])
+    kinds = {sheet.entities[eid].anchor["kind"] for eid in r["created"]}
+    assert kinds == {"callout", "callout_leader"}
+    text = next(sheet.entities[eid] for eid in r["created"]
+                if isinstance(sheet.entities[eid], Text))
+    assert text.anchor["alignment"] == REF_ALIGN and text.anchor["ref"] == "18+00.00"
+    assert text.anchor["station"] == 1800.0 and text.anchor["offset"] == 12.0
+    assert text.anchor["viewport"] == vp.id and text.anchor["placed_by"] == "place_callout"
     # the dict form and a named point work the same way
     r = s.execute("place_callout", {"space": "C-101", "alignment": REF_ALIGN,
                                     "target_anchor": {"station": 1800, "offset": -12},

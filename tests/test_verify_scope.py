@@ -13,9 +13,10 @@ from roaddraft.tasks.prompts import LEVELS
 from roaddraft.tasks.reference import reference_solution, session_for_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
 from roaddraft.tasks.types import (
-    CHECK_GROUPS, GROUPS, LAYOUT_GROUPS, TASK_TYPES, checks_in_scope, task_type,
+    CHECK_GROUPS, GROUPS, LAYOUT_GROUPS, REAL_TASK_TYPES, TASK_TYPES, checks_in_scope, task_type,
 )
 from roaddraft.verify import check_groups, verify
+from roaddraft.verify.checks import EXTRA_CHECKS
 from tests.verify_mutations import Base
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1 as _SPEC
 _L = _SPEC["layers"]
@@ -40,7 +41,11 @@ def _drafted(seed, ttype, sheets):
 
 
 def test_every_group_is_asked_for_by_some_type_and_plan_sheet_asks_for_the_layout():
-    assert set(GROUPS) == {g for t in TASK_TYPES.values() for g in t.asks}
+    # the seeded types ask for every group but the notes, which a real sheet's
+    # construction-callout type asks for
+    assert set(GROUPS) - {"notes"} == {g for t in TASK_TYPES.values() for g in t.asks}
+    assert set(GROUPS) == {g for t in (*TASK_TYPES.values(), *REAL_TASK_TYPES.values())
+                           for g in t.asks}
     assert task_type("plan-sheet").asks == frozenset(LAYOUT_GROUPS)
     assert task_type("plan-sheet").given == frozenset({"design"})  # the design is handed over
     assert task_type("annotate-base").design_referenced and task_type("annotate-base").start == "sheet"
@@ -77,7 +82,11 @@ def test_checks_in_scope_follow_the_groups():
     assert checks_in_scope(["reference"], ids) == ["D1-14"]
     assert checks_in_scope(["layers"], ids) == ["D1-09"]
     assert checks_in_scope(["design"], ids) == ["D1-15"]
-    assert set(CHECK_GROUPS) == set(ids)
+    # the verifier's own check joins only for a scope that asks for its group
+    extra = [c["id"] for c in EXTRA_CHECKS]
+    assert checks_in_scope(["notes"], ids + extra) == ["D1-08", "D1-16"]
+    assert checks_in_scope(["bearings"], ids + extra) == ["D1-05", "D1-07", "D1-08", "D1-09"]
+    assert set(CHECK_GROUPS) == set(ids) | set(extra)
 
 
 # --------------------------------------------------------- oracle and null

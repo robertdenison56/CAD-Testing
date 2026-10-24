@@ -64,6 +64,7 @@ from roaddraft.tasks.brief import GENERATOR_VERSION, Task
 from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.prompts import RULES_TEMPLATE, rules
 from roaddraft.tasks.reference import reference_solution, session_for_task
+from roaddraft.verify.checks import EXTRA_CHECKS
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, SPEC_VERSION, spec_hash
 from roaddraft.tasks.real import REAL_GENERATOR_VERSION, build_real_task
 from roaddraft.tasks.types import PHASE_ORDER, REAL_TASK_TYPES, TASK_TYPES, checks_in_scope, task_type
@@ -98,6 +99,7 @@ PILOT_NAMES = {1: "Redraw an alignment from a scanned sheet", 2: "Sources that d
 #: the dev-set dial cycle: every curve count with and without a station equation
 DIALS = [(curves, eq) for curves in (1, 2, 3) for eq in (False, True)]
 WEIGHTS = {c["id"]: c["weight"] for c in DRAFTING_SPEC_V1["checks"]}
+WEIGHTS.update({c["id"]: c["weight"] for c in EXTRA_CHECKS})  # the verifier's own (D1-16)
 RENDER_DPI = 100
 #: the pictures pasted into the workbook: each sheet's render with its lines thickened
 #: (a 1-px line vanishes when a plot is shrunk), THUMB_PX wide per sheet, shown
@@ -459,6 +461,9 @@ REAL_STARTS = {
     "blank": "the real sheet set up (border, viewport at the published scale and twist) but "
              "blank and its title block empty; one alignment unannotated",
     "scratch": "the real base files attached and nothing else: no sheet",
+    "notes": "the real sheet file as published with a spread of its construction callouts "
+             "(note, leader, arrowhead) removed; the notes come back in the prompt with a "
+             "station and offset each",
 }
 
 

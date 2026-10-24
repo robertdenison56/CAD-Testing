@@ -273,7 +273,8 @@ class _Words:
                  "reference": "the base drawing reference",
                  "table": "the curve data table" + ("s" if self.many else ""),
                  "north": "the north arrow" + ("s" if self.many else ""),
-                 "title": "the title block" + ("s" if self.many else "")}
+                 "title": "the title block" + ("s" if self.many else ""),
+                 "notes": "the construction callouts"}
         items = [words[p] for p in given]
         text = items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
         return f" {text[0].upper()}{text[1:]} {'are' if len(items) > 1 else 'is'} already done."
@@ -554,7 +555,8 @@ def _real_files(w: _Words) -> str:
     return ", ".join(files) or w.D.get("design_file", "")
 
 
-_LINE_COUNTS = {2: "two", 3: "three", 4: "four", 5: "five"}
+_LINE_COUNTS = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight",
+                9: "nine", 10: "ten", 11: "eleven", 12: "twelve"}
 
 
 def _field_value(v: str) -> str:
@@ -660,6 +662,59 @@ def _real_plan_sheet(w: _Words, explicit: bool) -> str:
             f"{_bullets(_real_sheet_items(w))}")
 
 
+# -- real plan sheets: the construction callouts
+
+
+def _note_target(c: dict) -> str:
+    """Where a note points: on its line at a station, so many feet right or left of it."""
+    off = float(c["offset"])
+    at = f"{c['alignment']} at {c['station_text']}"
+    if abs(off) < 0.05:
+        return f"on {at}"
+    return f"{abs(off):.1f} ft {'right' if off > 0 else 'left'} of {at}"
+
+
+def _note_list(w: _Words) -> str:
+    """The notes, each on its own bullet, the lines of a note indented under its target."""
+    out = []
+    for c in w.D["callouts"]:
+        lines = "\n".join("    " + line for line in c["content"].split("\n"))
+        out.append(f"- {_note_target(c)}:\n{lines}")
+    return "\n".join(out)
+
+
+def _note_lines(w: _Words) -> str:
+    """The lines the notes point at, with the base drawing they live in."""
+    names = list(dict.fromkeys(c["alignment"] for c in w.D["callouts"]))
+    refs = list(dict.fromkeys(c["reference"] for c in w.D["callouts"]))
+    lines = names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
+    live = "lives" if len(names) == 1 else "live"
+    ref = refs[0]
+    return (f"{lines} {live} in the base drawing {w.D.get('design_file')}, attached as {ref}, "
+            f"so name {'it' if len(names) == 1 else 'each'} as {ref}:{names[0]}")
+
+
+def _real_construction_callouts(w: _Words, explicit: bool) -> str:
+    notes = w.D["callouts"]
+    n = len(notes)
+    count = _LINE_COUNTS.get(n, str(n)) if n > 1 else "one"
+    if not explicit:
+        return (f"Add these construction notes to sheet {w.names[0]} as callouts, each pointing "
+                f"at the place given:\n{_note_list(w)}")
+    heights = sorted((c["height"] for c in notes), key=lambda h: (-[c["height"] for c in notes].count(h), h))
+    h = heights[0]
+    src = w.source
+    return (f"Sheet {w.names[0]} is {_a(w.size)} {src.get('family', 'plan')} sheet at {w.scale} "
+            f"from {_real_set(w)}. {_note_lines(w)}. {count[0].upper()}{count[1:]} of its "
+            f"construction callouts {'is' if n == 1 else 'are'} missing. Place each one on sheet "
+            f"{w.names[0]}, in sheet space, as a callout: the note in {h:.2f} in text, and a "
+            f"leader whose tip lands on the point given as a station and offset on the line named "
+            f"(right is to the right looking up-station). Aim the leader at that station and "
+            f"offset through the line (place_callout with target_anchor and the line's "
+            f"name), not at a point worked out by hand, and keep the note clear of the sheet's "
+            f"lettering and linework. The notes:\n{_note_list(w)}")
+
+
 PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "draw-alignment": _draw_alignment,
     "stationing": _stationing,
@@ -688,6 +743,7 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "real-sheet-setup": _real_sheet_setup,
     "real-annotate-sheet": _real_annotate_sheet,
     "real-plan-sheet": _real_plan_sheet,
+    "real-construction-callouts": _real_construction_callouts,
 }
 
 

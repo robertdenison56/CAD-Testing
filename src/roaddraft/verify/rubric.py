@@ -11,17 +11,28 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional
 
-from roaddraft.tasks.types import checks_in_scope
-from roaddraft.verify.checks import CHECKS, Analysis
+from roaddraft.tasks.types import CHECK_GROUPS, checks_in_scope
+from roaddraft.verify.checks import CHECKS, EXTRA_CHECKS, Analysis
 from roaddraft.verify.report import CheckResult
 
 
-def _spec_checks(spec: dict) -> List[dict]:
+def _spec_checks(spec: dict, scope: Optional[Iterable[str]] = None,
+                 check_groups: Optional[dict] = None) -> List[dict]:
+    """The spec's checks, then the verifier's own (``EXTRA_CHECKS``) whose
+    group the task's scope asks for and the spec does not already list: a
+    task whose scope names no such group sees the spec's list alone."""
     unknown = [c["id"] for c in spec["checks"] if c["id"] not in CHECKS]
     if unknown:
         raise ValueError(f"the verifier has no formula for spec check(s) {unknown}; "
                          f"it knows {sorted(CHECKS)}")
-    return spec["checks"]
+    checks = list(spec["checks"])
+    asked = set(scope or ())
+    groups = CHECK_GROUPS if check_groups is None else check_groups
+    listed = {c["id"] for c in checks}
+    for extra in EXTRA_CHECKS:
+        if extra["id"] not in listed and asked & set(groups.get(extra["id"], ())):
+            checks.append(extra)
+    return checks
 
 
 def score_checks(spec: dict, analysis: Optional[Analysis], scope: Optional[Iterable[str]] = None,
@@ -30,7 +41,7 @@ def score_checks(spec: dict, analysis: Optional[Analysis], scope: Optional[Itera
     marked so and skipped; with no analysis (a tampered design) every check
     is skipped at zero credit.  ``check_groups`` overrides the group each
     check draws from (``tasks.types.CHECK_GROUPS``)."""
-    checks = _spec_checks(spec)
+    checks = _spec_checks(spec, scope, check_groups)
     in_scope = set(checks_in_scope(scope, [c["id"] for c in checks], check_groups))
     out = []
     for c in checks:

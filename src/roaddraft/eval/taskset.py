@@ -7,13 +7,13 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   equations on/off, the task types and the sheet count cycling.  The
   leaderboard set.
 - ``d1-variance``: the first 20 tasks of ``d1-test``, for k = 5 sampling.
-- ``d1-real``: 99 held-out tasks on the redrafted sample plan sheets
-  (``examples/Exmple Plans/Redraft``), nine of each of the eleven real-sheet
+- ``d1-real``: 108 held-out tasks on the redrafted sample plan sheets
+  (``examples/Exmple Plans/Redraft``), nine of each of the twelve real-sheet
   types, drawn from the validated catalogue ``benchmarks/real_tasks/catalog.json``
   (``scripts/real_tasks.py`` writes it).  Within a type, every agency that has
   the type is drawn once before any is drawn again, then the sheet the set has
   used least.  Ranked beside ``d1-test``.
-- ``d1-real-dev``: 22 tasks, two of each real type, on a few Caltrans sheets
+- ``d1-real-dev``: 24 tasks, two of each real type, on a few Caltrans sheets
   that ``d1-real`` never uses.  For smoke runs and iteration; never reported.
 - ``hard-pilots``: the 29 harder-task pilots (``probes/pilot``, all of them),
   run as probe tasks (``eval/probe_tasks.py``): each its own start project on a

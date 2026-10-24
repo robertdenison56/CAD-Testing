@@ -14,7 +14,7 @@ from roaddraft.design.labels import caltrans_station_text, label_pose, resolve_s
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import LINETYPES, BlockDef, Document, Layer, TextStyle
 from roaddraft.document.entities import (
-    Arc, BlockRef, Circle, Dimension, Line, Polyline, Table, Text, entity_from_dict,
+    Arc, BlockRef, Circle, Dimension, Entity, Line, Polyline, Table, Text, entity_from_dict,
 )
 from roaddraft.document.entities import as_point, as_positive
 from roaddraft.document.references import (
@@ -367,10 +367,16 @@ def place_callout(doc: Document, p: dict):
         if key in p and needs not in p:
             raise CommandFault(f"{key} goes with {needs}, which was not given")
     pointing_at = None
+    # the callout's record: what it was aimed at, and where its tip landed (its own
+    # space). A verifier reads it as it reads a label's anchor (tasks.real's
+    # construction-callout tasks); the bus stamps placed_by.
+    record = {"kind": "callout", "alignment": "", "ref": "point"}
     if "target_entity" in p:
         target, pointing_at = _aim_at_entity(doc, space_key, p)
+        record["ref"] = str(p["target_entity"])
     elif "target_anchor" in p:
-        target, pointing_at = _aim_at_anchor(doc, space_key, p)
+        target, pointing_at, aimed = _aim_at_anchor(doc, space_key, p)
+        record.update(aimed)
     else:
         if "viewport" in p:
             raise CommandFault("viewport goes with target_entity or target_anchor: a "
@@ -406,22 +412,32 @@ def place_callout(doc: Document, p: dict):
                                               max(height, arrow_size)))
 
     created: List[str] = []
+    record["tip"] = [float(target[0]), float(target[1])]
+    parts: List[Entity] = []
+    part = {"kind": "callout_leader", "alignment": "", "ref": ""}
     _, leader = _add(doc, space_key, "line", Line, {
-        **common, "start": list(target), "end": elbow})
+        **common, "start": list(target), "end": elbow, "anchor": dict(part)})
     created.append(leader.id)
+    parts.append(leader)
     if landing > 0:
         _, shoulder = _add(doc, space_key, "line", Line, {
-            **common, "start": elbow, "end": list(position)})
+            **common, "start": elbow, "end": list(position), "anchor": dict(part)})
         created.append(shoulder.id)
+        parts.append(shoulder)
     if p.get("arrow", True) and arrow_size > 0:
         _, head = _add(doc, space_key, "polyline", Polyline, {
-            **common, "vertices": _arrow_head(target, elbow, arrow_size), "closed": True})
+            **common, "vertices": _arrow_head(target, elbow, arrow_size), "closed": True,
+            "anchor": dict(part)})
         created.append(head.id)
+        parts.append(head)
     _, text = _add(doc, space_key, "text", Text, {
         **common, "position": list(position), "content": p["content"], "height": height,
         "style": style, "rotation_deg": 0.0, "halign": halign, "valign": "middle",
+        "anchor": record,
         "annotative": anno.text_record(doc, height) if space_key == "model" else None})
     created.append(text.id)
+    for e in parts:
+        e.anchor["ref"] = text.id  # the leader's parts name the note they belong to
 
     warnings += _annotation_warnings(doc, space_key, text)
     preview = p["content"] if len(p["content"]) <= 40 else p["content"][:37] + "..."
@@ -527,13 +543,15 @@ def _aim_at_anchor(doc: Document, space_key: str, p: dict):
         f", {abs(ap.offset):.2f}' {'RT' if ap.offset > 0 else 'LT'}"
     named = "" if ap.kind_hint == "station" else f"{ap.ref} at "
     what = f"{shown_as} {named}{ap.station_text}{side}"
+    aimed = {"alignment": shown_as, "ref": ap.ref, "station": float(ap.station),
+             "offset": float(ap.offset)}
     try:
         sheet = _through_viewport(doc, space_key, "model", what)
         if sheet is None:
             if "viewport" in p:
                 raise CommandFault("viewport is for pointing from a sheet at the model; "
                                    "this callout is already in the model")
-            return point, what
+            return point, what, aimed
         vp = viewmap.viewport_showing(sheet, point, p.get("viewport"))
     except viewmap.ViewError as ex:
         raise CommandFault(str(ex), hint=ex.hint)
@@ -545,7 +563,8 @@ def _aim_at_anchor(doc: Document, space_key: str, p: dict):
             f"{what} ({point[0]:.2f}, {point[1]:.2f}) is not visible through {through} "
             f"of {sheet.name}",
             hint=_shown_elsewhere(elsewhere) + viewmap.describe_windows(sheet))
-    return vp.transform().to_paper(point), f"{what} through {vp.id}"
+    aimed["viewport"] = vp.id
+    return vp.transform().to_paper(point), f"{what} through {vp.id}", aimed
 
 
 def _shown_elsewhere(sheets: List[str]) -> str:

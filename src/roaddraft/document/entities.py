@@ -67,6 +67,10 @@ def _as_nonzero(value, name):
 
 
 ANCHOR_REQUIRED = ("alignment", "ref", "kind")
+#: a callout's record: its text (``callout``) and the leader, shoulder and arrowhead
+#: drawn with it (``callout_leader``). A callout aimed at a point or an entity names
+#: no alignment, so these kinds alone may leave ``alignment`` (and ``ref``) empty.
+CALLOUT_KINDS = ("callout", "callout_leader")
 ANCHOR_SIDES = ("left", "right")
 ANCHOR_ROTATIONS = ("along", "perpendicular", "horizontal")
 
@@ -129,15 +133,26 @@ def as_anchor(value) -> Optional[Dict]:
     if not isinstance(value, dict):
         raise ValueError(f"anchor: expected an object, got {value!r}")
     out = {}
+    callout = value.get("kind") in CALLOUT_KINDS
     for key in ANCHOR_REQUIRED:
         v = value.get(key)
+        if callout and key != "kind" and (v is None or v == ""):
+            out[key] = ""  # a callout aimed at a point or an entity names no alignment
+            continue
         if not isinstance(v, str) or not v:
             raise ValueError(f"anchor: {key} must be a non-empty string, got {v!r}")
         out[key] = v
     for key, v in value.items():
         if key in ANCHOR_REQUIRED:
             continue
-        if key in ("station", "offset", "label_offset", "view_rotation"):
+        if key == "tip":
+            if not callout:
+                raise ValueError("anchor: tip belongs to a callout record only")
+            if (not isinstance(v, (list, tuple)) or len(v) != 2
+                    or not all(_is_number(c) for c in v)):
+                raise ValueError(f"anchor: tip must be [x, y], got {v!r}")
+            out[key] = [float(v[0]), float(v[1])]
+        elif key in ("station", "offset", "label_offset", "view_rotation"):
             if v is not None and not _is_number(v):
                 raise ValueError(f"anchor: {key} must be a number or null, got {v!r}")
             out[key] = None if v is None else float(v)
@@ -167,7 +182,7 @@ def as_anchor(value) -> Optional[Dict]:
         else:
             raise ValueError(f"anchor: unknown key {key!r}; keys: alignment, ref, kind, "
                              f"station, offset, side, label_offset, rotation, viewport, "
-                             f"view_rotation, content_auto, placed_by")
+                             f"view_rotation, content_auto, placed_by, tip (callouts)")
     return out
 
 

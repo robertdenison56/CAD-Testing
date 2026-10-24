@@ -44,7 +44,8 @@ def truth_alignments(truth: GroundTruth) -> List[str]:
     """The alignments the truth is drawn from, primary first."""
     names: List[str] = []
     tables = [t.get("anchor", {}).get("alignment") for t in truth.curve_tables]
-    for name in tables + [label["alignment"] for label in truth.labels]:
+    notes = [c.get("alignment") for c in getattr(truth, "callouts", None) or []]
+    for name in tables + [label["alignment"] for label in truth.labels] + notes:
         if name and name not in names:
             names.append(name)
     return names

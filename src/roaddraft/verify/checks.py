@@ -40,7 +40,7 @@ from roaddraft.core import geometry as geo
 from roaddraft.core.units import format_station
 from roaddraft.design.errors import DesignError
 from roaddraft.document import dimgeom
-from roaddraft.document.entities import BlockRef, Dimension, Entity, Line, Polyline, Table
+from roaddraft.document.entities import BlockRef, Dimension, Entity, Line, Polyline, Table, Text
 from roaddraft.tasks.types import GROUP_LAYER_ROLE
 from roaddraft.verify.context import Context, SheetView, rect_inside
 from roaddraft.verify.geometry import (
@@ -63,6 +63,21 @@ _CURVE_NO = re.compile(r"^C(?:URVE)?\s*(?:NO\.?)?\s*[-#]?\s*(\d+)$", re.I)
 Result = Tuple[float, List[Finding]]
 
 NO_SHEET = "the deliverable sheet does not exist"
+
+#: Checks the verifier adds beside the spec's frozen list (d1-verify-v7): the
+#: construction callouts of a real plan sheet (``tasks.real_callouts``), judged
+#: like labels -- credit only for a note ``place_callout`` placed, with its text as
+#: given and its leader tip on the point called out; a callout at one of those
+#: points reading another note is wrong work on the sheet (hard fail).  They enter
+#: a task's rubric only through their groups (``tasks.types.CHECK_GROUPS``), so a
+#: task that does not ask for the group never sees them and the spec's hash and
+#: every task id stand.  Folded into the spec's own list at its next version.
+EXTRA_CHECKS = (
+    {"id": "D1-16",
+     "name": "construction callouts: each note placed as a callout, reading as given, its "
+             "leader tip on the station and offset called out",
+     "weight": 14, "hard_fail": True},
+)
 
 
 def _no_sheet(sv: SheetView) -> str:
@@ -296,6 +311,30 @@ def analyze_dimensions(ctx: Context) -> List[DimMatch]:
 
 
 @dataclass
+class CalloutCandidate:
+    """A callout on the document: its text (with a ``callout`` record), the
+    leader tip read from the lines drawn with it, on paper."""
+    text: Text
+    tip: Optional[List[float]]
+    visible: bool
+
+
+@dataclass
+class CalloutMatch:
+    """One truth callout against the document."""
+    truth: dict
+    chosen: Optional[CalloutCandidate] = None
+    distance: Optional[float] = None    # tip to the point called out, paper inches
+    wrong: Optional[CalloutCandidate] = None  # a callout at the point reading another note
+    by_hand: Optional[Text] = None      # the note typed as text, with no callout record
+
+    @property
+    def anchor(self) -> dict:
+        return {"alignment": self.truth["alignment"], "ref": self.truth["ref"],
+                "kind": "callout"}
+
+
+@dataclass
 class Analysis:
     ctx: Context
     labels: LabelIndex
@@ -304,6 +343,7 @@ class Analysis:
     tables: Dict[str, TableResult]
     edges: Optional[LineworkResult] = None
     dimensions: List[DimMatch] = field(default_factory=list)
+    callouts: List[CalloutMatch] = field(default_factory=list)
 
     def anchor(self, ref: str, kind: str) -> dict:
         return {"alignment": self.ctx.alignment_name, "ref": ref, "kind": kind}
@@ -315,8 +355,9 @@ class Analysis:
 #: how far a north arrow may turn from north on the sheet (degrees)
 NORTH_TOL_DEG = 2.0
 
-#: anchored parts of a label (a curve bubble's circle and leader), never ticks
-LABEL_PART_KINDS = ("mc_bubble", "mc_leader")
+#: anchored parts of a label (a curve bubble's circle and leader) or of a callout (its
+#: leader, shoulder and arrowhead), never ticks
+LABEL_PART_KINDS = ("mc_bubble", "mc_leader", "callout_leader")
 
 
 def analyze(ctx: Context) -> Analysis:
@@ -351,7 +392,103 @@ def analyze(ctx: Context) -> Analysis:
         edges = match_edges(ctx.alignment, ctx.truth.edges, model, ctx.layers["edges"], tol)
     return Analysis(ctx=ctx, labels=index_labels(ctx), linework=linework, ticks=ticks,
                     tables=analyze_tables(ctx), edges=edges,
-                    dimensions=analyze_dimensions(ctx) if ctx.asks("widths") else [])
+                    dimensions=analyze_dimensions(ctx) if ctx.asks("widths") else [],
+                    callouts=analyze_callouts(ctx) if ctx.asks("notes") else [])
+
+
+def _pt_key(p) -> Tuple[float, float]:
+    return (round(float(p[0]), 6), round(float(p[1]), 6))
+
+
+def callout_tip(entities: Dict[str, Entity], text: Text) -> Optional[List[float]]:
+    """Where a callout's leader points, read from what is drawn: the line that
+    ends at the text's insertion point and, when that is the level shoulder
+    ``place_callout`` draws, the leader that meets its far end (as
+    ``legibility`` finds leaders).  None when no line reaches the text."""
+    lines = [e for e in entities.values() if isinstance(e, Line)]
+    here = _pt_key(text.position)
+    first = [ln for ln in lines if _pt_key(ln.start) == here or _pt_key(ln.end) == here]
+    if not first:
+        return None
+    shoulder = first[0]
+    far = shoulder.end if _pt_key(shoulder.start) == here else shoulder.start
+    if abs(float(shoulder.end[1]) - float(shoulder.start[1])) <= 1e-9:
+        key = _pt_key(far)
+        for ln in lines:
+            if ln is shoulder:
+                continue
+            if _pt_key(ln.start) == key:
+                return [float(ln.end[0]), float(ln.end[1])]
+            if _pt_key(ln.end) == key:
+                return [float(ln.start[0]), float(ln.start[1])]
+    return [float(far[0]), float(far[1])]
+
+
+def analyze_callouts(ctx: Context) -> List[CalloutMatch]:
+    """Each truth callout against the document's callouts (texts carrying a
+    ``callout`` record): the nearest one reading the note is its match, one
+    callout to a note; a callout reading none of the notes with its tip on a
+    note's point is that note's ``wrong``; a note typed as plain text is
+    noted as ``by_hand``."""
+    cands: List[CalloutCandidate] = []
+    for sv in ctx.sheets:
+        if sv.sheet is None:
+            continue
+        for e in sv.sheet.entities.values():
+            if isinstance(e, Text) and (e.anchor or {}).get("kind") == "callout":
+                cands.append(CalloutCandidate(e, callout_tip(sv.sheet.entities, e),
+                                              ctx.sheet_visible(sv.sheet.id, e.position)))
+    for e in ctx.doc.model_entities.values():  # a callout in the model, seen through a viewport
+        if isinstance(e, Text) and (e.anchor or {}).get("kind") == "callout":
+            tip = callout_tip(ctx.doc.model_entities, e)
+            view = ctx.model_view(e.position)
+            paper = view.transform.to_paper(tip) if (view is not None and tip is not None) else None
+            cands.append(CalloutCandidate(e, [float(paper[0]), float(paper[1])] if paper else None,
+                                          view is not None))
+    matches = [CalloutMatch(truth=c) for c in ctx.truth.callouts]
+    pairs = []
+    for i, m in enumerate(matches):
+        want = normalize(m.truth["content"])
+        for j, cand in enumerate(cands):
+            if normalize(cand.text.content) != want:
+                continue
+            d = (geo.distance(cand.tip, m.truth["tip_paper"]) if cand.tip is not None
+                 else float("inf"))
+            pairs.append((d, i, j))
+    taken: set = set()
+    for d, i, j in sorted(pairs):
+        m = matches[i]
+        if m.chosen is not None or j in taken:
+            continue
+        m.chosen, m.distance = cands[j], d
+        taken.add(j)
+    tol = float(ctx.tol["position_paper_in"])
+    notes = {normalize(c["content"]) for c in ctx.truth.callouts}
+    for j, cand in enumerate(cands):
+        if j in taken or cand.tip is None or normalize(cand.text.content) in notes:
+            continue
+        for m in matches:
+            if m.chosen is None and geo.distance(cand.tip, m.truth["tip_paper"]) <= tol:
+                m.wrong = cand
+                break
+    plain = [t for t, _why in ctx_texts_without_callout_record(ctx)]
+    for m in matches:
+        if m.chosen is None:
+            want = normalize(m.truth["content"])
+            m.by_hand = next((t for t in plain if normalize(t.content) == want), None)
+    return matches
+
+
+def ctx_texts_without_callout_record(ctx: Context):
+    """``(text, where)`` for every text with no ``callout`` record, in any space."""
+    for e in ctx.doc.model_entities.values():
+        if isinstance(e, Text) and (e.anchor or {}).get("kind") != "callout":
+            yield e, "model"
+    for sv in ctx.sheets:
+        if sv.sheet is not None:
+            for e in sv.sheet.entities.values():
+                if isinstance(e, Text) and (e.anchor or {}).get("kind") != "callout":
+                    yield e, sv.sheet.id
 
 
 def _mean(values: List[float]) -> float:
@@ -628,6 +765,7 @@ def check_legibility(a: Analysis) -> Result:  # D1-08
     present = (any(m.chosen is not None and m.chosen.visible for m in a.labels.matches)
                or (ctx.asks("table") and bool(a.chosen_tables()))
                or (ctx.asks("widths") and any(dm.chosen is not None for dm in a.dimensions))
+               or (ctx.asks("notes") and any(cm.chosen is not None for cm in a.callouts))
                or (ctx.asks("sheet") and ctx.any_sheet)
                or (ctx.asks("north") and any(
                    isinstance(e, BlockRef) and e.block_name == block
@@ -1056,7 +1194,59 @@ def check_alignment_created(a: Analysis) -> Result:  # D1-15
     return ok / total, findings
 
 
+def check_callouts(a: Analysis) -> Result:  # D1-16 (EXTRA_CHECKS)
+    """Each construction callout the task asks for: placed by ``place_callout``
+    (its record), reading the note as given, visible on the sheet, its leader
+    tip within the paper tolerance of the station and offset called out.  A
+    callout at one of those points that reads none of the notes is wrong work
+    on the sheet (``wrong_value``); a missing or misplaced one costs credit."""
+    ctx = a.ctx
+    if not ctx.truth.callouts:
+        return 0.0, [Finding("missing", note="no construction callouts in the truth")]
+    tol = float(ctx.tol["position_paper_in"])
+    findings: List[Finding] = []
+    ok = 0
+    for m in a.callouts:
+        if m.wrong is not None:
+            findings.append(Finding("wrong_value", anchor=m.anchor, entity_ids=[m.wrong.text.id],
+                                    expected=m.truth["content"], actual=m.wrong.text.content,
+                                    note="the callout at this point reads another note"))
+        c = m.chosen
+        if c is None:
+            if m.by_hand is not None:
+                findings.append(Finding("unanchored", anchor=m.anchor, entity_ids=[m.by_hand.id],
+                                        note="the note was typed as text, not placed as a "
+                                             "callout"))
+            elif m.wrong is None:
+                findings.append(Finding("missing", anchor=m.anchor,
+                                        note="no callout reads this note"))
+            continue
+        if (c.text.anchor or {}).get("placed_by") != "place_callout":
+            findings.append(Finding("unanchored", anchor=m.anchor, entity_ids=[c.text.id],
+                                    note="the callout's record was not placed by the callout "
+                                         "command"))
+            continue
+        if c.tip is None:
+            findings.append(Finding("misplaced", anchor=m.anchor, entity_ids=[c.text.id],
+                                    note="no leader reaches the note"))
+            continue
+        if not c.visible:
+            findings.append(Finding("not_visible", anchor=m.anchor, entity_ids=[c.text.id],
+                                    note="the note is not on the deliverable sheet"))
+            continue
+        if m.distance is None or m.distance > tol:
+            findings.append(Finding("misplaced", anchor=m.anchor, entity_ids=[c.text.id],
+                                    expected=[round(v, 3) for v in m.truth["tip_paper"]],
+                                    actual=[round(v, 3) for v in c.tip],
+                                    note=f"the leader tip is {m.distance:.2f} in from the point "
+                                         f"called out"))
+            continue
+        ok += 1
+    return ok / len(a.callouts), findings
+
+
 CHECKS: Dict[str, Callable[[Analysis], Result]] = {
+    "D1-16": check_callouts,
     "D1-00": check_sheet_setup,
     "D1-01": check_linework,
     "D1-02": check_ticks,

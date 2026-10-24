@@ -105,6 +105,7 @@ class GroundTruth:
     sheets: List[dict] = field(default_factory=list)
     edges: List[dict] = field(default_factory=list)       # offset pieces of the pavement edges
     dimensions: List[dict] = field(default_factory=list)  # width dimensions, one per tangent
+    callouts: List[dict] = field(default_factory=list)    # construction callouts: note, target, tip
     references: List[dict] = field(default_factory=list)  # base drawings to attach
     layers: List[str] = field(default_factory=list)       # the standard layer set
     alignments: Dict[str, dict] = field(default_factory=dict)  # the design the truth is drawn from
@@ -126,7 +127,8 @@ class GroundTruth:
 
     @classmethod
     def from_dict(cls, d: dict) -> "GroundTruth":
-        return cls(**{k: d[k] for k in cls.__dataclass_fields__})
+        # a truth saved before a field existed (callouts, 2026-10-24) reads back with it empty
+        return cls(**{k: d[k] for k in cls.__dataclass_fields__ if k in d})
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)

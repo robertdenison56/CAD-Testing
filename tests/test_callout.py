@@ -142,7 +142,11 @@ def test_calling_out_a_pavement_edge_seen_through_a_reference(tmp_path):
     assert text.content == "EP 12' RT"
     # the callout is the host's own work; the referenced edge is untouched
     assert len(sheets.doc.model_entities) == 4
-    assert text.anchor is None                    # no design model here to anchor to
+    # no design model here to anchor to: the callout's own record says it was aimed at a
+    # point, and where the tip landed
+    assert text.anchor["kind"] == "callout" and text.anchor["ref"] == "point"
+    assert text.anchor["alignment"] == "" and text.anchor["placed_by"] == "place_callout"
+    assert text.anchor["tip"] == [float(TARGET[0]), float(TARGET[1])]
 
 
 def test_a_document_with_a_callout_survives_save_and_reload(tmp_path):

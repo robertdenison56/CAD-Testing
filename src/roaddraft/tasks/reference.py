@@ -206,6 +206,18 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
             for sh in sheets:
                 steps.append(("fill_title_block", {"sheet": sh["name"],
                                                    "fields": sh["title_block_fields"]}))
+        elif phase == "notes":
+            # a real sheet's construction callouts (tasks.real_callouts): each note placed
+            # on the sheet, aimed by station and offset at the line it calls out, its text
+            # where the published note stood
+            for c in D.get("callouts") or []:
+                steps.append(("place_callout", {
+                    "space": sheets[0]["name"],
+                    "alignment": f"{c['reference']}:{c['alignment']}",
+                    "target_anchor": {"station": c["station_text"], "offset": c["offset"]},
+                    "position": list(c["position"]), "content": c["content"],
+                    "height": c["height"], "arrow": bool(c.get("arrow", True)),
+                    "layer": c.get("layer") or layers["labels"]}))
     return steps
 
 

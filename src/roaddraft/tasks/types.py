@@ -40,6 +40,9 @@ PHASES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("table", ("table",)),
     ("north", ("north",)),
     ("title", ("title",)),
+    # a real plan sheet's construction callouts (tasks.real, 2026-10-24): notes with
+    # leaders on the points they call out, placed on the sheet after everything else
+    ("notes", ("notes",)),
 )
 PHASE_ORDER = [name for name, _ in PHASES]
 GROUPS: Tuple[str, ...] = tuple(g for _, gs in PHASES for g in gs)
@@ -63,7 +66,7 @@ CHECK_GROUPS: Dict[str, Tuple[str, ...]] = {
     "D1-05": ("bearings",),
     "D1-06": ("table",),
     "D1-07": LABEL_GROUPS,
-    "D1-08": LABEL_GROUPS + ("table", "north", "sheet", "widths"),
+    "D1-08": LABEL_GROUPS + ("table", "north", "sheet", "widths", "notes"),
     # (the "sheet" group joins D1-09 only on a two-sheet layout, whose match line and labels
     # have a level of their own; see verify.check_groups)
     "D1-09": LABEL_GROUPS + ("ticks", "linework", "table", "edges", "widths", "layers", "north"),
@@ -73,6 +76,8 @@ CHECK_GROUPS: Dict[str, Tuple[str, ...]] = {
     "D1-13": ("widths",),
     "D1-14": ("reference",),
     "D1-15": ("design",),
+    # the verifier's own check (verify.checks.EXTRA_CHECKS), outside the frozen spec v1 list
+    "D1-16": ("notes",),
 }
 #: which spec layer role each group's work is drawn on (D1-09)
 GROUP_LAYER_ROLE: Dict[str, str] = {
@@ -230,6 +235,15 @@ REAL_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
           ["layers", "linework", "reference"],
           "draft a real plan sheet from the base files: sheet, viewport, annotation",
           owns_design=False),
+    # -- the sheet's construction callouts (decided 2026-10-24, Robert: "build
+    # real-construction-callouts first"): the published notes taken off the sheet and
+    # handed back as text with a station and offset each; the drafter places them as
+    # callouts whose leader tips land on those points
+    _type("real-construction-callouts", ["notes"],
+          ["layers", "linework", "reference", "sheet", "north", "title", "stationing",
+           "bearings", "callouts", "table"],
+          "place a real plan sheet's construction callouts: each note with its leader on the "
+          "point it calls out", owns_design=False),
 )}
 
 

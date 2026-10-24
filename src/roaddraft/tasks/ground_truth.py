@@ -164,6 +164,19 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
             "tangent_range": [float(align.begin_station + t.start_dist),
                               float(align.begin_station + t.end_dist)],
             "layer": D.get("dims_layer", layers.get("dims"))})
+    # a real sheet's construction callouts: each note's tip from its station and offset on
+    # its line, in the model and on the paper through the sheet's viewport (tasks.real)
+    callouts: List[dict] = []
+    for c in D.get("callouts") or []:
+        on = Alignment.from_dict(brief.design["alignments"][c["alignment"]])
+        tip = on.station_to_xy(float(c["station"]), float(c["offset"]))[0]
+        vp = D["sheets"][0]["viewport"]
+        t = geo.ViewportTransform(vp["center_paper"], vp["model_center"], vp["feet_per_inch"],
+                              vp.get("rotation_deg", 0.0))
+        row = dict(c)
+        row.update(sheet=D["sheets"][0]["name"], tip_model=[float(tip[0]), float(tip[1])],
+                   tip_paper=[float(v) for v in t.to_paper(tip)])
+        callouts.append(row)
     references: List[dict] = [dict(r) for r in D.get("references") or []]
     if D.get("basefile"):
         ref_spec = S.get("reference", {})
@@ -174,12 +187,14 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
     counts = {"labels": len(labels), "ticks": len(ticks), "curves": len(align.curves()),
               "tangents": len(align.tangents()), "equations": len(align.equations),
               "sheets": len(sheets), "match_lines": len(match_stations), "edges": len(edges),
-              "dimensions": len(dimensions), "references": len(references)}
+              "dimensions": len(dimensions), "references": len(references),
+              "callouts": len(callouts)}
     fingerprint = DesignModel.from_dict({"alignments": brief.design["alignments"],
                                          "profiles": brief.design["profiles"]}).fingerprint()
     return GroundTruth(task_id=brief.task_id, design_fingerprint=fingerprint, labels=labels,
                        ticks=ticks, elements=elements, curve_tables=curve_tables, sheets=sheets,
-                       edges=edges, dimensions=dimensions, references=references,
+                       edges=edges, dimensions=dimensions, callouts=callouts,
+                       references=references,
                        layers=list(S.get("layer_set") or dict.fromkeys(layers.values())),
                        alignments=copy.deepcopy(brief.design["alignments"]), scope=scope,
                        counts=counts)
