@@ -259,7 +259,7 @@ def _settings(group: list, align: Alignment, before: Optional[Alignment]) -> dic
         settings["point_side"] = marks[0].anchor.get("side")
     texts = numbers + marks
     if texts:
-        settings["view_rotation"] = float(texts[0].anchor.get("view_rotation") or 0.0)
+        settings["view_rotation"] = _view_rotation(texts, before or align)
     raws = [float(t.anchor["station"]) for t in ticks if t.anchor.get("station") is not None]
     if raws:
         lo, hi = min(raws), max(raws)
@@ -269,6 +269,36 @@ def _settings(group: list, align: Alignment, before: Optional[Alignment]) -> dic
         if lo > begin + interval + TOL or hi < end - interval - TOL:
             settings["station_range"] = (lo, hi)
     return settings
+
+
+def _view_rotation(texts: list, align: Alignment) -> float:
+    """The twist a set was lettered to read through.  A label records it
+    (``view_rotation`` in its anchor); one lettered before the record carried
+    it does not, and laying such a set out again through no twist turns every
+    label whose line runs past 90 degrees in the model round, so it reads
+    upside down through the viewport it was posed for (L-1's "TB1", at
+    93.96 degrees under a -89.94 degree twist).  So the twist is read off the
+    pose instead: the one that keeps a label that runs along its line the way
+    it stands -- upright through the view when the text runs with the line,
+    turned round when it runs against it."""
+    recorded = [t for t in texts if t.anchor.get("view_rotation") is not None]
+    if recorded:
+        return float(recorded[0].anchor["view_rotation"])
+    along = [t for t in texts if t.anchor.get("rotation", "along") == "along"
+             and t.anchor.get("station") is not None]
+    if not along:
+        return 0.0
+    t = along[0]
+    dist = min(max(float(t.anchor["station"]) - float(align.begin_station), 0.0), align.length)
+    direction = float(align.direction_at(dist))
+    against = abs(_fold(float(t.rotation_deg) - direction)) > 90.0
+    return _fold(180.0 - direction if against else -direction)
+
+
+def _fold(angle_deg: float) -> float:
+    """An angle in (-180, 180]."""
+    a = (float(angle_deg) + 180.0) % 360.0 - 180.0
+    return 180.0 if a == -180.0 else a
 
 
 def _relay_stationing(doc: Document, space_key: str, group: list, align: Alignment,
