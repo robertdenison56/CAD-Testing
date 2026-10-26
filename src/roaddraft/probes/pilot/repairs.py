@@ -42,10 +42,10 @@ STROKE_LAYER_PREFIX = "S-TEXT-"
 # ------------------------------------------------------------------ L-1
 
 PPM045 = "PPM-045"
-#: the pieces of "Orchard Creek" on the sheet (the C was in AA01: qa_review)
+#: the pieces of "Orchard Creek" on the sheet; the C is in AA01
 PPM_CREEK = {"TX-089": "O", "TX-090": "rcha", "TX-091": "r", "TX-092": "d", "TX-094": "r",
-             "TX-093": "8’"}
-PPM_CREEK_PIECES = ("TX-089", "TX-090", "TX-091", "TX-092", "TX-094")
+             "TX-095": "eek"}
+PPM_CREEK_C = ("0000000000aa01.rdraft", "TX-035")
 #: paper boxes of the two labels the redraft digitised as strokes:
 #: N 01°05'14" W along "TB1" ahead of its curve, and 328.15' further on
 PPM_STROKES = {"bearing": (16.25, 8.12, 18.10, 8.45), "length": (21.15, 8.20, 22.20, 8.48),
@@ -167,13 +167,17 @@ def repair_ppm045(out: Path) -> None:
     for eid, text in PPM_CREEK.items():
         _expect(sheet.entities.get(eid), text, f"L-1 {eid}")
     o = sheet.entities["TX-089"]
-    c.ok(s.execute("delete_entities", {"ids": list(PPM_CREEK_PIECES)}))
+    c.ok(s.execute("delete_entities", {"ids": list(PPM_CREEK)}))
     c.ok(s.execute("place_text", {"space": sheet.name, "layer": o.layer, "position": list(o.position),
                                   "rotation_deg": float(o.rotation_deg), "height": 0.14,
                                   "content": "Orchard Creek"}))
     # an 8' width lettered over the 12' above it
     c.ok(s.execute("move_entities", {"ids": ["TX-098"], "delta": [0.0, -0.04]}))
     c.save(s, out / c.sheet_file(PPM045))
+    aa = c.load(out / PPM_CREEK_C[0])
+    _expect(aa.doc.model_entities.get(PPM_CREEK_C[1]), "C", f"AA01 {PPM_CREEK_C[1]}")
+    c.ok(aa.execute("delete_entities", {"ids": [PPM_CREEK_C[1]]}))
+    c.save(aa, out / PPM_CREEK_C[0])
 
 
 def repair_ppm160(out: Path) -> None:

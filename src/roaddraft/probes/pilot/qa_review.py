@@ -312,8 +312,6 @@ def prepare_ppm045(out: Path) -> Path:
                      ("TX-036", "TB1 T-1 bearing")):
         _ok(aa.execute("modify_entity", {"id": eid, "changes": {"content": v[key]}}))
     # TB1's two stroked labels went at staging (repairs.py); their values come back as text
-    _expect(aa.doc.model_entities.get("TX-035"), "C", "AA01 TX-035")
-    _ok(aa.execute("delete_entities", {"ids": ["TX-035"]}))   # the C of Creek, see below
     t2 = next(t for t in _rows(aa, "tangents", "TB1") if t["ref"] == "T-2")
     # where the strokes began, lifted clear of the station ticks (4.5 ft left of the line)
     at = _ok(aa.query("xy_to_station", {"alignment": "TB1",
