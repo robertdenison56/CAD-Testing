@@ -41,6 +41,12 @@ class Agent:
     def reset(self, task: Task, level: str, mode: str) -> None:
         """Called once per episode before the first observation."""
 
+    def ready(self) -> bool:
+        """Whether an episode may start: an LLM agent asks its provider, whose
+        local-server guard reloads and probes the engine. False stops the run
+        before the episode file is written, so the episode runs on resume."""
+        return True
+
     def begin(self, context: dict) -> None:
         """Called after ``reset`` with the episode's ``mode``, ``level``,
         ``dialect``, ``budgets`` (the mode's) and ``scope``, before the

@@ -57,3 +57,44 @@ def test_cli_dry_run_and_run(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "oracle" in out and "effective 100.00" in out
+
+
+def test_a_dead_endpoint_stops_the_run_before_any_episode_is_written(tmp_path):
+    from roaddraft.eval.agents import NullAgent
+
+    class Dead(NullAgent):
+        name = "dead"
+
+        def ready(self):
+            return False
+
+    spec = RunSpec(taskset="d1-dev", agents=("dead",), limit=4, results_root=str(tmp_path),
+                   run_id="dead", concurrency=1)
+    said = []
+    summary = run(spec, agent_factory=lambda name, spec: Dead(), progress=said.append)
+    # the first cell could not start; the others were never started and no episode file exists
+    assert summary["episodes"] == 0 and summary["stopped"] == "engine" and summary["not_run"] == 3
+    assert len(summary["failures"]) == 1 and "did not answer" in summary["failures"][0]["error"]
+    assert not list((tmp_path / "dead" / "episodes").glob("*.jsonl")) if (tmp_path / "dead" / "episodes").exists() else True
+    assert any("endpoint is down" in s for s in said)
+
+
+def test_episodes_that_die_before_their_first_step_stop_the_run_after_three(tmp_path):
+    from roaddraft.eval.agents import NullAgent
+    from roaddraft.eval.runner import DEAD_EPISODES
+
+    class Dying(NullAgent):
+        name = "dying"
+
+        def act(self, observation):
+            raise RuntimeError("HTTP 400: No models loaded")
+
+    spec = RunSpec(taskset="d1-dev", agents=("dying",), limit=6, results_root=str(tmp_path),
+                   run_id="dying", concurrency=1)
+    summary = run(spec, agent_factory=lambda name, spec: Dying())
+    assert summary["episodes"] == DEAD_EPISODES and summary["stopped"] == "errors"
+    assert summary["not_run"] == 6 - DEAD_EPISODES
+    assert summary["groups"]["dying|explicit|single"]["errors"] == DEAD_EPISODES
+    # the three that ran have end records; the rest have no file, so a resume runs them
+    files = list((tmp_path / "dying" / "episodes").glob("*.jsonl"))
+    assert len(files) == DEAD_EPISODES and all(is_complete(f) for f in files)

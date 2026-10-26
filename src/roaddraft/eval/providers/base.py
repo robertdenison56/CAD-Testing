@@ -84,6 +84,13 @@ class Provider:
     def reset(self, task) -> None:
         """Called once per episode with the task (the fake oracle reads it)."""
 
+    def ready(self) -> bool:
+        """The endpoint answers, so an episode may start; a local server's
+        provider reloads and probes its engine here (the LM Studio guard).
+        False stops the run before the episode is written, so a dead engine
+        burns no episodes (the 9B's d1-real run, 2026-10-24: 61 of 99)."""
+        return True
+
     def complete(self, system: str, transcript: List[dict], tools: List[dict]) -> Turn:  # pragma: no cover
         raise NotImplementedError
 

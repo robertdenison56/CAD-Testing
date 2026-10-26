@@ -1035,3 +1035,111 @@ def test_cli_run_stops_at_an_account_limit_and_leaves_the_probe_to_rerun(tmp_pat
     assert rc == 3
     assert not (tmp_path / "out" / "runs" / "cx" / BLANK.id).exists()
     assert not (tmp_path / "out" / "runs" / "cx" / second.id).exists()
+
+
+def test_no_models_loaded_is_a_reload_and_the_load_is_waited_for(monkeypatch):
+    import io
+    import subprocess
+    import urllib.error
+    from roaddraft.runners import openai_compat
+    # 2026-10-23 22:27, d1-real on the 9B: an LM Link drop took the model, the reload's CLI came back
+    # with rc=1 while the load went on, and the next request met this 400. Forty episodes then died
+    # on it in ten seconds, since it was no reload marker and nothing waited for the load.
+    body = (b'{"error": {"message": "No models loaded. Please load a model in the developer page '
+            b'or use the \'lms load\' command.", "type": "invalid_request_error", "param": "model"}}')
+    calls, reloads = [], []
+
+    def urlopen(req, timeout):
+        calls.append(1)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(body))
+        return Stream(sse(chunk(content="back"), chunk(finish="stop"), USAGE))
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", urlopen)
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    monkeypatch.setattr(guard, "reload", lambda sleep=None: reloads.append(1) or True)
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                    guard=guard, sleep=lambda s: None)
+    assert reply["choices"][0]["message"]["content"] == "back" and reloads == [1]
+    # and reload itself waits until the server lists the model at the context, not just for the CLI
+    fresh = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    ran, slept = [], []
+    monkeypatch.setattr(openai_compat.subprocess, "run",
+                        lambda cmd, **kw: ran.append(cmd[1]) or subprocess.CompletedProcess(cmd, 1, "", ""))
+    contexts = iter([0, 0, 65536])
+    monkeypatch.setattr(fresh, "loaded_context", lambda: next(contexts))
+    assert fresh.reload(sleep=slept.append) is True
+    assert ran == ["unload", "load"] and slept == [2, 2]
+
+
+def test_a_dead_engine_still_listed_as_loaded_is_reloaded_on_the_second_error(monkeypatch):
+    from roaddraft.runners import openai_compat
+    # 2026-10-24 01:50, d1-real on the 9B: the engine on the PC hung, LM Studio listed the model as
+    # loaded for the next seven hours, and every request ended "fetch failed" after five minutes.
+    # Asking again on each of four attempts was twenty minutes an episode for twenty episodes.
+    dead = {"error": {"message": "Engine protocol predict request failed: fetch failed"}}
+    streams = iter([Stream(sse(dead)), Stream(sse(dead)),
+                    Stream(sse(chunk(content="alive"), chunk(finish="stop"), USAGE))])
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", lambda req, timeout: next(streams))
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    reloads = []
+    monkeypatch.setattr(guard, "reload", lambda sleep=None: reloads.append(1) or True)
+    monkeypatch.setattr(guard, "loaded_context", lambda: 65536)
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {},
+                                    guard=guard, sleep=lambda s: None)
+    # asked again once, reloaded on the second, answered on the third
+    assert reply["choices"][0]["message"]["content"] == "alive" and reloads == [1]
+
+
+def test_ensure_alive_probes_the_engine_and_reloads_until_it_answers(monkeypatch):
+    from roaddraft.runners import openai_compat
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    reloads, slept = [], []
+    monkeypatch.setattr(guard, "reload", lambda sleep=None: reloads.append(1) or True)
+    # listed at the context but not answering twice, then answering: two reloads, then ready
+    monkeypatch.setattr(guard, "loaded_context", lambda: 65536)
+    probes = iter([False, False, True])
+    monkeypatch.setattr(guard, "probe", lambda timeout=None: next(probes))
+    clock = iter(range(0, 10_000, 10))
+    assert guard.ensure_alive(deadline=600, sleep=slept.append, clock=lambda: next(clock)) is True
+    assert reloads == [1, 1] and slept == [openai_compat.ENGINE_RETRY] * 2
+    # not listed at all: loaded first, then probed
+    reloads.clear()
+    contexts = iter([0, 65536])
+    monkeypatch.setattr(guard, "loaded_context", lambda: next(contexts))
+    monkeypatch.setattr(guard, "probe", lambda timeout=None: True)
+    assert guard.ensure_alive(deadline=600, sleep=slept.append, clock=lambda: 0.0) is True
+    assert reloads == [1]
+    # never answers: False once the deadline has passed, so the runner stops instead of burning episodes
+    monkeypatch.setattr(guard, "loaded_context", lambda: 65536)
+    monkeypatch.setattr(guard, "probe", lambda timeout=None: False)
+    clock = iter([0, 100, 700])
+    assert guard.ensure_alive(deadline=600, sleep=lambda s: None, clock=lambda: next(clock)) is False
+
+
+def test_the_probe_is_one_unstreamed_token_and_fails_closed(monkeypatch):
+    import io
+    import socket
+    from roaddraft.runners import openai_compat
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 65536)
+    seen = []
+
+    class Reply(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def urlopen(req, timeout):
+        seen.append((json.loads(req.data), timeout))
+        return Reply(json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode())
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", urlopen)
+    assert guard.probe() is True
+    body, timeout = seen[0]
+    assert body["model"] == "qwen/qwen3.5-9b" and body["max_tokens"] == 1 and "stream" not in body
+    assert timeout == openai_compat.PROBE_TIMEOUT
+
+    def hung(req, timeout):
+        raise socket.timeout("timed out")
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", hung)
+    assert guard.probe() is False

@@ -88,7 +88,7 @@ LMS = str(Path.home() / ".lmstudio" / "bin" / "lms")
 RELOAD_MARKERS = ("exceed_context_size_error", "fetch failed", "terminated",
                   "LM Link client transport disposed", "Model is unloaded",
                   "Model unloaded by user or API request", "Instance does not exist",
-                  "Failed to load model")
+                  "Failed to load model", "No models loaded")
 #: a 400 that is the model's fault, not the request's: LM Studio could not
 #: parse the tool call the model wrote (seen with Llama 3.1 8B, Oct 7 2026).
 #: Sampling again is the only answer, so it is retried like a 5xx. Streamed,
@@ -97,6 +97,15 @@ RESAMPLE_MARKERS = ("does not match the expected",)
 #: the chat template cannot render a list-valued JSON Schema ``type`` (Gemma-4-E4B)
 TYPE_LIST_MARKERS = ("filter-mapping not implemented",)
 SERVER_WAIT = 15 * 60
+#: after ``lms load`` returns, how long the server may take to list the model as loaded
+#: (2026-10-23 22:27, d1-real: the CLI came back with rc=1 and the load finished 10 s later)
+LOAD_WAIT = 180
+#: a one-token completion that proves the engine answers; an engine that hung on the PC
+#: (2026-10-24 01:50) took the server five minutes to call "fetch failed", so this is short
+PROBE_TIMEOUT = 90.0
+#: how long ``ensure_alive`` keeps reloading and probing before it gives the run up,
+#: and the pause between its tries
+ENGINE_WAIT, ENGINE_RETRY = 30 * 60, 30
 CALL_CAP = 4            # tool calls run from one turn; the start of another ends the turn
 TURN_LIMIT = 1800.0     # seconds one turn may take, and the socket's read timeout
 
@@ -157,12 +166,70 @@ class LmStudioGuard:
         self.models_url = base_url.rsplit("/v1", 1)[0] + "/api/v0/models"
         self.reloads = 0
 
-    def reload(self) -> None:
+    def reload(self, sleep: Callable[[float], None] = time.sleep) -> bool:
+        """Unload and load the model at the run's context, then wait until the
+        server lists it as loaded: ``lms load`` over LM Link can return before
+        the load has finished (or with rc=1 while it goes on), and a request
+        sent in that gap meets "No models loaded"."""
         self.reloads += 1
         subprocess.run([self.lms, "unload", self.model], capture_output=True, text=True)
         r = subprocess.run([self.lms, "load", self.model, "--context-length", str(self.context),
                             "--parallel", "1", "-y"], capture_output=True, text=True)
-        print(f"reloaded {self.model} at context {self.context}: rc={r.returncode}", flush=True)
+        up = self.wait_loaded(LOAD_WAIT, sleep)
+        print(f"reloaded {self.model} at context {self.context}: rc={r.returncode}, "
+              f"{'listed as loaded' if up else f'not listed as loaded after {LOAD_WAIT} s'}", flush=True)
+        return up
+
+    def wait_loaded(self, seconds: float, sleep: Callable[[float], None] = time.sleep,
+                    clock: Callable[[], float] = time.time) -> bool:
+        """True once the server lists the model loaded at the run's context, polling for ``seconds``."""
+        t0 = clock()
+        while True:
+            if self.loaded_context() >= self.context:
+                return True
+            if clock() - t0 >= seconds:
+                return False
+            sleep(2)
+
+    def probe(self, timeout: float = PROBE_TIMEOUT) -> bool:
+        """One token from the model, not streamed: the engine behind the listing
+        answers. False on any error or after ``timeout`` seconds."""
+        body = json.dumps({"model": self.model, "max_tokens": 1,
+                           "messages": [{"role": "user", "content": "Reply with one word."}]}).encode()
+        req = urllib.request.Request(self.base_url + "/chat/completions", body,
+                                     {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return bool(json.loads(resp.read()).get("choices"))
+        except Exception:  # noqa: BLE001  a dead engine fails in any of several ways
+            return False
+
+    def ensure_alive(self, deadline: float = ENGINE_WAIT, sleep: Callable[[float], None] = time.sleep,
+                     clock: Callable[[], float] = time.time) -> bool:
+        """The model listed at the run's context and answering a probe; a
+        model that is not listed, or is listed but does not answer (the
+        engine on the PC hung, 2026-10-24 01:50, and LM Studio listed it as
+        loaded for the next seven hours), is reloaded and probed again every
+        ``ENGINE_RETRY`` seconds until ``deadline``. False when it never came
+        back: the caller stops the run rather than burn its episodes."""
+        t0 = clock()
+        tries = 0
+        while True:
+            if self.loaded_context() < self.context:
+                print(f"{self.model} is not loaded at context {self.context}; loading it", flush=True)
+                self.reload(sleep)
+            if self.probe():
+                if tries:
+                    print(f"{self.model} answers again after {tries} reload(s)", flush=True)
+                return True
+            if clock() - t0 >= deadline:
+                print(f"{self.model} did not answer a probe within {deadline:.0f} s", flush=True)
+                return False
+            tries += 1
+            print(f"{self.model} is listed but does not answer (try {tries}); reloading the engine",
+                  flush=True)
+            self.reload(sleep)
+            sleep(ENGINE_RETRY)
 
     def models(self) -> List[dict]:
         with urllib.request.urlopen(self.models_url, timeout=10) as resp:
@@ -259,6 +326,7 @@ def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmS
     and the guard. Raises ``ToolsRefused`` and ``ContextFull`` for the backend
     to act on."""
     data = json.dumps(dict(body, stream=True, stream_options={"include_usage": True})).encode()
+    asked_again = False   # a reload marker met once with the model still listed
     for attempt in range(attempts):
         last = attempt == attempts - 1
         try:
@@ -289,12 +357,18 @@ def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmS
         # if it took the model with it, else ask again -- LM Studio can still
         # list the model for a moment after the engine stopped (2026-10-08 19:48,
         # pc-by-station), and the retry then meets "Model is unloaded" and reloads
+        # An engine that died with the model still listed is asked once more, and reloaded on
+        # the next such error: the listing can outlive the engine for a moment (2026-10-08) or for
+        # good (2026-10-24 01:50, d1-real: "fetch failed" for seven hours with the model listed),
+        # and asking again forever was 20 minutes an episode for 20 episodes.
         if guard and any(m in text for m in RELOAD_MARKERS) and not last:
-            if code == 400 or guard.loaded_context() < guard.context:
+            if code == 400 or asked_again or guard.loaded_context() < guard.context:
                 print(f"{where}, reloading the model: {text[:140]}", flush=True)
                 guard.reload()
+                asked_again = False
             else:
                 print(f"{where} with the model still loaded; asking again: {text[:140]}", flush=True)
+                asked_again = True
             sleep(5)
             continue
         if any(m in text for m in RESAMPLE_MARKERS) and not last:

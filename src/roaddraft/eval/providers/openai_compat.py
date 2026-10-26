@@ -134,14 +134,22 @@ class OpenAICompatProvider(Provider):
         self.call_cap = int(call_cap)
         self.lms_context = lms_context
         self.rewrite_type_lists = False
+        self.guard = None
         if post is None:
             from roaddraft.runners.openai_compat import LmStudioGuard, post_chat
             key = os.environ.get(api_key_env, "")
             headers = {"Authorization": f"Bearer {key}"} if key else {}
             guard = LmStudioGuard(self.base_url, model, int(lms_context)) if lms_context else None
+            self.guard = guard
             url = self.base_url + "/chat/completions"
             post = lambda body: post_chat(url, body, headers, guard, call_cap=self.call_cap)  # noqa: E731
         self.post = post
+
+    def ready(self) -> bool:
+        """With the LM Studio guard: the model listed at the run's context and
+        answering a one-token probe, reloaded until it is or the guard's
+        deadline passes. Without it (vLLM, Ollama, a hosted endpoint): True."""
+        return self.guard.ensure_alive() if self.guard is not None else True
 
     def request(self, system: str, transcript: List[dict], tools: List[dict]) -> dict:
         body = dict(self.extra_body, model=self.model, messages=chat_messages(system, transcript),
