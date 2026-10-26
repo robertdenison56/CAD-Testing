@@ -13,6 +13,15 @@ stops the runner, not an episode: once the episodes finished so far (the
 resumed ones included) have cost ``cost_cap`` dollars, no new episode starts
 and the running ones finish.  Episodes of an unpriced model cost nothing
 against the cap, so a cap on a local model never trips.
+
+A dead endpoint stops the runner too (``stopped = "engine"``): before each
+episode the agent is asked whether it is ready (an LLM agent's provider
+probes its local server and reloads the engine, up to its own deadline),
+and a no leaves that episode unwritten and starts no other, so the resume
+runs them. As a backstop, ``DEAD_EPISODES`` episodes in a row that ended
+in an error before their first step stop the runner the same way
+(``stopped = "errors"``). Both are what the 9B's d1-real run lacked on
+2026-10-24, when 61 of 99 episodes went to a server whose engine had died.
 """
 from __future__ import annotations
 
@@ -33,6 +42,12 @@ from roaddraft.eval.episode import HARNESS_VERSION, Episode, EpisodeConfig, Epis
 from roaddraft.eval.trajectory import episode_path, is_complete, read_episode
 
 DEFAULT_RESULTS = "results"
+#: consecutive episodes that errored before their first step: the endpoint, not the model
+DEAD_EPISODES = 3
+
+
+class EngineDown(RuntimeError):
+    """The agent's endpoint did not answer, so the episode was not started."""
 
 
 @dataclass(frozen=True)
@@ -128,10 +143,21 @@ def run_cell(cell: Cell, spec: RunSpec, pins: Optional[dict] = None,
                              "oracle, null, replay or a model")
         else:
             agent = (agent_factory or make_agent)(cell.agent, spec)
+        _ready(agent)
         return probe_tasks.ProbeEpisode(task, agent, config, out_root=spec.out_root,
                                         pins=pins).run()
     agent = (agent_factory or make_agent)(cell.agent, spec)
+    _ready(agent)
     return Episode(task, agent, config, out_root=spec.out_root, pins=pins).run()
+
+
+def _ready(agent: Agent) -> None:
+    """Raise ``EngineDown`` when the agent's endpoint does not answer, before
+    any episode file is written."""
+    check = getattr(agent, "ready", None)
+    if check is not None and not check():
+        raise EngineDown(f"{getattr(agent, 'name', 'the agent')}: the model endpoint did not answer; "
+                         "the episode was not started")
 
 
 def cell_path(spec: RunSpec, cell: Cell):
@@ -242,8 +268,16 @@ def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] 
 
     workers = max(1, spec.concurrency)
     queue = list(todo)
+    dead_streak = 0
     if capped():
         say(f"cost cap ${spec.cost_cap:.2f} already reached (${spent:.2f}); nothing started")
+
+    def stop(reason: str, why: str) -> None:
+        nonlocal stopped, not_run
+        if stopped is None:
+            stopped, not_run = reason, len(queue)
+            say(f"{why}: {len(queue)} episodes not started; the running ones finish")
+        queue.clear()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         running: Dict[Any, Cell] = {}
         # episodes start only as workers free up, so none starts past the cap
@@ -260,10 +294,17 @@ def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] 
                     failures.append({"task_id": cell.task_id, "agent": cell.agent,
                                      "error": "".join(traceback.format_exception_only(type(exc), exc)).strip()})
                     say(f"ERROR {cell.task_id} {cell.agent}: {exc}")
+                    if isinstance(exc, EngineDown):
+                        stop("engine", "the model endpoint is down")
                     continue
                 results.append(row)
                 cost = row.get("cost_usd")
                 spent += cost or 0.0
+                dead_streak = dead_streak + 1 if (row["termination"] == "error"
+                                                   and not row.get("steps")) else 0
+                if dead_streak >= DEAD_EPISODES:
+                    stop("errors", f"{dead_streak} episodes in a row ended in an error before "
+                         "their first step")
                 say(f"{row['task_id']} {cell.agent} {cell.level} {cell.mode}"
                     + (f" {cell.dialect}" if cell.dialect != "neutral" else "")
                     + f" s{cell.sample}: {row['effective_score']:.1f} ({row['termination']}, "
@@ -288,5 +329,5 @@ def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] 
     return summary
 
 
-__all__ = ["DEFAULT_RESULTS", "Cell", "RunSpec", "matrix", "make_agent", "run_cell", "cell_path",
-           "measured_cost", "summarize", "run"]
+__all__ = ["DEFAULT_RESULTS", "DEAD_EPISODES", "EngineDown", "Cell", "RunSpec", "matrix", "make_agent",
+           "run_cell", "cell_path", "measured_cost", "summarize", "run"]

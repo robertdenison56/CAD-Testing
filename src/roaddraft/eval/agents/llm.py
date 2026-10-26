@@ -64,6 +64,9 @@ class LLMAgent(Agent):
 
     def reset(self, task, level: str, mode: str) -> None:
         self.provider.reset(task)
+
+    def ready(self) -> bool:
+        return self.provider.ready()
         self.transcript, self.tools, self._pending = [], [], []
         self._usage, self._record = {}, {}
         self.system = self.fixed_system or prompts.system_prompt("neutral", mode)

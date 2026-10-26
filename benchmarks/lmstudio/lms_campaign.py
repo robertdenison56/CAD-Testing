@@ -8,7 +8,9 @@
     python benchmarks/lmstudio/lms_campaign.py smoke NAME [--probe edge-c102] [--print]
     python benchmarks/lmstudio/lms_campaign.py k3 NAME [PROBE...] [--force] [--print]
     python benchmarks/lmstudio/lms_campaign.py e3 NAME [--taskset d1-variance] [--samples 5] [--mode single]
-                                                [--level explicit] [--limit N] [--dry-run] [--print]
+                                                [--level explicit] [--limit N] [--run-id ID]
+                                                [--worktree PATH] [--dry-run] [--print]
+    python benchmarks/lmstudio/lms_campaign.py clear-errors RUN_ID [--apply]   # errored episodes aside, to rerun
     python benchmarks/lmstudio/lms_campaign.py score NAME [--print]
 
 NAME is a key of ``models`` in ``benchmarks/lmstudio/models.json`` (``qwen3.5-9b``, ``qwen3.5-4b``, ``gemma-4-12b``).
@@ -27,7 +29,14 @@ What it fixes, so a local run is the same run as the plan:
 
 The folder is ``benchmarks/probe_runs/2026-10-20-lms-k3`` (labels ``<label>-r1..r3``, logs ``run-<label>.log``);
 the smoke probe runs as ``-r1`` so the repeat skips it. Nothing here starts a run until ``smoke``, ``k3`` or
-``e3`` is called; ``check`` and ``status`` only load models and read state.
+``e3`` is called; ``check``, ``status`` and ``clear-errors --apply`` only load models, read state or move files.
+
+Resuming a run (2026-10-26, after the 9B's d1-real run lost 61 of 99 episodes to a dead engine): the harness
+resumes a run id by skipping every episode file with an end record, errored ones included, so ``clear-errors
+RUN_ID --apply`` first moves the errored episodes into ``<run>/errored-<date>/``; then ``e3 NAME --run-id
+RUN_ID --worktree PATH`` runs the rest from a worktree checked out at the run's own pin (``run.json``
+``pins.commit``), so the resumed episodes see the same task set and engine as the first ones. ``--worktree``
+must be clean in ``src`` and ``tests``; its HEAD is recorded in the run's pins as usual.
 """
 from __future__ import annotations
 
@@ -189,15 +198,16 @@ def git(*args: str, cwd: Path = WORKTREE) -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
 
 
-def preflight(m: Optional[dict] = None) -> None:
+def preflight(m: Optional[dict] = None, worktree: Path = WORKTREE) -> None:
     problems = []
-    if not WORKTREE.is_dir():
-        problems.append(f"worktree missing: git worktree add --detach {WORKTREE} {PIN}")
+    if not worktree.is_dir():
+        at = PIN if worktree == WORKTREE else "<the run's pins.commit>"
+        problems.append(f"worktree missing: git worktree add --detach {worktree} {at}")
     else:
-        head = git("rev-parse", "--short", "HEAD")
-        if not head.startswith(PIN) and not PIN.startswith(head):
+        head = git("rev-parse", "--short", "HEAD", cwd=worktree)
+        if worktree == WORKTREE and not head.startswith(PIN) and not PIN.startswith(head):
             problems.append(f"worktree at {head}, not {PIN}")
-        dirty = git("status", "--porcelain", "--", "src", "tests")
+        dirty = git("status", "--porcelain", "--", "src", "tests", cwd=worktree)
         if dirty:
             problems.append(f"worktree src/tests dirty:\n{dirty}")
     if not PYTHON.is_file():
@@ -229,8 +239,8 @@ def ready(m: dict) -> None:
     print(f"loaded {m['lms_key']} ({m['quantization']}) alone at context {CONTEXT} on {DEVICE}")
 
 
-def child_env() -> Dict[str, str]:
-    return dict(os.environ, PYTHONPATH=str(WORKTREE / "src"))
+def child_env(worktree: Path = WORKTREE) -> Dict[str, str]:
+    return dict(os.environ, PYTHONPATH=str(worktree / "src"))
 
 
 def run_command(m: dict, label: str, probes: List[str], repeat: int = 1, force: bool = False) -> List[str]:
@@ -246,15 +256,15 @@ def run_command(m: dict, label: str, probes: List[str], repeat: int = 1, force: 
     return cmd + list(probes)
 
 
-def show(cmd: List[str], log: Optional[Path] = None) -> None:
-    line = "PYTHONPATH=" + shlex.quote(str(WORKTREE / "src")) + " " + shlex.join(cmd)
+def show(cmd: List[str], log: Optional[Path] = None, worktree: Path = WORKTREE) -> None:
+    line = "PYTHONPATH=" + shlex.quote(str(worktree / "src")) + " " + shlex.join(cmd)
     print(line + (f" > {log} 2>&1 &" if log else ""))
 
 
-def stream(cmd: List[str], log: Path) -> int:
+def stream(cmd: List[str], log: Path, worktree: Path = WORKTREE) -> int:
     """Run in the foreground, every line to the terminal and the log."""
     log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as fh, subprocess.Popen(cmd, cwd=REPO, env=child_env(), stdout=subprocess.PIPE,
+    with log.open("a") as fh, subprocess.Popen(cmd, cwd=REPO, env=child_env(worktree), stdout=subprocess.PIPE,
                                                stderr=subprocess.STDOUT, text=True) as proc:
         for line in proc.stdout:
             sys.stdout.write(line)
@@ -399,19 +409,59 @@ def cmd_e3(args) -> int:
     if args.dry_run:
         cmd.append("--dry-run")
     log = E3_OUT / f"{run_id}.log"
+    worktree = Path(args.worktree).resolve() if args.worktree else WORKTREE
     if args.print:
-        show(cmd, log)
+        show(cmd, log, worktree)
         return 0
     if args.dry_run:
-        return subprocess.run(cmd, cwd=REPO, env=child_env()).returncode
-    preflight(m)
+        return subprocess.run(cmd, cwd=REPO, env=child_env(worktree)).returncode
+    preflight(m, worktree)
     ready(m)
     what = f"{args.taskset}" + (f"[:{args.limit}]" if args.limit else "")
     print(f"E3 {args.name}: {what} x {args.samples} sample(s) x {args.mode} x {args.level} -> {E3_OUT / run_id}; "
-          f"log {log}")
-    rc = stream(cmd, log)
+          f"log {log}; code {worktree} at {git('rev-parse', '--short', 'HEAD', cwd=worktree)}")
+    rc = stream(cmd, log, worktree)
     print(f"exit {rc}; report with: {PYTHON} -m roaddraft.eval report {E3_OUT / run_id}")
     return rc
+
+
+def cmd_clear_errors(args) -> int:
+    """The episodes of a run that ended in an error (``termination`` ``error`` in their end record),
+    listed, and with ``--apply`` moved into ``<run>/errored-<date>/`` so the harness runs them again on
+    resume. ``summary.json`` and ``episodes.json`` are left as they are: the resume rewrites both."""
+    run_dir = Path(args.run_id) if Path(args.run_id).is_dir() else E3_OUT / args.run_id
+    episodes = run_dir / "episodes"
+    if not episodes.is_dir():
+        sys.exit(f"no episodes under {run_dir}")
+    errored, kept = [], 0
+    for f in sorted(episodes.glob("*.jsonl")):
+        end = None
+        for line in f.read_text(encoding="utf-8").splitlines()[::-1]:
+            if line.strip():
+                rec = json.loads(line)
+                end = rec if rec.get("type") == "end" else None
+                break
+        if end is None:
+            print(f"no end record (left to resume): {f.name}")
+            continue
+        if end.get("termination") == "error":
+            errored.append((f, end))
+        else:
+            kept += 1
+    for f, end in errored:
+        first = (end.get("error") or "").splitlines()[0][:100] if end.get("error") else ""
+        print(f"{f.name.split('.')[0]}  {end.get('steps', 0):3d} steps  {first}")
+    print(f"{len(errored)} errored episode(s) of {len(errored) + kept} with an end record in {run_dir}")
+    if not errored or not args.apply:
+        if errored:
+            print("dry run: pass --apply to move them aside")
+        return 0
+    dest = run_dir / f"errored-{time.strftime('%Y-%m-%d')}"
+    dest.mkdir(exist_ok=True)
+    for f, _ in errored:
+        f.rename(dest / f.name)
+    print(f"moved {len(errored)} episode file(s) to {dest}; the run resumes them with e3 --run-id {run_dir.name}")
+    return 0
 
 
 def cmd_score(args) -> int:
@@ -447,7 +497,12 @@ def main(argv=None) -> int:
     e3.add_argument("--samples", type=int, default=5); e3.add_argument("--mode", default="single")
     e3.add_argument("--level", default="explicit"); e3.add_argument("--limit", type=int)
     e3.add_argument("--run-id"); e3.add_argument("--dry-run", action="store_true")
+    e3.add_argument("--worktree", help=f"the checkout to run from (default {WORKTREE}); a resume uses one "
+                                         "at the run's own pins.commit")
     e3.add_argument("--print", action="store_true"); e3.set_defaults(fn=cmd_e3)
+    ce = sub.add_parser("clear-errors"); ce.add_argument("run_id", help="a run id under results/e3-lms, or a path")
+    ce.add_argument("--apply", action="store_true", help="move them; without it, list only")
+    ce.set_defaults(fn=cmd_clear_errors)
     sc = sub.add_parser("score"); sc.add_argument("name"); sc.add_argument("--print", action="store_true")
     sc.set_defaults(fn=cmd_score)
     args = p.parse_args(argv)
