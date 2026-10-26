@@ -37,6 +37,7 @@ MODULES = [
     "typical",      # 10 typical section from a description
     "profile",      # 6 plan and profile on one sheet
     "striping",     # 13 striping plan with no-passing zones
+    "redline_pdf",  # 18 redline understanding: a marked-up PDF is the whole brief
 ]
 
 PILOT_PROBES: List[Probe] = []

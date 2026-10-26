@@ -29,10 +29,10 @@ def _ids(probes):
 def test_the_set_is_every_pilot_once_with_current_ids():
     rows = tasksets.load(P.PILOT_SET)["tasks"]
     assert sorted(r["probe"] for r in rows) == sorted(p.id for p in PILOT_PROBES)
-    assert len(rows) == 29 and len({r["task_id"] for r in rows}) == 29
+    assert len(rows) == 33 and len({r["task_id"] for r in rows}) == 33
     assert all(r["task_id"].startswith(P.ID_PREFIX + r["probe"]) for r in rows)
     assert {r["task_type"] for r in rows} == {"pilot-" + n for n in P.FAMILIES.values()}
-    assert sum(r["attachments"] for r in rows) == 5   # the scanned-sheet pilots
+    assert sum(r["attachments"] for r in rows) == 9   # the scanned-sheet and marked-up-page pilots
     assert tasksets.load(P.PILOT_SET)["generator_version"] == P.generator_version()
     assert not tasksets.check(P.PILOT_SET)
     task = tasksets.task_from_entry(rows[0])

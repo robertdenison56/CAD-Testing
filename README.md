@@ -944,7 +944,7 @@ balanced over curves and equations), `d1-variance` (20 of `d1-test` for k = 5),
 and two on the redrafted sample plan sheets: `d1-real` (99 held-out tasks, nine
 of each of the eleven real-sheet types, every agency) and `d1-real-dev` (22 tasks
 on three Caltrans sheets `d1-real` never uses, for smoke runs), and `hard-pilots`,
-the 29 harder-task pilots run as probe tasks: each on its own sample-sheet project with
+the 33 harder-task pilots run as probe tasks: each on its own sample-sheet project with
 the MCP server's tools, graded pass (100) or fail (0) by its own check
 (`src/roaddraft/eval/probe_tasks.py`, `docs/Probes_Pilots.md`).
 Prompt level, mode and dialect are run dimensions. Runs go under `results/`

@@ -1105,7 +1105,7 @@ def render_board(b: dict, readme: bool = False) -> str:
         L += ["", "Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded "
               "generator (one synthetic centerline per task); `d1-real` is 108 held-out tasks on "
               "the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), nine of each "
-              "real-sheet type; `hard-pilots` is the 29 harder-task pilots on the sample sheets, "
+              "real-sheet type; `hard-pilots` is the 33 harder-task pilots on the sample sheets, "
               "each graded pass (100) or fail (0) by its own check, with the share of its items "
               "done as the rubric column. A model's rows on different sets are not averaged.",
               "", "Effective score: 0 on a hard fail, else the rubric score; per task over its "

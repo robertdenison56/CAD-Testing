@@ -20,7 +20,7 @@ scored; `python -m roaddraft.probes score <probe> --doc <document>` repeats it.
     <probe>/<probe>.dxf     for AutoCAD, Civil 3D or MicroStation: each sheet a layout, references bound in
     <probe>/reference.json  the probe, its prompt and the verdict
 
-29 of 29 pass.
+33 of 33 pass.
 
 | Probe | Tags | Completed document | References | Check, read back from disk |
 |---|---|---|---|---|
@@ -53,3 +53,7 @@ scored; `python -m roaddraft.probes score <probe> --doc <document>` repeats it.
 | p15-plan-reading-wflp14 | pilot, scan, reading | [plan-check.rdraft](p15-plan-reading-wflp14/plan-check.rdraft) | none | PASS: all 6 answers read right off the scan |
 | p17-twist-fdot916 | pilot, layout, twist, verifier | [DRPRRD01.rdraft](p17-twist-fdot916/DRPRRD01.rdraft) | COR: DSGNRD01.rdraft, ALI: ALGNRD01.rdraft | PASS: "CL1" lettered in full on the re-cut sheet 1, every label along (or square to) its line and reading from the bottom or right as plotted |
 | p17-twist-ppm160 | pilot, layout, twist, verifier | [0000000000na001.rdraft](p17-twist-ppm160/0000000000na001.rdraft) | AA01: 0000000000aa01.rdraft, BB01: 0000000000bb01.rdraft | PASS: "NWR" lettered in full on the re-cut sheet PD-1, every label along (or square to) its line and reading from the bottom or right as plotted |
+| p18-redline-pdf-cflpla | pilot, redline-understanding, markup, scan, edit, cfl | [PLA(Sample).rdraft](p18-redline-pdf-cflpla/PLA(Sample).rdraft) | COR: COR(MAIN)Sample.rdraft, ALI: ALI(MAIN)Sample.rdraft | PASS: every mark on PLA-redlines.pdf picked up on PLA(SAMPLE), and nothing else touched |
+| p18-redline-pdf-fdot915 | pilot, redline-understanding, markup, scan, edit, fdot | [PLPRRD02.rdraft](p18-redline-pdf-fdot915/PLPRRD02.rdraft) | COR: DSGNRD01.rdraft, ALI: ALGNRD01.rdraft | PASS: every mark on sheet-12-redlines.pdf picked up on 12, and nothing else touched |
+| p18-redline-pdf-ppm045 | pilot, redline-understanding, markup, scan, edit, caltrans | [0000000000ea001.rdraft](p18-redline-pdf-ppm045/0000000000ea001.rdraft) | AA01: 0000000000aa01.rdraft, BB01: 0000000000bb01.rdraft | PASS: every mark on L-1-redlines.pdf picked up on L-1, and nothing else touched |
+| p18-redline-pdf-wfl19 | pilot, redline-understanding, markup, scan, edit, wfl | [SamplePlan_pln_pp6.rdraft](p18-redline-pdf-wfl19/SamplePlan_pln_pp6.rdraft) | COR: SamplePlan_cor.rdraft, ALI: SamplePlan_ali.rdraft, SUR: SamplePlan_sur.rdraft | PASS: every mark on D-10-redlines.pdf picked up on D.10, and nothing else touched |

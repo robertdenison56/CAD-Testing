@@ -23,7 +23,7 @@ anyone builds a generator. The ones it fails become benchmark families; the ones
   `benchmarks/pilot_runs/`.
 - `benchmarks/pilot_references/<id>/`: each scripted solution kept as a finished project: the
   completed `.rdraft` set, journal, PDF, DXF and `reference.json`.
-- Tests: `tests/test_pilot_*.py` (95 tests, about 30 s) and `tests/test_mcp_profiles.py`.
+- Tests: `tests/test_pilot_*.py` (108 tests, about a minute) and `tests/test_mcp_profiles.py`.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m roaddraft.probes.pilot list
@@ -32,7 +32,7 @@ PYTHONPATH=src .venv/bin/python -m roaddraft.probes.pilot reference --out benchm
 ```
 
 `selftest`: every scripted solution passes its check read back from disk, and every untouched start
-fails it (29/29). Each family's tests also feed the check at least one plausible wrong answer and
+fails it (33/33). Each family's tests also feed the check at least one plausible wrong answer and
 confirm it fails.
 
 ## The pilots
@@ -55,6 +55,7 @@ road, contours) were left out.
 | 10 | Typical section from a description | `p10-typical-cfl01` (CFL A6), `-wfl07` (WFL C.1) | Slopes, crown, layers and catch points against a given ground line, then a viewport at 1" = 10' | Grade breaks and catch points within 0.05 ft, layer bottoms within 0.03 ft, dims and slope labels present, the viewport |
 | 6 | Plan and profile on one sheet | `p06-plan-profile-cflpnp` (CFL Plan 1), `-wfl14` (WFL D.5) | No profile-view command: the grid and grade line built by hand at 10:1, stations lined up with the plan | Grade line within 0.10 ft every 10 ft, PVI/L/K/high-low labels, plan-profile alignment; D.5 has no high point, and lettering one fails |
 | 13 | Striping with no-passing zones | `p13-striping-wfl15` (D.6, 55 mph), `-wfl16` (D.7, 50 mph) | Passing sight distance from the profile per MUTCD, per direction | Zone ends within 25 ft, 10/30 dashes, edge lines, nothing in the wrong zone |
+| 18 | Redline understanding | `p18-redline-pdf-ppm045` (Caltrans L-1, 6 marks), `-wfl19` (WFL D.10, 5), `-cflpla` (CFL Davis Dam Road, 5), `-fdot915` (FDOT sheet 12, 6) | The brief is a marked-up PDF and nothing else: handwriting on a render of the sheet, read through `view_attachment`; a key says red = revise, green = delete, blue = comment only; each mark sits on one of several look-alike texts | One item per mark: the revised text reads the new wording at its spot, the deleted one is gone, the moved one sits where the arrow points (0.5 in), the added note lies within 1 in of the tip, the clouded entities are byte-for-byte as they were, the struck field reads the new value; nothing else changed and none of the handwriting lettered |
 | 16 | Basic tools | the 33 probes on `--profile basic` | The model computes coordinates itself | The probes' own checks |
 
 ### 16: the basic profile
@@ -77,14 +78,14 @@ python -m roaddraft.runners run --profile basic --backend codex --model MODEL \
 
 ## In the eval harness: the `hard-pilots` set (2026-10-22)
 
-Robert, 2026-10-22: "the harder tasks should make it into the eval set as well." All 29 pilots are
+Robert, 2026-10-22: "the harder tasks should make it into the eval set as well." All 33 pilots are
 the eval task set `hard-pilots` (`benchmarks/tasksets/hard-pilots.json`), ranked on its own board
 beside `d1-test` and `d1-real`. They stay pilots too: the `--pilot` route below is unchanged.
 
 - **How an episode runs** (`src/roaddraft/eval/probe_tasks.py`): the pilot's start project is
   built in the episode folder, the model gets the pilot's task text as the probe runner sends it,
   the server's instructions as its system prompt, and the MCP server's own tools served in-process
-  (autosave, `open_document`, `view_attachment` for the five scanned-sheet pilots), with paths
+  (autosave, `open_document`, `view_attachment` for the nine pilots that come with a page image), with paths
   shown and resolved relative to the project folder and file access held to the episode folder.
 - **Grading** is the pilot's own check, read back from disk as `runners score` does: 100 on a
   pass, 0 on a fail. The rubric column is the share of the check's items the document has. An
@@ -97,8 +98,8 @@ beside `d1-test` and `d1-real`. They stay pilots too: the `--pilot` route below 
   check's words, which name expected values.
 - **The oracle** is each pilot's scripted solution recorded as tool calls. A second session the
   solution opens on a base file is recorded as `open_document` of that file. Oracle 100 and null 0
-  on all 29 through the loop.
-- **Images.** The five scanned-sheet pilots need a provider that passes images. The
+  on all 33 through the loop.
+- **Images.** The five scanned-sheet pilots and the four redline pilots need a provider that passes images. The
   OpenAI-compatible route (Runpod, LM Studio) does not, so those models fail them.
 
 ```bash
@@ -164,6 +165,26 @@ does a probe run.
   - `traverse` with `close=true` reports the misclosure directly; the balance is the real test.
 - **10:** the sources are NO SCALE, so some numbers are invented (the fill and back slopes, the
   profile-grade elevations, the ground lines). Slope labels must be written V:H.
+- **18 (redline understanding, 2026-10-26):**
+  - Robert, 2026-10-26: "some of the tasks should be prompted by editing a pdf with redlines/markups and
+    having the LLM address these based only on that." The page is `markups/<sheet>-redlines.pdf`,
+    with the same page as a PNG beside it for `view_attachment`, drawn by `redline_pdf.draw_markups`
+    on a 200 dpi render of the sheet in a handwriting face (Bradley Hand, falling back to
+    Chalkboard or Comic Sans; the check never needs the font). A key strip under the sheet gives
+    the colour convention.
+  - The sheet file the model opens is the staged redraft, untouched: no layer, entity or text
+    carries the instruction, and the task text names no edit.
+  - The marks sit on texts that have look-alikes elsewhere on the sheet (two FENCE (TYPE CL-6),
+    two REMOVE FENCE, two See Section X for details, four TYPE F / E curb callouts, three
+    sidewalk callouts): the mark's place decides which one.
+  - The title block marks are found by rendering the sheet with the field blanked and taking the
+    pixels that differ; the model fills the field with `fill_title_block`.
+  - Tolerances: a revised or deleted text is judged within 0.6 in of its old spot, a moved one
+    within 0.5 in of where the arrow put it (the whole group for the FDOT BEGIN PROJECT block), an
+    added note by its box within 1 in of the tip. A new leader line within 1.2 in of an added or
+    moved note is allowed; any other new entity but text fails.
+  - Lettering the checker's own words (DELETE, MOVE, OK PER SURVEY) onto the sheet fails.
+  - Needs an image-capable route, like pilots 1 and 15.
 - **6 and 13:**
   - No redraft carries a design profile; each was entered from the published PVIs. The WFL profile is
     pieced together from sheets D.5 to D.12.

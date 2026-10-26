@@ -15,7 +15,7 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   used least.  Ranked beside ``d1-test``.
 - ``d1-real-dev``: 24 tasks, two of each real type, on a few Caltrans sheets
   that ``d1-real`` never uses.  For smoke runs and iteration; never reported.
-- ``hard-pilots``: the 29 harder-task pilots (``probes/pilot``, all of them),
+- ``hard-pilots``: the 33 harder-task pilots (``probes/pilot``, all of them),
   run as probe tasks (``eval/probe_tasks.py``): each its own start project on a
   sample sheet, the MCP server's tools, graded pass or fail by its own check.
   Ranked on its own board.  Too few instances per family to spare a dev split.

@@ -63,6 +63,7 @@ FAMILIES = {
     "p04": "crowded-annotation", "p05": "sheet-breaks", "p06": "plan-and-profile",
     "p10": "typical-section", "p11": "redlines", "p12": "plan-set", "p13": "striping",
     "p14": "qa-review", "p15": "plan-reading", "p17": "twisted-sheet",
+    "p18": "redline-understanding",
 }
 #: the budgets a probe task runs under when the run sets none: Track P's
 #: (120 turns of several calls each, 30 minutes), not D1's 150 steps -- one
