@@ -6,7 +6,11 @@ No ranked run yet. A row needs a published run on `d1-test` under a frozen spec 
 
 ## `d1-real`: the sample plan sheets
 
-No ranked run yet. A row needs a published run on `d1-real` under a frozen spec, with the catalogue it was drawn from validated under the verifier that scores it (`d1-real-dev` first, for a smoke run).
+**Best model 63.6/100 on d1-real (qwen/qwen3.5-9b · single · explicit, 95% CI 59.0–67.8, hard-fail 4%).**
+
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
+|---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
+| 1 | qwen/qwen3.5-9b · single · explicit | default | **63.6** | 59.0–67.8 | 66.5 | 4% | 31% | 0% | – | 98 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single` |
 
 ## `hard-pilots`: the harder tasks (pass or fail)
 
