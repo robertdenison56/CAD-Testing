@@ -621,6 +621,12 @@ def _start_inside(args) -> None:
     print(f"roaddraft-mcp: working directory moved into --root {root.real}", file=sys.stderr)
 
 
+def package_dir() -> str:
+    """The folder of the ``roaddraft`` package this process imported."""
+    import roaddraft
+    return str(Path(roaddraft.__file__).resolve().parent)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roaddraft-mcp",
@@ -656,6 +662,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "scanned sheet or markup)")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool names that would be served, then exit")
+    parser.add_argument("--where", action="store_true",
+                        help="print the folder of the roaddraft package this server "
+                             "would serve from, then exit: a client that starts the "
+                             "server with a path of its own can check it got the "
+                             "engine it meant")
     parser.add_argument("--config", metavar="CLIENT", choices=sorted(mcpconfig.CLIENTS),
                         help="instead of serving, print the registration of this server -- "
                              "with the options given here -- for an MCP client, then exit: "
@@ -667,6 +678,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "(or FILE), merged in beside the servers already there")
     args = parser.parse_args(argv)
 
+    if args.where:
+        print(package_dir())
+        return 0
     if args.config:
         if args.doc and not Path(args.doc).is_file():
             print(f"note: {args.doc} does not exist yet", file=sys.stderr)

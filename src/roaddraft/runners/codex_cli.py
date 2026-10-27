@@ -108,8 +108,18 @@ def toml(value: Any) -> str:
 
 
 def server_env() -> Dict[str, str]:
-    """What the server needs from the runner's environment."""
-    return {k: os.environ[k] for k in ("PYTHONPATH",) if os.environ.get(k)}
+    """What the server needs from the runner's environment: ``PYTHONPATH``,
+    every entry made absolute. The CLI starts the server in the episode's
+    ``project/`` folder, where a relative ``src`` names nothing, and Python
+    would then import whatever is installed -- another checkout's engine --
+    without a word (the 2026-10-27 Astra window ran on main's engine that way)."""
+    return {k: absolute_path_list(os.environ[k]) for k in ("PYTHONPATH",) if os.environ.get(k)}
+
+
+def absolute_path_list(value: str) -> str:
+    """A ``PATH``-style list with each entry absolute against the current
+    directory; empty entries dropped."""
+    return os.pathsep.join(os.path.abspath(e) for e in value.split(os.pathsep) if e)
 
 
 @register

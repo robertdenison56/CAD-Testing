@@ -1039,3 +1039,25 @@ def test_cli_run_stops_at_an_account_limit_and_leaves_the_probe_to_rerun(tmp_pat
     assert rc == 3
     assert not (tmp_path / "out" / "runs" / "cx" / BLANK.id).exists()
     assert not (tmp_path / "out" / "runs" / "cx" / second.id).exists()
+
+
+def test_server_env_makes_a_relative_pythonpath_absolute(tmp_path, monkeypatch):
+    """The CLI starts the server in the episode's project folder, where a
+    relative ``src`` names nothing and Python falls back on whatever is
+    installed: another checkout's engine, silently."""
+    from roaddraft.runners.codex_cli import server_env
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", f"src{os.pathsep}{os.pathsep}/pinned/src")
+    assert server_env()["PYTHONPATH"] == f"{tmp_path / 'src'}{os.pathsep}/pinned/src"
+
+
+def test_check_engine_refuses_a_server_from_another_tree(tmp_path):
+    from roaddraft.runners.core import check_engine
+    import roaddraft
+    mine = str(Path(roaddraft.__file__).resolve().parent)
+    assert check_engine([sys.executable, "-m", "roaddraft.mcp.server"], cwd=tmp_path) == mine
+    other = [sys.executable, "-c", "print('/elsewhere/src/roaddraft')"]
+    with pytest.raises(RuntimeError, match="another engine.*elsewhere"):
+        check_engine(other, cwd=tmp_path)
+    with pytest.raises(RuntimeError, match="could not say"):
+        check_engine([sys.executable, "-c", "raise SystemExit(1)"], cwd=tmp_path)

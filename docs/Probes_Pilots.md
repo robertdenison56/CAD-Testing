@@ -139,6 +139,23 @@ pilots passed. The three QA-review fails were all the harness's: Astra found eve
   (`document`), and `open_document` with a path that is no document lists the project's
   documents, the one handed to the model marked.
 
+- **The server ran another engine** (2026-10-27, the 2:48 AM window). The resume script set
+  `PYTHONPATH=src`, relative; the Codex CLI starts `roaddraft-mcp` in the episode's `project/`
+  folder, where that names nothing, so the server imported the editable install -- the main
+  checkout's engine -- while the runner traced and pinned this branch. Twelve episodes ran that
+  way (kept under `void-main-engine/`, rerun with `--force`). The codex backend now hands the
+  server an absolute `PYTHONPATH`, `roaddraft-mcp --where` says which package a server would
+  serve from, and `runners run` asks it before the first episode and refuses to start on a
+  mismatch (`runners.core.check_engine`).
+
+- **A working route abandoned** (2026-10-26, p04-crowded-ppm050): the first failure that is
+  the model's own. Astra ticked D13 the anchored way (`annotate_stationing` in model space with
+  the sheet's `view_rotation`), deleted the nineteen entities, and hand-drew ticks as sheet lines
+  for all five lines over 3,110 calls; D1-02 credits no unanchored tick. The refusal it met on
+  the sheet-space attempt ("alignment-mode stationing draws in model space; use place_label for
+  sheet labels") points at a command with no tick kind; a hint naming the model-space route with
+  `view_rotation` would serve better. Not changed during the run (it would move the tool digest).
+
 Left as the sample has it: blank title-block fields, the match line with no sheet number, FLH's
 leaders without arrowheads, a plan with no scale note (D.10). Astra's marks on these count against
 the one false alarm allowed, which is the family's whole difficulty so far.
