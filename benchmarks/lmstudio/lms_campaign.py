@@ -5,11 +5,12 @@
     python benchmarks/lmstudio/lms_campaign.py status                   # link, server, files, what is loaded
     python benchmarks/lmstudio/lms_campaign.py pins                     # the worktree's engine/tool/instruction pins
     python benchmarks/lmstudio/lms_campaign.py check NAME               # load at 65k, time one ~29k-token prompt
+    python benchmarks/lmstudio/lms_campaign.py vision NAME              # one image through the harness's route; records it
     python benchmarks/lmstudio/lms_campaign.py smoke NAME [--probe edge-c102] [--print]
     python benchmarks/lmstudio/lms_campaign.py k3 NAME [PROBE...] [--force] [--print]
-    python benchmarks/lmstudio/lms_campaign.py e3 NAME [--taskset d1-variance] [--samples 5] [--mode single]
+    python benchmarks/lmstudio/lms_campaign.py e3 NAME [--taskset d1-variance] [--samples 5|1] [--mode single]
                                                 [--level explicit] [--limit N] [--run-id ID]
-                                                [--worktree PATH] [--dry-run] [--print]
+                                                [--pilots text|images|all] [--worktree PATH] [--dry-run] [--print]
     python benchmarks/lmstudio/lms_campaign.py clear-errors RUN_ID [--apply]   # errored episodes aside, to rerun
     python benchmarks/lmstudio/lms_campaign.py score NAME [--print]
 
@@ -38,6 +39,18 @@ RUN_ID --apply`` first moves the errored episodes into ``<run>/errored-<date>/``
 RUN_ID --worktree PATH`` runs the rest from a worktree checked out at the run's own pin (``run.json``
 ``pins.commit``), so the resumed episodes see the same task set and engine as the first ones. ``--worktree``
 must be clean in ``src`` and ``tests``; its HEAD is recorded in the run's pins as usual.
+
+The context (2026-10-27): every ``e3`` run passes ``--context-tokens CONTEXT`` beside ``--lms-context CONTEXT``, so
+the harness ends an episode whose prompt reaches the window as a ``context`` budget trip, the way vLLM's refusal
+ends one on the hosted rows; LM Studio alone would truncate the prompt and answer.
+
+Images (2026-10-27): the nine hard-pilots that come with a page (two scans to redraw, three to read, four marked-up
+prints) reach the model through the harness's own route, a ``view_attachment`` result with the PNG as a data URL,
+which LM Studio takes for a model with vision (``lms ls --json`` says which; ``vision`` in ``models.json`` records
+it). ``e3 NAME --taskset hard-pilots --pilots images`` runs those nine, ``text`` the other 24, ``all`` (the default)
+every pilot; a model without vision is refused the image pilots. ``vision NAME`` sends one lettered image through
+that route first and records whether the model read it (``vision_check``), with what one image costs in prompt
+tokens: a capability read, not a run.
 """
 from __future__ import annotations
 
@@ -48,6 +61,7 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -296,10 +310,36 @@ def cmd_status(args) -> int:
     for s in loaded():
         print(f"loaded: {s['identifier']} {s['quantization']['name']} context {s.get('contextLength')} "
               f"parallel {s.get('parallel')}")
+    files = downloaded()
     for name, m in data["models"].items():
         why = file_problem(m)
-        print(f"{name:14} {'ready' if not why else why}")
+        seen = vision_flag(m, files)
+        eyes = "vision" if seen else ("no vision" if seen is False else "vision unknown")
+        if m.get("vision") is not None and seen is not None and bool(m["vision"]) != seen:
+            eyes += f" (models.json says {m['vision']})"
+        print(f"{name:14} {'ready' if not why else why}; {eyes}")
     return 0
+
+
+def vision_flag(m: dict, files: Optional[List[dict]] = None) -> Optional[bool]:
+    """Whether LM Studio lists the spec's model as taking images; None when the file is not there."""
+    for d in files if files is not None else downloaded():
+        if d.get("modelKey") == m["lms_key"]:
+            return bool(d.get("vision"))
+    return None
+
+
+PILOT_SET = REPO / "benchmarks" / "tasksets" / "hard-pilots.json"
+
+
+def pilot_ids(kind: str) -> List[str]:
+    """The hard-pilots task ids of one kind: ``images`` (the pilots that come with a page, served through
+    ``view_attachment``), ``text`` (the rest), or ``all``."""
+    rows = json.loads(PILOT_SET.read_text())
+    rows = rows["tasks"] if isinstance(rows, dict) else rows
+    want = {"images": lambda r: bool(r.get("attachments")), "text": lambda r: not r.get("attachments"),
+            "all": lambda r: True}[kind]
+    return [r["task_id"] for r in rows if want(r)]
 
 
 def cmd_pins(args) -> int:
@@ -402,12 +442,22 @@ def cmd_e3(args) -> int:
     data = load()
     m = spec(data, args.name)
     run_id = args.run_id or f"e3-{args.taskset}-{m['label']}-{args.mode}"
+    if args.samples is None:   # d1-variance is the x 5 set; every other set runs x 1 (the ranked rows)
+        args.samples = 5 if args.taskset == "d1-variance" else 1
     cmd = ["caffeinate", "-i", str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", args.taskset,
            "--model", m["lms_key"], "--provider", "openai", "--base-url", BASE_URL, "--lms-context", str(CONTEXT),
+           "--context-tokens", str(CONTEXT),
            "--out", str(E3_OUT), "--run-id", run_id, "--mode", args.mode, "--level", args.level,
            "--samples", str(args.samples), "--concurrency", "1"]
     if args.limit:
         cmd += ["--limit", str(args.limit)]
+    if args.taskset == "hard-pilots" and args.pilots != "all":
+        ids = pilot_ids(args.pilots)
+        cmd += [x for i in ids for x in ("--task", i)]
+    if args.taskset == "hard-pilots" and args.pilots != "text" and m.get("vision") is not True:
+        sys.exit(f"{args.name} is not marked as taking images in models.json (vision: {m.get('vision')}); "
+                 f"the {len(pilot_ids('images'))} image pilots need a vision model: run `vision {args.name}` "
+                 f"first, or --pilots text")
     if m.get("extra_body"):
         cmd += ["--extra-body", json.dumps(m["extra_body"])]
     if args.dry_run:
@@ -427,6 +477,81 @@ def cmd_e3(args) -> int:
     rc = stream(cmd, log, worktree)
     print(f"exit {rc}; report with: {PYTHON} -m roaddraft.eval report {E3_OUT / run_id}")
     return rc
+
+
+VISION_QUESTION = "What station and bearing are lettered on the attachment? Answer with the text only."
+
+
+def lettered_image() -> bytes:
+    """A 900 x 300 PNG with a station and a bearing lettered on it, drawn here so the check needs no file."""
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+    im = Image.new("RGB", (900, 300), "white")
+    draw = ImageDraw.Draw(im)
+    font = ImageFont.load_default(size=48)
+    draw.text((40, 50), "STA 12+50.00", fill="black", font=font)
+    draw.text((40, 150), "N 45\u00b000'00\" E", fill="black", font=font)
+    draw.line((40, 250, 860, 250), fill="black", width=4)
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def cmd_vision(args) -> int:
+    """One lettered image to the loaded model through the harness's own route -- a ``view_attachment`` call, its
+    tool message, then the PNG as a data URL in a user message, as ``eval.providers.openai_compat`` sends every
+    image -- and a question only the image answers. Records in models.json whether the model read it and what
+    the image cost in prompt tokens (the same request without it, subtracted). The model is loaded alone at
+    CONTEXT as for a run; nothing else may be running."""
+    import base64
+    data = load()
+    m = spec(data, args.name)
+    preflight(m)
+    ready(m)
+    sys.path.insert(0, str(REPO / "src"))
+    from roaddraft.eval.providers.openai_compat import chat_messages
+    png = base64.b64encode(lettered_image()).decode("ascii")
+    call = {"id": "call_0", "type": "function",
+            "function": {"name": "view_attachment", "arguments": json.dumps({"name": "check.png"})}}
+    shown = {"ok": True, "name": "check.png", "size_px": [900, 300], "region": [0, 0, 1, 1],
+             "region_px": [0, 0, 900, 300], "shown_px": [900, 300], "scale": 1.0}
+    tools = [{"type": "function", "function": {
+        "name": "view_attachment", "description": "Look at an image this task came with.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string"}}}}}]
+
+    def ask(with_image: bool):
+        transcript = [
+            {"role": "user", "text": "Look at the attachment check.png with view_attachment. " + VISION_QUESTION},
+            {"role": "assistant", "text": "", "calls": [{"id": "call_0", "name": "view_attachment",
+                                                            "params": {"name": "check.png"}}],
+             "raw": {"role": "assistant", "content": "", "tool_calls": [call]}},
+            {"role": "results", "note": None,
+             "results": [{"id": "call_0", "name": "view_attachment", "content": json.dumps(shown),
+                          "is_error": False, "images": [("image/png", png)] if with_image else []}]}]
+        body = dict(m.get("extra_body") or {}, model=m["lms_key"], tools=tools, max_tokens=4000,
+                    messages=chat_messages("You are checking an image route. Answer in one line.", transcript))
+        req = urllib.request.Request(BASE_URL + "/chat/completions", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            reply = json.loads(urllib.request.urlopen(req, timeout=900).read())
+        except urllib.error.HTTPError as ex:
+            return None, None, f"HTTP {ex.code}: {ex.read().decode(errors='replace')[:300]}"
+        msg = (reply.get("choices") or [{}])[0].get("message") or {}
+        return (msg.get("content") or "").strip(), (reply.get("usage") or {}).get("prompt_tokens"), None
+
+    text, with_tokens, error = ask(True)
+    _, without_tokens, _ = ask(False) if error is None else (None, None, None)
+    read = bool(text) and "12+50" in text.replace(" ", "")
+    record = {"date": time.strftime("%Y-%m-%d"), "read": read, "reply": (text or "")[:200], "error": error,
+              "prompt_tokens": with_tokens,
+              "image_tokens": (with_tokens - without_tokens) if with_tokens and without_tokens else None,
+              "image_px": [900, 300]}
+    print(json.dumps(record, indent=1))
+    m["vision_check"] = record
+    m["vision"] = read
+    save(data)
+    print(f"{args.name}: {'read the image' if read else 'did NOT read the image'}; models.json updated")
+    return 0 if read else 1
 
 
 def cmd_clear_errors(args) -> int:
@@ -492,15 +617,19 @@ def main(argv=None) -> int:
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("pins").set_defaults(fn=cmd_pins)
     c = sub.add_parser("check"); c.add_argument("name"); c.set_defaults(fn=cmd_check)
+    v = sub.add_parser("vision"); v.add_argument("name"); v.set_defaults(fn=cmd_vision)
     sm = sub.add_parser("smoke"); sm.add_argument("name"); sm.add_argument("--probe", default="edge-c102")
     sm.add_argument("--print", action="store_true"); sm.set_defaults(fn=cmd_smoke)
     k = sub.add_parser("k3"); k.add_argument("name"); k.add_argument("probes", nargs="*")
     k.add_argument("--force", action="store_true"); k.add_argument("--print", action="store_true")
     k.set_defaults(fn=cmd_k3)
     e3 = sub.add_parser("e3"); e3.add_argument("name"); e3.add_argument("--taskset", default="d1-variance")
-    e3.add_argument("--samples", type=int, default=5); e3.add_argument("--mode", default="single")
+    e3.add_argument("--samples", type=int, help="default 5 on d1-variance, 1 on every other set")
+    e3.add_argument("--mode", default="single")
     e3.add_argument("--level", default="explicit"); e3.add_argument("--limit", type=int)
     e3.add_argument("--run-id"); e3.add_argument("--dry-run", action="store_true")
+    e3.add_argument("--pilots", choices=["text", "images", "all"], default="all",
+                    help="hard-pilots only: the 24 text pilots, the 9 that come with a page, or every one")
     e3.add_argument("--worktree", help=f"the checkout to run from (default {WORKTREE}); a resume uses one "
                                          "at the run's own pins.commit")
     e3.add_argument("--print", action="store_true"); e3.set_defaults(fn=cmd_e3)

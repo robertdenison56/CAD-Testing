@@ -135,3 +135,43 @@ def test_the_report_holds_a_pilot_run_to_the_probe_sets_hash_and_ranks_it_apart(
                   "versions": {"spec_version": ["v1"]}, "publish_problems": [], "rows": [row]}])
     assert not b["ranked"] and b["boards"][P.PILOT_SET]["ranked"][0]["rank"] == 1
     assert "## `hard-pilots`: the harder tasks (pass or fail)" in R.render_board(b)
+
+
+def test_a_pilots_page_reaches_an_openai_request_as_a_data_url():
+    """The image route of the nine pilots that come with a page: the
+    ``view_attachment`` PNG goes to an OpenAI-compatible endpoint as an
+    ``image_url`` data URL in a user message after the tool messages, in
+    every mode, and never into the trajectory."""
+    from roaddraft.eval.agents import LLMAgent
+    from roaddraft.eval.providers.openai_compat import OpenAICompatProvider
+    probe = P.by_id("p15-plan-reading-ppm046")
+    task = P.task_from_entry(P.entry(probe))
+    bodies = []
+
+    def post(body):
+        bodies.append(json.loads(json.dumps(body)))
+        n = len(bodies)
+        usage = {"prompt_tokens": 100 * n, "completion_tokens": 5}
+        if n == 1:
+            args = "{}"
+        elif n == 2:
+            listing = json.loads(body["messages"][-1]["content"])      # the tool message
+            args = json.dumps({"name": listing["attachments"][0]["name"], "region": [0, 0, 0.5, 0.5]})
+        else:
+            return {"choices": [{"message": {"content": "done"}, "finish_reason": "stop"}], "usage": usage}
+        calls = [{"id": f"c{n}", "type": "function", "function": {"name": "view_attachment", "arguments": args}}]
+        return {"choices": [{"message": {"content": "", "tool_calls": calls}, "finish_reason": "tool_calls"}],
+                "usage": usage}
+
+    provider = OpenAICompatProvider("local-vision", post=post, lms_context=None)
+    r = P.ProbeEpisode(task, LLMAgent(provider), EpisodeConfig(mode="single")).run()
+    assert r.termination == "submit" and len(bodies) == 3 and r.steps == 2
+    msgs = bodies[2]["messages"]
+    assert [m["role"] for m in msgs[-3:]] == ["assistant", "tool", "user"]
+    parts = msgs[-1]["content"]
+    assert parts[0] == {"type": "text", "text": "The image(s) from the calls above:"}
+    assert parts[1]["type"] == "image_url"
+    url = parts[1]["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,") and len(url) > 10000
+    assert "base64" not in msgs[-2]["content"]          # the tool message is the JSON alone
+    assert [m["role"] for m in bodies[1]["messages"][-2:]] == ["assistant", "tool"]   # the listing: no image

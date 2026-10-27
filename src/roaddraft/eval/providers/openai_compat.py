@@ -9,9 +9,12 @@ cannot render a list-valued ``type``.  The tools go in as function tools,
 the system prompt as the system message, each tool result as a ``role:
 tool`` message.  A model's reasoning (``reasoning_content``) is kept for the
 trajectory and not sent back, as in the runner: a local model's context is
-the scarce resource.  In the vision mode a render goes back as a user
-message with the PNG as a data URL after the tool messages, since tool
-messages carry strings.
+the scarce resource.  An image a call returned -- a render in the vision
+mode, a scan or a marked-up page from ``view_attachment`` in every mode --
+goes back as a user message with the PNG as a data URL after the tool
+messages, since tool messages carry strings: the ``image_url`` content part
+LM Studio and vLLM take for a vision model (the Track P runner of the same
+name never passed images; this provider always has).
 
 ``call_cap`` ends a turn when the model starts a call past it (the earlier
 calls run).  The runner's cap of 4 was a guard for one local model that
@@ -78,7 +81,7 @@ def chat_messages(system: str, transcript: List[dict]) -> List[dict]:
             if m.get("note"):
                 parts.append({"type": "text", "text": m["note"]})
             if images:
-                parts.append({"type": "text", "text": "The render(s) from the calls above:"})
+                parts.append({"type": "text", "text": "The image(s) from the calls above:"})
                 parts.extend({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
                              for mime, data in images)
             if parts:

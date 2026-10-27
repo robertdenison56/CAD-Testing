@@ -21,12 +21,22 @@ How a turn ends the episode, or does not:
   episode as a budget (``output_limit``), the model's outcome;
 - a refusal: ``AgentRefusal``, ``termination = "refusal"``, never rescued.
 
+The context budget (``Budgets.context_tokens``, the window the row is served
+at) is held here, since a server that truncates an oversize prompt and
+answers (LM Studio) never says so: a reply whose own prompt count is at the
+budget ends the episode as ``context`` before any of its calls run, as a
+refusal by vLLM would have, and a next request that cannot fit by the
+transcript's own size -- the last prompt count plus a floor on the tokens
+of what was appended since -- is not sent at all.  The floor never trips
+a request a server would take; the reply's count is the backstop.
+
 A provider's HTTP failure is an ``error``: the harness's, not the model's.
 """
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional
+import math
+from typing import Dict, List, Optional, Tuple
 
 from roaddraft.eval import prompts
 from roaddraft.eval.agents.basic import Action, Agent, AgentRefusal, Submit, ToolCall
@@ -37,11 +47,39 @@ NUDGE = ("Your last turn was cut off at the output limit before it made a tool c
 #: the step and fault counts at or below which each turn's results carry a note
 LOW_STEPS = 15
 LOW_FAULTS = 3
+#: a floor on the tokens in a run of text: no tokenizer in use makes fewer than
+#: one token per this many characters of JSON or prose
+CHARS_PER_TOKEN_MAX = 4.5
+#: the fewest prompt tokens one image costs on the models the harness runs (Gemma's 256)
+IMAGE_TOKENS_MIN = 256
 
 
 def result_text(result: dict) -> str:
     """A bus result as the model reads it: compact JSON, unicode as is."""
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+
+
+def prompt_size(usage: Optional[Dict[str, int]]) -> int:
+    """The tokens a request held, by its reply's usage: the uncached and the
+    cached input together (0 when the reply reported none)."""
+    u = usage or {}
+    return sum(int(u.get(k) or 0) for k in
+               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+
+
+def message_size(message: dict) -> Tuple[int, int]:
+    """(characters, images) a transcript message adds to the next request:
+    what goes back to the model, so an assistant's thinking does not."""
+    role = message["role"]
+    if role == "user":
+        return len(message["text"]), 0
+    if role == "assistant":
+        return len(message.get("text") or "") + len(json.dumps(message.get("calls") or [])), 0
+    chars, images = len(message.get("note") or ""), 0
+    for r in message["results"]:
+        chars += len(r["content"]) + len(r["name"])
+        images += len(r.get("images") or [])
+    return chars, images
 
 
 class LLMAgent(Agent):
@@ -56,22 +94,28 @@ class LLMAgent(Agent):
         self.system = ""
         self.transcript: List[dict] = []
         self.tools: List[dict] = []
+        self.context_tokens: Optional[int] = None
         self._pending: List[Call] = []
         self._usage: Dict[str, int] = {}
         self._record: dict = {}
+        self._last_prompt = 0          # the last reply's prompt count
+        self._appended = (0, 0)        # (characters, images) added since that reply
 
     # ------------------------------------------------------------ lifecycle
 
     def reset(self, task, level: str, mode: str) -> None:
         self.provider.reset(task)
+        self.transcript, self.tools, self._pending = [], [], []
+        self._usage, self._record = {}, {}
+        self._last_prompt, self._appended = 0, (0, 0)
+        self.system = self.fixed_system or prompts.system_prompt("neutral", mode)
 
     def ready(self) -> bool:
         return self.provider.ready()
-        self.transcript, self.tools, self._pending = [], [], []
-        self._usage, self._record = {}, {}
-        self.system = self.fixed_system or prompts.system_prompt("neutral", mode)
 
     def begin(self, context: dict) -> None:
+        budgets = context.get("budgets")
+        self.context_tokens = getattr(budgets, "context_tokens", None) or None
         if self.fixed_system:
             return
         if context.get("system"):  # a task with a system prompt of its own (a probe task)
@@ -109,20 +153,53 @@ class LLMAgent(Agent):
                         "images": list(images[i] or []) if i < len(images) else []})
         return {"role": "results", "results": out, "note": self._note(observation.get("budget") or {})}
 
+    def _append(self, message: dict) -> None:
+        self.transcript.append(message)
+        chars, images = message_size(message)
+        self._appended = (self._appended[0] + chars, self._appended[1] + images)
+
+    def context_floor(self) -> int:
+        """The fewest tokens the next request can hold: the last reply's prompt
+        count plus a floor on what was appended since; 0 before the first reply."""
+        if not self._last_prompt:
+            return 0
+        chars, images = self._appended
+        return self._last_prompt + math.ceil(chars / CHARS_PER_TOKEN_MAX) + images * IMAGE_TOKENS_MIN
+
+    def _check_context(self, held: Optional[int] = None) -> None:
+        """``LimitReached("context")`` when the budget is set and the request
+        cannot fit: before sending, by the floor; after a reply, by its count."""
+        budget = self.context_tokens
+        if not budget:
+            return
+        if held is None:
+            floor = self.context_floor()
+            if floor >= budget:
+                raise LimitReached("context", f"the next request would hold at least {floor} "
+                                   f"tokens, past the context budget of {budget}: the "
+                                   "conversation has outgrown the context")
+        elif held >= budget:
+            raise LimitReached("context", f"the request held {held} tokens, past the context "
+                               f"budget of {budget}: the conversation has outgrown the context")
+
     def act(self, observation: dict) -> Action:
         if not self.transcript:
             self.tools = list(observation.get("tools") or [])
-            self.transcript.append({"role": "user", "text": observation["brief"]})
+            self._append({"role": "user", "text": observation["brief"]})
         else:
-            self.transcript.append(self._results(observation))
+            self._append(self._results(observation))
         self._pending = []
         usage: Dict[str, int] = {}
         texts, thoughts, stops = [], [], []
         self._usage, self._record = usage, {}
         nudges = 0
         while True:
+            self._check_context()
             turn = self.provider.complete(self.system, self.transcript, self.tools)
             add_usage(usage, turn.usage)
+            held = prompt_size(turn.usage)
+            if held:
+                self._last_prompt, self._appended = held, (0, 0)
             texts += [turn.text] if turn.text else []
             thoughts += [turn.thinking] if turn.thinking else []
             stops.append(turn.stop_detail or turn.stop)
@@ -132,8 +209,9 @@ class LLMAgent(Agent):
                 self._record["nudges"] = nudges
             if turn.stop == "refusal":
                 raise AgentRefusal(turn.stop_detail or "refusal")
-            self.transcript.append({"role": "assistant", "text": turn.text,
-                                    "calls": [c.to_dict() for c in turn.calls], "raw": turn.raw})
+            self._check_context(held)
+            self._append({"role": "assistant", "text": turn.text,
+                          "calls": [c.to_dict() for c in turn.calls], "raw": turn.raw})
             if turn.calls:
                 self._pending = list(turn.calls)
                 return [ToolCall(c.name, dict(c.params)) for c in turn.calls]
@@ -143,7 +221,7 @@ class LLMAgent(Agent):
                                        f"the model was cut off at the output limit {nudges + 1} "
                                        "times in one turn without a tool call")
                 nudges += 1
-                self.transcript.append({"role": "user", "text": NUDGE})
+                self._append({"role": "user", "text": NUDGE})
                 continue
             return Submit(note=turn.text, implicit=True)
 
@@ -162,4 +240,5 @@ class LLMAgent(Agent):
                 "system_prompt": self.system, "provider_config": self.provider.describe()}
 
 
-__all__ = ["LLMAgent", "NUDGE", "LOW_STEPS", "LOW_FAULTS", "result_text"]
+__all__ = ["LLMAgent", "NUDGE", "LOW_STEPS", "LOW_FAULTS", "CHARS_PER_TOKEN_MAX",
+           "IMAGE_TOKENS_MIN", "result_text", "prompt_size", "message_size"]

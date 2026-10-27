@@ -1,8 +1,19 @@
 """Episode budgets (eval plan section 4.1): steps, ``run_check`` uses,
-consecutive faults, output tokens and wall clock.  Every one is recorded
-with the episode; tripping one ends the episode with ``termination =
-"budget"`` and the budget's name, which is an outcome, not an error.  The
-per-run cost cap belongs to the runner, not the episode.
+consecutive faults, output tokens, wall clock and, for an LLM agent, the
+context.  Every one is recorded with the episode; tripping one ends the
+episode with ``termination = "budget"`` and the budget's name, which is an
+outcome, not an error.  The per-run cost cap belongs to the runner, not the
+episode.
+
+``context_tokens`` is the prompt size an episode may send, normally the
+context window the row is served at.  A server that refuses an oversize
+request (vLLM) ends the episode as ``context`` by itself; one that
+truncates the prompt and answers (LM Studio: eight of the 9B's first 38
+d1-real episodes ran on cut transcripts at 65,536, up to 159,505 tokens)
+never would, so the LLM agent holds the budget itself (``agents/llm.py``):
+the reply's own prompt count past it, or a next request that cannot fit,
+ends the episode the same way and runs none of that turn's calls.  None
+leaves only the server's limit.
 """
 from __future__ import annotations
 
@@ -18,6 +29,7 @@ class Budgets:
     faults: int = 8                # consecutive failed calls
     output_tokens: int = 60000     # per episode, LLM agents only
     wall_clock_s: float = 1200.0   # 20 minutes
+    context_tokens: Optional[int] = None  # prompt tokens a request may hold; None: the server's limit
 
     def for_mode(self, mode: str) -> "Budgets":
         return replace(self, run_checks=0) if mode == "single" else self

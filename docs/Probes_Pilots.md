@@ -99,8 +99,12 @@ beside `d1-test` and `d1-real`. They stay pilots too: the `--pilot` route below 
 - **The oracle** is each pilot's scripted solution recorded as tool calls. A second session the
   solution opens on a base file is recorded as `open_document` of that file. Oracle 100 and null 0
   on all 33 through the loop.
-- **Images.** The five scanned-sheet pilots and the four redline pilots need a provider that passes images. The
-  OpenAI-compatible route (Runpod, LM Studio) does not, so those models fail them.
+- **Images.** The five scanned-sheet pilots and the four redline pilots hand the model their page through
+  `view_attachment`, and every provider of the harness passes it on: the Anthropic provider inside the tool
+  result, the OpenAI-compatible provider (Runpod, LM Studio) as an `image_url` data URL in a user message after
+  the tool messages. What they need is a model that takes images; LM Studio lists which of the local files do
+  (`lms ls --json`, `vision`), and `benchmarks/lmstudio/lms_campaign.py vision NAME` sends one lettered image
+  through that route to see that it reads it. A text-only model gets the page's JSON and no picture.
 
 ```bash
 .venv/bin/python -m roaddraft.eval run --taskset hard-pilots --agent oracle --agent null --steps 5000
@@ -115,9 +119,10 @@ python -m roaddraft.runners run --pilot --backend codex --model gpt-6.1-sol --ef
 ```
 
 Pilots 1 and 15 hand the model a scan through `view_attachment` (served only to probes that ask for
-it with `--attachments`). The scan reaches the model on the codex and claude-code backends always,
-and on the anthropic backend only with `--vision`. The openai-compatible backend (LM Studio, Runpod)
-never passes images, so it cannot run pilots 1 and 15.
+it with `--attachments`). On this Track P runner the scan reaches the model on the codex and claude-code
+backends always, and on the anthropic backend only with `--vision`; the runner's openai-compatible backend
+(LM Studio, Runpod) never passes images, so it cannot run pilots 1 and 15. The eval harness's provider of
+the same name does pass them (above), so on `hard-pilots` the local models run every pilot.
 
 `python -m roaddraft.runners score benchmarks/pilot_runs/<run>/runs/<label>` scores a pilot run as it
 does a probe run.
@@ -184,7 +189,7 @@ does a probe run.
     added note by its box within 1 in of the tip. A new leader line within 1.2 in of an added or
     moved note is allowed; any other new entity but text fails.
   - Lettering the checker's own words (DELETE, MOVE, OK PER SURVEY) onto the sheet fails.
-  - Needs an image-capable route, like pilots 1 and 15.
+  - Needs a model that takes images, like pilots 1 and 15 (the harness passes the page to any provider).
 - **6 and 13:**
   - No redraft carries a design profile; each was entered from the published PVIs. The WFL profile is
     pieced together from sheets D.5 to D.12.

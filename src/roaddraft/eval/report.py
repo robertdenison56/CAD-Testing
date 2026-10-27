@@ -1088,8 +1088,8 @@ def render_board(b: dict, readme: bool = False) -> str:
                   f"interval, then `{name}` × at least three models)."]
         elif name == "hard-pilots":
             L += ["No ranked run yet. A row needs a published run on `hard-pilots` on the "
-                  "current task texts; each task scores 100 on a pass and 0 on a fail. The five "
-                  "scanned-sheet pilots need a provider that passes images."]
+                  "current task texts; each task scores 100 on a pass and 0 on a fail. The nine "
+                  "pilots that come with a page need a model that takes images."]
         else:
             L += [f"No ranked run yet. A row needs a published run on `{name}` under a frozen "
                   "spec, with the catalogue it was drawn from validated under the verifier "

@@ -8,16 +8,24 @@ Robert's go (`lms_campaign.py e3 NAME --taskset ... --samples ...`).
 
 ## What is running right now
 
-Nothing (2026-10-27 morning). The 9B's d1-real x 1 run ended 21:18 PDT on 2026-10-26 and is published as the
-first ranked Track D row (`benchmarks/runs/e3-d1-real-qwen3.5-9b-q4km-lms-single`, 63.6 effective
-[59.0-67.8] over 98 scored episodes). The next model-night waits on Robert's go; the order is below.
+**2026-10-27 13:15 PDT: the Track D queue** (Robert: "do steps 1-4"; Gemma as the Q8_0 on the PC). The 9B's hard-pilots run
+(24 text-only pilots, since 10:18, worktree lms-hard-pilots) is going; a detached queue on the Mac,
+`results/e3-lms/queue-2026-10-27.sh` (log beside it), waits for it and then runs, one at a time from the worktree
+`.claude/worktrees/lms-d1-test` (main 4ec8667e): the 9B on d1-test x 1 (`e3-d1-test-qwen3.5-9b-q4km-lms-single`, the
+20-minute budget of every ranked row, up to six resumes), a `check` of Gemma 4 12B Q8_0 at 131k and then its d1-test x 1
+(`e3-d1-test-gemma-4-12b-q8-lms-single`), then one d1-dev smoke episode each for Devstral Small 2, Ministral 3 14B,
+GLM-4.6V-Flash, Gemma 4 E4B and Llama 3.1 8B (`e3-smoke-d1-dev-<name>-lms`). Each run's report is written, not
+published: publishing, the board and the tracker follow a look at the numbers. The 4B waits on its download on the PC.
+
+The 9B's d1-real x 1 run ended 21:18 PDT on 2026-10-26 and is published as the first ranked Track D row
+(`benchmarks/runs/e3-d1-real-qwen3.5-9b-q4km-lms-single`, 63.6 effective [59.0-67.8] over 98 scored episodes).
 
 ## Time per episode on the PC
 
 | model | file | fits | gen tok/s | minutes per episode | 100 episodes |
 |---|---|---|---|---|---|
 | Qwen3.5-9B | Q4_K_M 6.6 GB, on the PC | fully on the cards | 35.8 measured | 8-20 (test hit the 20-min cap) | 13-33 h |
-| Gemma 4 12B | Q6_K 9.8 GB, to download | partly on the CPU | ~13 (Q8_0 measured 12.8) | 6-10 (Gemma writes little: 1.8k out tokens an episode on Runpod) | 10-17 h |
+| Gemma 4 12B | Q8_0 12.8 GB, on the PC (Robert, Oct 27: in place of the Q6_K pick) | partly on the CPU | 12.8 measured at 65k; `check` at 131k pending | 6-10 (Gemma writes little: 1.8k out tokens an episode on Runpod) | 10-17 h |
 | Qwen3.5-4B | BF16 8.4 GB, to download | fully on the cards | not measured, ~2x the 9B | 5-12 | 8-20 h |
 | Devstral Small 2 24B | Q3_K_L 13.3 GB, on the PC | tight; context spills to the CPU | not measured, ~8-10 | unknown, smoke first | 15-30 h |
 | Ministral 3 14B reasoning | Q6_K 12.0 GB, on the PC | partly on the CPU | not measured, ~10 | reasoning model at 10 tok/s: likely cap-bound | 25-33 h |
@@ -51,10 +59,11 @@ inside ±5 for a strong model and ±6 or so for a noisy one; k = 3 is three nigh
 that lands near another.
 
 1. **Qwen3.5-9B, d1-test x 1.** The file is loaded, the harness is proven on it. First ranked local row.
-2. **Downloads on the PC** (they land where `lms get` runs, so from the PC, not the Mac): Gemma 4 12B Q6_K and
+2. **Downloads on the PC** (they land where `lms get` runs, so from the PC, not the Mac): Qwen3.5-4B BF16 only, since Gemma 4 12B
+   runs as the Q8_0 already there (Robert, Oct 27); the old text named Gemma 4 12B Q6_K and
    Qwen3.5-4B BF16 as `README.md` step 1 says; then `lms_campaign.py check NAME` for each (one 29k prompt at
    65k, writes `measured`).
-3. **Gemma 4 12B Q6_K, d1-test x 1.** Its Runpod row is 69.3; the local row shows what Q6_K and llama.cpp's
+3. **Gemma 4 12B Q8_0, d1-test x 1** (a `check` at 131k first). Its Runpod row is 69.3; the local row shows what Q8_0 on a CPU split and llama.cpp's
    Gemma template cost it.
 4. **Qwen3.5-4B BF16, d1-test x 1.** Bottom of the ladder at the board row's precision.
 5. **Smoke the models already on the PC** (one d1-dev episode each, `e3 NAME --taskset d1-dev --limit 1
@@ -71,8 +80,13 @@ that lands near another.
    stays out (Robert, Oct 20). A `check` first; expect a cap-bound run that takes a weekend.
 8. **d1-real x 1 (99 episodes) for the two best local rows.** The first real-sheet rows on the board. Real
    sheets carry more linework, so allow 1.3x the d1-test time.
-9. **hard-pilots, text-only 24 of 29, for the best local row**, k = 1 (24 episodes under Track P's budgets).
-   The five scanned-sheet pilots need image input the OpenAI-compatible route does not pass.
+9. **hard-pilots for the best local row**, k = 1, under Track P's budgets: the 24 text pilots (going on the 9B
+   since Oct 27, 10:18), then the nine that come with a page (`e3 NAME --taskset hard-pilots --pilots images`,
+   same run id, so the run fills out to 33). The page reaches the model through the harness's own route (a
+   `view_attachment` result with the PNG as a data URL, which LM Studio takes for a model with vision: the 9B,
+   Gemma 4 12B and E4B, GLM-4.6V-Flash, Devstral and Ministral all are, Llama 3.1 is not); `lms_campaign.py vision
+   NAME` first, one lettered image through that route to see that the model reads it and what an image costs in
+   prompt tokens (Robert's go: it loads the model, so not while a run is going).
 
 Total: about six model-nights for the d1-test rows that exist today (steps 1, 3, 4, and two or three keepers),
 two more for d1-real, a weekend for Qwen3.6 if it fits. Nothing else is needed for the board except the
@@ -163,5 +177,12 @@ sent prompts over 65k (up to 159k) and ran on cut transcripts; vLLM would have e
 window is a per-row setting now, recorded on the card: hosted rows 65,536 (refused past it), local rows 131,072
 (truncated past it). The 9B's d1-real run: episodes 1 to 38 at 65,536; after the engine death at 13:51 on Oct 26
 LM Studio brought the model back at its own 108,032 / parallel 4 (resumed episodes 1 and 2, and part of 3); from
-14:31 on Oct 26 at 131,072 / parallel 1, reloaded by hand with the harness paused. Open: a context budget in the
-harness so an oversize prompt ends the episode the same way on every server.
+14:31 on Oct 26 at 131,072 / parallel 1, reloaded by hand with the harness paused.
+
+**The harness holds the window itself now (built 2026-10-27, uncommitted on main).** `Budgets.context_tokens`
+(`--context-tokens N`, defaulting to `--lms-context N`; the campaign script passes both at `CONTEXT`): the LLM
+agent ends an episode whose reply reports a prompt at or past the budget as a `context` budget trip before any of
+that turn's calls run, as vLLM's refusal ends one on the hosted rows, and does not send a next request that cannot
+fit by the transcript's own size (the last prompt count plus a floor of one token per 4.5 characters appended).
+The budget is recorded with every episode. The runs queued today (`queue-2026-10-27.sh`) run from a worktree at
+4ec8667e, before this, so their episodes still rely on the window alone; the 9B's hard-pilots run likewise.

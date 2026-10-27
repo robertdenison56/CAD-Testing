@@ -55,3 +55,8 @@ def test_records_are_plain_dicts():
     assert Budgets().to_dict()["steps"] == 150
     d = BudgetState().to_dict()
     assert set(d) == {"steps", "run_check_uses", "faults", "output_tokens", "elapsed_ms"}
+
+
+def test_the_context_budget_is_off_unless_set_and_is_recorded():
+    assert Budgets().context_tokens is None and Budgets().to_dict()["context_tokens"] is None
+    assert Budgets(context_tokens=131072).for_mode("single").to_dict()["context_tokens"] == 131072

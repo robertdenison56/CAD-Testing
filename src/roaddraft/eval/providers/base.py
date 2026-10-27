@@ -62,8 +62,9 @@ class Turn:
 class LimitReached(Exception):
     """The model cannot go on inside a limit the run sets: cut off at the
     output limit turn after turn (``output_limit``), a conversation past the
-    context it is served at (``context``), a turn past the provider's time
-    limit (``turn_time``).  That is the model's outcome, like a budget, not
+    context it is served at (``context``: the server refused the request, or
+    the agent's own context budget, ``Budgets.context_tokens``, says it
+    cannot fit), a turn past the provider's time limit (``turn_time``).  That is the model's outcome, like a budget, not
     the harness's failure: the episode ends with ``termination = "budget"``
     and ``budget_tripped`` = the limit.  Everything else a provider raises
     (HTTP errors, refused credentials) is an ``error``."""

@@ -18,7 +18,7 @@ No ranked run yet. A row needs a published run on `d1-test` under a frozen spec 
 
 ## `hard-pilots`: the harder tasks (pass or fail)
 
-No ranked run yet. A row needs a published run on `hard-pilots` on the current task texts; each task scores 100 on a pass and 0 on a fail. The five scanned-sheet pilots need a provider that passes images.
+No ranked run yet. A row needs a published run on `hard-pilots` on the current task texts; each task scores 100 on a pass and 0 on a fail. The nine pilots that come with a page need a model that takes images.
 
 ## Published runs that are not ranked
 

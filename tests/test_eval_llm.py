@@ -382,3 +382,100 @@ def test_cli_runs_a_model_and_fails_fast_without_credentials(tmp_path, capsys, m
                  "--out", str(tmp_path)]) == 2
     assert "no Anthropic credentials" in capsys.readouterr().err
     assert not (tmp_path / "episodes").exists()
+
+
+# --------------------------------------------------------- the context budget
+
+
+def test_reset_clears_the_conversation():
+    provider = FakeProvider([turn([("submit", {})])])
+    agent = LLMAgent(provider)
+    run_episode(_task(1), agent, EpisodeConfig())
+    assert agent.transcript and agent.tools
+    agent.reset(_task(1), "explicit", "single")
+    assert agent.transcript == [] and agent.tools == [] and agent.context_floor() == 0
+
+
+def test_message_size_counts_what_goes_back_to_the_model():
+    from roaddraft.eval.agents.llm import message_size
+    assert message_size({"role": "user", "text": "abcd"}) == (4, 0)
+    chars, images = message_size({"role": "assistant", "text": "hi", "raw": {"thinking": "x" * 1000},
+                                  "calls": [{"id": "c", "name": "n", "params": {"a": 1}}]})
+    assert 2 < chars < 100 and images == 0          # the thinking is not sent back
+    results = {"role": "results", "note": "n", "results": [
+        {"id": "c", "name": "render_sheet", "content": "{}", "is_error": False,
+         "images": [("image/png", "A" * 100000)]}]}
+    assert message_size(results) == (1 + 2 + len("render_sheet"), 1)   # an image is not characters
+
+
+def test_a_reply_past_the_context_budget_ends_the_episode_before_its_calls_run(tmp_path):
+    provider = FakeProvider([
+        turn([_good_layer()], usage={"input_tokens": 400, "cache_read_input_tokens": 100,
+                                     "output_tokens": 10}),
+        turn([("create_layer", {"name": "rd_NEVER", "color": "black"})],
+             usage={"input_tokens": 1000, "output_tokens": 10}),
+    ])
+    r = run_episode(_task(1), LLMAgent(provider), EpisodeConfig(budgets=Budgets(context_tokens=1000)),
+                    out_root=tmp_path)
+    assert r.termination == "budget" and r.budget_tripped == "context" and r.steps == 1
+    assert "1000 tokens" in r.error and len(provider.requests) == 2
+    turns = read_episode(r.path)["turns"]
+    assert turns[-1]["assistant"]["tool_calls"] == [] and turns[-1]["usage"]["input_tokens"] == 1000
+    # the same conversation with no budget runs on
+    provider = FakeProvider([
+        turn([_good_layer()], usage={"input_tokens": 400, "output_tokens": 10}),
+        turn([("submit", {})], usage={"input_tokens": 1000, "output_tokens": 10}),
+    ])
+    assert run_episode(_task(1), LLMAgent(provider), EpisodeConfig()).termination == "submit"
+
+
+def test_a_next_request_that_cannot_fit_is_not_sent():
+    big = "x" * 9000                                 # at least 2,000 tokens by the floor
+    provider = FakeProvider([
+        turn([_good_layer()], text=big, usage={"input_tokens": 500, "output_tokens": 2000}),
+        turn([("submit", {})]),
+    ])
+    r = run_episode(_task(1), LLMAgent(provider), EpisodeConfig(budgets=Budgets(context_tokens=2000)))
+    assert r.termination == "budget" and r.budget_tripped == "context" and r.steps == 1
+    assert len(provider.requests) == 1 and "at least" in r.error
+    # a reply with no prompt count (an estimated usage) leaves the floor where it was
+    agent = LLMAgent(FakeProvider([turn([_good_layer()], usage={"output_tokens": 5})]))
+    run_episode(_task(1), agent, EpisodeConfig())
+    assert agent.context_floor() == 0
+
+
+def test_chat_messages_carry_images_as_data_urls_after_the_tool_messages():
+    from roaddraft.eval.providers.openai_compat import chat_messages
+    transcript = [
+        {"role": "user", "text": "look"},
+        {"role": "assistant", "text": "", "calls": [], "raw": {"role": "assistant", "content": "",
+                                                            "tool_calls": [{"id": "c1"}]}},
+        {"role": "results", "note": "[harness] 3 steps left.", "results": [
+            {"id": "c1", "name": "view_attachment", "content": "{\"ok\":true}", "is_error": False,
+             "images": [("image/png", "QUJD")]}]},
+    ]
+    msgs = chat_messages("sys", transcript)
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant", "tool", "user"]
+    assert msgs[3] == {"role": "tool", "tool_call_id": "c1", "name": "view_attachment",
+                       "content": "{\"ok\":true}"}
+    parts = msgs[4]["content"]
+    assert parts[0] == {"type": "text", "text": "[harness] 3 steps left."}
+    assert parts[1] == {"type": "text", "text": "The image(s) from the calls above:"}
+    assert parts[2] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}
+    # no image, no note: the tool messages alone
+    transcript[2]["results"][0]["images"], transcript[2]["note"] = [], None
+    assert [m["role"] for m in chat_messages("sys", transcript)] == ["system", "user", "assistant", "tool"]
+
+
+def test_the_cli_context_budget_defaults_to_the_lms_context():
+    import argparse
+    from roaddraft.eval.__main__ import _budgets
+
+    def args(**kw):
+        base = dict(taskset="d1-dev", steps=None, wall_clock=None, output_tokens=None,
+                    context_tokens=None, lms_context=None)
+        return argparse.Namespace(**dict(base, **kw))
+    assert _budgets(args()).context_tokens is None
+    assert _budgets(args(lms_context=131072)).context_tokens == 131072
+    assert _budgets(args(lms_context=131072, context_tokens=65536)).context_tokens == 65536
+    assert _budgets(args(taskset="hard-pilots", lms_context=131072)).steps == 600

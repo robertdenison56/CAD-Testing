@@ -7,7 +7,8 @@
     python -m roaddraft.eval run --taskset d1-dev --model claude-sonnet-5-5 [--model ...]
         [--provider anthropic|openai|fake] [--effort high] [--max-tokens N] [--strict]
         [--base-url URL] [--api-key-env VAR] [--extra-body JSON] [--lms-context N]
-        [--dialect neutral|c3d|ord ...] [--cost-cap USD] [--output-tokens N] ...
+        [--dialect neutral|c3d|ord ...] [--cost-cap USD] [--output-tokens N]
+        [--context-tokens N] ...                      # defaults to --lms-context
     python -m roaddraft.eval taskset [NAME ...] [--write | --check]
     python -m roaddraft.eval verify EPISODE.jsonl [--level L] [--json]
     python -m roaddraft.eval verify DOCUMENT --task ID [--taskset d1-dev] [--journal J] [--level L]
@@ -63,12 +64,17 @@ def _models(values: Optional[List[str]]) -> List[str]:
 
 def _budgets(args) -> Budgets:
     """The run's budgets: the task set's defaults (a probe set takes Track P's,
-    taskset.default_budgets), with any the command line set."""
+    taskset.default_budgets), with any the command line set.  The context
+    budget is ``--context-tokens``, else the window ``--lms-context`` loads
+    the model at, so a local row trips on an oversize prompt as a hosted
+    row's server refuses one."""
     base = tasksets.default_budgets(args.taskset)
+    context = args.context_tokens if args.context_tokens is not None else args.lms_context
     return replace(base, **{k: v for k, v in (("steps", args.steps),
                                              ("wall_clock_s", None if args.wall_clock is None
                                               else args.wall_clock * 60),
-                                             ("output_tokens", args.output_tokens))
+                                             ("output_tokens", args.output_tokens),
+                                             ("context_tokens", context))
                             if v is not None})
 
 
@@ -326,6 +332,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--extra-body", help="openai: JSON merged into every request")
     p.add_argument("--lms-context", type=int, help="openai: LM Studio reload guard at this context")
     p.add_argument("--dialect", action="append", choices=list(DIALECTS))
+    p.add_argument("--context-tokens", type=int,
+                   help="prompt tokens a request may hold (default: --lms-context, else the "
+                        "server's own limit)")
     p.add_argument("--output-tokens", type=int,
                    help=f"output-token budget per episode (default {Budgets.output_tokens})")
     p.add_argument("--cost-cap", type=float, help="dollars: no new episode starts past it")
