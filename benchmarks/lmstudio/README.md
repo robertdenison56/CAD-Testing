@@ -2,7 +2,7 @@
 
 RobertsPC got a second RTX 4060 on 2026-10-20: two 8 GB cards, 16 GB that llama.cpp splits the layers across.
 LM Studio serves the PC's models to the Mac over LM Link (`localhost:1234`), so the runners need nothing new:
-`--backend openai` (probes) and `--provider openai` (E3) with the `--lms-context 65536` reload guard.
+`--backend openai` (probes) and `--provider openai` (E3) with the `--lms-context 131072` reload guard (65536 until 2026-10-26).
 `models.json` holds the specs and `lms_campaign.py` the commands, built like the Runpod rig next door.
 
 **Status, 2026-10-23 evening: first run going.** A single d1-dev test episode on the 9B ran clean through the
@@ -16,7 +16,7 @@ server's `loaded` state.
 Measured: one ~29k-token prompt at context 65536 (`lms_campaign.py check`). Estimated: weights plus context
 memory from each model's config, scaled from the measured rates.
 
-| board row | here | fits at 65k | speed | k = 3 |
+| board row | here | fits at 65k (131k since Oct 26: 9B yes, others to check) | speed | k = 3 |
 |---|---|---|---|---|
 | Qwen3.5-9B (bf16, vLLM), 44.4% | Q4_K_M, on the PC | fully on the cards, measured | 3,157 tok/s prefill, 35.8 tok/s gen | ~8-10 h |
 | Qwen3.5-4B (bf16, vLLM), 33.3% | BF16 GGUF, to download | ~13 GB, estimated | not measured | ~10 h |
@@ -37,7 +37,7 @@ the bf16 vLLM ones: GGUF weights on llama.cpp, with LM Studio's own chat templat
    takes only the bare key and loads the selected variant, and the Q8_0 is there too.
 2. `python benchmarks/lmstudio/lms_campaign.py status` names the 4B's model key; put it in `models.json`
    (`lms_key`, and `variant` from `lms ls --json`).
-3. `lms_campaign.py check NAME` for the 4B and Gemma: loads the model alone at 65k (all layers on the cards
+3. `lms_campaign.py check NAME` for the 4B and Gemma: loads the model alone at the rig's context, 131k since Oct 26 (all layers on the cards
    if they fit, LM Studio's split otherwise), times one prompt and records it under `measured`.
 4. `lms_campaign.py pins`: the worktree `.claude/worktrees/runpod-k3` at `2658fa0`, clean help text.
 
@@ -50,7 +50,7 @@ the bf16 vLLM ones: GGUF weights on llama.cpp, with LM Studio's own chat templat
 
 `--print` shows any of them without running it. Probe runs go to `benchmarks/probe_runs/2026-10-20-lms-k3`,
 E3 runs to `results/e3-lms/` (gitignored). Before each launch the script checks the link, starts the
-server, refuses while another local run is going, unloads everything, loads the model at 65536 / parallel 1,
+server, refuses while another local run is going, unloads everything, loads the model at 131072 / parallel 1 (65536 until Oct 26),
 and refuses unless the PC's selected variant and the loaded quantization are the spec's.
 
 How the rig differs from the Runpod rows, for the writeup:
@@ -58,7 +58,7 @@ How the rig differs from the Runpod rows, for the writeup:
 - no 570 s proxy cut-off: a turn ends at the runner's own 1,800 s limit, and the 30-minute budget is wall
   clock on the PC's speed;
 - the PC must not sleep during a run (Windows power settings); the Mac is held awake by `caffeinate -i`;
-- an LM Link drop shows as connection refused: the runner's guard waits up to 15 min and reloads at 65536.
+- an LM Link drop shows as connection refused: the runner's guard waits up to 15 min and reloads at the run's context.
 
 Before the board: add `NAMES` entries in `src/roaddraft/runners/leaderboard.py` for the three model ids
 (`qwen/qwen3.5-9b` reads "Qwen3.5-9B" today), naming the file and LM Studio, e.g. "Qwen3.5-9B (Q4_K_M, LM

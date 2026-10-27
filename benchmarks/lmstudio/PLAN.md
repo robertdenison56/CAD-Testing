@@ -143,3 +143,16 @@ ids are gone from it, so a resume from main would not be the same run).
 3. When it ends: `python -m roaddraft.eval report results/e3-lms/<run>` then `--publish`, and
    `scripts/make_leaderboard.py`. `run.json` is rewritten by the resume (its `started_at` and pins are the
    resume's); the per-episode headers keep each episode's own pins.
+
+## The context window (decided 2026-10-26, Robert)
+
+Local rows load at **131,072** tokens, parallel 1, from now on (`CONTEXT` in `lms_campaign.py`): the largest the
+two 4060s hold for the 9B by LM Studio's estimate (13.3 of 16 GiB; 164k is at the edge, 262k spills to the CPU).
+The 65,536 of the first runs matched the hosted vLLM rows' `MAX_MODEL_LEN`, but LM Studio does not refuse a prompt
+past its window the way vLLM does: it truncates the middle and answers. Eight of the 9B's first 38 d1-real episodes
+sent prompts over 65k (up to 159k) and ran on cut transcripts; vLLM would have ended them as context trips. The
+window is a per-row setting now, recorded on the card: hosted rows 65,536 (refused past it), local rows 131,072
+(truncated past it). The 9B's d1-real run: episodes 1 to 38 at 65,536; after the engine death at 13:51 on Oct 26
+LM Studio brought the model back at its own 108,032 / parallel 4 (resumed episodes 1 and 2, and part of 3); from
+14:31 on Oct 26 at 131,072 / parallel 1, reloaded by hand with the harness paused. Open: a context budget in the
+harness so an oversize prompt ends the episode the same way on every server.

@@ -20,7 +20,8 @@ What it fixes, so a local run is the same run as the plan:
   ``benchmarks/runpod/runpod_campaign.py``), so edits to ``main`` during a run change nothing;
 - the model file: ``lms load`` over LM Link takes only the bare key and loads the variant selected on the PC,
   so before a run the PC's selected variant and the loaded quantization must be the spec's, and the model is
-  loaded alone at context 65536, parallel 1 (the runner's ``--lms-context`` guard reloads it the same way);
+  loaded alone at ``CONTEXT`` (131,072 since 2026-10-26), parallel 1 (the runner's ``--lms-context`` guard
+  reloads it the same way);
 - the setting: the Runpod rows' budget (30 min, 120 turns) and sampling (``extra_body``), ``--base-url`` named
   so ``pgrep`` finds a running rig;
 - one model at a time: k = 3 is one process with ``--repeat 3`` (r1, r2, r3 in turn), never three at once,
@@ -63,7 +64,10 @@ E3_OUT = REPO / "results" / "e3-lms"
 BASE_URL = "http://localhost:1234/v1"
 MODELS_URL = "http://localhost:1234/api/v0/models"
 DEVICE = "RobertsPC"
-CONTEXT = 65536
+#: the context every local row is loaded at (2026-10-26, Robert: the largest the two 4060s hold for the 9B
+#: by LM Studio's estimate, 13.3 of 16 GiB; 65,536 before that, which LM Studio silently truncated past on 8 of
+#: the 9B's first 38 d1-real episodes). The hosted vLLM rows stay at their recorded 65,536.
+CONTEXT = 131072
 LOAD_TIMEOUT_S = 300  # lms load over LM Link: 6-10 s when it works, hung for good when it does not
 
 BUDGET_MIN, MAX_TURNS = 30, 120     # the hosted open-weight setting of the Runpod rows
