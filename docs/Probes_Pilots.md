@@ -242,3 +242,15 @@ does a probe run.
    stripping a line's annotation can leave traced text behind.
 8. On the anthropic backend, a text-only run replaces a `view_attachment` image with a note saying
    "the text above carries the file path", which is not true for an attachment.
+
+## The first full pass (GPT-6-Astra, medium, 2026-10-26 to 27)
+
+All 29 pilots answered, in six ChatGPT Plus windows, on the branch engine (987e2c21; the twelve episodes one window ran on main's engine were voided and rerun). Run folder `benchmarks/pilot_runs/2026-10-26-astra/runs/astra-pilot`. **26 of 29 passed.**
+
+The three failures:
+
+- **p04-crowded-ppm050** (layout, crowded). The one hard failure: Astra had anchored D13 ticks in model space, deleted them, and hand-drew unanchored ticks on the sheet after 3,110 calls; nine ticks get no credit. The engine's "use place_label for sheet labels" hint sent it the wrong way (place_label has no tick kind).
+- **p14-qa-review-wfl19** (QA). Marked two leftovers of the sample sheet (a leader without an arrowhead, a station label over limit linework) where one false alarm is allowed. Whether sample-sheet leftovers count is open.
+- **p15-plan-reading-wflp14** (plan reading). Read one station off the scan as 119+45.98 for 119+46.48; an earlier (voided) attempt read it right, so this is scan-reading variance.
+
+Families where every pilot passed: redraw alignment, sources, survey (grid/ground, international feet, misclosure), sheet breaks, plan-profile, typical sections, redline pick-up, plan set, striping, twist. Faults seen on passes were recoverable: the annotate_stationing sheet-space hint (p04, p06, p17), a create_alignment leg with no distance (p01), measure with too many points (p03).
