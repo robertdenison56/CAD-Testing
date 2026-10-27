@@ -8,6 +8,7 @@ Reads every ``benchmarks/runs/<run_id>/summary.json`` (written by
     benchmarks/runs/LEADERBOARD.md    the ranked rows, the reference agents, every
                                       published run that is not ranked and why
     benchmarks/runs/leaderboard.json  the same, for the tracker
+    benchmarks/runs/leaderboard.svg   the picture: a bar per ranked row with its interval, per set
     README.md                         the board between the d1-leaderboard markers
 
 A row is ranked only from a run on d1-test under a frozen spec with one
@@ -31,7 +32,8 @@ from roaddraft.eval import report  # noqa: E402
 def outputs(runs: Path, readme: Path) -> dict:
     b = report.board(report.published(runs))
     out = {runs / "LEADERBOARD.md": report.render_board(b),
-           runs / "leaderboard.json": json.dumps(b, indent=1, ensure_ascii=False) + "\n"}
+           runs / "leaderboard.json": json.dumps(b, indent=1, ensure_ascii=False) + "\n",
+           runs / "leaderboard.svg": report.render_board_svg(b)}
     if readme.exists():
         out[readme] = report.replace_block(readme.read_text(encoding="utf-8"),
                                            report.render_board(b, readme=True))

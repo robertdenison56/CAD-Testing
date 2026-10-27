@@ -1,4 +1,10 @@
-"""The Track P leaderboard and its model cards, generated from the run folders.
+"""The probe board (Track P) and its model cards, generated from the run folders.
+
+This is the capability probe board, not the eval leaderboard: the 33 probes
+were built for a quick read on what models of different sizes can do with the
+tool surface, and the board was closed on 2026-10-27 (Robert) with eleven
+rows. The benchmark board is ``benchmarks/runs/LEADERBOARD.md``, built by
+``scripts/make_leaderboard.py`` from the eval harness ``roaddraft.eval``.
 
 Research plan §3.3. A row is one model through ``roaddraft.runners`` in one
 run folder: every episode it left under ``runs/<label>/<probe>/``, re-scored
@@ -497,6 +503,7 @@ def board(attempts: List[Attempt], folders: List[Folder]) -> Dict[str, Any]:
                                           ensure_ascii=False).encode("utf-8")).hexdigest()
     dates = [m.group(0) for r in rows for m in [re.match(r"\d{4}-\d{2}-\d{2}", r["run"])] if m]
     return {"generated_by": "python -m roaddraft.runners leaderboard",
+            "board": "probe board (Track P): capability probes, not the eval; closed 2026-10-27",
             "as_of": max(dates, default=None),
             "ranked_from": sorted({r["run"] for r in ranked}),
             "k": K, "probes": len(tasks.PROBES), "probe_set_sha256": "sha256:" + probe_set,
@@ -579,13 +586,22 @@ def _comparability(ranked: List[Dict[str, Any]]) -> List[str]:
     return notes
 
 
+PROBE_BOARD_NOTE = (
+    "**This is the probe board, not the eval leaderboard.** The 33 probes are hand-built capability checks, "
+    "pass or fail, made for a quick read on what models of different sizes can do with the tool surface. "
+    "Closed as a capability read on 2026-10-27 (Robert): eleven rows say enough, no more rows are planned, "
+    "and the withdrawn frontier rows are not rerun. The benchmark proper, the eval sets `d1-test`, `d1-real` "
+    "and `hard-pilots` scored by the verifier, is the [eval leaderboard](../runs/LEADERBOARD.md).")
+
+
 def render_board(b: Dict[str, Any]) -> str:
     tiers = b["tiers"]
     head = " | ".join(f"{t} ({len(v['probes'])})" for t, v in tiers.items())
     listing = "; ".join(f"{t} {v['name']}, {len(v['probes'])}" for t, v in tiers.items())
     lines = [
-        "# RoadDraft-Bench Track P: the probe leaderboard", "",
+        "# RoadDraft probe board (Track P): capability probes, not the eval", "",
         f"*{GENERATED}*", "",
+        PROBE_BOARD_NOTE, "",
         f"The {b['probes']} probes in three tiers ({listing}), "
         f"k = {b['k']} attempts each, every model through the one native MCP runner, `roaddraft.runners`. "
         "Every episode is re-scored from the document it left on disk against the current probe checks. "
@@ -767,8 +783,8 @@ def fidelity(m: Dict[str, Any]) -> str:
 def render_card(r: Dict[str, Any], b: Dict[str, Any]) -> str:
     score = card_score(r, b)
     lines = [
-        f"# {r['name']}: Track P model card", "",
-        f"*{GENERATED}* [Back to the leaderboard](../TRACK_P.md)", "",
+        f"# {r['name']}: probe card (Track P)", "",
+        f"*{GENERATED}* [Back to the probe board](../TRACK_P.md)", "",
         "| | |", "|---|---|",
         *(f"| {label} | {value} |" for label, value in card_facts(r, b)),
         "", "## Score", "",
@@ -857,12 +873,12 @@ def render_svg(b: Dict[str, Any]) -> str:
     width = right + 150
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" '
            f'height="{height}" role="img" aria-labelledby="title">',
-           f"<title id=\"title\">RoadDraft-Bench Track P: probes passed of k = {b['k']} attempts, per model</title>",
+           f"<title id=\"title\">RoadDraft probe board (Track P): probes passed of k = {b['k']} attempts, per model</title>",
            f"<style>{SVG_STYLE}</style>",
            f'<rect class="bg" width="{width}" height="{height}"/>',
-           f'<text class="ink" x="16" y="28" font-size="17" font-weight="600">RoadDraft-Bench Track P</text>',
+           f'<text class="ink" x="16" y="28" font-size="17" font-weight="600">RoadDraft probe board (Track P)</text>',
            f'<text class="ink2" x="16" y="48" font-size="12">probes passed of k = {b["k"]} attempts; '
-           f'runs through {_x(b["as_of"] or "")}</text>']
+           f'runs through {_x(b["as_of"] or "")}; capability probes, not the eval; closed 2026-10-27</text>']
     for t, v in b["tiers"].items():
         x0, x1 = xs[v["probes"][0]], xs[v["probes"][-1]] + cell
         out.append(f'<text class="ink" x="{x0}" y="64" font-size="12" font-weight="600">{t} '

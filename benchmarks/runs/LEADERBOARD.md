@@ -1,4 +1,8 @@
-# Track D leaderboard (D1)
+# RoadDraft eval leaderboard
+
+The benchmark board: every published run on the eval sets, scored by the verifier (`roaddraft.eval`), one ranking per set. The 33 capability probes of Track P are a separate board, closed 2026-10-27: [the probe board](../leaderboard/TRACK_P.md).
+
+![Effective score by model on each eval set](leaderboard.svg)
 
 ## `d1-test`: seeded sheets
 

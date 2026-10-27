@@ -1057,10 +1057,20 @@ def _board_table(rows: Sequence[dict], numbered: bool = True) -> List[str]:
     return L
 
 
+def eval_board_note(probe_board: str) -> str:
+    """The line that says which board this is; ``probe_board`` is the probe board's path from here."""
+    return ("The benchmark board: every published run on the eval sets, scored by the verifier "
+            "(`roaddraft.eval`), one ranking per set. The 33 capability probes of Track P are a separate "
+            f"board, closed 2026-10-27: [the probe board]({probe_board}).")
+
+
 def render_board(b: dict, readme: bool = False) -> str:
     L: List[str] = []
     if not readme:
-        L += ["# Track D leaderboard (D1)", ""]
+        L += ["# RoadDraft eval leaderboard", "", eval_board_note("../leaderboard/TRACK_P.md"), "",
+              "![Effective score by model on each eval set](leaderboard.svg)", ""]
+    else:
+        L += ["![Effective score by model on each eval set](benchmarks/runs/leaderboard.svg)", ""]
     boards = b.get("boards") or {LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET],
                                                     "headline": b["headline"],
                                                     "ranked": b["ranked"],
@@ -1119,6 +1129,72 @@ def render_board(b: dict, readme: bool = False) -> str:
     return "\n".join(L) + "\n"
 
 
+EVAL_SVG_STYLE = """
+text { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+.bg { fill: #fcfcfb; } .ink { fill: #0b0b0b; } .ink2 { fill: #52514e; } .rule { stroke: #b4b3ae; }
+.track { fill: #f0efec; } .bar { fill: #2a78d6; } .ci { stroke: #104281; stroke-width: 1.5; }
+@media (prefers-color-scheme: dark) {
+  .bg { fill: #1a1a19; } .ink { fill: #ffffff; } .ink2 { fill: #c3c2b7; } .rule { stroke: #6b6a65; }
+  .track { fill: #383835; } .bar { fill: #3987e5; } .ci { stroke: #b7d3f6; }
+}
+"""
+
+
+def _esc(s: str) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def render_board_svg(b: dict) -> str:
+    """The eval board as a picture: one panel per set, a bar per ranked row (effective score
+    on a 0 to 100 scale) with its 95% interval as a whisker; a set with no ranked run says so."""
+    boards = b.get("boards") or {LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET], "ranked": b["ranked"]}}
+    left, bar_x, bar_w, pitch, right_w = 16, 300, 360, 24, 150
+    width = bar_x + bar_w + right_w
+    y = 56
+    body: List[str] = []
+    for name, one in boards.items():
+        body.append(f'<text class="ink" x="{left}" y="{y}" font-size="13" font-weight="600">'
+                    f'{_esc(name)}: {_esc(one["title"])}</text>')
+        y += 10
+        rows = one.get("ranked") or []
+        if not rows:
+            y += 18
+            body.append(f'<text class="ink2" x="{left}" y="{y}" font-size="12">no ranked run yet</text>')
+            y += 14
+        for r in rows:
+            y += pitch
+            cy = y - 7
+            label = f"{r.get('rank', '')}. {r['label']}"
+            if len(label) > 44:
+                label = label[:43] + "…"
+            x0 = bar_x + bar_w * max(0.0, min(100.0, r["effective_mean"])) / 100
+            lo = bar_x + bar_w * max(0.0, min(100.0, r["ci_low"])) / 100
+            hi = bar_x + bar_w * max(0.0, min(100.0, r["ci_high"])) / 100
+            body += [f'<text class="ink" x="{left}" y="{y}" font-size="12">{_esc(label)}</text>',
+                     f'<rect class="track" x="{bar_x}" y="{cy - 6}" width="{bar_w}" height="12"/>',
+                     f'<rect class="bar" x="{bar_x}" y="{cy - 6}" width="{x0 - bar_x:.1f}" height="12"/>',
+                     f'<line class="ci" x1="{lo:.1f}" y1="{cy}" x2="{hi:.1f}" y2="{cy}"/>',
+                     f'<line class="ci" x1="{lo:.1f}" y1="{cy - 4}" x2="{lo:.1f}" y2="{cy + 4}"/>',
+                     f'<line class="ci" x1="{hi:.1f}" y1="{cy - 4}" x2="{hi:.1f}" y2="{cy + 4}"/>',
+                     f'<text class="ink" x="{bar_x + bar_w + 10}" y="{y}" font-size="12">'
+                     f'{r["effective_mean"]:.1f} [{r["ci_low"]:.1f}–{r["ci_high"]:.1f}]</text>']
+        y += 22
+    height = y + 8
+    axis = [f'<line class="rule" x1="{bar_x + bar_w * t // 100}" y1="40" x2="{bar_x + bar_w * t // 100}" '
+            f'y2="{height - 8}" stroke-dasharray="2 3"/>' for t in (0, 50, 100)]
+    axis += [f'<text class="ink2" x="{bar_x + bar_w * t // 100}" y="38" font-size="10" text-anchor="middle">{t}</text>'
+             for t in (0, 50, 100)]
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" '
+           f'height="{height}" role="img" aria-labelledby="title">',
+           '<title id="title">RoadDraft eval leaderboard: effective score by model on each eval set</title>',
+           f"<style>{EVAL_SVG_STYLE}</style>",
+           f'<rect class="bg" width="{width}" height="{height}"/>',
+           f'<text class="ink" x="{left}" y="24" font-size="17" font-weight="600">RoadDraft eval leaderboard</text>',
+           f'<text class="ink2" x="{left}" y="40" font-size="11">effective score, 0 to 100, with its 95% interval; '
+           'one ranking per eval set</text>', *axis, *body, "</svg>"]
+    return "\n".join(out) + "\n"
+
+
 def replace_block(text: str, block: str) -> str:
     """``text`` with the README board between its markers replaced."""
     start, end = text.find(README_BEGIN), text.find(README_END)
@@ -1133,4 +1209,4 @@ __all__ = ["REPORT_VERSION", "LEADERBOARD_SETS", "SET_TITLES", "NEVER_REPORTED",
            "effort_label", "effort_cell", "summarize_group", "paired", "build", "publish_problems",
            "render_markdown", "files",
            "write", "publish", "published", "board", "render_board", "replace_block",
-           "README_BEGIN", "README_END"]
+           "README_BEGIN", "README_END", "render_board_svg", "eval_board_note"]
