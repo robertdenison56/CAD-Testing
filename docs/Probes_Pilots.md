@@ -133,6 +133,12 @@ pilots passed. The three QA-review fails were all the harness's: Astra found eve
   sits in the E1 real-task starts of every sheet whose table tabulates several lines; not fixed
   there.
 
+- **No way back from a base file** (2026-10-26 rerun, p11-radius-ppm160). Astra opened
+  AA01 with `open_document` to revise the curve, then could not reopen PD-1: nothing named the
+  sheet's file, and it guessed 38 names. `get_document_state` now names the open file
+  (`document`), and `open_document` with a path that is no document lists the project's
+  documents, the one handed to the model marked.
+
 Left as the sample has it: blank title-block fields, the match line with no sheet number, FLH's
 leaders without arrowheads, a plan with no scale note (D.10). Astra's marks on these count against
 the one false alarm allowed, which is the family's whole difficulty so far.
