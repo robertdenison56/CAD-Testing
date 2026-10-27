@@ -8,12 +8,9 @@ Robert's go (`lms_campaign.py e3 NAME --taskset ... --samples ...`).
 
 ## What is running right now
 
-`e3 qwen3.5-9b` on `d1-variance` x 5 (run id `e3-d1-variance-qwen3.5-9b-q4km-lms-single`), started 19:34 PDT
-Oct 23. The single test episode before it ran to the 20-minute wall clock (122 steps, score 0), so the 9B is
-budget-bound on this hardware. d1-variance is the sizing set: it is listed on the board but never ranked, and
-at 100 episodes of 8 to 20 minutes it costs 13 to 33 hours of the PC. The same hours on `d1-test` x 1 give a
-ranked row. Suggested: let two or three episodes finish to prove the harness, then stop it and restart on
-`d1-test --samples 1` (the campaign script resumes nothing across task sets, so this is a fresh run).
+Nothing (2026-10-27 morning). The 9B's d1-real x 1 run ended 21:18 PDT on 2026-10-26 and is published as the
+first ranked Track D row (`benchmarks/runs/e3-d1-real-qwen3.5-9b-q4km-lms-single`, 63.6 effective
+[59.0-67.8] over 98 scored episodes). The next model-night waits on Robert's go; the order is below.
 
 ## Time per episode on the PC
 
@@ -92,7 +89,7 @@ two more for d1-real, a weekend for Qwen3.6 if it fits. Nothing else is needed f
 - After each run: `lms_campaign.py score NAME`, then `report --publish` and `python scripts/make_leaderboard.py`
   as `benchmarks/runs/LEADERBOARD.md` describes; the episodes stay in `results/e3-lms/` (gitignored).
 
-## Resuming the 9B's d1-real run (set up 2026-10-26, not started)
+## Resuming the 9B's d1-real run (set up 2026-10-26; resumed and finished the same day)
 
 **What happened.** `e3-d1-real-qwen3.5-9b-q4km-lms-single` ran 20:21 PDT Oct 23 to 09:08 Oct 24 and lost 61 of its
 99 episodes to the server, not the model (`results/e3-lms/<run>.log`, LM Studio's `~/.lmstudio/server-logs`):
@@ -143,6 +140,18 @@ ids are gone from it, so a resume from main would not be the same run).
 3. When it ends: `python -m roaddraft.eval report results/e3-lms/<run>` then `--publish`, and
    `scripts/make_leaderboard.py`. `run.json` is rewritten by the resume (its `started_at` and pins are the
    resume's); the per-episode headers keep each episode's own pins.
+
+### Outcome (2026-10-26, written 2026-10-27)
+
+The resume started 13:36 PDT on Robert's go from the `lms-9b-resume` worktree (d98e7025), was relaunched at
+14:57 so the harness's own guard reloads at 131,072, and ended 21:18: 99 episodes, 98 scored. The PC's engine
+died five more times that day (13:51, 17:16, 17:22, 18:35, 18:40, each a `predict request failed: fetch
+failed` with the model still listed as loaded); the guard reloaded at 131k each time and the run lost one
+episode, which died mid-stream at 18:40 and which the report leaves out of the score (termination `error`),
+instead of the sixty-one the first attempt lost. Re-scored under d1-verify-v7 before publishing (the same
+numbers as the run's v6): 63.6 effective [59.0-67.8], rubric 66.5, hard-fail 4%, clean 31%, submit 87%, no
+invalid calls. Since the relaunch a third of the episodes sent a prompt over 65,536 (peak 93,893), all inside
+131k. The run's window history is in `results/e3-lms/<run>/NOTES.md`; the worktree can be removed.
 
 ## The context window (decided 2026-10-26, Robert)
 
