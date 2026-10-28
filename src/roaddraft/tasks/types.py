@@ -247,6 +247,46 @@ REAL_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
 )}
 
 
+#: the real-sheet types by question type (decided 2026-10-24, Robert: "make sure real
+#: sheets are separated similar to the probes for question type"), the way the probe
+#: board's TIERS split the probes (runners/leaderboard.py): a key, a name, the types.
+#: ``d1-real`` draws the same number of tasks from every group that has types, and the
+#: real board shows a column per group beside the blended score (eval/taskset.py,
+#: eval/report.py).  Reading and QA stay with the pilots (eval/probe_tasks.py).
+REAL_GROUPS: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
+    # drawing the linework itself; later create-alignment and construction limits
+    ("draft", "draft linework", ("real-draw-alignment",)),
+    # lettering one alignment's data: stationing, bearings, curve numbers, the table
+    ("letter", "letter alignment data", ("real-stationing", "real-bearings", "real-callouts",
+                                         "real-curve-table", "real-alignment-data")),
+    # producing the sheet: references, title block, viewport, a sheet from scratch
+    ("sheet", "produce the sheet", ("real-attach-reference", "real-title-block",
+                                    "real-sheet-setup", "real-annotate-sheet",
+                                    "real-plan-sheet")),
+    # the sheet's notes and dimensions; later plus-station notes and match lines (the
+    # edge-break station-and-offset callouts and their width dimensions were scrapped
+    # by Robert on 2026-10-27)
+    ("notes", "notes and dimensions", ("real-construction-callouts",)),
+    # a composite "complete this layout" task across the groups, on its own small set
+    # and board like hard-pilots; none built yet
+    ("job", "the whole job", ()),
+)
+REAL_GROUP_OF: Dict[str, str] = {ty: key for key, _, types in REAL_GROUPS for ty in types}
+REAL_GROUP_NAMES: Dict[str, str] = {key: name for key, name, _ in REAL_GROUPS}
+REAL_GROUP_ORDER: Tuple[str, ...] = tuple(key for key, _, _ in REAL_GROUPS)
+
+
+def real_group(name: str) -> str:
+    """The question group of real task type ``name`` (``REAL_GROUPS``).  A
+    real type without a group is a mistake to fix in ``REAL_GROUPS``, not a
+    case to carry, so it raises."""
+    try:
+        return REAL_GROUP_OF[name]
+    except KeyError:
+        raise ValueError(f"real task type {name!r} has no question group; add it to "
+                         "tasks.types.REAL_GROUPS") from None
+
+
 def task_type(name: str) -> TaskType:
     try:
         return TASK_TYPES[name]
@@ -274,4 +314,5 @@ __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "L
            "DESIGN_GROUPS",
            "MODEL_PHASES", "LABEL_GROUPS", "CHECK_GROUPS", "GROUP_LAYER_ROLE", "TaskType",
            "TASK_TYPES", "REAL_TASK_TYPES", "REAL_SHEET_PHASES", "DEFAULT_TYPE", "task_type",
+           "REAL_GROUPS", "REAL_GROUP_OF", "REAL_GROUP_NAMES", "REAL_GROUP_ORDER", "real_group",
            "checks_in_scope"]

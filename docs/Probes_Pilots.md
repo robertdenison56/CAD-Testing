@@ -81,6 +81,12 @@ python -m roaddraft.runners run --profile basic --backend codex --model MODEL \
 Robert, 2026-10-22: "the harder tasks should make it into the eval set as well." All 33 pilots are
 the eval task set `hard-pilots` (`benchmarks/tasksets/hard-pilots.json`), ranked on its own board
 beside `d1-test` and `d1-real`. They stay pilots too: the `--pilot` route below is unchanged.
+How a run is held to the set (2026-10-27, Robert): by its task ids, each of which carries the hash of
+its task text, so adding a family does not unrank the rows run before it, while a changed or removed
+text shows as an id the set no longer has; its verifier version is the pilot checks' source hash
+(`probe_tasks.check_version`, re-scored with `report --reverify`); and a row ranks only when the run
+covers every task of the current set, a run on part of the set being published as **partial** and
+listed on the board, not ranked (the first local row, Qwen3.5-9B on the 24 text-only pilots, is one).
 
 - **How an episode runs** (`src/roaddraft/eval/probe_tasks.py`): the pilot's start project is
   built in the episode folder, the model gets the pilot's task text as the probe runner sends it,

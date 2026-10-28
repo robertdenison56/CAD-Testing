@@ -12,20 +12,23 @@ No ranked run yet. A row needs a published run on `d1-test` under a frozen spec 
 
 **Best model 63.6/100 on d1-real (qwen/qwen3.5-9b · single · explicit, 95% CI 59.0–67.8, hard-fail 4%).**
 
-| # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
-|---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
-| 1 | qwen/qwen3.5-9b · single · explicit | default | **63.6** | 59.0–67.8 | 66.5 | 4% | 31% | 0% | – | 98 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single` |
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Draft | Letter | Sheet | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
+|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | qwen/qwen3.5-9b · single · explicit | default | **63.6** | 59.0–67.8 | 100.0 ± 0.0 (n 9) | 55.4 ± 7.5 (n 44) | 64.3 ± 6.5 (n 45) | 66.5 | 4% | 31% | 0% | – | 98 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single` |
+
+Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Draft = draft linework (`real-draw-alignment`); Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
 
 ## `hard-pilots`: the harder tasks (pass or fail)
 
-No ranked run yet. A row needs a published run on `hard-pilots` on the current task texts; each task scores 100 on a pass and 0 on a fail. The nine pilots that come with a page need a model that takes images.
+No ranked run yet. A row needs a published run on `hard-pilots` that covers every task of the current set (a run on part of it is published as partial and listed among the runs not ranked); each task scores 100 on a pass and 0 on a fail by its own check, whose source hash is the row's verifier version. The nine pilots that come with a page need a model that takes images.
 
 ## Published runs that are not ranked
 
 - `e3-d1-variance-gemma-4-12b-single` (d1-variance, 100 episodes): google/gemma-4-12B-it · single · explicit, effort thinking on 69.3 ± 3.0 (20 tasks × 5). Not ranked: run on d1-variance, not a leaderboard set (d1-test, d1-real, hard-pilots).
 - `e3-d1-variance-qwen3.6-35b-a3b-single` (d1-variance, 100 episodes): Qwen/Qwen3.6-35B-A3B · single · explicit, effort thinking on (default) 86.7 ± 2.7 (20 tasks × 5). Not ranked: run on d1-variance, not a leaderboard set (d1-test, d1-real, hard-pilots).
+- `e3-hard-pilots-qwen3.5-9b-q4km-lms-single` (hard-pilots, 24 episodes, **partial: 24 of 33 tasks**): qwen/qwen3.5-9b · single · explicit, effort default 8.7 ± 8.7 (23 tasks × 1). Not ranked: scored under an older spec or verifier: verifier_version d1-verify-v6 (current pilot-check-a6cca462de35); partial: covers 24 of the set's 33 tasks; a row ranks once the run holds every task of the current set.
 
-Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded generator (one synthetic centerline per task); `d1-real` is 108 held-out tasks on the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), nine of each real-sheet type; `hard-pilots` is the 33 harder-task pilots on the sample sheets, each graded pass (100) or fail (0) by its own check, with the share of its items done as the rubric column. A model's rows on different sets are not averaged.
+Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded generator (one synthetic centerline per task); `d1-real` is 100 held-out tasks on the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), 25 in each of four question groups (draft linework, letter alignment data, produce the sheet, notes and dimensions), each group a column beside the blended score; `hard-pilots` is the 33 harder-task pilots on the sample sheets, each graded pass (100) or fail (0) by its own check, with the share of its items done as the rubric column. A model's rows on different sets are not averaged.
 
 Effective score: 0 on a hard fail, else the rubric score; per task over its samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank on the effective mean, then hard-fail rate, invalid-call rate and cost. Effort is the level the run set with `--effort`, else what the request body set, else the model's default marked (default), as read from its chat template or catalog (`roaddraft.effort`); plain default is one not looked up. A model run at two efforts is two rows.
 

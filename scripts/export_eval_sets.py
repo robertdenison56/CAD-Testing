@@ -33,7 +33,7 @@ from openpyxl.styles import Font  # noqa: E402
 
 from roaddraft.eval import taskset as tasksets  # noqa: E402
 from roaddraft.probes.pilot import PILOT_PROBES  # noqa: E402
-from roaddraft.tasks.types import checks_in_scope, task_type  # noqa: E402
+from roaddraft.tasks.types import checks_in_scope, real_group, task_type  # noqa: E402
 
 SEEDED_HEADS = ["Set", "#", "Seed", "Type", "Sheets", "Curves", "Station equation", "Task ID",
                 "In d1-variance", "Starts with", "Checks graded", "Points", "EXPLICIT prompt",
@@ -41,10 +41,10 @@ SEEDED_HEADS = ["Set", "#", "Seed", "Type", "Sheets", "Curves", "Station equatio
 SEEDED_WIDTHS = [8, 5, 6, 16, 7, 7, 11, 24, 10, 36, 30, 7, 95, 40, *ep.TASK_LINK_WIDTHS]
 
 REAL_HEADS = ["Set", "#", "Agency", "Sheet ID", "Sheet", "Scale", "Twist (deg)", "Alignment",
-              "Type", "Task ID", "Starts with", "Checks graded", "Points", "EXPLICIT prompt",
+              "Group", "Type", "Task ID", "Starts with", "Checks graded", "Points", "EXPLICIT prompt",
               "VAGUE prompt", "Files", "Start", "Finished", "Redraft", "Base files",
               "Start (picture)", "Finished (picture)"]
-REAL_WIDTHS = [10, 5, 14, 30, 16, 10, 7, 12, 18, 24, 40, 30, 7, 95, 40,
+REAL_WIDTHS = [10, 5, 14, 30, 16, 10, 7, 12, 9, 18, 24, 40, 30, 7, 95, 40,
                *ep.TASK_LINK_WIDTHS[:4], 24, *ep.TASK_LINK_WIDTHS[4:]]
 
 PILOT_HEADS = ["Set", "#", "Pilot", "Probe ID", "Task ID", "Family", "Task type", "Tags",
@@ -94,6 +94,7 @@ def real_rows(name: str, catalog: dict, tasks_dir: Path, workbook_dir: Path) -> 
             name, i, src["agency_name"], entry["sheet_id"], entry["sheet"],
             f"1\" = {entry['feet_per_inch']:g}'", entry["twist_deg"],
             "(whole sheet)" if cat.get("per_sheet") else entry["alignment"],
+            entry.get("group") or real_group(entry["task_type"]),
             entry["task_type"], entry["task_id"], ep._real_given(ttype), ", ".join(graded),
             sum(ep.WEIGHTS[c] for c in graded),
             task.brief.prompts["explicit"], task.brief.prompts["vague"], *links])
@@ -149,8 +150,11 @@ def main(argv=None) -> int:
                     f"In d1-variance marks the first {len(sets['d1-variance']['tasks'])}, the "
                     "d1-variance set sampled k = 5 times to size the interval."),
         ("d1-real", f"{len(sets['d1-real']['tasks'])} held-out tasks on the redrafted sample "
-                    "plan sheets (Caltrans, FHWA WFL and CFL, FDOT), nine of each of the twelve "
-                    "real-sheet types. Ranked beside d1-test."),
+                    "plan sheets (Caltrans, FHWA WFL and CFL, FDOT), 25 from each of the four "
+                    "question groups (Group column: draft linework, letter alignment data, "
+                    "produce the sheet, notes and dimensions), a group's quota split evenly over "
+                    "its real-sheet types. Ranked beside d1-test, with a column per group on the "
+                    "board."),
         ("d1-real-dev", f"{len(sets['d1-real-dev']['tasks'])} tasks, two of each real type, on "
                         "Caltrans sheets d1-real never uses. For smoke runs; never reported."),
         ("hard-pilots", f"The {len(sets['hard-pilots']['tasks'])} harder-task pilots run as probe "

@@ -10,7 +10,7 @@ Numbers come from a sweep of the 313 redrafted sheet files and the 584-task real
 | Set | Tasks | Types | Sheets |
 |---|---|---|---|
 | `d1-test` / `d1-dev` / `d1-variance` | 100 / 50 / 20 | 16 seeded types on one synthetic centerline | generated |
-| `d1-real` / `d1-real-dev` | 99 / 22 | 11 real types (`real-*`) | 42 + 3 of the 45 catalogue sheets |
+| `d1-real` / `d1-real-dev` | 100 / 24 | 12 real types (`real-*`) in 4 question groups, 25 a group (since 2026-10-27) | 51 + 3 of the 45 catalogue sheets |
 | `hard-pilots` | 29 | 13 pilot families, hand-built | real sheets, 24 text-only + 5 scans |
 
 Seeded types with no real counterpart: `pavement-edges`, `pavement-widths`, `pavement`,
@@ -127,5 +127,5 @@ and the 41 scanned pages never redrafted.
 | Centerline traced as 7 to 44 short tangents | 8 (WFL SamplePlan pp1 to pp7 `MAIN 01`, CFL parking `CL1` twice, PPM-218) | refit those alignments as tangents and curves in the redraft, as pilots 1 and 14 did for L-1; the WFL series is eight consecutive sheets of one line, the only real two-sheet or plan-set material in the set |
 | Under 200 ft, or 5 curves | 3 | leave |
 
-The catalogue also holds 36 to 85 tasks per type against the 9 per type `d1-real` draws, so the
+The catalogue also holds 32 to 85 tasks per type against the 5 to 25 per type `d1-real` draws (25 a question group since 2026-10-27), so the
 set can grow without a new type.

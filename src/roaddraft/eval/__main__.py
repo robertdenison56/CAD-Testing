@@ -294,6 +294,10 @@ def cmd_report(args) -> int:
               f"n={g['n_tasks']}x{g['k_max']}" + (f" errors {g['errors']}" if g["errors"] else ""))
     for p in summary["publish_problems"]:
         print(f"  not rankable: {p}")
+    if summary.get("partial"):
+        c = summary["coverage"]
+        print(f"  partial: {c['tasks_run']} of the set's {c['tasks_in_set']} tasks; "
+              "published and listed, ranked once the run holds them all")
     print(f"-> {out}")
     if args.publish:
         try:
