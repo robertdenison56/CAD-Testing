@@ -75,6 +75,11 @@ states the published text and the geometry gives the station.
 
 ### 4. Pavement edges and widths on the real corridors (`real-pavement-edges`, `real-pavement-widths`)
 
+**Scrapped by Robert on Oct 27 2026.** His Oct 24 reading of this candidate (station-and-offset
+callouts at every break in the edge of pavement, with the total-width dimensions as the companion;
+tracker step B10) was designed and never built, and is not to be. The notes below stay as the
+survey of what the redrafts hold.
+
 67 of the 85 catalogue alignments have traced linework running 150 ft or more at a constant
 offset (D13's traveled way at 34.8 ft each side over 400 to 800 ft on L-2, L-4 and L-5; its EP
 at 39.7 ft; FDOT CL1 at 40 ft; CFL CL1 at 13 ft). Truth: `offset_pieces` already takes a station
