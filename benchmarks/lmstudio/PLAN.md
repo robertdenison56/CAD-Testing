@@ -8,14 +8,79 @@ Robert's go (`lms_campaign.py e3 NAME --taskset ... --samples ...`).
 
 ## What is running right now
 
-**2026-10-27 13:15 PDT: the Track D queue** (Robert: "do steps 1-4"; Gemma as the Q8_0 on the PC). The 9B's hard-pilots run
-(24 text-only pilots, since 10:18, worktree lms-hard-pilots) is going; a detached queue on the Mac,
-`results/e3-lms/queue-2026-10-27.sh` (log beside it), waits for it and then runs, one at a time from the worktree
-`.claude/worktrees/lms-d1-test` (main 4ec8667e): the 9B on d1-test x 1 (`e3-d1-test-qwen3.5-9b-q4km-lms-single`, the
-20-minute budget of every ranked row, up to six resumes), a `check` of Gemma 4 12B Q8_0 at 131k and then its d1-test x 1
-(`e3-d1-test-gemma-4-12b-q8-lms-single`), then one d1-dev smoke episode each for Devstral Small 2, Ministral 3 14B,
-GLM-4.6V-Flash, Gemma 4 E4B and Llama 3.1 8B (`e3-smoke-d1-dev-<name>-lms`). Each run's report is written, not
-published: publishing, the board and the tracker follow a look at the numbers. The 4B waits on its download on the PC.
+**Nothing since 04:06 PDT on 2026-10-28: the Track D queue of Oct 27 is through** (`results/e3-lms/queue-2026-10-27.sh`,
+log beside it; Robert, Oct 27 13:00: "do steps 1-4", Gemma as the Q8_0 on the PC). It ran one model at a time from the
+worktree `.claude/worktrees/lms-d1-test` (main 291ae711):
+
+- **Step 1, the 9B on d1-test x 1: DONE and PUBLISHED.** `e3-d1-test-qwen3.5-9b-q4km-lms-single`, 16:14 Oct 27 to
+  02:42 Oct 28; 100 of 100 episodes scored, no error and no engine death in 10.4 hours of episode time (6.3 minutes an
+  episode mean, 2.7 median, 39.7 max). **62.5 effective [57.2-67.8]**, rubric 69.4, hard-fail 15%, clean 30%, submit
+  90%, one invalid call in 2,886. Rankable as run (spec v1, generator d1-v6, verifier d1-verify-v7, clean pins): the
+  first `d1-test` row, published 11:08 Oct 28 to `benchmarks/runs/e3-d1-test-qwen3.5-9b-q4km-lms-single` and on the
+  board. Terminations: 90 submits, 6 at the 20-minute clock, 4 on an over-long turn; the 15 hard fails are 12 submitted
+  sheets with a hard-fail finding and 3 of the budget trips; 30 sheets at 100, 27 at 0. Weakest checks: pavement width
+  dimensions 0.27, north arrow 0.42, station ticks 0.50, BC/EC lettering 0.51, bearings 0.52; strongest: alignment
+  linework, reference attached and alignment created 1.00, curve table 0.92. Prompts: 17 episodes peaked past 65,536
+  tokens (max 104,370, p90 70,589, median 35,248), all inside the 131k window and the harness budget, no context trip.
+  The row reads 1.1 below the 9B's d1-real row (63.6), the intervals overlapping.
+- **Step 3, Gemma 4 12B Q8_0: NOT RUN.** The `check` at 131,072 failed both ways LM Studio tries (`--gpu max`: "failed
+  to allocate buffer for kv cache"; the default split: "failed to allocate compute pp buffers"), so the queue skipped
+  its d1-test night as written. The 12.8 GB file loaded at 65k on Oct 20 (12.8 tok/s, partly on the CPU); it is the
+  131k KV cache that does not fit beside it on the two 16 GB cards.
+- **Step 4, the five smokes (one d1-dev episode each, 02:43 to 04:06):** GLM-4.6V-Flash Q4_K_M ran and submitted
+  (43.8 effective, 32 steps in 4 turns, 10 faults, no invalid calls, 3.4 minutes): a keeper by the rule. Gemma 4 E4B
+  Q4_K_M ran 7 steps in 8 turns and never submitted (0, hard fail; 9,400 reasoning tokens; the wall clock took it after
+  44 minutes that included one engine death and reload mid-episode): not a keeper on this episode. Devstral Small 2
+  24B Q3_K_L, Ministral 3 14B Q6_K and Llama 3.1 8B Q4_K_M did not load at 131,072 ("failed to allocate buffer for kv
+  cache", twice each), so their episodes never ran.
+
+**Robert, Oct 28 about 11:30: "have the models run at the highest context possible that will fit on my local
+machine, if a model is unable to run with enough context for these tasks remove it from the list of local tested
+models."** Built the same hour (committed on main Oct 28, on Robert's go): each model has its own window. `lms_campaign.py fit NAME` walks the
+ladder 131,072, 114,688, 98,304, 81,920, 65,536 from the ceiling (`CONTEXT`, the Oct 26 decision) down to the floor
+(`FLOOR_CONTEXT` 65,536: the hosted vLLM rows' window, taken as "enough context for these tasks"; at it about 17 in
+100 d1-test episodes trip on the 9B's transcript sizes), records the first rung LM Studio loads the model at as
+`context` in `models.json` (every load, the runner guard, `--lms-context` and `--context-tokens` use it; the window
+is on the card), and below the floor marks the model `dropped` with the reason, which `e3`, `check`, `smoke`, `k3`
+and `vision` then refuse. Tests in `tests/test_lms_campaign.py`. The 9B, GLM-4.6V-Flash and Gemma 4 E4B are
+recorded at 131,072 (they loaded there). **Queue 2** (`results/e3-lms/queue-2026-10-28.sh`, log beside it, started
+right after): `fit` for Gemma 4 12B Q8_0, Devstral Small 2, Ministral 3 14B and Llama 3.1 8B in turn, then the
+three smokes that never ran (one d1-dev episode each, for the ones that fit), then Gemma 4 12B's d1-test x 1 night
+at its window if it fit (report written, not published). A dropped model leaves the list below and the board.
+**The fits (11:57 to 12:08):** Gemma 4 12B Q8_0 loads at **98,304** (131k and 114k: "failed to allocate compute pp
+buffers"); Llama 3.1 8B Q4_K_M loads at **65,536**, the floor, and at no rung above it; Devstral Small 2 24B Q3_K_L and
+Ministral 3 14B Q6_K load at none of the five rungs (KV cache at 65,536 too) and are **DROPPED from the local list**.
+Llama's smoke episode at 65,536 (12:08 to 12:10) ended as an error at step 0: LM Studio could not parse the model's
+tool-call output (500 "does not match the expected peg-native format", three samples), as in the Oct 7-8 Tier-3 pass,
+so Llama 3.1 8B is **DROPPED** by step 5's rule (a model that never calls a tool) and marked so in `models.json`.
+**Gemma 4 12B Q8_0's d1-test x 1 night is RUNNING since 12:10 at 98,304** (`e3-d1-test-gemma-4-12b-q8-lms-single`,
+100 episodes; at 12.8 tok/s partly on the CPU, expect it to end Oct 29 morning; report written, not published).
+The local list after today: Qwen3.5-9B (131k), GLM-4.6V-Flash (131k), Gemma 4 12B Q8_0 (98k), Gemma 4 E4B (131k, no
+submit on its smoke: Robert's call), the 4B once downloaded; off it: Devstral, Ministral (no window), Llama (no tool calls).
+Gemma's first nine episodes took about three minutes each (12:10 to 12:36), so the night may end this evening.
+**Queue 3** (Robert, 12:25: "Yes, queue it"; `results/e3-lms/queue-2026-10-28b.sh`, log beside it, started 12:36)
+waits for queue 2's "queue done" and an idle server, then runs **GLM-4.6V-Flash Q4_K_M on d1-test x 1 at 131,072**
+(`e3-d1-test-glm-4.6v-flash-q4km-lms-single`, step 6's first keeper; its smoke episode took 3.4 minutes, so about
+six hours) and writes its report, not published.
+
+Next in the plan after queues 2 and 3: step 2's 4B download (the PC alone can start it; then `fit`, `check`, its
+night), Gemma 4 E4B's place on the list (Robert's call), the image pilots on the 9B after the pilot-astra merge (step 9).
+The 9B's published d1-test row, the regenerated board, the window rule and this section were committed on main on Oct 28 (Robert's go).
+
+**The 9B's hard-pilots run ended 16:01 PDT on 2026-10-27**: 2 of the 24 text-only pilots passed (p02-sources-wfl19a,
+p14-qa-review-ppm045a), effective 8.7 [0.0-17.4] over 23 scored, rubric 31.4 (the share of each pilot's items done),
+four pilots at the 30-minute clock, one lost to an LM Studio server error ("Unexpected empty grammar stack", left out as
+the report leaves out errored episodes), 5.7 hours of episode time. GPT-6-Astra passed 22 of the same 24 through the
+pilot rig. Published with `--allow-unrankable` to `benchmarks/runs/e3-hard-pilots-qwen3.5-9b-q4km-lms-single` and listed
+on the board under the runs that are not ranked: the run is pinned to the worktree's 29-pilot set (generator
+probe-d1e6c7398d83, verifier d1-verify-v6) while main's set is 33 pilots (probe-de3257064ca0, the redline family) under
+v7, although the 24 task texts are the same in both (each id carries its text hash). Robert, Oct 27 17:00: the rule
+changed (committed that night with B9 as 2cce1ef6 by the other session, pushed Oct 28 on Robert's go): a hard-pilots run is held to its task ids, not the set's hash; its verifier version is
+the pilot checks' source hash (`probe_tasks.check_version`); and a row ranks only when the run covers every task of
+the current set, a run on part of it being published as partial. Under it the 9B's row reads "partial: 24 of 33
+tasks" and stays unranked on one count only, its verifier stamp (d1-verify-v6 against the checks' hash), which a
+`report --reverify --publish` clears once the pilot-astra branch is merged (main's checker lacks the p14 repairs the run
+used); then the nine image pilots under the same run id complete the row.
 
 The 9B's d1-real x 1 run ended 21:18 PDT on 2026-10-26 and is published as the first ranked Track D row
 (`benchmarks/runs/e3-d1-real-qwen3.5-9b-q4km-lms-single`, 63.6 effective [59.0-67.8] over 98 scored episodes).
@@ -25,11 +90,13 @@ The 9B's d1-real x 1 run ended 21:18 PDT on 2026-10-26 and is published as the f
 | model | file | fits | gen tok/s | minutes per episode | 100 episodes |
 |---|---|---|---|---|---|
 | Qwen3.5-9B | Q4_K_M 6.6 GB, on the PC | fully on the cards | 35.8 measured | 8-20 (test hit the 20-min cap) | 13-33 h |
-| Gemma 4 12B | Q8_0 12.8 GB, on the PC (Robert, Oct 27: in place of the Q6_K pick) | partly on the CPU | 12.8 measured at 65k; `check` at 131k pending | 6-10 (Gemma writes little: 1.8k out tokens an episode on Runpod) | 10-17 h |
+| Gemma 4 12B | Q8_0 12.8 GB, on the PC (Robert, Oct 27: in place of the Q6_K pick) | **window 98,304** (`fit`, Oct 28: 131k and 114k refused), partly on the CPU | 12.8 measured at 65k | 6-10 (Gemma writes little: 1.8k out tokens an episode on Runpod) | 10-17 h |
 | Qwen3.5-4B | BF16 8.4 GB, to download | fully on the cards | not measured, ~2x the 9B | 5-12 | 8-20 h |
-| Devstral Small 2 24B | Q3_K_L 13.3 GB, on the PC | tight; context spills to the CPU | not measured, ~8-10 | unknown, smoke first | 15-30 h |
-| Ministral 3 14B reasoning | Q6_K 12.0 GB, on the PC | partly on the CPU | not measured, ~10 | reasoning model at 10 tok/s: likely cap-bound | 25-33 h |
-| GLM-4.6V-Flash 9.4B, Gemma 4 E4B, Llama 3.1 8B | Q4_K_M, on the PC | fully | fast | 3-8 | 5-13 h each |
+| Devstral Small 2 24B | Q3_K_L 13.3 GB, on the PC | **DROPPED Oct 28**: loads at no rung from 131k down to 65k (kv cache) | not measured | smoke not run | off the list |
+| Ministral 3 14B reasoning | Q6_K 12.0 GB, on the PC | **DROPPED Oct 28**: loads at no rung from 131k down to 65k (kv cache) | not measured | smoke not run | off the list |
+| GLM-4.6V-Flash 9.4B | Q4_K_M 8.0 GB, on the PC | fully, at 131k | fast | 3.4 on its smoke episode (submitted, 43.8) | 6-13 h |
+| Gemma 4 E4B | Q4_K_M 6.3 GB, on the PC | fully, at 131k | slow with thinking (9.4k reasoning tokens in 7 steps) | cap-bound on its smoke episode (no submit) | 33 h |
+| Llama 3.1 8B | Q4_K_M 4.9 GB, on the PC | window 65,536, the floor; **DROPPED Oct 28**: its smoke errored at step 0 (LM Studio cannot parse its tool calls) | fast | smoke: 0 steps, error | off the list |
 | Qwen3.6-35B-A3B, Gemma 4 26B-A4B, gpt-oss-20b | Q4_K_M 21 / 16 / 12 GB, to download | experts in the PC's RAM only | 3-5x slower than Runpod | likely cap-bound | 25-35 h |
 
 The minutes are from the measured token rates and the Runpod rows' tokens per episode (`results/e3-runpod`):
@@ -63,7 +130,7 @@ that lands near another.
    runs as the Q8_0 already there (Robert, Oct 27); the old text named Gemma 4 12B Q6_K and
    Qwen3.5-4B BF16 as `README.md` step 1 says; then `lms_campaign.py check NAME` for each (one 29k prompt at
    65k, writes `measured`).
-3. **Gemma 4 12B Q8_0, d1-test x 1** (a `check` at 131k first). Its Runpod row is 69.3; the local row shows what Q8_0 on a CPU split and llama.cpp's
+3. **Gemma 4 12B Q8_0, d1-test x 1** (a `check` at 131k first; FAILED Oct 28: no fit at 131k, see above; the window question is Robert's). Its Runpod row is 69.3; the local row shows what Q8_0 on a CPU split and llama.cpp's
    Gemma template cost it.
 4. **Qwen3.5-4B BF16, d1-test x 1.** Bottom of the ladder at the board row's precision.
 5. **Smoke the models already on the PC** (one d1-dev episode each, `e3 NAME --taskset d1-dev --limit 1
@@ -72,7 +139,12 @@ that lands near another.
    tool (GLM-4.6V-Flash, E4B and Llama scored 0 of 24 on the Tier-3 probes in October, so expect to drop them).
    Mistral 7B v0.3 stays out: LM Studio strips its tools and 32k of context is under the schema.
    Each needs a `models.json` entry (lms_key, variant, quantization, extra_body) before `e3` will take it.
-6. **Keepers from step 5, d1-test x 1**, one night each. Devstral Small 2 is the one to hope for: an agentic
+   DONE Oct 28 (see above): GLM-4.6V-Flash submitted (keeper); E4B never submitted; Devstral and Ministral DROPPED by
+   the window rule (no rung from 131k to 65k loads); Llama smoked at 65,536 from queue 2 and errored at step 0 (LM
+   Studio cannot parse its tool calls, as in October): DROPPED by this step's rule. Keepers: GLM-4.6V-Flash; E4B open.
+   GLM's d1-test night is queue 3 (Robert, Oct 28 12:25), behind Gemma's.
+6. **Keepers from step 5, d1-test x 1**, one night each: GLM-4.6V-Flash so far (Devstral Small 2 is dropped, Oct 28:
+   it does not load with 65k of context on the cards). It was the one to hope for: an agentic
    coding model with tool calling, the largest dense model the cards hold.
 7. **The MoE rows, if the PC's RAM allows** (needs about 24 GB free RAM beside the cards for Qwen3.6-35B-A3B
    Q4_K_M; Robert to confirm the PC's RAM). Qwen3.6-35B-A3B is the best open model on the board (86.7 on
@@ -80,13 +152,15 @@ that lands near another.
    stays out (Robert, Oct 20). A `check` first; expect a cap-bound run that takes a weekend.
 8. **d1-real x 1 (99 episodes) for the two best local rows.** The first real-sheet rows on the board. Real
    sheets carry more linework, so allow 1.3x the d1-test time.
-9. **hard-pilots for the best local row**, k = 1, under Track P's budgets: the 24 text pilots (going on the 9B
-   since Oct 27, 10:18), then the nine that come with a page (`e3 NAME --taskset hard-pilots --pilots images`,
+9. **hard-pilots for the best local row**, k = 1, under Track P's budgets: the 24 text pilots (done on the 9B
+   Oct 27: 2 of 24, published, not ranked; see above), then the nine that come with a page (`e3 NAME --taskset hard-pilots --pilots images`,
    same run id, so the run fills out to 33). The page reaches the model through the harness's own route (a
    `view_attachment` result with the PNG as a data URL, which LM Studio takes for a model with vision: the 9B,
    Gemma 4 12B and E4B, GLM-4.6V-Flash, Devstral and Ministral all are, Llama 3.1 is not); `lms_campaign.py vision
    NAME` first, one lettered image through that route to see that the model reads it and what an image costs in
-   prompt tokens (Robert's go: it loads the model, so not while a run is going).
+   prompt tokens (Robert's go: it loads the model, so not while a run is going). The 9B's run is pinned to the
+   lms-hard-pilots worktree (pilot-astra + guard), whose harness predates `--pilots` and `--context-tokens`; the nine
+   image pilots under the same run id wait for the pilot-astra merge (or a cherry-pick onto that worktree).
 
 Total: about six model-nights for the d1-test rows that exist today (steps 1, 3, 4, and two or three keepers),
 two more for d1-real, a weekend for Qwen3.6 if it fits. Nothing else is needed for the board except the
@@ -98,6 +172,9 @@ two more for d1-real, a weekend for Qwen3.6 if it fits. Nothing else is needed f
 - The PC must not sleep during a run (Windows power settings); the Mac holds itself awake with `caffeinate -i`.
 - One local run at a time: the campaign script refuses while another is going.
 - Quantization stays as recorded in `models.json`; a precision change is asked first (Qwen = Q4_K_M).
+- Each model loads at the highest window that fits the PC (`lms_campaign.py fit NAME`: 131,072 down to 65,536,
+  recorded as `context` in `models.json`); a model that does not load at 65,536 is dropped from the local list
+  (Robert, Oct 28). Nothing loads a model at any other size.
 - Runs are pinned to the campaign worktree (`lms_campaign.py pins`); a pin change between a model's episodes
   makes a new row, not a resume.
 - After each run: `lms_campaign.py score NAME`, then `report --publish` and `python scripts/make_leaderboard.py`
@@ -121,7 +198,7 @@ two more for d1-real, a weekend for Qwen3.6 if it fits. Nothing else is needed f
 
 The 38 episodes that ran scored 63.8 effective (median 75.6; 30 submitted, 8 at the budget, no hard fails).
 
-**What is built (uncommitted on main, 2026-10-26).**
+**What is built (2026-10-26, committed fed5f4d1).**
 
 - `runners/openai_compat.py`: "No models loaded" is a reload marker; `LmStudioGuard.reload` waits until the
   server lists the model at the run's context (`LOAD_WAIT` 180 s) instead of trusting the CLI's exit;
@@ -179,10 +256,20 @@ window is a per-row setting now, recorded on the card: hosted rows 65,536 (refus
 LM Studio brought the model back at its own 108,032 / parallel 4 (resumed episodes 1 and 2, and part of 3); from
 14:31 on Oct 26 at 131,072 / parallel 1, reloaded by hand with the harness paused.
 
-**The harness holds the window itself now (built 2026-10-27, uncommitted on main).** `Budgets.context_tokens`
+**The harness holds the window itself now (built 2026-10-27, committed 291ae711).** `Budgets.context_tokens`
 (`--context-tokens N`, defaulting to `--lms-context N`; the campaign script passes both at `CONTEXT`): the LLM
 agent ends an episode whose reply reports a prompt at or past the budget as a `context` budget trip before any of
 that turn's calls run, as vLLM's refusal ends one on the hosted rows, and does not send a next request that cannot
 fit by the transcript's own size (the last prompt count plus a floor of one token per 4.5 characters appended).
-The budget is recorded with every episode. The runs queued today (`queue-2026-10-27.sh`) run from a worktree at
-4ec8667e, before this, so their episodes still rely on the window alone; the 9B's hard-pilots run likewise.
+The budget is recorded with every episode. The queue of Oct 27 (`queue-2026-10-27.sh`) ran from a worktree at 291ae711, so the
+9B's d1-test row is the first under the budget (no context trip; 17 of its 100 episodes peaked past 65k, the largest
+prompt 104,370 tokens); the 9B's hard-pilots run predates it and relied on the window alone. Oct 28: at 131,072 the
+two 16 GB cards hold the 9B Q4, GLM-4.6V-Flash Q4 and E4B Q4 and refuse Gemma 4 12B Q8_0, Devstral Small 2 Q3_K_L,
+Ministral 3 14B Q6_K and Llama 3.1 8B Q4 ("failed to allocate buffer for kv cache"); what window those load at is
+Robert's call (see the top of this file).
+
+**Decided 2026-10-28 (Robert): each model loads at the highest window that fits**, `lms_campaign.py fit NAME` walking
+131,072, 114,688, 98,304, 81,920, 65,536 and writing the first rung that loads to `models.json` as `context`; the
+ceiling stays 131,072 and the floor is 65,536 (the hosted rows' window; a model that does not load there has too
+little for these tasks and is dropped from the local list). The hosted vLLM rows keep their recorded 65,536. The fits
+of Oct 28: Gemma 4 12B Q8_0 98,304; Llama 3.1 8B 65,536; Devstral Small 2 and Ministral 3 14B dropped (no rung loads).
