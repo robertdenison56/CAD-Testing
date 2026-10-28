@@ -4,7 +4,8 @@
     python benchmarks/lmstudio/lms_campaign.py list
     python benchmarks/lmstudio/lms_campaign.py status                   # link, server, files, what is loaded
     python benchmarks/lmstudio/lms_campaign.py pins                     # the worktree's engine/tool/instruction pins
-    python benchmarks/lmstudio/lms_campaign.py check NAME               # load at 65k, time one ~29k-token prompt
+    python benchmarks/lmstudio/lms_campaign.py fit NAME                 # the highest context that loads, 131k down to 65k; below: dropped
+    python benchmarks/lmstudio/lms_campaign.py check NAME               # load at its context, time one ~29k-token prompt
     python benchmarks/lmstudio/lms_campaign.py vision NAME              # one image through the harness's route; records it
     python benchmarks/lmstudio/lms_campaign.py smoke NAME [--probe edge-c102] [--print]
     python benchmarks/lmstudio/lms_campaign.py k3 NAME [PROBE...] [--force] [--print]
@@ -21,8 +22,9 @@ What it fixes, so a local run is the same run as the plan:
   ``benchmarks/runpod/runpod_campaign.py``), so edits to ``main`` during a run change nothing;
 - the model file: ``lms load`` over LM Link takes only the bare key and loads the variant selected on the PC,
   so before a run the PC's selected variant and the loaded quantization must be the spec's, and the model is
-  loaded alone at ``CONTEXT`` (131,072 since 2026-10-26), parallel 1 (the runner's ``--lms-context`` guard
-  reloads it the same way);
+  loaded alone at its own context (``context`` in models.json, found by ``fit``: the highest rung of ``LADDER``
+  that loads, ceiling ``CONTEXT`` 131,072, floor ``FLOOR_CONTEXT`` 65,536), parallel 1 (the runner's
+  ``--lms-context`` guard reloads it the same way);
 - the setting: the Runpod rows' budget (30 min, 120 turns) and sampling (``extra_body``), ``--base-url`` named
   so ``pgrep`` finds a running rig;
 - one model at a time: k = 3 is one process with ``--repeat 3`` (r1, r2, r3 in turn), never three at once,
@@ -43,6 +45,14 @@ must be clean in ``src`` and ``tests``; its HEAD is recorded in the run's pins a
 The context (2026-10-27): every ``e3`` run passes ``--context-tokens CONTEXT`` beside ``--lms-context CONTEXT``, so
 the harness ends an episode whose prompt reaches the window as a ``context`` budget trip, the way vLLM's refusal
 ends one on the hosted rows; LM Studio alone would truncate the prompt and answer.
+
+The window (2026-10-28, Robert: "run at the highest context possible that will fit on my local machine; a model
+that cannot run with enough context for these tasks leaves the list of local tested models"): ``fit NAME`` walks
+``LADDER`` from ``CONTEXT`` down to ``FLOOR_CONTEXT``, records the first context LM Studio loads the model at as
+``context`` in models.json (every run, check and vision load it there, and the runner guard reloads it there),
+and below the floor marks the model ``dropped`` with the reason; ``e3``, ``check``, ``smoke``, ``k3`` and
+``vision`` refuse a dropped model, ``fit`` alone takes it again. The floor is the hosted vLLM rows' window: at
+65,536 about 17 in 100 of the 9B's d1-test episodes would have ended as context trips (its largest prompt 104k).
 
 Images (2026-10-27): the nine hard-pilots that come with a page (two scans to redraw, three to read, four marked-up
 prints) reach the model through the harness's own route, a ``view_attachment`` result with the PNG as a data URL,
@@ -82,6 +92,12 @@ DEVICE = "RobertsPC"
 #: by LM Studio's estimate, 13.3 of 16 GiB; 65,536 before that, which LM Studio silently truncated past on 8 of
 #: the 9B's first 38 d1-real episodes). The hosted vLLM rows stay at their recorded 65,536.
 CONTEXT = 131072
+#: the floor (2026-10-28, Robert): a model that cannot load at this context has too little for these tasks and
+#: is dropped from the local list. It is the hosted vLLM rows' window; 17 of the 9B's 100 d1-test episodes peaked
+#: past it (the largest 104,370 tokens), so a row at the floor loses about that share to context trips.
+FLOOR_CONTEXT = 65536
+#: the rungs ``fit`` tries, highest first
+LADDER = (131072, 114688, 98304, 81920, 65536)
 LOAD_TIMEOUT_S = 300  # lms load over LM Link: 6-10 s when it works, hung for good when it does not
 
 BUDGET_MIN, MAX_TURNS = 30, 120     # the hosted open-weight setting of the Runpod rows
@@ -103,6 +119,19 @@ def spec(data: dict, name: str) -> dict:
     if name not in data["models"]:
         sys.exit(f"unknown model {name!r}; one of: {', '.join(data['models'])}")
     return data["models"][name]
+
+
+def context(m: dict) -> int:
+    """The context this model loads at: ``context`` in models.json (set by ``fit``), else the ceiling."""
+    return int(m.get("context") or CONTEXT)
+
+
+def dropped_problem(m: dict) -> Optional[str]:
+    """Why the model is off the local list, or None."""
+    d = m.get("dropped")
+    if not d:
+        return None
+    return f"dropped from the local list on {d.get('date')}: {d.get('reason')} (fit NAME tries it again)"
 
 
 def lms(*args: str) -> subprocess.CompletedProcess:
@@ -173,8 +202,9 @@ def wait_state(key: str, want: str, seconds: int) -> bool:
     return False
 
 
-def load_alone(m: dict, gpu: Optional[str] = None) -> subprocess.CompletedProcess:
-    """Everything else unloaded, the spec's model at CONTEXT, parallel 1 (the runner guard's own load).
+def load_alone(m: dict, gpu: Optional[str] = None, ctx: Optional[int] = None) -> subprocess.CompletedProcess:
+    """Everything else unloaded, the spec's model at its context (``ctx`` to try another), parallel 1 (the
+    runner guard's own load).
 
     Oct 23 2026: a ``load`` issued right behind ``unload --all`` over LM Link sat at "97%" for eight minutes with the
     server reporting ``loading``, and the CLI never returned; a second load after the unload had settled took 6 s.
@@ -183,7 +213,7 @@ def load_alone(m: dict, gpu: Optional[str] = None) -> subprocess.CompletedProces
     """
     lms("unload", "--all")
     wait_state(m["lms_key"], "not-loaded", 60)
-    args = [LMS, "load", m["lms_key"], "--context-length", str(CONTEXT), "--parallel", "1", "-y"]
+    args = [LMS, "load", m["lms_key"], "--context-length", str(ctx or context(m)), "--parallel", "1", "-y"]
     args += ["--gpu", gpu] if gpu else []
     try:
         r = subprocess.run(args, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=LOAD_TIMEOUT_S)
@@ -197,16 +227,17 @@ def load_alone(m: dict, gpu: Optional[str] = None) -> subprocess.CompletedProces
     return r
 
 
-def loaded_problem(m: dict) -> Optional[str]:
-    """Why what the server serves is not the spec's model at CONTEXT, or None."""
+def loaded_problem(m: dict, ctx: Optional[int] = None) -> Optional[str]:
+    """Why what the server serves is not the spec's model at its context (or ``ctx``), or None."""
+    want = ctx or context(m)
     rows = [s for s in served() if s.get("state") == "loaded"]
     mine = [s for s in rows if s["id"] == m["lms_key"]]
     if len(rows) != 1 or not mine:
         return f"loaded: {[s['id'] for s in rows]} (want {m['lms_key']} alone)"
     if not same_quant(mine[0].get("quantization"), m["quantization"]):
         return f"{m['lms_key']} is loaded as {mine[0].get('quantization')}, not {m['quantization']}"
-    if mine[0].get("loaded_context_length") != CONTEXT:
-        return f"{m['lms_key']} is loaded at {mine[0].get('loaded_context_length')}, not {CONTEXT}"
+    if mine[0].get("loaded_context_length") != want:
+        return f"{m['lms_key']} is loaded at {mine[0].get('loaded_context_length')}, not {want}"
     return None
 
 
@@ -216,7 +247,7 @@ def git(*args: str, cwd: Path = WORKTREE) -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
 
 
-def preflight(m: Optional[dict] = None, worktree: Path = WORKTREE) -> None:
+def preflight(m: Optional[dict] = None, worktree: Path = WORKTREE, allow_dropped: bool = False) -> None:
     problems = []
     if not worktree.is_dir():
         at = PIN if worktree == WORKTREE else "<the run's pins.commit>"
@@ -244,17 +275,20 @@ def preflight(m: Optional[dict] = None, worktree: Path = WORKTREE) -> None:
         why = file_problem(m)
         if why:
             problems.append(why)
+        why = None if allow_dropped else dropped_problem(m)
+        if why:
+            problems.append(why)
     if problems:
         sys.exit("preflight failed:\n- " + "\n- ".join(problems))
 
 
 def ready(m: dict) -> None:
-    """The spec's model loaded alone at CONTEXT, checked against the server's own record."""
+    """The spec's model loaded alone at its context, checked against the server's own record."""
     r = load_alone(m)
     why = loaded_problem(m) if r.returncode == 0 else (r.stdout + r.stderr).strip()[-400:]
     if why:
         sys.exit(f"could not load {m['lms_key']} as specified: {why}")
-    print(f"loaded {m['lms_key']} ({m['quantization']}) alone at context {CONTEXT} on {DEVICE}")
+    print(f"loaded {m['lms_key']} ({m['quantization']}) alone at context {context(m)} on {DEVICE}")
 
 
 def child_env(worktree: Path = WORKTREE) -> Dict[str, str]:
@@ -263,7 +297,7 @@ def child_env(worktree: Path = WORKTREE) -> Dict[str, str]:
 
 def run_command(m: dict, label: str, probes: List[str], repeat: int = 1, force: bool = False) -> List[str]:
     cmd = ["caffeinate", "-i", str(PYTHON), "-m", "roaddraft.runners", "run", "--backend", "openai",
-           "--model", m["lms_key"], "--base-url", BASE_URL, "--lms-context", str(CONTEXT),
+           "--model", m["lms_key"], "--base-url", BASE_URL, "--lms-context", str(context(m)),
            "--out", str(CAMPAIGN), "--label", label, "--budget", str(BUDGET_MIN), "--max-turns", str(MAX_TURNS)]
     if repeat > 1:
         cmd += ["--repeat", str(repeat)]
@@ -296,9 +330,10 @@ def stream(cmd: List[str], log: Path, worktree: Path = WORKTREE) -> int:
 
 def cmd_list(args) -> int:
     data = load()
-    print(f"{'name':14} {'model':36} {'quant':7} {'est h':>6} {'label':24} board row")
+    print(f"{'name':14} {'model':36} {'quant':7} {'context':>8} {'est h':>6} {'label':24} board row")
     for name, m in data["models"].items():
-        print(f"{name:14} {m['name']:36} {m['quantization']:7} {m.get('est_k3_hours') or '':>6} "
+        window = "dropped" if m.get("dropped") else (str(m["context"]) if m.get("context") else "to fit")
+        print(f"{name:14} {m['name']:36} {m['quantization']:7} {window:>8} {m.get('est_k3_hours') or '':>6} "
               f"{m['label']:24} {m.get('board_row', '')}")
     return 0
 
@@ -317,7 +352,8 @@ def cmd_status(args) -> int:
         eyes = "vision" if seen else ("no vision" if seen is False else "vision unknown")
         if m.get("vision") is not None and seen is not None and bool(m["vision"]) != seen:
             eyes += f" (models.json says {m['vision']})"
-        print(f"{name:14} {'ready' if not why else why}; {eyes}")
+        window = dropped_problem(m) or (f"context {m['context']}" if m.get("context") else "context not fitted (fit NAME)")
+        print(f"{name:14} {'ready' if not why else why}; {eyes}; {window}")
     return 0
 
 
@@ -359,7 +395,7 @@ def cmd_pins(args) -> int:
 
 
 def cmd_check(args) -> int:
-    """Load the model alone at 65k (all layers on the GPUs if they fit, else LM Studio's split), time one
+    """Load the model alone at its context (all layers on the GPUs if they fit, else LM Studio's split), time one
     ~29k-token prompt and record the result in models.json. The model stays loaded."""
     data = load()
     m = spec(data, args.name)
@@ -389,6 +425,49 @@ def cmd_check(args) -> int:
     print(json.dumps(measured, indent=1))
     m["measured"] = measured
     save(data)
+    return 0
+
+
+def fit(m: dict, rungs=LADDER) -> dict:
+    """Walk the ladder from the ceiling down: the first context LM Studio loads the model at is its ``context``;
+    none at or above the floor drops it. Returns the record written to models.json (``fit`` or ``dropped``)."""
+    tried = []
+    for ctx in rungs:
+        if ctx > CONTEXT or ctx < FLOOR_CONTEXT:
+            continue
+        r = load_alone(m, ctx=ctx)
+        why = loaded_problem(m, ctx) if r.returncode == 0 else (r.stdout + r.stderr).strip()[-300:]
+        last = None if why is None else (why.strip().splitlines() or [why])[-1][-200:]
+        tried.append({"context": ctx, "loaded": why is None, "why": last})
+        print(f"{m['lms_key']} at {ctx:,}: {'loaded' if why is None else 'no: ' + last}")
+        if why is None:
+            m["context"] = ctx
+            m.pop("dropped", None)
+            m["fit"] = {"date": time.strftime("%Y-%m-%d"), "context": ctx, "ceiling": CONTEXT,
+                        "floor": FLOOR_CONTEXT, "tried": tried}
+            return m["fit"]
+    reason = next((t["why"] for t in reversed(tried) if t.get("why")), "no rung tried")
+    m["context"] = None
+    m.pop("fit", None)
+    m["dropped"] = {"date": time.strftime("%Y-%m-%d"), "floor": FLOOR_CONTEXT,
+                    "reason": f"does not load at the floor {FLOOR_CONTEXT:,} on {DEVICE} ({reason})", "tried": tried}
+    return m["dropped"]
+
+
+def cmd_fit(args) -> int:
+    """The highest context the PC loads this model at (``LADDER`` from ``CONTEXT`` down to ``FLOOR_CONTEXT``),
+    recorded in models.json as ``context``; a model that does not load at the floor is ``dropped`` from the local
+    list (Robert, 2026-10-28). The model stays loaded at its context, or is unloaded when dropped."""
+    data = load()
+    m = spec(data, args.name)
+    preflight(m, allow_dropped=True)
+    fit(m)
+    save(data)
+    if m.get("dropped"):
+        lms("unload", "--all")
+        print(f"{args.name}: DROPPED from the local list: {m['dropped']['reason']}")
+        return 1
+    print(f"{args.name}: context {m['context']:,} (ceiling {CONTEXT:,}, floor {FLOOR_CONTEXT:,}); models.json updated")
     return 0
 
 
@@ -445,8 +524,8 @@ def cmd_e3(args) -> int:
     if args.samples is None:   # d1-variance is the x 5 set; every other set runs x 1 (the ranked rows)
         args.samples = 5 if args.taskset == "d1-variance" else 1
     cmd = ["caffeinate", "-i", str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", args.taskset,
-           "--model", m["lms_key"], "--provider", "openai", "--base-url", BASE_URL, "--lms-context", str(CONTEXT),
-           "--context-tokens", str(CONTEXT),
+           "--model", m["lms_key"], "--provider", "openai", "--base-url", BASE_URL, "--lms-context", str(context(m)),
+           "--context-tokens", str(context(m)),
            "--out", str(E3_OUT), "--run-id", run_id, "--mode", args.mode, "--level", args.level,
            "--samples", str(args.samples), "--concurrency", "1"]
     if args.limit:
@@ -502,7 +581,7 @@ def cmd_vision(args) -> int:
     tool message, then the PNG as a data URL in a user message, as ``eval.providers.openai_compat`` sends every
     image -- and a question only the image answers. Records in models.json whether the model read it and what
     the image cost in prompt tokens (the same request without it, subtracted). The model is loaded alone at
-    CONTEXT as for a run; nothing else may be running."""
+    its context as for a run; nothing else may be running."""
     import base64
     data = load()
     m = spec(data, args.name)
@@ -617,6 +696,7 @@ def main(argv=None) -> int:
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("pins").set_defaults(fn=cmd_pins)
     c = sub.add_parser("check"); c.add_argument("name"); c.set_defaults(fn=cmd_check)
+    f = sub.add_parser("fit"); f.add_argument("name"); f.set_defaults(fn=cmd_fit)
     v = sub.add_parser("vision"); v.add_argument("name"); v.set_defaults(fn=cmd_vision)
     sm = sub.add_parser("smoke"); sm.add_argument("name"); sm.add_argument("--probe", default="edge-c102")
     sm.add_argument("--print", action="store_true"); sm.set_defaults(fn=cmd_smoke)

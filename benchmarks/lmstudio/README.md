@@ -2,7 +2,8 @@
 
 RobertsPC got a second RTX 4060 on 2026-10-20: two 8 GB cards, 16 GB that llama.cpp splits the layers across.
 LM Studio serves the PC's models to the Mac over LM Link (`localhost:1234`), so the runners need nothing new:
-`--backend openai` (probes) and `--provider openai` (E3) with the `--lms-context 131072` reload guard (65536 until 2026-10-26).
+`--backend openai` (probes) and `--provider openai` (E3) with the `--lms-context N` reload guard at the model's own
+window (`context` in `models.json`, 131,072 at most; see *The window* below).
 `models.json` holds the specs and `lms_campaign.py` the commands, built like the Runpod rig next door.
 
 **Status, 2026-10-23 evening: first run going.** A single d1-dev test episode on the 9B ran clean through the
@@ -16,11 +17,11 @@ server's `loaded` state.
 Measured: one ~29k-token prompt at context 65536 (`lms_campaign.py check`). Estimated: weights plus context
 memory from each model's config, scaled from the measured rates.
 
-| board row | here | fits at 65k (131k since Oct 26: 9B yes, others to check) | speed | k = 3 |
+| board row | here | window (`fit`, Oct 28 2026) | speed | k = 3 |
 |---|---|---|---|---|
-| Qwen3.5-9B (bf16, vLLM), 44.4% | Q4_K_M, on the PC | fully on the cards, measured | 3,157 tok/s prefill, 35.8 tok/s gen | ~8-10 h |
-| Qwen3.5-4B (bf16, vLLM), 33.3% | BF16 GGUF, to download | ~13 GB, estimated | not measured | ~10 h |
-| Gemma 4 12B (bf16, vLLM), 41.4% | Q8_0, on the PC (Robert, Oct 27, in place of the Q6_K pick) | partly on the CPU, measured at 65k | Q8_0 measured 1,140 / 12.8 tok/s | ~6-8 h |
+| Qwen3.5-9B (bf16, vLLM), 44.4% | Q4_K_M, on the PC | 131,072, fully on the cards | 3,157 tok/s prefill, 35.8 tok/s gen | ~8-10 h |
+| Qwen3.5-4B (bf16, vLLM), 33.3% | BF16 GGUF, to download | to fit after the download | not measured | ~10 h |
+| Gemma 4 12B (bf16, vLLM), 41.4% | Q8_0, on the PC (Robert, Oct 27, in place of the Q6_K pick) | 98,304 (`fit`, Oct 28; 131k and 114k refused), partly on the CPU | Q8_0 measured 1,140 / 12.8 tok/s at 65k | ~6-8 h |
 | gpt-oss-20b (mxfp4, vLLM), 13.1% | left out (Robert) | ~14 GB, tight | | ~2-3 h |
 | Gemma 4 26B-A4B, Qwen3.6-35B-A3B, GLM-4.7-Flash | stay on Runpod | only with experts in the PC's RAM | 3-5x slower than Runpod | 8-17 h |
 | Qwen3.8-27B, Gemma 4 31B, gpt-oss-120b, Qwen3.5-122B | stay on Runpod | no | | |
@@ -38,8 +39,10 @@ the bf16 vLLM ones: GGUF weights on llama.cpp, with LM Studio's own chat templat
    there (Robert, 2026-10-27).
 2. `python benchmarks/lmstudio/lms_campaign.py status` names the 4B's model key; put it in `models.json`
    (`lms_key`, and `variant` from `lms ls --json`).
-3. `lms_campaign.py check NAME` for the 4B and Gemma: loads the model alone at the rig's context, 131k since Oct 26 (all layers on the cards
-   if they fit, LM Studio's split otherwise), times one prompt and records it under `measured`.
+3. `lms_campaign.py fit NAME` for every new file: the highest window it loads at, 131,072 down to 65,536, written to
+   `models.json` as `context`; a model that does not load at 65,536 is dropped from the list (Robert, Oct 28). Then
+   `lms_campaign.py check NAME` loads it alone at that window (all layers on the cards if they fit, LM Studio's split
+   otherwise), times one prompt and records it under `measured`.
 4. `lms_campaign.py pins`: the worktree `.claude/worktrees/runpod-k3` at `2658fa0`, clean help text.
 
 ## Running (on Robert's go)
@@ -50,16 +53,35 @@ the bf16 vLLM ones: GGUF weights on llama.cpp, with LM Studio's own chat templat
     python benchmarks/lmstudio/lms_campaign.py score qwen3.5-9b
 
 `--print` shows any of them without running it. Probe runs go to `benchmarks/probe_runs/2026-10-20-lms-k3`,
-E3 runs to `results/e3-lms/` (gitignored). Every `e3` run carries `--context-tokens 131072` beside the reload
-guard's `--lms-context 131072` (since 2026-10-27): the harness ends an episode whose prompt reaches the window as a
+E3 runs to `results/e3-lms/` (gitignored). Every `e3` run carries `--context-tokens N` beside the reload
+guard's `--lms-context N`, N the model's `context` (since 2026-10-27): the harness ends an episode whose prompt reaches the window as a
 `context` budget trip, as vLLM refuses one on the hosted rows, where LM Studio alone would cut the middle of the
 prompt and answer. On `hard-pilots`, `--pilots text|images|all` picks the 24 text pilots, the nine that come with
 a page, or every one (the default); the page goes to the model as a data URL in the harness's own request shape,
 so the nine need a model LM Studio lists with vision (`vision` in `models.json`, from `lms ls --json`), and
 `lms_campaign.py vision NAME` sends one lettered image that way first and records whether the model read it and
 what the image cost in prompt tokens (`vision_check`). It loads the model, so it waits for an idle server. Before each launch the script checks the link, starts the
-server, refuses while another local run is going, unloads everything, loads the model at 131072 / parallel 1 (65536 until Oct 26),
-and refuses unless the PC's selected variant and the loaded quantization are the spec's.
+server, refuses while another local run is going, unloads everything, loads the model at its `context` / parallel 1,
+and refuses unless the PC's selected variant and the loaded quantization are the spec's, and the model is not dropped.
+
+## The window (2026-10-28, Robert)
+
+"Have the models run at the highest context possible that will fit on my local machine; if a model is unable to run
+with enough context for these tasks remove it from the list of local tested models." So each model has its own
+window: `lms_campaign.py fit NAME` walks the ladder 131,072, 114,688, 98,304, 81,920, 65,536 from the ceiling
+(`CONTEXT`, the Oct 26 decision: the largest the two cards hold for the 9B) down to the floor (`FLOOR_CONTEXT`,
+65,536: the hosted vLLM rows' window, and the reading of "enough context for these tasks": 17 of the 9B's 100
+d1-test episodes peaked past it, the largest at 104,370 tokens, so a row at the floor loses about that share to
+context trips), records the first rung LM Studio loads the model at as `context` in `models.json` (with the rungs
+tried under `fit`), and below the floor marks the model `dropped` with the reason; `e3`, `check`, `smoke`, `k3`
+and `vision` refuse a dropped model, `fit` alone takes it again. Every load, the runner guard's reload and the
+harness's `--context-tokens` use the model's `context`, and the window is on the row's card. Oct 28: at 131,072
+the cards load the 9B Q4, GLM-4.6V-Flash Q4 and Gemma 4 E4B Q4 and refuse Gemma 4 12B Q8_0, Devstral Small 2
+Q3_K_L, Ministral 3 14B Q6_K and Llama 3.1 8B Q4 ("failed to allocate buffer for kv cache"); the window, not the
+weights, is the limit (131k of KV cache for an 8B dense model is about 16 GB on its own). Their fits ran from
+`results/e3-lms/queue-2026-10-28.sh` at 11:57 to 12:08: Gemma 4 12B Q8_0 loads at 98,304, Llama 3.1 8B at 65,536
+(the floor), and Devstral Small 2 Q3_K_L and Ministral 3 14B Q6_K at no rung, so both are dropped from the local list
+(`dropped` in `models.json`, with the rungs tried); the rest of the queue is Llama's smoke and Gemma's d1-test night.
 
 How the rig differs from the Runpod rows, for the writeup:
 - one model and one episode at a time (Runpod ran r1-r3 as three processes on one vLLM worker);
