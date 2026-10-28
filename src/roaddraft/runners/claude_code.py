@@ -34,7 +34,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from roaddraft.mcp import config as mcpconfig
 from roaddraft.mcp import profiles
@@ -66,6 +66,45 @@ def mcp_config(cmd: List[str]) -> dict:
     return {"mcpServers": {SERVER_NAME: mcpconfig.entry(cmd[:1], cmd[1:], "claude-code")}}
 
 
+def claude_argv(claude: str, task: str, model: str, max_turns: int, config, system: str,
+                effort: Optional[str] = None, max_budget_usd: Optional[float] = None,
+                extra: Sequence[str] = ()) -> List[str]:
+    """``claude -p`` pared back as the module docstring says: the task, the
+    model, the turn cap, ``config`` (an absolute ``--mcp-config`` naming the
+    one server), ``system`` as the whole system prompt, the effort and the
+    CLI's own spend cap where set, then ``extra`` arguments verbatim.  The
+    eval harness's claude-code provider builds its command here too."""
+    argv = [claude, "-p", task,
+            "--model", model,
+            "--max-turns", str(max_turns),
+            "--mcp-config", str(config), "--strict-mcp-config",
+            "--tools", "",
+            "--allowedTools", f"mcp__{SERVER_NAME}__*",
+            "--restricted",
+            "--system-prompt", system,
+            "--output-format", "stream-json", "--verbose",
+            "--no-session-persistence"]
+    if effort:
+        argv += ["--effort", effort]
+    if max_budget_usd:
+        argv += ["--max-budget-usd", str(max_budget_usd)]
+    argv += list(extra or [])
+    return argv
+
+
+def claude_env() -> Dict[str, str]:
+    """The CLI's environment: this one without ``CLAUDECODE``, under which a
+    nested session refuses to start."""
+    env = dict(os.environ)
+    env.pop("CLAUDECODE", None)
+    return env
+
+
+def sign_in_error(text: str) -> bool:
+    """Whether a CLI's output says it is not signed in."""
+    return "not logged in" in text.lower() or "/login" in text
+
+
 @register
 class ClaudeCodeBackend(Backend):
     name = "claude-code"
@@ -78,33 +117,19 @@ class ClaudeCodeBackend(Backend):
     def command(self, episode: Episode) -> List[str]:
         config = (episode.folder / "mcp.json").resolve()   # the CLI runs from project/
         config.write_text(json.dumps(mcp_config(episode.setup.cmd), indent=2))
-        argv = [self.claude, "-p", episode.task,
-                "--model", self.options.model,
-                "--max-turns", str(self.options.max_turns),
-                "--mcp-config", str(config), "--strict-mcp-config",
-                "--tools", "",
-                "--allowedTools", f"mcp__{SERVER_NAME}__*",
-                "--restricted",
-                "--system-prompt", profiles.instructions(self.options.profile, INSTRUCTIONS),
-                "--output-format", "stream-json", "--verbose",
-                "--no-session-persistence"]
-        if self.options.effort:
-            argv += ["--effort", self.options.effort]
-        budget_usd = self.options.extra.get("max_budget_usd")
-        if budget_usd:
-            argv += ["--max-budget-usd", str(budget_usd)]
-        argv += list(self.options.extra.get("claude_args") or [])
-        return argv
+        return claude_argv(self.claude, episode.task, self.options.model, self.options.max_turns,
+                           config, profiles.instructions(self.options.profile, INSTRUCTIONS),
+                           effort=self.options.effort,
+                           max_budget_usd=self.options.extra.get("max_budget_usd"),
+                           extra=self.options.extra.get("claude_args") or [])
 
     def run(self, episode: Episode) -> Outcome:
         argv = self.command(episode)
         episode.log.append({"role": "system",
                             "content": profiles.instructions(self.options.profile, INSTRUCTIONS)})
         episode.log.append({"role": "user", "content": episode.task})
-        env = dict(os.environ)
-        env.pop("CLAUDECODE", None)       # a nested session refuses to start otherwise
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                cwd=str(episode.folder / "project"), env=env)
+                                cwd=str(episode.folder / "project"), env=claude_env())
         timed_out = False
         try:
             out, err = proc.communicate(timeout=self.options.budget or None)
@@ -118,7 +143,7 @@ class ClaudeCodeBackend(Backend):
             outcome.stop = "budget"
         elif proc.returncode != 0 and outcome.stop == "max_turns" and not outcome.turns:
             text = (err or out or "").strip()
-            if "not logged in" in text.lower() or "/login" in text:
+            if sign_in_error(text):
                 outcome.stop = "error: claude is not signed in (claude login, or claude setup-token)"
             else:
                 outcome.stop = f"error: claude exited {proc.returncode}: {text[-300:]}"

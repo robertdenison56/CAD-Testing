@@ -349,6 +349,8 @@ def group_key(row: dict) -> Tuple:
 
 def group_label(dims: dict) -> str:
     model = dims["model"] + (f" ({dims['effort']})" if dims.get("effort") else "")
+    if dims.get("provider") in CLI_PROVIDERS:
+        model += f" via {dims['provider']}"
     parts = [model, dims["mode"], dims["level"]]
     if dims.get("dialect") and dims["dialect"] != "neutral":
         parts.append(dims["dialect"])
@@ -357,7 +359,12 @@ def group_label(dims: dict) -> str:
 
 #: how each E3 provider sends ``--effort``
 EFFORT_SENT = {"anthropic": "the Messages API's `output_config.effort`",
-               "openai": "`reasoning_effort` in the request body"}
+               "openai": "`reasoning_effort` in the request body",
+               "claude-code": "the CLI's `--effort`",
+               "codex": "`model_reasoning_effort` in the CLI's config"}
+#: the providers that are a headless CLI on a subscription (``providers.CLI_PROVIDERS``):
+#: their rows say so beside the model, since the CLI's harness is part of the row
+CLI_PROVIDERS = ("claude-code", "codex")
 
 
 def effort_label(model: Optional[str], provider: str, effort: Optional[str],

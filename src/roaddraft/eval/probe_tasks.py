@@ -405,7 +405,7 @@ class ProbeEpisode(Episode):
         system = system_prompt(self.config.mode, self.budgets)
         self.agent.begin({"mode": self.config.mode, "level": self.config.level,
                           "dialect": self.config.dialect, "skin": self.dialect,
-                          "budgets": self.budgets, "scope": self.scope,
+                          "budgets": self.budgets, "scope": self.scope, "episode_path": self.path,
                           "system": self.dialect.text(system)})
         return {"turn": 0, "brief": self.brief_text, "tools": self.tools,
                 "state": self.state_summary(), "budget": self.state.remaining(self.budgets),

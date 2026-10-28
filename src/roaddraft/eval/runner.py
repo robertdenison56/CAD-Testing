@@ -8,7 +8,8 @@ is E4.
 
 A model is an agent too: ``models`` names model ids, each run as an
 ``LLMAgent`` over its provider (``provider``, or the one the id implies),
-with ``provider_options`` (effort, max_tokens, base_url ...).  The cost cap
+with ``provider_options`` (effort, max_tokens, base_url ...), or as a
+``CLIAgent`` when the provider is a headless CLI (``claude-code``, ``codex``).  The cost cap
 stops the runner, not an episode: once the episodes finished so far (the
 resumed ones included) have cost ``cost_cap`` dollars, no new episode starts
 and the running ones finish.  Episodes of an unpriced model cost nothing
@@ -36,7 +37,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from roaddraft.eval import providers
 from roaddraft.eval import taskset as tasksets
-from roaddraft.eval.agents import AGENTS, Agent, LLMAgent, ReplayAgent
+from roaddraft.eval.agents import AGENTS, Agent, CLIAgent, LLMAgent, ReplayAgent
 from roaddraft.eval.budget import Budgets
 from roaddraft.eval.episode import HARNESS_VERSION, Episode, EpisodeConfig, EpisodeResult
 from roaddraft.eval.trajectory import episode_path, is_complete, read_episode
@@ -118,7 +119,10 @@ def matrix(spec: RunSpec) -> List[Cell]:
 
 def make_agent(name: str, spec: RunSpec) -> Agent:
     if name in spec.models:
-        return LLMAgent(providers.make(name, spec.provider, **spec.provider_options))
+        provider = providers.make(name, spec.provider, **spec.provider_options)
+        if isinstance(provider, providers.CLIProvider):
+            return CLIAgent(provider)
+        return LLMAgent(provider)
     if name == "replay":
         if not spec.journal:
             raise ValueError("the replay agent needs --journal")

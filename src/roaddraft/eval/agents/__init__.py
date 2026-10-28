@@ -10,14 +10,17 @@ list[ToolCall] | Submit``, and the four non-LLM implementations E2 ships.
   episode) for regression and curation.
 
 ``LLMAgent`` (E3) implements the same interface over a provider
-(``eval.providers``): the model being measured.
+(``eval.providers``): the model being measured.  ``CLIAgent`` runs a
+headless CLI (Claude Code, Codex) as the model, the harness serving it the
+episode's tools.
 """
 from roaddraft.eval.agents.basic import (
     AGENTS, Agent, AgentRefusal, NullAgent, OracleAgent, ReplayAgent, ScriptedAgent, Submit,
     ToolCall, calls_from_commands, journal_entries,
 )
+from roaddraft.eval.agents.cli import CLIAgent
 from roaddraft.eval.agents.llm import LLMAgent
 
-__all__ = ["AGENTS", "Agent", "AgentRefusal", "LLMAgent", "NullAgent", "OracleAgent",
+__all__ = ["AGENTS", "Agent", "AgentRefusal", "CLIAgent", "LLMAgent", "NullAgent", "OracleAgent",
            "ReplayAgent", "ScriptedAgent", "Submit", "ToolCall", "calls_from_commands",
            "journal_entries"]

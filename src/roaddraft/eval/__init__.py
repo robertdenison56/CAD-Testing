@@ -23,13 +23,14 @@ system prompts (``eval.prompts``), the dialect skins (``eval.dialects``) and
 the dated price table (``eval.prices``); ``run --model ID`` runs one.
 """
 from roaddraft.eval.agents import (
-    AGENTS, Agent, LLMAgent, NullAgent, OracleAgent, ReplayAgent, ScriptedAgent, Submit, ToolCall,
+    AGENTS, Agent, CLIAgent, LLMAgent, NullAgent, OracleAgent, ReplayAgent, ScriptedAgent, Submit,
+    ToolCall,
 )
 from roaddraft.eval.budget import Budgets, BudgetState
 from roaddraft.eval.episode import HARNESS_VERSION, Episode, EpisodeConfig, EpisodeResult, run_episode
 from roaddraft.eval.tools import DIALECTS, MODES, tool_definitions
 
-__all__ = ["HARNESS_VERSION", "AGENTS", "Agent", "LLMAgent", "NullAgent", "OracleAgent",
+__all__ = ["HARNESS_VERSION", "AGENTS", "Agent", "CLIAgent", "LLMAgent", "NullAgent", "OracleAgent",
            "ReplayAgent", "ScriptedAgent", "Submit", "ToolCall", "Budgets", "BudgetState",
            "Episode", "EpisodeConfig", "EpisodeResult", "run_episode", "DIALECTS", "MODES",
            "tool_definitions"]

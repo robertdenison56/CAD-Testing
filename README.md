@@ -991,6 +991,8 @@ Prompt level, mode and dialect are run dimensions. Runs go under `results/`
 .venv/bin/python -m roaddraft.eval run --taskset d1-dev --model fake-oracle --dialect c3d --dialect ord   # offline: 100
 .venv/bin/python -m roaddraft.eval run --taskset d1-dev --limit 5 --model claude-sonnet-5-5 --cost-cap 10 # ANTHROPIC_API_KEY
 .venv/bin/python -m roaddraft.eval run --taskset d1-dev --limit 5 --model google/gemma-4-e4b --lms-context 65536
+.venv/bin/python -m roaddraft.eval run --taskset d1-test --model claude-sonnet-5-5 --provider claude-code --effort high  # a signed-in claude
+.venv/bin/python -m roaddraft.eval run --taskset d1-test --model gpt-6.1-sol --provider codex --effort medium --concurrency 1
 .venv/bin/python -m roaddraft.eval run ... --dry-run     # the matrix, and the cost projected from measured episodes
 ```
 
@@ -1013,6 +1015,29 @@ ends as a budget (`output_limit`), like a conversation past its context
 (`context`). Usage is recorded per turn and priced from the dated
 `eval/prices.json` into the end record; `--cost-cap` lets no new episode
 start once the run has spent it.
+
+`--provider claude-code` and `--provider codex` are the frontier's route
+on a subscription, with no API key: the Track P backends' headless CLIs
+(`claude -p`, `codex exec --json`) run the whole episode, and the harness is
+their MCP server. The CLI starts a small stdio bridge (`eval/bridge.py`) as
+its one server; the bridge forwards every tool call over a local socket to
+the episode loop (`eval/agents/cli.py`), which runs it through the same
+whitelist, dialect, budgets, result cap and file confinement as an API row
+and sends the result back, a render's image included in the vision mode. The
+CLI is pared back as on Track P (the eval's system prompt in place of its
+own, every built-in tool off, the user's settings ignored, the bridge's tools
+pre-allowed), so the words the model gets are the harness's; what the CLI
+keeps of its own (its context handling, retries and parallel calls) is why
+the row reads `model via claude-code` on the board. A CLI that stops without
+calling `submit` has submitted; one that is not signed in, or stopped by an
+account limit, ends the episode as an error, not a score. The CLI's own
+event stream and stderr are kept under `results/<run>/cli/`. A priced
+model's cost is notional (the subscription paid; the table says what the
+tokens would have cost); Codex models have no price row. The CLIs are asked
+for by name only: a `gpt-*` id still means an OpenAI-compatible endpoint.
+`--claude-bin`, `--claude-arg`, `--max-budget-usd`, `--codex-bin` and
+`--codex-arg` are as on the Track P runner; Codex on a Plus account answers
+parallel runs with 429s, so `--concurrency 1`.
 
 #### The run report and the D1 leaderboard
 

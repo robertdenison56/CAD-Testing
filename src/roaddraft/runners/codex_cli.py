@@ -56,7 +56,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from roaddraft.mcp import profiles
 from roaddraft.mcp.server import INSTRUCTIONS
@@ -112,6 +112,56 @@ def server_env() -> Dict[str, str]:
     return {k: os.environ[k] for k in ("PYTHONPATH",) if os.environ.get(k)}
 
 
+def codex_settings(instructions, server: Sequence[str], effort: Optional[str] = None,
+                   env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """The ``-c`` settings that pare Codex back as the module docstring says,
+    with ``server`` (a command) as the one MCP server and ``instructions``
+    (an absolute path) as the whole system prompt."""
+    settings: Dict[str, Any] = {
+        "approval_policy": "never",
+        "model_instructions_file": str(instructions),
+        "project_doc_max_bytes": 0,
+        "web_search": "disabled",
+        **{key: False for key in QUIET},
+        f"mcp_servers.{SERVER_NAME}.command": server[0],
+        f"mcp_servers.{SERVER_NAME}.args": list(server[1:]),
+        f"mcp_servers.{SERVER_NAME}.default_tools_approval_mode": "approve",
+        f"mcp_servers.{SERVER_NAME}.startup_timeout_sec": 60,
+        f"mcp_servers.{SERVER_NAME}.tool_timeout_sec": 600,
+    }
+    if env:
+        settings[f"mcp_servers.{SERVER_NAME}.env"] = dict(env)
+    if effort:
+        settings["model_reasoning_effort"] = effort
+    return settings
+
+
+def codex_argv(codex: str, task: str, model: str, instructions, server: Sequence[str],
+               effort: Optional[str] = None, extra: Sequence[str] = (),
+               env: Optional[Dict[str, str]] = None) -> List[str]:
+    """``codex exec --json`` on ``task`` with the settings above, then
+    ``extra`` arguments verbatim.  The eval harness's codex provider builds
+    its command here too."""
+    argv = [codex, "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+            "--skip-git-repo-check", "--sandbox", "read-only", "--model", model]
+    for feature in DISABLED:
+        argv += ["--disable", feature]
+    for key, value in codex_settings(instructions, server, effort, env).items():
+        argv += ["-c", f"{key}={toml(value)}"]
+    argv += list(extra or [])
+    argv.append(task)
+    return argv
+
+
+def codex_version(codex: str) -> Optional[str]:
+    """``codex --version``, or None when it does not run."""
+    try:
+        out = subprocess.run([codex, "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (out.stdout.strip() or None) if out.returncode == 0 else None
+
+
 @register
 class CodexBackend(Backend):
     name = "codex"
@@ -124,42 +174,14 @@ class CodexBackend(Backend):
     def command(self, episode: Episode) -> List[str]:
         instructions = (episode.folder / "instructions.md").resolve()   # the CLI runs from project/
         instructions.write_text(profiles.instructions(self.options.profile, INSTRUCTIONS))
-        cmd = episode.setup.cmd
-        settings: Dict[str, Any] = {
-            "approval_policy": "never",
-            "model_instructions_file": str(instructions),
-            "project_doc_max_bytes": 0,
-            "web_search": "disabled",
-            **{key: False for key in QUIET},
-            f"mcp_servers.{SERVER_NAME}.command": cmd[0],
-            f"mcp_servers.{SERVER_NAME}.args": list(cmd[1:]),
-            f"mcp_servers.{SERVER_NAME}.default_tools_approval_mode": "approve",
-            f"mcp_servers.{SERVER_NAME}.startup_timeout_sec": 60,
-            f"mcp_servers.{SERVER_NAME}.tool_timeout_sec": 600,
-        }
-        env = server_env()
-        if env:
-            settings[f"mcp_servers.{SERVER_NAME}.env"] = env
-        if self.options.effort:
-            settings["model_reasoning_effort"] = self.options.effort
-        argv = [self.codex, "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-                "--skip-git-repo-check", "--sandbox", "read-only", "--model", self.options.model]
-        for feature in DISABLED:
-            argv += ["--disable", feature]
-        for key, value in settings.items():
-            argv += ["-c", f"{key}={toml(value)}"]
-        argv += list(self.options.extra.get("codex_args") or [])
-        argv.append(episode.task)
-        return argv
+        return codex_argv(self.codex, episode.task, self.options.model, instructions,
+                          episode.setup.cmd, effort=self.options.effort,
+                          extra=self.options.extra.get("codex_args") or [], env=server_env())
 
     def version(self) -> Optional[str]:
         """``codex --version``, asked per episode: the ChatGPT app updates its
         copy on its own, so a campaign can span two versions."""
-        try:
-            out = subprocess.run([self.codex, "--version"], capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return (out.stdout.strip() or None) if out.returncode == 0 else None
+        return codex_version(self.codex)
 
     def run(self, episode: Episode) -> Outcome:
         version = self.version()

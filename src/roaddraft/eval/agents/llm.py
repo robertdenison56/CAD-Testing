@@ -82,6 +82,18 @@ def message_size(message: dict) -> Tuple[int, int]:
     return chars, images
 
 
+def system_for(context: dict) -> str:
+    """The system prompt an episode's ``begin`` context asks for: the task's
+    own where it has one (a probe task), else the dialect's template filled
+    with the mode and budgets, in the skin's tool names."""
+    if context.get("system"):
+        return context["system"]
+    text = prompts.system_prompt(context.get("dialect", "neutral"), context["mode"],
+                                 context.get("budgets"))
+    skin = context.get("skin")
+    return skin.text(text) if skin is not None else text
+
+
 class LLMAgent(Agent):
     """One model, through one provider, for one episode at a time."""
 
@@ -116,15 +128,8 @@ class LLMAgent(Agent):
     def begin(self, context: dict) -> None:
         budgets = context.get("budgets")
         self.context_tokens = getattr(budgets, "context_tokens", None) or None
-        if self.fixed_system:
-            return
-        if context.get("system"):  # a task with a system prompt of its own (a probe task)
-            self.system = context["system"]
-            return
-        text = prompts.system_prompt(context.get("dialect", "neutral"), context["mode"],
-                                     context.get("budgets"))
-        skin = context.get("skin")
-        self.system = skin.text(text) if skin is not None else text
+        if not self.fixed_system:
+            self.system = system_for(context)
 
     # ----------------------------------------------------------------- turns
 
@@ -240,5 +245,5 @@ class LLMAgent(Agent):
                 "system_prompt": self.system, "provider_config": self.provider.describe()}
 
 
-__all__ = ["LLMAgent", "NUDGE", "LOW_STEPS", "LOW_FAULTS", "CHARS_PER_TOKEN_MAX",
+__all__ = ["LLMAgent", "system_for", "NUDGE", "LOW_STEPS", "LOW_FAULTS", "CHARS_PER_TOKEN_MAX",
            "IMAGE_TOKENS_MIN", "result_text", "prompt_size", "message_size"]

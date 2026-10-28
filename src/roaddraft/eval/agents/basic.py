@@ -49,8 +49,9 @@ class Agent:
 
     def begin(self, context: dict) -> None:
         """Called after ``reset`` with the episode's ``mode``, ``level``,
-        ``dialect``, ``budgets`` (the mode's) and ``scope``, before the
-        header is written: an LLM agent builds its system prompt here."""
+        ``dialect``, ``budgets`` (the mode's), ``scope`` and ``episode_path``
+        (the trajectory file, or None), before the header is written: an LLM
+        agent builds its system prompt here."""
 
     def act(self, observation: dict) -> Action:  # pragma: no cover - abstract
         raise NotImplementedError

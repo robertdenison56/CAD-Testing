@@ -5,10 +5,12 @@
         [--task ID ...] [--out results] [--run-id ID] [--concurrency 4] [--dry-run]
         [--journal FILE]                              # for --agent replay
     python -m roaddraft.eval run --taskset d1-dev --model claude-sonnet-5-5 [--model ...]
-        [--provider anthropic|openai|fake] [--effort high] [--max-tokens N] [--strict]
-        [--base-url URL] [--api-key-env VAR] [--extra-body JSON] [--lms-context N]
+        [--provider anthropic|openai|fake|claude-code|codex] [--effort high] [--max-tokens N]
+        [--strict] [--base-url URL] [--api-key-env VAR] [--extra-body JSON] [--lms-context N]
         [--dialect neutral|c3d|ord ...] [--cost-cap USD] [--output-tokens N]
         [--context-tokens N] ...                      # defaults to --lms-context
+        [--claude-bin PATH] [--claude-arg ARG ...] [--max-budget-usd D]   # --provider claude-code
+        [--codex-bin PATH] [--codex-arg ARG ...]                          # --provider codex
     python -m roaddraft.eval taskset [NAME ...] [--write | --check]
     python -m roaddraft.eval verify EPISODE.jsonl [--level L] [--json]
     python -m roaddraft.eval verify DOCUMENT --task ID [--taskset d1-dev] [--journal J] [--level L]
@@ -82,7 +84,10 @@ def cmd_run(args) -> int:
     models = _models(args.model)
     options = {"effort": args.effort, "max_tokens": args.max_tokens, "base_url": args.base_url,
                "api_key_env": args.api_key_env, "lms_context": args.lms_context,
-               "extra_body": json.loads(args.extra_body) if args.extra_body else None}
+               "extra_body": json.loads(args.extra_body) if args.extra_body else None,
+               "claude_bin": args.claude_bin, "claude_args": args.claude_arg or None,
+               "max_budget_usd": args.max_budget_usd,
+               "codex_bin": args.codex_bin, "codex_args": args.codex_arg or None}
     if args.strict:
         options["strict"] = True
     spec = RunSpec(taskset=args.taskset,
@@ -120,6 +125,9 @@ def cmd_run(args) -> int:
         except (RuntimeError, ValueError) as exc:
             print(f"run: {model}: {exc}", file=sys.stderr)
             return 2
+    if args.provider == "codex" and spec.concurrency > 1 and models:
+        print("codex: a ChatGPT Plus account answers parallel runs with 429s; "
+              "--concurrency 1 runs them one at a time", file=sys.stderr)
     summary = run(spec, progress=lambda s: print(s, flush=True))
     print(f"\nrun {summary['run_id']}: {summary['episodes']} episodes, {summary['skipped']} resumed, "
           f"{len(summary['failures'])} failed to start"
@@ -322,7 +330,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--model", action="append",
                    help="model id(s) to run as LLM agents (comma-separated or repeated)")
     p.add_argument("--provider", choices=sorted(PROVIDERS),
-                   help="default: anthropic for claude-*, fake for fake*, else openai")
+                   help="default: anthropic for claude-*, fake for fake*, else openai; "
+                        "claude-code and codex (a signed-in CLI on a subscription) by name only")
     p.add_argument("--effort", help="low | medium | high | xhigh | max (anthropic default high)")
     p.add_argument("--max-tokens", type=int, help="output tokens per model turn")
     p.add_argument("--strict", action="store_true",
@@ -331,6 +340,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--api-key-env", help="openai: the variable holding the key (OPENAI_API_KEY)")
     p.add_argument("--extra-body", help="openai: JSON merged into every request")
     p.add_argument("--lms-context", type=int, help="openai: LM Studio reload guard at this context")
+    p.add_argument("--claude-bin", help="claude-code: the CLI to run (default: PATH, then the app's)")
+    p.add_argument("--claude-arg", action="append", help="claude-code: an extra CLI argument")
+    p.add_argument("--max-budget-usd", type=float, help="claude-code: the CLI's own spend cap per episode")
+    p.add_argument("--codex-bin", help="codex: the CLI to run (default: the ChatGPT app's, then PATH)")
+    p.add_argument("--codex-arg", action="append", help="codex: an extra CLI argument")
     p.add_argument("--dialect", action="append", choices=list(DIALECTS))
     p.add_argument("--context-tokens", type=int,
                    help="prompt tokens a request may hold (default: --lms-context, else the "
