@@ -67,6 +67,16 @@ Share of episodes with at least one finding in the category (findings per episod
 | error invalid_params | 1 |
 | error query_failed | 63 |
 
+## By question group
+
+The real-sheet types by question type (`tasks.types.REAL_GROUPS`), the way the probe board splits its tiers: effective mean over the group's tasks ± its 95% half-width (bootstrap over tasks within type), and the tasks it rests on.
+
+| Group | Types | #1 |
+|---|---|---:|
+| draft: draft linework | real-draw-alignment | 100.0 ± 0.0 (n 9) |
+| letter: letter alignment data | real-alignment-data, real-bearings, real-callouts, real-curve-table, real-stationing | 55.4 ± 7.5 (n 44) |
+| sheet: produce the sheet | real-annotate-sheet, real-attach-reference, real-plan-sheet, real-sheet-setup, real-title-block | 64.3 ± 6.5 (n 45) |
+
 ## By task type and sheet count
 
 | Task type | #1 |

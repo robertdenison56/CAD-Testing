@@ -258,6 +258,70 @@ def test_d1_real_is_ranked_on_its_own_board():
     assert "### `d1-real`" in R.render_board(b, readme=True)
 
 
+def test_a_partial_probe_run_is_listed_not_ranked():
+    whole = _fake_summary("hp-all", [_fake_row("claude-a", "anthropic", 40.0)], taskset="hard-pilots")
+    whole["partial"], whole["coverage"] = False, {"tasks_run": 33, "tasks_in_set": 33,
+                                                  "missing": [], "foreign": []}
+    part = _fake_summary("hp-text", [_fake_row("claude-b", "anthropic", 60.0)], taskset="hard-pilots")
+    part["partial"], part["coverage"] = True, {"tasks_run": 24, "tasks_in_set": 33,
+                                               "missing": ["PR-x"] * 9, "foreign": []}
+    b = R.board([whole, part])
+    assert [r["run_id"] for r in b["boards"]["hard-pilots"]["ranked"]] == ["hp-all"]
+    assert [o["run_id"] for o in b["others"]] == ["hp-text"]
+    assert b["others"][0]["reasons"] == ["partial: covers 24 of the set's 33 tasks; a row ranks once the "
+                                         "run holds every task of the current set"]
+    md = R.render_board(b)
+    assert "**Best model 40.0/100 on hard-pilots" in md
+    assert "- `hp-text` (hard-pilots, 10 episodes, **partial: 24 of 33 tasks**)" in md
+    # the seeded and real sets are not held to coverage (d1-real's first row is 99 of 108)
+    seeded = _fake_summary("t", [_fake_row("claude-a", "anthropic", 70.0)])
+    assert R.board([seeded])["ranked"][0]["run_id"] == "t" and "partial" not in seeded
+
+
+def _ep(task_id, task_type, score, hard=False):
+    return {"row": {"task_id": task_id, "task_type": task_type, "effective_score": score,
+                    "hard_failed": hard, "termination": "submit"}}
+
+
+def test_real_rows_split_by_question_group(summary):
+    # the groups of tasks.types.REAL_GROUPS, in board order, each over its tasks
+    eps = [_ep("a", "real-draw-alignment", 100), _ep("b", "real-draw-alignment", 100),
+           _ep("c", "real-stationing", 50), _ep("d", "real-bearings", 70, hard=True),
+           _ep("e", "real-title-block", 80), _ep("e", "real-title-block", 60),   # two samples of one task
+           _ep("f", "plan-sheet", 10)]                                           # a seeded type: no group
+    g = R.by_group(eps)
+    assert list(g) == ["draft", "letter", "sheet"]
+    assert g["draft"]["effective_mean"] == 100 and g["draft"]["n_tasks"] == 2 and g["draft"]["half_width"] == 0
+    assert g["letter"] == {**g["letter"], "name": "letter alignment data", "n": 2, "n_tasks": 2,
+                           "effective_mean": 60.0, "hard_fail_rate": 0.5,
+                           "types": ["real-bearings", "real-stationing"]}
+    assert g["sheet"]["effective_mean"] == 70.0 and g["sheet"]["n"] == 2 and g["sheet"]["n_tasks"] == 1
+    assert "job" not in g and "notes" not in g
+    # a seeded run's rows carry no groups
+    assert _row(summary, "oracle · single · explicit")["by_group"] == {}
+    assert R.group_columns([{"by_group": g}, {"by_group": {"notes": {}}}]) == ["draft", "letter", "sheet", "notes"]
+    # the board: the real table gets a column per group beside the blended score, the seeded one none
+    real_row = _fake_row("claude-a", "anthropic", 55.0)
+    real_row["by_group"] = {k: {"effective_mean": 50.0 + i, "half_width": 4.0, "n_tasks": 25,
+                                "hard_fail_rate": 0.0} for i, k in enumerate(("draft", "letter", "sheet", "notes"))}
+    ref_row = _fake_row("oracle", "harness", 100.0)   # written before rows carried by_group
+    b = R.board([_fake_summary("t", [_fake_row("claude-a", "anthropic", 70.0)]),
+                 _fake_summary("r", [real_row, ref_row], taskset="d1-real")])
+    assert b["boards"]["d1-real"]["groups"] == ["draft", "letter", "sheet", "notes"]
+    assert b["boards"]["d1-test"]["groups"] == [] and b["ranked"][0]["by_group"] == {}
+    assert b["boards"]["d1-real"]["ranked"][0]["by_group"]["notes"]["effective_mean"] == 53.0
+    assert [x["key"] for x in b["groups"]] == ["draft", "letter", "sheet", "notes", "job"]
+    md = R.render_board(b)
+    real_table = md.split("## `d1-real`")[1].split("## `hard-pilots`")[0]
+    assert "| Effective | 95% CI | Draft | Letter | Sheet | Notes | Rubric |" in real_table
+    assert ("| **55.0** | 52.0–58.0 | 50.0 ± 4.0 (n 25) | 51.0 ± 4.0 (n 25) | 52.0 ± 4.0 (n 25) "
+            "| 53.0 ± 4.0 (n 25) | 60.0 |") in real_table
+    assert "| **100.0** | 97.0–103.0 | – | – | – | – |" in real_table   # the reference row has none
+    assert "Question groups (`tasks.types.REAL_GROUPS`" in real_table and "Letter = letter alignment data (`real-stationing`, `real-bearings`" in real_table
+    assert "| Draft |" not in md.split("## `d1-real`")[0]
+    assert "| Draft | Letter |" in R.render_board(b, readme=True)
+
+
 def test_a_real_set_is_judged_against_the_real_generator():
     from roaddraft.tasks.brief import GENERATOR_VERSION
     from roaddraft.tasks.real import REAL_GENERATOR_VERSION

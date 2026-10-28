@@ -37,7 +37,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.document import confine
@@ -138,6 +138,31 @@ def generator_version(probes: Optional[Sequence[Probe]] = None) -> str:
     for p in sorted(probes, key=lambda p: p.id):
         h.update(p.id.encode("utf-8") + b"\0" + brief_text(p).encode("utf-8") + b"\0")
     return "probe-" + h.hexdigest()[:12]
+
+
+def current_ids(probes: Optional[Sequence[Probe]] = None) -> FrozenSet[str]:
+    """The task ids of the current set.  An id carries the hash of its task
+    text, so a run whose ids are all here ran on texts the set still has."""
+    return frozenset(task_id(p) for p in (probes if probes is not None else pilots()))
+
+
+def check_sources() -> List[Path]:
+    """The files the pilot checks live in: the pilot package, one module per family."""
+    import roaddraft.probes.pilot as pilot_pkg
+    return sorted(Path(pilot_pkg.__file__).parent.glob("*.py"))
+
+
+def check_version(paths: Optional[Sequence[Path]] = None) -> str:
+    """``pilot-check-<hash>`` over the pilot checks' sources: the verifier
+    version of a probe episode.  A pilot is graded by its own check, not the
+    D1 verifier, and a check that changes without its task text changing
+    (the p14 repairs of pilot-astra) would otherwise re-grade earlier rows
+    unseen; ``report --reverify`` re-scores a run under the current checks."""
+    paths = list(paths) if paths is not None else check_sources()
+    h = hashlib.sha256()
+    for f in sorted(Path(x) for x in paths):
+        h.update(f.name.encode("utf-8") + b"\0" + f.read_bytes() + b"\0")
+    return "pilot-check-" + h.hexdigest()[:12]
 
 
 def entry(probe: Probe) -> dict:
@@ -255,7 +280,6 @@ class ProbeReport:
 
     def to_dict(self) -> dict:
         from roaddraft.tasks.spec_v1 import SPEC_VERSION, spec_hash
-        from roaddraft.verify import VERIFIER_VERSION
         done, asked = self.scope
         return {"kind": "probe", "probe": self.probe, "passed": self.passed,
                 "detail": self.detail, "touched": self.touched,
@@ -263,7 +287,7 @@ class ProbeReport:
                 "items_done": done, "items_asked": asked,
                 "effective_score": self.effective_score, "rubric_score": self.rubric_score,
                 "hard_failed": self.hard_failed, "spec_version": SPEC_VERSION,
-                "spec_hash": spec_hash(), "verifier_version": VERIFIER_VERSION,
+                "spec_hash": spec_hash(), "verifier_version": check_version(),
                 "checks": [{"id": CHECK_ID, "name": "the probe's own check", "weight": 100,
                             "credit": round(done / asked, 4) if asked else 0.0,
                             "in_scope": True, "findings": [],
@@ -419,14 +443,13 @@ class ProbeEpisode(Episode):
 
     def header(self) -> dict:
         from roaddraft.tasks.spec_v1 import SPEC_VERSION, spec_hash
-        from roaddraft.verify import VERIFIER_VERSION
         pins = self.pins or {}
         return {"type": "header", "run_id": self.config.run_id, "task_id": self.task.task_id,
                 "task_type": self.task.task_type, "sheets": 1, "seed": None,
                 "probe": self.probe.id, "start": self.probe.start,
                 "spec_version": SPEC_VERSION, "spec_hash": spec_hash(),
                 "generator_version": generator_version(),
-                "verifier_version": VERIFIER_VERSION, "harness_version": HARNESS_VERSION,
+                "verifier_version": check_version(), "harness_version": HARNESS_VERSION,
                 "prompt_hash": _hash(self.brief_text), "git_commit": pins.get("commit"),
                 "dirty": pins.get("dirty"),
                 "tools_sha256": _hash(json.dumps(self.tools, sort_keys=True)),
@@ -585,5 +608,6 @@ class ProbeOracleAgent(_QueueAgent):
 
 __all__ = ["PILOT_SET", "FAMILIES", "BUDGETS", "ProbeTask", "ProbeReport", "ProbeEpisode",
            "ProbeOracleAgent", "EpisodeServer", "pilots", "by_id", "entry", "task_id",
-           "task_type", "brief_text", "generator_version", "task_from_entry", "grade",
+           "task_type", "brief_text", "generator_version", "current_ids", "check_sources",
+           "check_version", "task_from_entry", "grade",
            "rescore", "keep", "oracle_calls", "system_prompt"]

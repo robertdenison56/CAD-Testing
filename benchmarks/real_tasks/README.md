@@ -116,12 +116,19 @@ the points that reads none of the notes is `wrong_value`, a hard fail.
 The harness runs two task sets from this catalogue (`src/roaddraft/eval/taskset.py`,
 manifests under `benchmarks/tasksets/`):
 
-- **`d1-real`**: 108 held-out tasks, nine of each of the twelve types. Within a type
-  every agency that has the type is drawn once before any is drawn again, then the
-  sheet the set has used least. Ranked on its own board beside the seeded `d1-test`.
-  (Until 2026-10-24 it was 99 tasks of eleven types; no model had run it.)
+- **`d1-real`**: 100 held-out tasks, 25 from each of the four question groups of
+  `tasks.types.REAL_GROUPS` (draft linework: `real-draw-alignment`; letter alignment
+  data: the five lettering types; produce the sheet: the five sheet types; notes and
+  dimensions: `real-construction-callouts`), the way the probe board splits its tiers
+  (Robert, 2026-10-24). A group's quota is split evenly over its types (5 each in the
+  five-type groups), so every question type weighs the same in the blended score and
+  the board shows a column per group beside it. Within a type every agency that has
+  the type is drawn once before any is drawn again, then the sheet the set has used
+  least. Ranked on its own board beside the seeded `d1-test`. (Until 2026-10-27 it
+  was nine of each type: 99 tasks of eleven types from Oct 22, 108 of twelve from
+  Oct 24; the 9B's first row ran the 99-task draw.)
 - **`d1-real-dev`**: 24 tasks, two of each type, on a few Caltrans sheets that
-  `d1-real` never uses. For smoke runs; never reported.
+  `d1-real` never uses. For smoke runs, so it covers every type; never reported.
 
 ```bash
 .venv/bin/python -m roaddraft.eval run --taskset d1-real-dev --agent oracle --agent null --level explicit --level vague

@@ -7,14 +7,21 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   equations on/off, the task types and the sheet count cycling.  The
   leaderboard set.
 - ``d1-variance``: the first 20 tasks of ``d1-test``, for k = 5 sampling.
-- ``d1-real``: 108 held-out tasks on the redrafted sample plan sheets
-  (``examples/Exmple Plans/Redraft``), nine of each of the twelve real-sheet
-  types, drawn from the validated catalogue ``benchmarks/real_tasks/catalog.json``
-  (``scripts/real_tasks.py`` writes it).  Within a type, every agency that has
-  the type is drawn once before any is drawn again, then the sheet the set has
-  used least.  Ranked beside ``d1-test``.
+- ``d1-real``: 100 held-out tasks on the redrafted sample plan sheets
+  (``examples/Exmple Plans/Redraft``), 25 from each of the four question
+  groups of ``tasks.types.REAL_GROUPS`` (draft linework, letter alignment
+  data, produce the sheet, notes and dimensions: the real-sheet counterpart of
+  the probe board's tiers, decided 2026-10-24), the group's quota split as
+  evenly as its types allow, drawn from the validated catalogue
+  ``benchmarks/real_tasks/catalog.json`` (``scripts/real_tasks.py`` writes it).
+  Within a type, every agency that has the type is drawn once before any is
+  drawn again, then the sheet the set has used least.  Ranked beside
+  ``d1-test``, with a column per group beside the blended score.  (Until
+  2026-10-27 it was nine of each type, so two groups held 45 tasks and two
+  held 9.)
 - ``d1-real-dev``: 24 tasks, two of each real type, on a few Caltrans sheets
-  that ``d1-real`` never uses.  For smoke runs and iteration; never reported.
+  that ``d1-real`` never uses.  For smoke runs and iteration, so it covers
+  every type rather than balancing the groups; never reported.
 - ``hard-pilots``: the 33 harder-task pilots (``probes/pilot``, all of them),
   run as probe tasks (``eval/probe_tasks.py``): each its own start project on a
   sample sheet, the MCP server's tools, graded pass or fail by its own check.
@@ -39,7 +46,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 from roaddraft.tasks.brief import GENERATOR_VERSION, Task
 from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
-from roaddraft.tasks.types import REAL_TASK_TYPES, TASK_TYPES
+from roaddraft.tasks.types import REAL_GROUPS, REAL_TASK_TYPES, TASK_TYPES, real_group
 
 REPO = Path(__file__).resolve().parents[3]
 TASKSETS_DIR = REPO / "benchmarks" / "tasksets"
@@ -52,8 +59,9 @@ PROBE_NAMES = ("hard-pilots",)
 NAMES = SEEDED_NAMES + REAL_NAMES + PROBE_NAMES
 #: the validated real-sheet tasks the real sets are drawn from
 REAL_CATALOG = REPO / "benchmarks" / "real_tasks" / "catalog.json"
-#: tasks of each real type in d1-real, and in d1-real-dev
-REAL_PER_TYPE = 9
+#: tasks of each question group (tasks.types.REAL_GROUPS) in d1-real, and of each
+#: real type in d1-real-dev
+REAL_PER_GROUP = 25
 REAL_DEV_PER_TYPE = 2
 #: the agency the dev sheets are taken from: the only one with sheets to spare
 #: (WFL has 6 sheets, FDOT 3, CFL 1; every one of them stays in d1-real)
@@ -124,6 +132,17 @@ def current_generator(name: Optional[str]) -> str:
     return GENERATOR_VERSION
 
 
+def current_verifier(name: Optional[str]) -> str:
+    """The verifier version a run on ``name`` is held to: the D1 verifier's,
+    or, for a probe set, the pilot checks' source hash
+    (``probe_tasks.check_version``), since a pilot is graded by its own check."""
+    if name is not None and is_probe(name):
+        from roaddraft.eval import probe_tasks
+        return probe_tasks.check_version()
+    from roaddraft.verify import VERIFIER_VERSION
+    return VERIFIER_VERSION
+
+
 def default_budgets(name: Optional[str]):
     """The budgets a run on ``name`` takes when it sets none: Track P's for the
     probe tasks (eval/probe_tasks.BUDGETS), the harness's otherwise."""
@@ -184,24 +203,44 @@ def real_dev_sheets(tasks: Sequence[dict]) -> List[str]:
     return sorted(picked)
 
 
-def _pick(pool: Sequence[dict], per_type: int) -> List[dict]:
-    """``per_type`` tasks of each real type from ``pool``, picked round by
-    round over the types in ``REAL_TASK_TYPES`` order.  Within a type, an
-    agency the type has not drawn yet comes first, then the sheet the set has
-    used least so far, then the hashed task id.  So a set holds every agency's
+def real_quotas(per_group: int = REAL_PER_GROUP) -> Dict[str, int]:
+    """How many tasks of each real type ``d1-real`` draws: ``per_group`` for
+    every question group that has types (``REAL_GROUPS``), split as evenly as
+    the group's types allow, the first types of the group taking the
+    remainder.  So the blended score weighs every question type the same,
+    whatever the number of types each holds, and a type added to a group
+    shares the group's quota rather than growing the set."""
+    quotas: Dict[str, int] = {}
+    for _, _, types in REAL_GROUPS:
+        if not types:
+            continue
+        base, extra = divmod(per_group, len(types))
+        for i, ty in enumerate(types):
+            quotas[ty] = base + (1 if i < extra else 0)
+    return {ty: quotas[ty] for ty in REAL_TASK_TYPES if ty in quotas}
+
+
+def _pick(pool: Sequence[dict], quotas: Dict[str, int]) -> List[dict]:
+    """``quotas[type]`` tasks of each real type from ``pool``, picked round by
+    round over the types in ``REAL_TASK_TYPES`` order (every type still owed
+    a task gets one before any type gets its next).  Within a type, an agency
+    the type has not drawn yet comes first, then the sheet the set has used
+    least so far, then the hashed task id.  So a set holds every agency's
     sheets wherever the agency has the type, and spreads over sheets instead
     of taking one sheet's whole catalogue."""
     by_type = {ty: sorted((t for t in pool if t["type"] == ty), key=lambda t: _h(t["task_id"]))
                for ty in REAL_TASK_TYPES}
     for ty, rows in by_type.items():
-        if len(rows) < per_type:
-            raise RuntimeError(f"{ty}: {len(rows)} tasks to draw from, {per_type} wanted")
+        if len(rows) < quotas.get(ty, 0):
+            raise RuntimeError(f"{ty}: {len(rows)} tasks to draw from, {quotas[ty]} wanted")
     used_sheet: Counter = Counter()
     used_agency = {ty: Counter() for ty in REAL_TASK_TYPES}
     taken = set()
     out: List[dict] = []
-    for _ in range(per_type):
+    for round_ in range(max(quotas.values(), default=0)):
         for ty in REAL_TASK_TYPES:
+            if round_ >= quotas.get(ty, 0):
+                continue
             best = min((t for t in by_type[ty] if t["task_id"] not in taken),
                        key=lambda t: (min(used_agency[ty][t["agency"]], 1),
                                       used_sheet[t["sheet_id"]], _h(t["task_id"])))
@@ -214,8 +253,8 @@ def _pick(pool: Sequence[dict], per_type: int) -> List[dict]:
 
 def _real_entry(t: dict) -> dict:
     return {"agency": t["agency"], "sheet_id": t["sheet_id"], "sheet": t["sheet"],
-            "alignment": t["alignment"], "task_type": t["type"], "sheets": 1,
-            "feet_per_inch": t["feet_per_inch"], "twist_deg": t["twist_deg"],
+            "alignment": t["alignment"], "task_type": t["type"], "group": real_group(t["type"]),
+            "sheets": 1, "feet_per_inch": t["feet_per_inch"], "twist_deg": t["twist_deg"],
             "task_id": t["task_id"]}
 
 
@@ -226,16 +265,20 @@ def build_real(name: str, catalog_path=None) -> dict:
     tasks = cat["tasks"]
     dev = set(real_dev_sheets(tasks))
     if name == "d1-real":
-        chosen = _pick([t for t in tasks if t["sheet_id"] not in dev], REAL_PER_TYPE)
+        chosen = _pick([t for t in tasks if t["sheet_id"] not in dev], real_quotas())
     elif name == "d1-real-dev":
-        chosen = _pick([t for t in tasks if t["sheet_id"] in dev], REAL_DEV_PER_TYPE)
+        chosen = _pick([t for t in tasks if t["sheet_id"] in dev],
+                       {ty: REAL_DEV_PER_TYPE for ty in REAL_TASK_TYPES})
     else:
         raise ValueError(f"unknown real task set {name!r}; sets: {', '.join(REAL_NAMES)}")
+    entries = [_real_entry(t) for t in chosen]
+    groups = Counter(e["group"] for e in entries)
     return {"taskset": name, "generator_version": REAL_GENERATOR_VERSION,
             "spec_version": DRAFTING_SPEC_V1["version"], "spec_hash": spec_hash(DRAFTING_SPEC_V1),
             "source": "benchmarks/real_tasks/catalog.json",
             "catalog_verifier": cat.get("verifier_version"),
-            "tasks": [_real_entry(t) for t in chosen]}
+            "groups": {key: groups[key] for key, _, _ in REAL_GROUPS if groups[key]},
+            "tasks": entries}
 
 
 def build(name: str) -> dict:
@@ -364,8 +407,8 @@ def entries(name: str, limit: Optional[int] = None, task_ids: Optional[Iterable[
     return rows
 
 
-__all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_TYPE",
+__all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROUP",
            "REAL_DEV_PER_TYPE", "SEEDED_TYPES", "TASKSETS_DIR", "VARIANCE_SIZE", "dials",
-           "make_task", "is_real", "is_probe", "current_generator", "default_budgets",
-           "build_probes", "PROBE_NAMES", "load_catalog", "real_dev_sheets", "build_real", "build",
+           "make_task", "is_real", "is_probe", "current_generator", "current_verifier", "default_budgets",
+           "build_probes", "PROBE_NAMES", "load_catalog", "real_dev_sheets", "real_quotas", "build_real", "build",
            "manifest_path", "write", "load", "check", "task_from_entry", "entries"]

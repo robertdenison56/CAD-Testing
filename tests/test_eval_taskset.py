@@ -60,20 +60,48 @@ def test_dials_cycle():
 # ------------------------------------------------------------ the real sets
 
 
-def test_real_sets_draw_every_type_and_agency_from_the_catalogue():
-    from roaddraft.tasks.types import REAL_TASK_TYPES
+def test_real_quotas_split_each_group_evenly_over_its_types():
+    from roaddraft.tasks.types import REAL_GROUPS, REAL_TASK_TYPES, real_group
+    q = tasksets.real_quotas()
+    assert list(q) == list(REAL_TASK_TYPES), "quotas run in type order, every real type in"
+    assert sum(q.values()) == tasksets.REAL_PER_GROUP * sum(1 for _, _, ts in REAL_GROUPS if ts) == 100
+    for key, _, types in REAL_GROUPS:
+        if not types:
+            continue  # the whole-job group has no type yet
+        shares = [q[ty] for ty in types]
+        assert sum(shares) == tasksets.REAL_PER_GROUP
+        assert max(shares) - min(shares) <= 1 and shares == sorted(shares, reverse=True)
+    assert q["real-draw-alignment"] == 25 and q["real-construction-callouts"] == 25
+    assert q["real-stationing"] == 5 and q["real-plan-sheet"] == 5
+    # a type added to a group shares its quota: seven types in the letter group would get 4,4,4,4,3,3,3
+    assert tasksets.real_quotas(27)["real-stationing"] == 6 and tasksets.real_quotas(27)["real-alignment-data"] == 5
+    assert real_group("real-bearings") == "letter"
+    with pytest.raises(ValueError):
+        real_group("real-no-such-type")
+
+
+def test_real_sets_draw_every_group_type_and_agency_from_the_catalogue():
+    from roaddraft.tasks.types import REAL_GROUPS, REAL_TASK_TYPES, real_group
     catalogue = {t["task_id"]: t for t in tasksets.load_catalog()["tasks"]}
-    real, dev = (tasksets.load(n)["tasks"] for n in tasksets.REAL_NAMES)
-    assert len(real) == tasksets.REAL_PER_TYPE * len(REAL_TASK_TYPES) == 108
+    real, dev = (tasksets.load(n) for n in tasksets.REAL_NAMES)
+    real, real_groups, dev = real["tasks"], real["groups"], dev["tasks"]
+    groups_with_types = [key for key, _, ts in REAL_GROUPS if ts]
+    assert len(real) == tasksets.REAL_PER_GROUP * len(groups_with_types) == 100
     assert len(dev) == tasksets.REAL_DEV_PER_TYPE * len(REAL_TASK_TYPES) == 24
-    for rows, per in ((real, tasksets.REAL_PER_TYPE), (dev, tasksets.REAL_DEV_PER_TYPE)):
-        assert Counter(t["task_type"] for t in rows) == {ty: per for ty in REAL_TASK_TYPES}
+    # held out: the same number of tasks in every question group, split over the group's types
+    assert Counter(t["group"] for t in real) == {k: tasksets.REAL_PER_GROUP for k in groups_with_types}
+    assert real_groups == {k: tasksets.REAL_PER_GROUP for k in groups_with_types}
+    assert Counter(t["task_type"] for t in real) == tasksets.real_quotas()
+    # dev: two of every type, for smoke runs
+    assert Counter(t["task_type"] for t in dev) == {ty: tasksets.REAL_DEV_PER_TYPE for ty in REAL_TASK_TYPES}
+    for rows in (real, dev):
         assert len({t["task_id"] for t in rows}) == len(rows)
         for t in rows:
             c = catalogue[t["task_id"]]  # every task is a validated catalogue task
             assert (c["sheet_id"], c["alignment"], c["type"]) == (t["sheet_id"], t["alignment"],
                                                                    t["task_type"])
             assert t["sheets"] == 1 and t["task_id"].startswith("D1-")
+            assert t["group"] == real_group(t["task_type"])
     # the held-out set reaches every agency; the first twelve are one of each type
     assert {t["agency"] for t in real} == {t["agency"] for t in catalogue.values()}
     assert {t["task_type"] for t in real[:len(REAL_TASK_TYPES)]} == set(REAL_TASK_TYPES)

@@ -53,8 +53,22 @@ the published summaries: one ranking per leaderboard set, ``d1-test`` (the
 seeded sheets), ``d1-real`` (the redrafted sample plan sheets) and
 ``hard-pilots`` (the harder tasks, each graded pass or fail by its own check:
 ``eval/probe_tasks.py``).  A run is held to its own set's generator version
-(``taskset.current_generator``): the seeded generator, the real-sheet builder,
-or the probe set's hash.
+(``taskset.current_generator``): the seeded generator or the real-sheet
+builder.  A probe run is held to its task ids instead: each id carries the
+hash of its task text, so the set may grow without unranking earlier rows,
+while a changed or removed text shows as an id the set no longer has.  Its
+verifier version is the pilot checks' source hash (``probe_tasks.check_version``,
+``taskset.current_verifier``).  A probe run ranks only when it covers every
+task of the current set; a run on part of it is published as **partial** and
+listed, not ranked.  The seeded and real-sheet sets keep ranking a draw of
+their set (d1-real's first row is 99 of its 108 tasks).
+
+A row on a real-sheet set also carries ``by_group`` (``by_group()``): the
+question groups of ``tasks.types.REAL_GROUPS`` (draft linework, letter
+alignment data, produce the sheet, notes and dimensions), each with its
+effective mean and interval, the way the probe board splits its tiers; the
+real board shows them as columns beside the blended score (decided
+2026-10-24, Robert; ``d1-real`` draws 25 tasks a group since 2026-10-27).
 """
 from __future__ import annotations
 
@@ -71,6 +85,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from roaddraft import effort as effort_of
 from roaddraft.eval.trajectory import read_episode, replay_journal
+from roaddraft.tasks.types import REAL_GROUP_NAMES, REAL_GROUP_OF, REAL_GROUPS
 from roaddraft.verify.report import FINDING_CODES
 
 REPORT_VERSION = "e4-v1"  # (2026-10-14) leaderboard v0.1 report
@@ -462,6 +477,7 @@ def summarize_group(dims: dict, eps: Sequence[dict]) -> dict:
     out["tool_errors"] = dict(sorted(sum((Counter(e["errors"]) for e in scored), Counter()).items()))
     out["by_task_type"] = split(scored, "task_type")
     out["by_sheets"] = split(scored, "sheets")
+    out["by_group"] = by_group(scored)
     return out
 
 
@@ -504,6 +520,44 @@ def split(eps: Sequence[dict], field: str) -> Dict[str, dict]:
             for k, v in sorted(by.items())}
 
 
+def by_group(eps: Sequence[dict]) -> Dict[str, dict]:
+    """The real-sheet question groups (``tasks.types.REAL_GROUPS``) a row's
+    episodes fall in, in board order: each with its types, episode and task
+    counts, effective mean over tasks, 95% bootstrap interval over tasks
+    within type, and hard-fail rate.  Empty for a row on the seeded or probe
+    sets, whose task types have no group."""
+    by: Dict[str, List[dict]] = {}
+    for e in eps:
+        key = REAL_GROUP_OF.get(str(e["row"]["task_type"]))
+        if key:
+            by.setdefault(key, []).append(e)
+    out: Dict[str, dict] = {}
+    for key, _, _ in REAL_GROUPS:
+        v = by.get(key)
+        if not v:
+            continue
+        tm, types = task_means(v), task_types(v)
+        tasks = sorted(tm)
+        lo, hi = bootstrap([tm[t] for t in tasks], [types[t] for t in tasks])
+        out[key] = {"name": REAL_GROUP_NAMES[key], "types": sorted({types[t] for t in tasks}),
+                    "n": len(v), "n_tasks": len(tm), "effective_mean": _r(mean(tm.values())),
+                    "ci_low": _r(lo), "ci_high": _r(hi),
+                    "half_width": _r(None if lo is None else (hi - lo) / 2),
+                    "hard_fail_rate": _rate(v, lambda r: r["hard_failed"])}
+    return out
+
+
+def group_columns(rows: Iterable[dict]) -> List[str]:
+    """The question groups any of ``rows`` has numbers for, in board order."""
+    return [k for k, _, _ in REAL_GROUPS if any(k in (g.get("by_group") or {}) for g in rows)]
+
+
+def _group_cell(c: Optional[dict]) -> str:
+    """A group's cell: effective mean ± 95% half-width (n tasks), since a row
+    drawn before the per-group draw holds other counts than 25 a group."""
+    return f"{_f(c['effective_mean'])} ± {_f(c['half_width'])} (n {c['n_tasks']})" if c else "–"
+
+
 def paired(a: Sequence[dict], b: Sequence[dict]) -> Optional[dict]:
     """effective(a) - effective(b) over the tasks both ran, with a bootstrap
     interval; None when they share no task."""
@@ -532,12 +586,38 @@ def rank_key(g: dict) -> Tuple:
 
 def current_versions(taskset: Optional[str] = None) -> dict:
     """The versions a run on ``taskset`` is judged against: its set's own
-    generator (``taskset.current_generator``), the spec, the verifier."""
-    from roaddraft.eval.taskset import current_generator
+    generator (``taskset.current_generator``), the spec, and its verifier
+    (``taskset.current_verifier``: the D1 verifier, or a probe set's checks)."""
+    from roaddraft.eval.taskset import current_generator, current_verifier
     from roaddraft.tasks.spec_v1 import SPEC_VERSION, spec_hash
-    from roaddraft.verify import VERIFIER_VERSION
     return {"spec_version": SPEC_VERSION, "spec_hash": spec_hash(),
-            "generator_version": current_generator(taskset), "verifier_version": VERIFIER_VERSION}
+            "generator_version": current_generator(taskset),
+            "verifier_version": current_verifier(taskset)}
+
+
+def coverage(taskset: Optional[str], task_ids: Iterable[str]) -> Optional[dict]:
+    """How much of the current set a probe run holds: ``tasks_run``,
+    ``tasks_in_set``, ``missing`` (current ids the run has not run) and
+    ``foreign`` (the run's ids the set no longer has: a changed or removed
+    task text).  None for the other sets, which keep ranking a draw of their
+    set."""
+    from roaddraft.eval.taskset import is_probe
+    if taskset is None or not is_probe(taskset):
+        return None
+    from roaddraft.eval.probe_tasks import current_ids
+    now, run = current_ids(), set(task_ids)
+    return {"tasks_run": len(run), "tasks_in_set": len(now),
+            "missing": sorted(now - run), "foreign": sorted(run - now)}
+
+
+def _ids(ids: Sequence[str], limit: int = 6) -> str:
+    shown = ", ".join(f"`{i}`" for i in ids[:limit])
+    return shown + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
+
+
+def partial_reason(cov: dict) -> str:
+    return (f"partial: covers {cov['tasks_run']} of the set's {cov['tasks_in_set']} tasks; "
+            "a row ranks once the run holds every task of the current set")
 
 
 def _run_meta(run_dir: Path) -> dict:
@@ -593,14 +673,18 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
                 for f in ("spec_version", "spec_hash", "generator_version", "verifier_version",
                           "harness_version")}
     now = current_versions(taskset)
+    cov = coverage(taskset, (e["row"]["task_id"] for e in eps))
+    held = ["spec_hash", "generator_version", "verifier_version"]
+    if cov is not None:   # a probe run is held to its task ids, not the set's hash
+        held.remove("generator_version")
     stale = [f"{f} {', '.join(versions[f])} (current {now[f]})"
-             for f in ("spec_hash", "generator_version", "verifier_version")
-             if versions[f] != [str(now[f])]]
+             for f in held if versions[f] != [str(now[f])]]
     summary = {
         "report_version": REPORT_VERSION, "run_id": run_dir.name, "taskset": taskset,
         "episodes": len(eps), "incomplete": incomplete,
         "reverified": bool(reverify), "versions": versions, "current_versions": now,
-        "stale": stale, "pins": meta.get("pins"), "harness_version": meta.get("harness_version"),
+        "stale": stale, "coverage": cov, "partial": bool(cov and cov["missing"]),
+        "pins": meta.get("pins"), "harness_version": meta.get("harness_version"),
         "prices_checked": sorted({e["row"]["prices_checked"] for e in eps
                                   if e["row"]["prices_checked"]}),
         "bootstrap": {"resamples": BOOTSTRAP, "seed": SEED, "over": "tasks within task type"},
@@ -627,6 +711,10 @@ def publish_problems(summary: dict) -> List[str]:
         out.append("episodes were scored under more than one verifier or spec; report with --reverify")
     elif summary["stale"]:
         out.append("scored under an older spec or verifier: " + "; ".join(summary["stale"]))
+    cov = summary.get("coverage")
+    if cov and cov["foreign"]:
+        out.append(f"{len(cov['foreign'])} of the run's {cov['tasks_run']} task ids are not in the "
+                   f"current set (a changed or removed task text): {_ids(cov['foreign'])}")
     if summary["incomplete"]:
         out.append(f"{len(summary['incomplete'])} episodes have no end record; resume the run")
     return out
@@ -673,6 +761,12 @@ def render_markdown(s: dict) -> str:
     if s["publish_problems"]:
         L.append("> **Not rankable as it stands:** " + " ".join(
             f"{p[0].upper()}{p[1:]}." for p in s["publish_problems"]))
+        L.append("")
+    if s.get("partial"):
+        c = s["coverage"]
+        L.append(f"> **Partial:** covers {c['tasks_run']} of the set's {c['tasks_in_set']} tasks; "
+                 "published and listed, ranked once the run holds them all. "
+                 f"Not run: {_ids(c['missing'], 12)}.")
         L.append("")
     L += ["## Rows", "",
           "Effective score: 0 on a hard fail, else the rubric score; per task over its samples, "
@@ -751,6 +845,19 @@ def render_markdown(s: dict) -> str:
             L.append(f"| {p['gap_name']} | {p['row']} | {p['a']} − {p['b']} | {p['gap']:+.1f} | "
                      f"{p['ci_low']:+.1f} to {p['ci_high']:+.1f} | {p['n_tasks']} | "
                      f"{'yes' if p['separated'] else 'no'} |")
+    gkeys = group_columns(rows)
+    if gkeys:
+        L += ["", "## By question group", "",
+              "The real-sheet types by question type (`tasks.types.REAL_GROUPS`), the way the probe "
+              "board splits its tiers: effective mean over the group's tasks ± its 95% half-width "
+              "(bootstrap over tasks within type), and the tasks it rests on.", "",
+              "| Group | Types | " + " | ".join(f"#{g['rank']}" for g in rows) + " |",
+              "|---|---|" + "---:|" * len(rows)]
+        for k in gkeys:
+            types = sorted({t for g in rows for t in ((g.get("by_group") or {}).get(k) or {}).get("types", [])})
+            cells = [(g.get("by_group") or {}).get(k) for g in rows]
+            L.append(f"| {k}: {REAL_GROUP_NAMES[k]} | {', '.join(types)} | "
+                     + " | ".join(_group_cell(c) for c in cells) + " |")
     types = sorted({t for g in rows for t in g["by_task_type"]})
     if types:
         L += ["", "## By task type and sheet count", "",
@@ -1002,13 +1109,17 @@ def board(summaries: Sequence[dict]) -> dict:
     others = []
     for s in summaries:
         taskset = s.get("taskset")
-        rankable = not s.get("publish_problems") and taskset in LEADERBOARD_SETS
+        partial = bool(s.get("partial"))
+        rankable = not s.get("publish_problems") and taskset in LEADERBOARD_SETS and not partial
         if not rankable:
             reasons = list(s.get("publish_problems") or [])
             if taskset not in LEADERBOARD_SETS and not any("development" in r for r in reasons):
                 reasons.append(_not_a_board(taskset))
+            if partial:
+                reasons.append(partial_reason(s["coverage"]))
             others.append({"run_id": s["run_id"], "taskset": s.get("taskset"),
                            "episodes": s.get("episodes"), "reasons": reasons,
+                           "partial": s.get("coverage") if partial else None,
                            "rows": [{"label": g["label"], "effort": effort_cell(g),
                                      "effective_mean": g["effective_mean"],
                                      "half_width": g["half_width"], "n_tasks": g["n_tasks"],
@@ -1020,7 +1131,10 @@ def board(summaries: Sequence[dict]) -> dict:
                                          "clean_sheet_rate", "invalid_call_rate", "cost_per_sheet",
                                          "n_tasks", "k_min", "k_max")},
                    "effort": effort_cell(g), "run_id": s["run_id"],
-                   "spec_version": ", ".join(s["versions"]["spec_version"])}
+                   "spec_version": ", ".join(s["versions"]["spec_version"]),
+                   "by_group": {k: {f: c.get(f) for f in ("effective_mean", "half_width", "n_tasks",
+                                                          "hard_fail_rate")}
+                                for k, c in (g.get("by_group") or {}).items()}}
             kind = "reference" if g["key"].get("provider") == "harness" else "ranked"
             per[taskset][kind].append(row)
     boards = {}
@@ -1035,26 +1149,43 @@ def board(summaries: Sequence[dict]) -> dict:
                         f"({b['label']}, 95% CI {b['ci_low']:.1f}–{b['ci_high']:.1f}, "
                         f"hard-fail {_p(b['hard_fail_rate'])})")
         boards[name] = {"title": SET_TITLES.get(name, name), "headline": headline,
-                        "ranked": ranked, "reference": per[name]["reference"]}
+                        "ranked": ranked, "reference": per[name]["reference"],
+                        "groups": group_columns(ranked + per[name]["reference"])}
     main = boards[LEADERBOARD_SET]
     return {"report_version": REPORT_VERSION, "leaderboard_set": LEADERBOARD_SET,
             "leaderboard_sets": list(LEADERBOARD_SETS),
             "headline": main["headline"], "ranked": main["ranked"],
-            "reference": main["reference"], "boards": boards, "others": others}
+            "reference": main["reference"], "boards": boards, "others": others,
+            "groups": [{"key": k, "name": n, "types": list(ts)} for k, n, ts in REAL_GROUPS]}
 
 
-def _board_table(rows: Sequence[dict], numbered: bool = True) -> List[str]:
-    L = ["| # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls "
-         "| Cost / sheet | Tasks × k | Run |",
-         "|---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|"]
+def _board_table(rows: Sequence[dict], numbered: bool = True, groups: Sequence[str] = ()) -> List[str]:
+    """The board's table; ``groups`` adds a column per question group beside
+    the blended score (the real board), each cell the group's effective mean
+    ± its 95% half-width over the row's tasks in it (n)."""
+    gh = "".join(f" {k.capitalize()} |" for k in groups)
+    L = ["| # | Model · mode · prompt | Effort | Effective | 95% CI |" + gh
+         + " Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |",
+         "|---:|---|---|---:|---|" + "---:|" * len(groups) + "---:|---:|---:|---:|---:|---|---|"]
     for i, r in enumerate(rows):
         k = f"{r['k_min']}" if r["k_min"] == r["k_max"] else f"{r['k_min']}–{r['k_max']}"
+        gc = "".join(f" {_group_cell((r.get('by_group') or {}).get(g))} |" for g in groups)
         L.append(f"| {r.get('rank', '') if numbered else ''} | {r['label']} | {effort_cell(r)} "
                  f"| **{_f(r['effective_mean'])}** "
-                 f"| {_ci(r)} | {_f(r['rubric_mean'])} | {_p(r['hard_fail_rate'])} | "
+                 f"| {_ci(r)} |" + gc + f" {_f(r['rubric_mean'])} | {_p(r['hard_fail_rate'])} | "
                  f"{_p(r['clean_sheet_rate'])} | {_p(r['invalid_call_rate'])} | "
                  f"{_usd(r['cost_per_sheet'])} | {r['n_tasks']} × {k} | `{r['run_id']}` |")
     return L
+
+
+def group_legend(groups: Sequence[str]) -> str:
+    """The line under a board with group columns: what each column holds."""
+    parts = [f"{k.capitalize()} = {REAL_GROUP_NAMES[k]} ({', '.join(f'`{t}`' for t, g in REAL_GROUP_OF.items() if g == k)})"
+             for k in groups]
+    return ("Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe "
+            "board's tiers; `d1-real` draws 25 tasks a group): " + "; ".join(parts)
+            + ". Each cell is the effective mean over the row's tasks in that group ± its 95% "
+            "half-width, with the number of tasks it rests on.")
 
 
 def eval_board_note(probe_board: str) -> str:
@@ -1079,17 +1210,23 @@ def render_board(b: dict, readme: bool = False) -> str:
         if n:
             L.append("")
         L += [f"{'###' if readme else '##'} `{name}`: {one['title']}", ""]
+        groups = one.get("groups") or group_columns(one["ranked"] + one["reference"])
         if one["headline"]:
             L += [f"**{one['headline'][0].upper()}{one['headline'][1:]}.**", ""]
-            L += _board_table(one["ranked"])
+            L += _board_table(one["ranked"], groups=groups)
+            if groups:
+                L += ["", group_legend(groups)]
         elif name == LEADERBOARD_SET:
             L += [f"No ranked run yet. A row needs a published run on `{name}` under a "
                   "frozen spec (v0.1: spec v1, then `d1-variance` × 5 samples to size the "
                   f"interval, then `{name}` × at least three models)."]
         elif name == "hard-pilots":
-            L += ["No ranked run yet. A row needs a published run on `hard-pilots` on the "
-                  "current task texts; each task scores 100 on a pass and 0 on a fail. The nine "
-                  "pilots that come with a page need a model that takes images."]
+            L += ["No ranked run yet. A row needs a published run on `hard-pilots` that covers "
+                  "every task of the current set (a run on part of it is published as partial and "
+                  "listed among the runs not ranked); each task scores 100 on a pass and 0 on a fail "
+                  "by its own check, "
+                  "whose source hash is the row's verifier version. The nine pilots that come with "
+                  "a page need a model that takes images."]
         else:
             L += [f"No ranked run yet. A row needs a published run on `{name}` under a frozen "
                   "spec, with the catalogue it was drawn from validated under the verifier "
@@ -1097,7 +1234,7 @@ def render_board(b: dict, readme: bool = False) -> str:
         if one["reference"]:
             L += ["", "Reference agents on the same tasks (the harness's own checks, not ranked):",
                   ""]
-            L += _board_table(one["reference"], numbered=False)
+            L += _board_table(one["reference"], numbered=False, groups=groups)
     if not readme and b["others"]:
         L += ["", "## Published runs that are not ranked", ""]
         for o in b["others"]:
@@ -1105,7 +1242,9 @@ def render_board(b: dict, readme: bool = False) -> str:
                              + (f", effort {r['effort']}" if r.get("effort", "–") != "–" else "")
                              + f" {_f(r['effective_mean'])} ± {_f(r['half_width'])} "
                              f"({r['n_tasks']} tasks × {r['k_max']})" for r in o["rows"])
-            L.append(f"- `{o['run_id']}` ({o['taskset']}, {o['episodes']} episodes): {rows}. "
+            part = o.get("partial")
+            tag = f", **partial: {part['tasks_run']} of {part['tasks_in_set']} tasks**" if part else ""
+            L.append(f"- `{o['run_id']}` ({o['taskset']}, {o['episodes']} episodes{tag}): {rows}. "
                      f"Not ranked: {'; '.join(o['reasons'])}.")
     if readme:
         L += ["", "The full board, with the runs not ranked and why: "
@@ -1113,9 +1252,11 @@ def render_board(b: dict, readme: bool = False) -> str:
               "Generated by `scripts/make_leaderboard.py`; do not edit by hand."]
     else:
         L += ["", "Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded "
-              "generator (one synthetic centerline per task); `d1-real` is 108 held-out tasks on "
-              "the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), nine of each "
-              "real-sheet type; `hard-pilots` is the 33 harder-task pilots on the sample sheets, "
+              "generator (one synthetic centerline per task); `d1-real` is 100 held-out tasks on "
+              "the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), 25 in each of four "
+              "question groups (draft linework, letter alignment data, produce the sheet, notes and "
+              "dimensions), each group a column beside the blended score; `hard-pilots` is the 33 "
+              "harder-task pilots on the sample sheets, "
               "each graded pass (100) or fail (0) by its own check, with the share of its items "
               "done as the rubric column. A model's rows on different sets are not averaged.",
               "", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
@@ -1206,7 +1347,8 @@ def replace_block(text: str, block: str) -> str:
 __all__ = ["REPORT_VERSION", "LEADERBOARD_SETS", "SET_TITLES", "NEVER_REPORTED",
            "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
            "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
-           "effort_label", "effort_cell", "summarize_group", "paired", "build", "publish_problems",
+           "effort_label", "effort_cell", "summarize_group", "by_group", "group_columns",
+           "group_legend", "paired", "build", "publish_problems",
            "render_markdown", "files",
            "write", "publish", "published", "board", "render_board", "replace_block",
            "README_BEGIN", "README_END", "render_board_svg", "eval_board_note"]

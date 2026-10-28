@@ -47,7 +47,7 @@ def test_a_probe_set_runs_on_track_p_budgets_unless_the_run_sets_them():
     assert P.BUDGETS.steps > Budgets().steps and P.BUDGETS.wall_clock_s >= 1800
 
 
-def test_oracle_passes_and_null_fails_through_the_loop_and_reverify_agrees(tmp_path):
+def test_oracle_passes_and_null_fails_through_the_loop_and_reverify_agrees(tmp_path, monkeypatch):
     spec = RunSpec(taskset=P.PILOT_SET, agents=("oracle", "null"), task_ids=_ids(FAST),
                    results_root=str(tmp_path), run_id="hp", budgets=Budgets(steps=5000))
     summary = run(spec)
@@ -62,6 +62,27 @@ def test_oracle_passes_and_null_fails_through_the_loop_and_reverify_agrees(tmp_p
     assert len(kept) == len(FAST) and all(".oracle." in k for k in kept)
     s = R.build(run_dir, check_delta=False)
     assert s["taskset"] == P.PILOT_SET and not s["stale"] and not s["publish_problems"]
+    # the episodes are stamped with the pilot checks' version, and the run is held to it
+    assert s["versions"]["verifier_version"] == [P.check_version()]
+    assert s["current_versions"]["verifier_version"] == P.check_version()
+    # three pilots of 33: a partial run, published and listed but not ranked
+    assert s["partial"] and s["coverage"] == {"tasks_run": len(FAST), "tasks_in_set": 33,
+                                              "missing": sorted(P.current_ids() - set(_ids(FAST))),
+                                              "foreign": []}
+    b = R.board([{k: v for k, v in s.items() if k != "_episodes"}])
+    assert not b["boards"][P.PILOT_SET]["ranked"] and b["others"][0]["run_id"] == "hp"
+    assert b["others"][0]["partial"]["tasks_run"] == len(FAST)
+    assert b["others"][0]["reasons"] == [f"partial: covers {len(FAST)} of the set's 33 tasks; "
+                                         "a row ranks once the run holds every task of the current set"]
+    assert f"**partial: {len(FAST)} of 33 tasks**" in R.render_board(b)
+    assert f"> **Partial:** covers {len(FAST)} of the set's 33 tasks" in R.render_markdown(s)
+    # the run is held to its task ids, not the set's hash: a grown set leaves it current
+    monkeypatch.setattr(P, "generator_version", lambda probes=None: "probe-000000000000")
+    grown = R.build(run_dir, check_delta=False)
+    assert grown["current_versions"]["generator_version"] == "probe-000000000000"
+    assert grown["versions"]["generator_version"] == s["versions"]["generator_version"]
+    assert not grown["stale"] and not grown["publish_problems"]
+    monkeypatch.undo()
     again = R.build(run_dir, reverify=True, check_delta=False)
     assert ([(r["label"], r["effective_mean"], r["rubric_mean"]) for r in again["rows"]]
             == [(r["label"], r["effective_mean"], r["rubric_mean"]) for r in s["rows"]])
@@ -122,7 +143,48 @@ def test_the_fake_oracle_drives_a_pilot_through_the_llm_agent(tmp_path):
     assert header["generator_version"] == P.generator_version() and header["probe"]
 
 
-def test_the_report_holds_a_pilot_run_to_the_probe_sets_hash_and_ranks_it_apart():
+def test_the_check_version_follows_the_pilot_sources(tmp_path):
+    from roaddraft.verify import VERIFIER_VERSION
+    v = P.check_version()
+    assert v.startswith("pilot-check-") and len(v) == len("pilot-check-") + 12 and v == P.check_version()
+    sources = P.check_sources()
+    assert all(f.suffix == ".py" for f in sources) and {"qa_review.py", "common.py"} <= {f.name for f in sources}
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    a.write_text("def check(): return 1\n"); b.write_text("X = 2\n")
+    v1 = P.check_version([a, b])
+    assert v1 == P.check_version([b, a]) != v
+    b.write_text("X = 3\n")
+    assert P.check_version([a, b]) != v1
+    # the grade and the header carry it, and a probe set is held to it, not the D1 verifier
+    assert P.ProbeReport("p02-sources-wfl19a", True, "ok").to_dict()["verifier_version"] == v
+    assert tasksets.current_verifier(P.PILOT_SET) == v
+    assert tasksets.current_verifier("d1-test") == VERIFIER_VERSION == tasksets.current_verifier(None)
+    assert R.current_versions(P.PILOT_SET)["verifier_version"] == v
+    assert R.current_versions("d1-real")["verifier_version"] == VERIFIER_VERSION
+
+
+def test_a_probe_run_is_held_to_its_task_ids_not_the_sets_hash():
+    ids = sorted(P.current_ids())
+    assert len(ids) == 33 and set(ids) == {r["task_id"] for r in tasksets.load(P.PILOT_SET)["tasks"]}
+    cov = R.coverage(P.PILOT_SET, ids[:24])
+    assert cov == {"tasks_run": 24, "tasks_in_set": 33, "missing": ids[24:], "foreign": []}
+    gone = "PR-p99-gone-0123456789"
+    cov2 = R.coverage(P.PILOT_SET, ids + [gone])
+    assert cov2["foreign"] == [gone] and not cov2["missing"] and cov2["tasks_run"] == 34
+    assert R.coverage("d1-test", ids) is None and R.coverage(None, ids) is None
+    base = {"taskset": P.PILOT_SET, "stale": [], "incomplete": [],
+            "versions": {"spec_version": ["v1"], "spec_hash": ["x"],
+                         "verifier_version": [P.check_version()]}}
+    # a run on part of the set is not a publish problem; an id the set no longer has is
+    assert R.publish_problems({**base, "coverage": cov}) == []
+    probs = R.publish_problems({**base, "coverage": cov2})
+    assert len(probs) == 1 and probs[0].startswith("1 of the run's 34 task ids are not in the current set")
+    assert gone in probs[0]
+    assert R.partial_reason(cov) == ("partial: covers 24 of the set's 33 tasks; a row ranks once the "
+                                     "run holds every task of the current set")
+
+
+def test_the_report_holds_a_pilot_run_to_its_task_ids_and_ranks_it_apart():
     assert R.current_versions(P.PILOT_SET)["generator_version"] == P.generator_version()
     assert P.PILOT_SET in R.LEADERBOARD_SETS
     row = {"label": "m · single · explicit",
@@ -131,10 +193,22 @@ def test_the_report_holds_a_pilot_run_to_the_probe_sets_hash_and_ranks_it_apart(
            "effective_mean": 41.4, "ci_low": 30.0, "ci_high": 52.0, "half_width": 11.0,
            "rubric_mean": 70.0, "hard_fail_rate": 0.59, "clean_sheet_rate": 0.41,
            "invalid_call_rate": 0.02, "cost_per_sheet": None, "n_tasks": 29, "k_min": 3, "k_max": 3}
-    b = R.board([{"run_id": "hp", "taskset": P.PILOT_SET, "episodes": 87,
-                  "versions": {"spec_version": ["v1"]}, "publish_problems": [], "rows": [row]}])
+    full = {"run_id": "hp", "taskset": P.PILOT_SET, "episodes": 87, "partial": False,
+            "coverage": {"tasks_run": 29, "tasks_in_set": 29, "missing": [], "foreign": []},
+            "versions": {"spec_version": ["v1"]}, "publish_problems": [], "rows": [row]}
+    b = R.board([full])
     assert not b["ranked"] and b["boards"][P.PILOT_SET]["ranked"][0]["rank"] == 1
     assert "## `hard-pilots`: the harder tasks (pass or fail)" in R.render_board(b)
+    # the same run on 24 of 33 tasks: published, listed as partial, not ranked
+    part = {**full, "run_id": "hp-text", "partial": True,
+            "coverage": {"tasks_run": 24, "tasks_in_set": 33, "missing": ["x"] * 9, "foreign": []},
+            "rows": [{**row, "n_tasks": 24}]}
+    b = R.board([part])
+    assert not b["boards"][P.PILOT_SET]["ranked"]
+    assert b["others"][0]["partial"]["tasks_in_set"] == 33 and "partial: covers 24" in b["others"][0]["reasons"][0]
+    md = R.render_board(b)
+    assert "No ranked run yet. A row needs a published run on `hard-pilots` that covers every task" in md
+    assert "`hp-text` (hard-pilots, 87 episodes, **partial: 24 of 33 tasks**)" in md
 
 
 def test_a_pilots_page_reaches_an_openai_request_as_a_data_url():
