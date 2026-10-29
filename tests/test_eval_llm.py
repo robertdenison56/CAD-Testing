@@ -382,3 +382,23 @@ def test_cli_runs_a_model_and_fails_fast_without_credentials(tmp_path, capsys, m
                  "--out", str(tmp_path)]) == 2
     assert "no Anthropic credentials" in capsys.readouterr().err
     assert not (tmp_path / "episodes").exists()
+
+
+
+def test_a_stalled_turn_is_a_turn_time_limit_with_the_stall_in_its_message():
+    """The backend's stall guard (runners.openai_compat) gives a turn up as ``turn_limit`` with ``stalled``
+    beside it; the provider ends the episode as a turn_time budget trip that says so."""
+    from roaddraft.eval.providers.base import LimitReached
+    from roaddraft.eval.providers.openai_compat import parse_reply as parse_openai
+    plain = {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "turn_limit"}]}
+    with pytest.raises(LimitReached, match="ran past the provider's turn limit") as info:
+        parse_openai(plain)
+    assert info.value.limit == "turn_time"
+    stalled = dict(plain, usage={"completion_tokens": 0, "estimated": True},
+                   stalled={"seconds": 300.5, "chunks": 1200, "reloaded": True})
+    with pytest.raises(LimitReached, match=r"carried nothing for 300 s \(1200 empty chunks\), before and after a reload") as info:
+        parse_openai(stalled)
+    assert info.value.limit == "turn_time"
+    stalled["stalled"]["reloaded"] = False
+    with pytest.raises(LimitReached, match=r"1200 empty chunks\)$"):
+        parse_openai(stalled)
