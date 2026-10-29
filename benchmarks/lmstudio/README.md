@@ -51,6 +51,8 @@ the bf16 vLLM ones: GGUF weights on llama.cpp, with LM Studio's own chat templat
     python benchmarks/lmstudio/lms_campaign.py k3 qwen3.5-9b             # r1..r3 in one detached process
     python benchmarks/lmstudio/lms_campaign.py e3 qwen3.5-9b             # d1-variance x 5, single, explicit
     python benchmarks/lmstudio/lms_campaign.py score qwen3.5-9b
+    python benchmarks/lmstudio/lms_campaign.py watch RUN_ID               # a stalled episode: stop the run for the queue's retry
+    python benchmarks/lmstudio/lms_campaign.py clear-errors RUN_ID --apply [--stalled] [--turn-time]   # episodes aside, to rerun
 
 `--print` shows any of them without running it. Probe runs go to `benchmarks/probe_runs/2026-10-20-lms-k3`,
 E3 runs to `results/e3-lms/` (gitignored). Every `e3` run carries `--context-tokens N` beside the reload
@@ -82,6 +84,46 @@ weights, is the limit (131k of KV cache for an 8B dense model is about 16 GB on 
 `results/e3-lms/queue-2026-10-28.sh` at 11:57 to 12:08: Gemma 4 12B Q8_0 loads at 98,304, Llama 3.1 8B at 65,536
 (the floor), and Devstral Small 2 Q3_K_L and Ministral 3 14B Q6_K at no rung, so both are dropped from the local list
 (`dropped` in `models.json`, with the rungs tried); the rest of the queue is Llama's smoke and Gemma's d1-test night.
+
+## Stalls (2026-10-28)
+
+The dead-engine guard (Oct 26) catches an engine that is gone: "No models loaded", "fetch failed", "terminated" in
+the stream, a one-token probe before every episode that gets no answer. Gemma 4 12B Q8_0 at 98,304 on d1-test
+showed a stall it cannot see: from 12:53 (the 18th turn of D1-001014, after 17 turns of seven seconds each) the
+engine answered every probe and then streamed empty chunks on the real prompt for the whole 30-minute turn limit,
+nine episodes in a row over five hours (D1-001015 to 001023), each scored 0 with 0 steps, LM Studio listing the
+model GENERATING throughout. Stopping the client and reloading cleared it (the model went IDLE the moment the client
+died). The rule, in `lms_campaign.py`: an episode whose end record says `turn_time` with 0 steps is a *stall*, the
+engine's outcome rather than the model's, once. `watch RUN_ID` (one per run, detached, log `results/e3-lms/watch-<run
+id>.log`) polls the run's episode files every minute and, on a stall, stops the run's eval process so a queue
+script's `run_e3` retry loop reloads the model and resumes the run, moves the episode into `<run>/errored-<date>/`
+so the resume runs it again, and records it in `<run>/watch.json`; a stall of the same episode after that stays as
+the model's result. `clear-errors RUN_ID --apply --stalled` does the move by hand. The harness has the guard
+too since the evening of Oct 28 (`roaddraft/runners/openai_compat.py`, committed 31774181 at 22:19 on Robert's go): a stream whose chunks carry
+nothing (no text, no reasoning under any key, no call fragment, no finish) for `STALL_LIMIT` 300 s, at least
+`STALL_CHUNKS` 50 of them, is a stall; with the LM Studio guard the model is reloaded and the request sent again
+once, and a second stall, or one on an endpoint without the guard, ends the turn as `turn_limit` with `stalled`
+in the reply, which the eval harness records as a `turn_time` budget trip that names the stall. Tokens arrive in
+every chunk of a healthy stream, so no model is cut by it; a long prompt's processing sends no chunks and is not
+touched. A run gets it only from a worktree at a commit that holds it, so tonight's nights (pinned to 291ae711)
+rely on `watch`. The same scan found the shape in the rows already published: four of the 9B's d1-test episodes
+(its "over-long turns": D1-001032, 001034, 001069, 001071, after 57, 6, 13 and 1 steps) and one of its d1-real
+episodes (D1-000000-8e8d02fad1d1, after 6) ended on a silent 30-minute turn. Robert, 21:20 Oct 28: rerun them.
+`results/e3-lms/queue-2026-10-28c.sh` (queue 4, started 21:32, restarted 22:21 re-pointed, log beside it) waits for queue 3's "queue done" and
+an idle server, then for each run sets the episodes aside with `clear-errors RUN --apply --turn-time` (every
+`turn_time` trip, after steps too; the d1-real run's one errored episode of Oct 26, D1-000000-f1825a08b736, goes
+with them, so that row fills to 99), starts a `watch`, and resumes the run with `e3 ... --worktree` from the
+worktree at the run's own pin: `lms-d1-test` at 291ae711 for d1-test, `lms-9b-resume` at d98e7025 for d1-real,
+whose harness predates `--context-tokens` (`e3` leaves the flag out for a worktree without it, and the run keeps
+the budgets it had). Neither pin held the harness stall guard, so on Robert's "Yes, commit" (22:19) the guard went in
+as its own commit (31774181) and was cherry-picked onto each pin in its rerun worktree: `lms-9b-rerun-test` at 97469b45
+(291ae711 + the guard; the running nights keep `lms-d1-test` untouched) and `lms-9b-resume` at c1719489 (d98e7025 + the
+guard; the cherry-pick kept the stall test alone of the four new tests, the rest need the context budget that pin lacks;
+its 77 tests pass), both tagged `pin/<run id>-rerun` so the detached pins stay reachable; queue 4 was restarted at 22:21
+pointing at them. A five-minute stall now reloads the model and asks again once, and the `watch` stays beside each run
+for the zero-step kind. The reports are written (d1-real's with `--reverify`,
+as its published row was), not published: the two rows change after a look at the numbers, with
+`report --publish` and `scripts/make_leaderboard.py`.
 
 How the rig differs from the Runpod rows, for the writeup:
 - one model and one episode at a time (Runpod ran r1-r3 as three processes on one vLLM worker);

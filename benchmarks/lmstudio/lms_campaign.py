@@ -12,7 +12,8 @@
     python benchmarks/lmstudio/lms_campaign.py e3 NAME [--taskset d1-variance] [--samples 5|1] [--mode single]
                                                 [--level explicit] [--limit N] [--run-id ID]
                                                 [--pilots text|images|all] [--worktree PATH] [--dry-run] [--print]
-    python benchmarks/lmstudio/lms_campaign.py clear-errors RUN_ID [--apply]   # errored episodes aside, to rerun
+    python benchmarks/lmstudio/lms_campaign.py clear-errors RUN_ID [--apply] [--stalled] [--turn-time]  # errored (stalled, silent) episodes aside
+    python benchmarks/lmstudio/lms_campaign.py watch RUN_ID [--interval 60] [--idle 20]   # stop + set aside a stalled run's episode
     python benchmarks/lmstudio/lms_campaign.py score NAME [--print]
 
 NAME is a key of ``models`` in ``benchmarks/lmstudio/models.json`` (``qwen3.5-9b``, ``qwen3.5-4b``, ``gemma-4-12b``).
@@ -40,7 +41,9 @@ resumes a run id by skipping every episode file with an end record, errored ones
 RUN_ID --apply`` first moves the errored episodes into ``<run>/errored-<date>/``; then ``e3 NAME --run-id
 RUN_ID --worktree PATH`` runs the rest from a worktree checked out at the run's own pin (``run.json``
 ``pins.commit``), so the resumed episodes see the same task set and engine as the first ones. ``--worktree``
-must be clean in ``src`` and ``tests``; its HEAD is recorded in the run's pins as usual.
+must be clean in ``src`` and ``tests``; its HEAD is recorded in the run's pins as usual. A pin older than
+291ae711 (2026-10-27) has no ``--context-tokens``: ``e3`` leaves the flag out for such a worktree (the 9B's d1-real
+run at d98e7025) and the run keeps the budgets it had.
 
 The context (2026-10-27): every ``e3`` run passes ``--context-tokens CONTEXT`` beside ``--lms-context CONTEXT``, so
 the harness ends an episode whose prompt reaches the window as a ``context`` budget trip, the way vLLM's refusal
@@ -53,6 +56,15 @@ that cannot run with enough context for these tasks leaves the list of local tes
 and below the floor marks the model ``dropped`` with the reason; ``e3``, ``check``, ``smoke``, ``k3`` and
 ``vision`` refuse a dropped model, ``fit`` alone takes it again. The floor is the hosted vLLM rows' window: at
 65,536 about 17 in 100 of the 9B's d1-test episodes would have ended as context trips (its largest prompt 104k).
+
+Stalls (2026-10-28): Gemma 4 12B Q8_0 at 98,304 on d1-test answered the harness's one-token probe before every
+episode and then streamed empty chunks for the whole 30-minute turn limit, nine episodes in a row over five
+hours, each scored 0 with 0 steps while LM Studio listed the model GENERATING; stopping the client and reloading
+cleared it. An episode whose end record says ``turn_time`` with 0 steps is a *stall* (``stalled``), the engine's
+outcome rather than the model's -- once. ``watch RUN_ID`` polls a run for one, stops the run's eval process (a
+queue script's ``run_e3`` retry loop then reloads the model and resumes the run), moves the episode into
+``<run>/errored-<date>/`` so the resume runs it again, and records it in ``<run>/watch.json``; a stall of the
+same episode after that stays as the model's result. ``clear-errors --stalled`` does the move by hand.
 
 Images (2026-10-27): the nine hard-pilots that come with a page (two scans to redraw, three to read, four marked-up
 prints) reach the model through the harness's own route, a ``view_attachment`` result with the PNG as a data URL,
@@ -295,6 +307,13 @@ def child_env(worktree: Path = WORKTREE) -> Dict[str, str]:
     return dict(os.environ, PYTHONPATH=str(worktree / "src"))
 
 
+def context_budget_in(worktree: Path = WORKTREE) -> bool:
+    """Whether the worktree's harness takes ``--context-tokens`` (main since 291ae711, 2026-10-27). A resume from an
+    older pin runs without it, under the budgets the run had; a missing worktree is preflight's to report."""
+    main = worktree / "src" / "roaddraft" / "eval" / "__main__.py"
+    return not main.is_file() or "--context-tokens" in main.read_text(encoding="utf-8")
+
+
 def run_command(m: dict, label: str, probes: List[str], repeat: int = 1, force: bool = False) -> List[str]:
     cmd = ["caffeinate", "-i", str(PYTHON), "-m", "roaddraft.runners", "run", "--backend", "openai",
            "--model", m["lms_key"], "--base-url", BASE_URL, "--lms-context", str(context(m)),
@@ -523,11 +542,16 @@ def cmd_e3(args) -> int:
     run_id = args.run_id or f"e3-{args.taskset}-{m['label']}-{args.mode}"
     if args.samples is None:   # d1-variance is the x 5 set; every other set runs x 1 (the ranked rows)
         args.samples = 5 if args.taskset == "d1-variance" else 1
+    worktree = Path(args.worktree).resolve() if args.worktree else WORKTREE
     cmd = ["caffeinate", "-i", str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", args.taskset,
-           "--model", m["lms_key"], "--provider", "openai", "--base-url", BASE_URL, "--lms-context", str(context(m)),
-           "--context-tokens", str(context(m)),
-           "--out", str(E3_OUT), "--run-id", run_id, "--mode", args.mode, "--level", args.level,
-           "--samples", str(args.samples), "--concurrency", "1"]
+           "--model", m["lms_key"], "--provider", "openai", "--base-url", BASE_URL, "--lms-context", str(context(m))]
+    if context_budget_in(worktree):
+        cmd += ["--context-tokens", str(context(m))]
+    else:
+        print(f"note: the harness at {worktree} predates --context-tokens; the run keeps the budgets it had",
+              file=sys.stderr)
+    cmd += ["--out", str(E3_OUT), "--run-id", run_id, "--mode", args.mode, "--level", args.level,
+            "--samples", str(args.samples), "--concurrency", "1"]
     if args.limit:
         cmd += ["--limit", str(args.limit)]
     if args.taskset == "hard-pilots" and args.pilots != "all":
@@ -542,7 +566,6 @@ def cmd_e3(args) -> int:
     if args.dry_run:
         cmd.append("--dry-run")
     log = E3_OUT / f"{run_id}.log"
-    worktree = Path(args.worktree).resolve() if args.worktree else WORKTREE
     if args.print:
         show(cmd, log, worktree)
         return 0
@@ -636,40 +659,148 @@ def cmd_vision(args) -> int:
 def cmd_clear_errors(args) -> int:
     """The episodes of a run that ended in an error (``termination`` ``error`` in their end record),
     listed, and with ``--apply`` moved into ``<run>/errored-<date>/`` so the harness runs them again on
-    resume. ``summary.json`` and ``episodes.json`` are left as they are: the resume rewrites both."""
+    resume; ``--stalled`` adds the stalled ones (a silent first turn, 0 steps), ``--turn-time`` every episode
+    that ended on the turn limit, after steps too. ``summary.json`` and ``episodes.json`` are left as they
+    are: the resume rewrites both."""
     run_dir = Path(args.run_id) if Path(args.run_id).is_dir() else E3_OUT / args.run_id
     episodes = run_dir / "episodes"
     if not episodes.is_dir():
         sys.exit(f"no episodes under {run_dir}")
     errored, kept = [], 0
     for f in sorted(episodes.glob("*.jsonl")):
-        end = None
-        for line in f.read_text(encoding="utf-8").splitlines()[::-1]:
-            if line.strip():
-                rec = json.loads(line)
-                end = rec if rec.get("type") == "end" else None
-                break
+        end = end_record(f)
         if end is None:
             print(f"no end record (left to resume): {f.name}")
             continue
-        if end.get("termination") == "error":
+        if end.get("termination") == "error" or (getattr(args, "stalled", False) and stalled(end)) \
+                or (getattr(args, "turn_time", False) and silent_turn(end)):
             errored.append((f, end))
         else:
             kept += 1
     for f, end in errored:
         first = (end.get("error") or "").splitlines()[0][:100] if end.get("error") else ""
-        print(f"{f.name.split('.')[0]}  {end.get('steps', 0):3d} steps  {first}")
-    print(f"{len(errored)} errored episode(s) of {len(errored) + kept} with an end record in {run_dir}")
+        kind = "stalled" if stalled(end) else "silent " if silent_turn(end) else "error  "
+        print(f"{f.name.split('.')[0]}  {kind}  {end.get('steps', 0):3d} steps  {first}")
+    print(f"{len(errored)} errored/stalled episode(s) of {len(errored) + kept} with an end record in {run_dir}")
     if not errored or not args.apply:
         if errored:
             print("dry run: pass --apply to move them aside")
         return 0
-    dest = run_dir / f"errored-{time.strftime('%Y-%m-%d')}"
-    dest.mkdir(exist_ok=True)
-    for f, _ in errored:
-        f.rename(dest / f.name)
+    dest = set_aside(run_dir, [f for f, _ in errored])
     print(f"moved {len(errored)} episode file(s) to {dest}; the run resumes them with e3 --run-id {run_dir.name}")
     return 0
+
+
+# ------------------------------------------------------------------ stalled episodes (2026-10-28)
+
+STALL_TRIP = "turn_time"
+WATCH_INTERVAL_S = 60
+WATCH_IDLE_MIN = 20        # a queue script's retry gap is 10 min plus a model load
+
+
+def end_record(path: Path) -> Optional[dict]:
+    """The episode file's end record, or None while the episode is still being written."""
+    for line in path.read_text(encoding="utf-8").splitlines()[::-1]:
+        if line.strip():
+            rec = json.loads(line)
+            return rec if rec.get("type") == "end" else None
+    return None
+
+
+def silent_turn(end: dict) -> bool:
+    """An episode that ended on the provider's turn limit: a turn that carried nothing for 30 minutes, the shape of
+    the Oct 28 stall, on the first turn or after steps (the 9B's four "over-long turns" on d1-test, 2026-10-27)."""
+    return end.get("budget_tripped") == STALL_TRIP
+
+
+def stalled(end: dict) -> bool:
+    """An episode the model never acted in: a silent turn as its first, 0 steps (see "Stalls" above). A silent
+    turn after steps, or a wall-clock trip, ``watch`` leaves as the model's outcome; ``clear-errors --turn-time``
+    sets the silent ones aside by hand (Robert, 2026-10-28: the 9B's five rerun)."""
+    return silent_turn(end) and not end.get("steps")
+
+
+def stalled_episodes(run_dir: Path, reruns: Dict[str, int], max_reruns: int = 1) -> List[Path]:
+    """The episode files of ``run_dir`` with a stalled end record that have been set aside fewer than
+    ``max_reruns`` times (``reruns`` by file name): a stall that repeats after a reload is the model's result."""
+    out: List[Path] = []
+    episodes = run_dir / "episodes"
+    if not episodes.is_dir():
+        return out
+    for f in sorted(episodes.glob("*.jsonl")):
+        end = end_record(f)
+        if end is not None and stalled(end) and reruns.get(f.name, 0) < max_reruns:
+            out.append(f)
+    return out
+
+
+def set_aside(run_dir: Path, files: List[Path]) -> Path:
+    """Move episode files into ``<run>/errored-<date>/`` (a second copy of a name gets a numbered suffix)."""
+    dest = run_dir / f"errored-{time.strftime('%Y-%m-%d')}"
+    dest.mkdir(exist_ok=True)
+    for f in files:
+        target, n = dest / f.name, 1
+        while target.exists():
+            target, n = dest / f"{f.name}.{n}", n + 1
+        f.rename(target)
+    return dest
+
+
+def run_processes(run_id: str) -> List[int]:
+    """The pids of the eval harness (and its caffeinate) running ``run_id``."""
+    r = subprocess.run(["pgrep", "-f", f"roaddraft.eval run .*--run-id {run_id}( |$)"], capture_output=True, text=True)
+    return [int(p) for p in r.stdout.split() if p.strip().isdigit()]
+
+
+def cmd_watch(args) -> int:
+    """Poll a run for a stalled episode every ``--interval`` s. On one: stop the run's eval process (a queue
+    script's retry loop reloads the model and resumes), move the episode aside so the resume runs it again,
+    note it in ``<run>/watch.json``. Ends after ``--idle`` minutes with no eval process once the run has begun."""
+    run_dir = E3_OUT / args.run_id
+    state_path = run_dir / "watch.json"
+    log = E3_OUT / f"watch-{args.run_id}.log"
+
+    def note(msg: str) -> None:
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+        print(line, flush=True)
+        with log.open("a") as fh:
+            fh.write(line + "\n")
+
+    state = json.loads(state_path.read_text()) if state_path.exists() else {"reruns": {}, "events": []}
+    note(f"watching {args.run_id} every {args.interval} s (stall = {STALL_TRIP} with 0 steps; "
+         f"{args.max_reruns} rerun(s) each); ends after {args.idle} min without an eval process")
+    idle_since: Optional[float] = None
+    while True:
+        pids = run_processes(args.run_id)
+        if pids:
+            idle_since = None
+        elif run_dir.is_dir():
+            idle_since = idle_since or time.time()
+            if time.time() - idle_since >= args.idle * 60:
+                note(f"no eval process for {args.idle} min; the run is over or abandoned; stopping")
+                return 0
+        found = stalled_episodes(run_dir, state["reruns"], args.max_reruns)
+        if found:
+            names = [f.name.split(".")[0] for f in found]
+            note(f"stalled: {names}; stopping pids {pids} so the queue's retry reloads the model and resumes")
+            for pid in pids:
+                try:
+                    os.kill(pid, 15)
+                except ProcessLookupError:
+                    pass
+            for _ in range(30):
+                if not run_processes(args.run_id):
+                    break
+                time.sleep(1)
+            dest = set_aside(run_dir, found)
+            for f in found:
+                state["reruns"][f.name] = state["reruns"].get(f.name, 0) + 1
+            state["events"].append({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "stalled": names,
+                                    "stopped": pids, "aside": str(dest)})
+            state_path.write_text(json.dumps(state, indent=1))
+            note(f"moved {len(found)} episode(s) to {dest}" + ("" if pids else
+                 f"; no eval process was running: resume by hand with e3 ... --run-id {args.run_id}"))
+        time.sleep(args.interval)
 
 
 def cmd_score(args) -> int:
@@ -715,7 +846,15 @@ def main(argv=None) -> int:
     e3.add_argument("--print", action="store_true"); e3.set_defaults(fn=cmd_e3)
     ce = sub.add_parser("clear-errors"); ce.add_argument("run_id", help="a run id under results/e3-lms, or a path")
     ce.add_argument("--apply", action="store_true", help="move them; without it, list only")
+    ce.add_argument("--stalled", action="store_true", help="also the stalled ones (turn_time with 0 steps)")
+    ce.add_argument("--turn-time", action="store_true",
+                    help="also every turn_time trip, after steps too (a silent turn; the 9B's rerun of 2026-10-28)")
     ce.set_defaults(fn=cmd_clear_errors)
+    w = sub.add_parser("watch"); w.add_argument("run_id", help="a run id under results/e3-lms")
+    w.add_argument("--interval", type=int, default=WATCH_INTERVAL_S, help="seconds between looks")
+    w.add_argument("--idle", type=int, default=WATCH_IDLE_MIN, help="minutes without an eval process before it ends")
+    w.add_argument("--max-reruns", type=int, default=1, help="stalls of one episode set aside before it stays")
+    w.set_defaults(fn=cmd_watch)
     sc = sub.add_parser("score"); sc.add_argument("name"); sc.add_argument("--print", action="store_true")
     sc.set_defaults(fn=cmd_score)
     args = p.parse_args(argv)

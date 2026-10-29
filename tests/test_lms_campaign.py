@@ -76,3 +76,125 @@ def test_a_rung_the_server_loads_at_another_size_does_not_count(monkeypatch):
     c.fit(m)
     assert m["context"] == 65536
     assert [t["loaded"] for t in m["fit"]["tried"]] == [False, False, False, False, True]
+
+
+# ------------------------------------------------------------------ stalls (2026-10-28)
+
+def _episode(folder, name, end=None, body=1):
+    """An episode file: a header, ``body`` turn records and, unless ``end`` is None, an end record."""
+    import json
+    lines = [json.dumps({"type": "header", "run_id": "r"})]
+    lines += [json.dumps({"type": "turn", "n": i}) for i in range(body)]
+    if end is not None:
+        lines.append(json.dumps(dict({"type": "end", "termination": "budget", "steps": 0}, **end)))
+    f = folder / f"{name}.model.neutral.single.explicit.0.jsonl"
+    f.write_text("\n".join(lines) + "\n")
+    return f
+
+
+def test_a_stall_is_a_turn_time_trip_with_no_steps():
+    c = load_script()
+    assert c.stalled({"termination": "budget", "budget_tripped": "turn_time", "steps": 0})
+    assert not c.stalled({"termination": "budget", "budget_tripped": "turn_time", "steps": 17})   # Gemma's D1-001014
+    assert not c.stalled({"termination": "budget", "budget_tripped": "wall_clock", "steps": 0})
+    assert not c.stalled({"termination": "error", "steps": 0})
+    assert not c.stalled({"termination": "submit", "steps": 2})
+
+
+def test_the_end_record_is_the_last_line_or_none_while_the_episode_runs(tmp_path):
+    c = load_script()
+    done = _episode(tmp_path, "D1-000001-aaaa", end={"budget_tripped": "turn_time"})
+    partial = _episode(tmp_path, "D1-000002-bbbb", end=None)
+    assert c.end_record(done)["budget_tripped"] == "turn_time"
+    assert c.end_record(partial) is None
+
+
+def test_stalled_episodes_skip_partials_and_ones_already_rerun(tmp_path):
+    c = load_script()
+    eps = tmp_path / "episodes"
+    eps.mkdir()
+    a = _episode(eps, "D1-000001-aaaa", end={"budget_tripped": "turn_time"})
+    b = _episode(eps, "D1-000002-bbbb", end={"budget_tripped": "turn_time"})
+    _episode(eps, "D1-000003-cccc", end={"termination": "submit", "steps": 3, "budget_tripped": None})
+    _episode(eps, "D1-000004-dddd", end=None)
+    _episode(eps, "D1-000005-eeee", end={"budget_tripped": "turn_time", "steps": 5})
+    assert c.stalled_episodes(tmp_path, {}) == [a, b]
+    assert c.stalled_episodes(tmp_path, {b.name: 1}) == [a]
+    assert c.stalled_episodes(tmp_path, {a.name: 1, b.name: 1}) == []
+    assert c.stalled_episodes(tmp_path, {a.name: 1}, max_reruns=2) == [a, b]
+    assert c.stalled_episodes(tmp_path / "missing", {}) == []
+
+
+def test_set_aside_moves_into_a_dated_folder_and_keeps_a_second_copy(tmp_path):
+    import time
+    c = load_script()
+    eps = tmp_path / "episodes"
+    eps.mkdir()
+    a = _episode(eps, "D1-000001-aaaa", end={"budget_tripped": "turn_time"})
+    dest = c.set_aside(tmp_path, [a])
+    assert dest == tmp_path / f"errored-{time.strftime('%Y-%m-%d')}"
+    assert (dest / a.name).exists() and not a.exists()
+    again = _episode(eps, "D1-000001-aaaa", end={"budget_tripped": "turn_time"})
+    c.set_aside(tmp_path, [again])
+    assert (dest / f"{a.name}.1").exists() and not again.exists()
+    assert list(eps.glob("*.jsonl")) == []
+
+
+def test_clear_errors_takes_stalled_episodes_only_when_asked(tmp_path, capsys):
+    import argparse
+    c = load_script()
+    eps = tmp_path / "episodes"
+    eps.mkdir()
+    err = _episode(eps, "D1-000001-aaaa", end={"termination": "error", "error": "boom"})
+    stall = _episode(eps, "D1-000002-bbbb", end={"budget_tripped": "turn_time"})
+    keep = _episode(eps, "D1-000003-cccc", end={"termination": "submit", "steps": 4, "budget_tripped": None})
+    assert c.cmd_clear_errors(argparse.Namespace(run_id=str(tmp_path), apply=False, stalled=False)) == 0
+    assert "dry run" in capsys.readouterr().out and err.exists() and stall.exists()
+    assert c.cmd_clear_errors(argparse.Namespace(run_id=str(tmp_path), apply=True, stalled=False)) == 0
+    assert not err.exists() and stall.exists() and keep.exists()
+    assert c.cmd_clear_errors(argparse.Namespace(run_id=str(tmp_path), apply=True, stalled=True)) == 0
+    out = capsys.readouterr().out
+    assert "stalled" in out and not stall.exists() and keep.exists()
+
+
+def test_a_silent_turn_is_any_turn_time_trip_and_clear_errors_takes_them_with_turn_time(tmp_path, capsys):
+    import argparse
+    c = load_script()
+    assert c.silent_turn({"termination": "budget", "budget_tripped": "turn_time", "steps": 57})   # the 9B's D1-001032
+    assert c.silent_turn({"termination": "budget", "budget_tripped": "turn_time", "steps": 0})
+    assert not c.silent_turn({"termination": "budget", "budget_tripped": "wall_clock", "steps": 0})
+    assert not c.stalled({"termination": "budget", "budget_tripped": "turn_time", "steps": 57})
+    eps = tmp_path / "episodes"
+    eps.mkdir()
+    err = _episode(eps, "D1-000001-aaaa", end={"termination": "error", "error": "boom"})
+    stall = _episode(eps, "D1-000002-bbbb", end={"budget_tripped": "turn_time"})
+    silent = _episode(eps, "D1-000003-cccc", end={"budget_tripped": "turn_time", "steps": 13})
+    keep = _episode(eps, "D1-000004-dddd", end={"termination": "submit", "steps": 4, "budget_tripped": None})
+    ns = dict(run_id=str(tmp_path), apply=True)
+    assert c.cmd_clear_errors(argparse.Namespace(stalled=True, turn_time=False, **ns)) == 0
+    assert not err.exists() and not stall.exists() and silent.exists() and keep.exists()
+    assert c.cmd_clear_errors(argparse.Namespace(stalled=False, turn_time=True, **ns)) == 0
+    out = capsys.readouterr().out
+    assert "silent" in out and not silent.exists() and keep.exists()
+
+
+def test_e3_leaves_the_context_budget_out_for_a_harness_pin_without_the_flag(tmp_path, monkeypatch, capsys):
+    import argparse
+    c = load_script()
+    models = {"models": {"m": {"label": "m-lms", "lms_key": "org/m", "quantization": "Q4_K_M", "context": 131072}}}
+    monkeypatch.setattr(c, "load", lambda: models)
+
+    def e3(worktree):
+        return argparse.Namespace(name="m", taskset="d1-real", samples=1, mode="single", level="explicit", limit=None,
+                                  run_id="r", pilots="text", worktree=str(worktree), dry_run=False, print=True)
+
+    for name, flags in (("old", ["--lms-context"]), ("new", ["--lms-context", "--context-tokens"])):
+        d = tmp_path / name / "src" / "roaddraft" / "eval"
+        d.mkdir(parents=True)
+        (d / "__main__.py").write_text("".join(f'p.add_argument("{f}", type=int)\n' for f in flags))
+    assert c.cmd_e3(e3(tmp_path / "old")) == 0
+    out = capsys.readouterr().out
+    assert "--lms-context 131072" in out and "--context-tokens" not in out
+    assert c.cmd_e3(e3(tmp_path / "new")) == 0
+    assert "--context-tokens 131072" in capsys.readouterr().out
+    assert c.context_budget_in(tmp_path / "missing")      # preflight's to report, not this check's

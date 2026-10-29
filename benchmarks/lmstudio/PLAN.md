@@ -53,19 +53,55 @@ Ministral 3 14B Q6_K load at none of the five rungs (KV cache at 65,536 too) and
 Llama's smoke episode at 65,536 (12:08 to 12:10) ended as an error at step 0: LM Studio could not parse the model's
 tool-call output (500 "does not match the expected peg-native format", three samples), as in the Oct 7-8 Tier-3 pass,
 so Llama 3.1 8B is **DROPPED** by step 5's rule (a model that never calls a tool) and marked so in `models.json`.
-**Gemma 4 12B Q8_0's d1-test x 1 night is RUNNING since 12:10 at 98,304** (`e3-d1-test-gemma-4-12b-q8-lms-single`,
-100 episodes; at 12.8 tok/s partly on the CPU, expect it to end Oct 29 morning; report written, not published).
+**Gemma 4 12B Q8_0's d1-test x 1 night RUNS since 12:10 at 98,304** (`e3-d1-test-gemma-4-12b-q8-lms-single`,
+100 episodes; report written, not published). Its first 15 episodes ran 12:10 to 12:49, one to seven minutes each
+(five at 100, then 94.2, 93.7, 77.3, 53.8 and six at 0). **Then the engine stalled:** at 12:53 the 18th turn of
+D1-001014 (its first 17 turns had taken seven seconds each) streamed empty chunks until the provider's 30-minute
+turn limit, and so did the first turn of every episode after it, nine in a row (D1-001015 to 001023, 13:23 to
+17:54), each scored 0 with 0 steps while LM Studio listed the model GENERATING and answered the harness's one-token
+probe before every episode, so the dead-engine guard saw a live model. Found at the 18:13 check-in: the eval
+process was stopped at 18:17 (the queue's `run_e3` loop retries after ten minutes, and `e3` reloads the model alone
+first; the model went IDLE the moment the client died), the nine zero-step episodes were moved into
+`errored-2026-10-28/` under the run so the resume runs them again (1014 keeps its 93.7 on 17 steps), and
+`lms_campaign.py watch RUN_ID` now watches both of tonight's runs (a stall is `turn_time` with 0 steps: it stops
+the run for the queue's retry, sets the episode aside once, and records it in `watch.json`; README, "Stalls"). The
+resume, attempt 2 of 6, started 18:27:39 with 85 episodes to run: the reload cured it, the nine set-aside episodes
+ran again inside 36 minutes (75, 0, 0, 100, 0, 100, 0, 0, 100, all submitted) and the run went on. Five hours of
+the afternoon went to the stall.
 The local list after today: Qwen3.5-9B (131k), GLM-4.6V-Flash (131k), Gemma 4 12B Q8_0 (98k), Gemma 4 E4B (131k, no
 submit on its smoke: Robert's call), the 4B once downloaded; off it: Devstral, Ministral (no window), Llama (no tool calls).
-Gemma's first nine episodes took about three minutes each (12:10 to 12:36), so the night may end this evening.
 **Queue 3** (Robert, 12:25: "Yes, queue it"; `results/e3-lms/queue-2026-10-28b.sh`, log beside it, started 12:36)
 waits for queue 2's "queue done" and an idle server, then runs **GLM-4.6V-Flash Q4_K_M on d1-test x 1 at 131,072**
 (`e3-d1-test-glm-4.6v-flash-q4km-lms-single`, step 6's first keeper; its smoke episode took 3.4 minutes, so about
-six hours) and writes its report, not published.
+six hours) and writes its report, not published. A `watch` for its run id waits for the run's folder to appear.
 
-Next in the plan after queues 2 and 3: step 2's 4B download (the PC alone can start it; then `fit`, `check`, its
+From the stall (Robert, 18:40: "Yes, build it"): the harness now has a stall guard of its own (committed 31774181 at 22:19 on Robert's go; README,
+"Stalls"): a stream whose chunks carry nothing for 300 s, 50 chunks at least, is reloaded once and asked again, and a
+second stall ends the turn as `turn_limit` with the stall on record; it reaches a run only through a worktree at a
+commit that holds it, so tonight's two nights rely on `watch`. The same shape sits in the 9B's published rows: four
+d1-test episodes (D1-001032, 001034, 001069, 001071, after 57, 6, 13 and 1 steps) and one d1-real episode ended on a
+silent 30-minute turn, scored on what they had done; Robert, 21:20: "Yes, rerun them" (queue 4 below). Next in the plan after queues 2 to 4: step 2's 4B download (the PC alone can start it; then `fit`, `check`, its
 night), Gemma 4 E4B's place on the list (Robert's call), the image pilots on the 9B after the pilot-astra merge (step 9).
 The 9B's published d1-test row, the regenerated board, the window rule and this section were committed on main on Oct 28 (Robert's go).
+
+**Queue 4** (Robert, 21:20: "Yes, rerun them"; `results/e3-lms/queue-2026-10-28c.sh`, log beside it, started 21:32, restarted 22:21)
+waits for queue 3's "queue done" and an idle server, then reruns the 9B's silent-turn episodes inside their published
+runs: `clear-errors RUN --apply --turn-time` (new: every `turn_time` trip, after steps too) sets them aside, a `watch`
+starts, and `e3 qwen3.5-9b ... --run-id RUN --worktree WT` resumes the run from the worktree at its own pin. d1-test
+(`e3-d1-test-qwen3.5-9b-q4km-lms-single`): D1-001032, 001034, 001069, 001071 from `lms-d1-test` (291ae711). d1-real
+(`e3-d1-real-qwen3.5-9b-q4km-lms-single`): D1-000000-8e8d02fad1d1 (silent, 6 steps) and the one errored episode of
+Oct 26, D1-000000-f1825a08b736 (died mid-stream, left out of the published row; the rerun fills the row to 99), from
+`lms-9b-resume` (d98e7025, whose harness has no `--context-tokens`: `e3` now leaves the flag out for such a worktree,
+and the run keeps its own budgets). Neither pin held the harness stall guard, so on Robert's "Yes, commit" (22:19) the
+guard went in as its own commit (31774181) and was cherry-picked onto each pin in its rerun worktree: `lms-9b-rerun-test`
+at 97469b45 (291ae711 + the guard, so the nights' `lms-d1-test` stays untouched) and `lms-9b-resume` at c1719489
+(d98e7025 + the guard; its 77 tests pass), tagged `pin/e3-d1-test-qwen3.5-9b-rerun` and `pin/e3-d1-real-qwen3.5-9b-rerun`;
+queue 4 was stopped in its wait and restarted at 22:21 pointing at them. A five-minute stall now reloads the model and
+asks again once; the `watch` stays for the zero-step kind. Both reports are written, d1-real's
+with `--reverify` (d98e7025 scores under d1-verify-v6, the published row is v7), neither published: the two rows
+change only after a look at the numbers, then `report --publish` (d1-real: `--reverify --publish`) and
+`scripts/make_leaderboard.py`. Expected start Oct 29 morning (Gemma at 45 of 100 at 21:27, about 6 min an
+episode, so ~03:00; GLM about six hours after), then an hour or two of episodes.
 
 **The 9B's hard-pilots run ended 16:01 PDT on 2026-10-27**: 2 of the 24 text-only pilots passed (p02-sources-wfl19a,
 p14-qa-review-ppm045a), effective 8.7 [0.0-17.4] over 23 scored, rubric 31.4 (the share of each pilot's items done),
@@ -177,6 +213,15 @@ two more for d1-real, a weekend for Qwen3.6 if it fits. Nothing else is needed f
   (Robert, Oct 28). Nothing loads a model at any other size.
 - Runs are pinned to the campaign worktree (`lms_campaign.py pins`); a pin change between a model's episodes
   makes a new row, not a resume.
+- A `lms_campaign.py watch RUN_ID` runs beside every night (detached, from the queue's launch): an episode that ends
+  on the 30-minute turn limit with 0 steps is a stall of the engine, not the model's result; the watch stops the
+  run so the queue's retry reloads the model and resumes, and sets that episode aside once (Oct 28, Gemma 4 12B:
+  nine such episodes, five hours, with the one-token probe passing throughout).
+- A rerun inside a published run (Robert, Oct 28: the 9B's silent-turn episodes) goes from the run's own pin plus
+  only the harness fix it needs, cherry-picked into a worktree of its own and tagged `pin/<run id>-rerun` so the
+  detached commit stays reachable; the task set, tools and instructions stay the run's. `clear-errors RUN --apply
+  --turn-time` sets the episodes aside, `e3 ... --run-id RUN --worktree WT` resumes, and the report is written,
+  not published, until a look at the numbers.
 - After each run: `lms_campaign.py score NAME`, then `report --publish` and `python scripts/make_leaderboard.py`
   as `benchmarks/runs/LEADERBOARD.md` describes; the episodes stay in `results/e3-lms/` (gitignored).
 
