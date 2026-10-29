@@ -43,6 +43,15 @@ run_models.py) are here too:
   turn is kept in the transcript. A cut turn has no usage (LM Studio reports
   it at the end of the stream), so its output tokens are the chunk count,
   marked ``usage_estimated``; ``cut_turns`` counts the call-cap cuts.
+- A stream whose chunks carry nothing -- no content, no reasoning under any
+  key, no call fragment, no finish -- for ``STALL_LIMIT`` seconds, and at least
+  ``STALL_CHUNKS`` of them, is a stall of the engine, not a turn: Gemma 4 12B
+  Q8_0 at 98,304 (2026-10-28, 12:53 to 17:54) flooded empty chunks for the
+  whole turn limit on ten turns in a row while answering every one-token
+  probe before each episode, and Qwen3.5-9B's four "over-long turns" of
+  Oct 27-28 had the same shape. With the guard the model is reloaded and the
+  request sent again, once; a second stall, or one without the guard, ends
+  the turn as ``turn_limit`` with ``stalled`` in the reply for the records.
 - A 400 for a request over the context, with the model already loaded at the
   guard's context, stops the probe with ``stop: "context"``: the conversation
   has outgrown the context and a reload cannot fit it. (Before, the guard
@@ -108,6 +117,10 @@ PROBE_TIMEOUT = 90.0
 ENGINE_WAIT, ENGINE_RETRY = 30 * 60, 30
 CALL_CAP = 4            # tool calls run from one turn; the start of another ends the turn
 TURN_LIMIT = 1800.0     # seconds one turn may take, and the socket's read timeout
+#: a stream whose chunks carry nothing for this long is a stall of the engine (the docstring's last bullet)
+STALL_LIMIT = 300.0
+#: and at least this many empty chunks in that time: one empty chunk after a long prompt's processing is not one
+STALL_CHUNKS = 50
 
 
 class ContextFull(Exception):
@@ -120,6 +133,19 @@ class ToolsRefused(Exception):
 
 class StreamError(RuntimeError):
     """An error the server sent inside a stream, after the 200."""
+
+
+class Stalled(Exception):
+    """The stream carried chunks with nothing in them for ``STALL_LIMIT`` seconds."""
+
+    def __init__(self, seconds: float, chunks: int):
+        super().__init__(f"the stream carried nothing for {seconds:.0f} s ({chunks} empty chunks)")
+        self.seconds, self.chunks = seconds, chunks
+
+
+def carries(delta: dict) -> bool:
+    """Whether a chunk's delta brings any of the turn: text, reasoning under whatever key, a call fragment."""
+    return any(v for k, v in delta.items() if k != "role")
 
 
 def parse_args(raw) -> dict:
@@ -259,13 +285,17 @@ class LmStudioGuard:
 
 
 def read_stream(lines: Iterable[bytes], t0: float, call_cap: int = CALL_CAP,
-                turn_limit: float = TURN_LIMIT, clock: Callable[[], float] = time.time) -> dict:
+                turn_limit: float = TURN_LIMIT, clock: Callable[[], float] = time.time,
+                stall_limit: float = STALL_LIMIT, stall_chunks: int = STALL_CHUNKS) -> dict:
     """A streamed turn assembled into the shape of a non-streamed reply. It
     ends at the start of a call past ``call_cap`` (``finish_reason``
     ``call_cap``, the earlier calls whole) or after ``turn_limit`` seconds
     (``turn_limit``, whatever had come). Without a usage chunk the output
-    tokens are the chunk count, marked ``estimated``."""
+    tokens are the chunk count, marked ``estimated``. Chunks carrying nothing
+    for ``stall_limit`` seconds, ``stall_chunks`` of them at least, raise
+    ``Stalled``."""
     content, reasoning, calls, usage, finish, chunks = [], [], {}, {}, None, 0
+    stall_from, empty_run = None, 0    # when the chunks stopped carrying anything, and how many since
     for raw in lines:
         line = (raw.decode(errors="replace") if isinstance(raw, bytes) else raw).strip()
         if not line.startswith("data:"):
@@ -281,6 +311,14 @@ def read_stream(lines: Iterable[bytes], t0: float, call_cap: int = CALL_CAP,
         for ch in d.get("choices") or []:
             delta = ch.get("delta") or {}
             chunks += 1
+            if carries(delta) or ch.get("finish_reason") or d.get("usage"):
+                stall_from, empty_run = None, 0
+            else:
+                now = clock()
+                stall_from = now if stall_from is None else stall_from
+                empty_run += 1
+                if empty_run >= stall_chunks and now - stall_from >= stall_limit:
+                    raise Stalled(now - stall_from, empty_run)
             content.append(delta.get("content") or "")
             reasoning.append(delta.get("reasoning_content") or delta.get("reasoning") or "")
             for tc in delta.get("tool_calls") or []:
@@ -318,22 +356,46 @@ def read_stream(lines: Iterable[bytes], t0: float, call_cap: int = CALL_CAP,
     return {"choices": [{"message": msg, "finish_reason": finish}], "usage": usage}
 
 
+def stalled_reply(ex: Stalled, reloaded: bool) -> dict:
+    """The turn a stalled stream ends: ``finish_reason`` ``turn_limit`` (the provider gave the turn up), nothing
+    said, and ``stalled`` saying why, for the backends' records."""
+    return {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "turn_limit"}],
+            "usage": {"completion_tokens": 0, "estimated": True},
+            "stalled": {"seconds": round(ex.seconds, 1), "chunks": ex.chunks, "reloaded": reloaded}}
+
+
 def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmStudioGuard] = None,
               attempts: int = 4, sleep: Callable[[float], None] = time.sleep,
               call_cap: int = CALL_CAP, turn_limit: float = TURN_LIMIT,
               clock: Callable[[], float] = time.time) -> dict:
     """One streamed chat completion, read by ``read_stream``, with the retries
     and the guard. Raises ``ToolsRefused`` and ``ContextFull`` for the backend
-    to act on."""
+    to act on. A stall (``Stalled``) reloads the model once, with the guard,
+    and asks again; a second one, or one without the guard, ends the turn as
+    ``turn_limit`` with ``stalled`` in the reply."""
     data = json.dumps(dict(body, stream=True, stream_options={"include_usage": True})).encode()
     asked_again = False   # a reload marker met once with the model still listed
-    for attempt in range(attempts):
-        last = attempt == attempts - 1
+    stalled_once = False  # a stall met once: the model reloaded and the request sent again
+    attempt = 0
+    while attempt < attempts:
+        attempt += 1
+        last = attempt == attempts
         try:
             req = urllib.request.Request(url, data, {"Content-Type": "application/json", **headers})
             t0 = clock()
             with urllib.request.urlopen(req, timeout=turn_limit) as resp:
-                return read_stream(resp, t0, call_cap, turn_limit, clock)
+                try:
+                    return read_stream(resp, t0, call_cap, turn_limit, clock)
+                except Stalled as ex:
+                    if guard is not None and not stalled_once:
+                        print(f"stall: {ex}; reloading the model and asking again", flush=True)
+                        guard.reload()
+                        stalled_once = True
+                        attempt -= 1    # the engine's fault, not a try of the request
+                        continue
+                    print(f"stall: {ex}" + (" again, after a reload" if stalled_once else
+                                            " (no guard to reload the model)") + "; the turn ends", flush=True)
+                    return stalled_reply(ex, stalled_once)
         except urllib.error.HTTPError as ex:
             code, text = ex.code, ex.read().decode(errors="replace")
         except StreamError as ex:
@@ -345,7 +407,7 @@ def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmS
                 if guard:
                     guard.wait_for_server()
                 else:
-                    sleep(15 * (attempt + 1))
+                    sleep(15 * attempt)
                 continue
             raise
         where = f"HTTP {code}" if code else "stream error"
@@ -375,7 +437,7 @@ def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmS
             print(f"{where}, the model's output could not be parsed; sampling again", flush=True)
             continue
         if code in (429, 500, 502, 503) and not last:
-            sleep(15 * (attempt + 1))
+            sleep(15 * attempt)
             continue
         raise RuntimeError(f"{where}: {text[:300]}")
     raise RuntimeError("gave up")
@@ -453,6 +515,8 @@ class OpenAIBackend(Backend):
                 kept = dict(sent)
                 kept["finish_reason"] = finish
                 kept["seconds"] = round(time.time() - t0, 1)
+                if reply.get("stalled"):
+                    kept["stalled"] = reply["stalled"]
                 if reasoning:
                     kept["reasoning"] = reasoning
                 if u.get("estimated"):

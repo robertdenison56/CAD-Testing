@@ -691,6 +691,88 @@ def test_a_turn_past_the_turn_limit_ends_with_what_had_come():
     assert reply["usage"]["estimated"] is True
 
 
+def test_a_flood_of_empty_chunks_is_a_stall_and_anything_carried_is_not():
+    from roaddraft.runners.openai_compat import STALL_CHUNKS, STALL_LIMIT, Stalled, carries, read_stream
+    assert STALL_LIMIT == 300.0 and STALL_CHUNKS == 50
+    assert not carries({}) and not carries({"role": "assistant", "content": ""})
+    assert carries({"content": " "}) and carries({"reasoning_content": "hm"}) and carries({"thinking": "hm"})
+    assert carries({"tool_calls": [call_delta(0, "x")]})
+    seconds = [0.0]
+
+    def clock():
+        seconds[0] += 0.5
+        return seconds[0]
+
+    def flood():
+        # Gemma 4 12B Q8_0 at 98,304, 2026-10-28 12:53: chunks with nothing in them, faster than tokens,
+        # for the whole turn limit, while the model answered every one-token probe
+        while True:
+            yield from sse(chunk(), done=False)
+
+    with pytest.raises(Stalled, match="carried nothing for 3.. s") as info:
+        read_stream(flood(), t0=0.0, clock=clock)
+    assert info.value.seconds >= STALL_LIMIT and info.value.chunks >= STALL_CHUNKS and seconds[0] < 1800
+    # reasoning under any key keeps the turn alive however long it runs, as a token or a call fragment does
+    seconds[0] = 0.0
+    thinking = [{"object": "chat.completion.chunk",
+                 "choices": [{"index": 0, "delta": {"thinking": "."}, "finish_reason": None}]} for _ in range(400)]
+    reply = read_stream(sse(*thinking, chunk(content="done"), chunk(finish="stop"), USAGE), t0=0.0, clock=clock)
+    assert reply["choices"][0]["finish_reason"] == "stop" and reply["choices"][0]["message"]["content"] == "done"
+    # fewer than STALL_CHUNKS empty chunks are no stall however far apart: a role chunk, a long prompt's
+    # processing, one more empty chunk, then the tokens
+    ticks = iter([0.0, 0.0, 900.0, 900.0, 901.0, 902.0, 903.0])
+    role = {"object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
+    reply = read_stream(sse(role, chunk(), chunk(content="late"), chunk(finish="stop"), USAGE), t0=0.0,
+                        clock=lambda: next(ticks))
+    assert reply["choices"][0]["message"]["content"] == "late" and reply["choices"][0]["finish_reason"] == "stop"
+
+
+def test_a_stall_reloads_the_model_once_and_then_ends_the_turn(monkeypatch):
+    from roaddraft.runners import openai_compat
+    seconds = [0.0]
+
+    def clock():
+        seconds[0] += 1.0
+        return seconds[0]
+
+    def flood():
+        while True:
+            yield from sse(chunk(), done=False)
+
+    streams = iter([Stream(flood()), Stream(sse(chunk(content="back"), chunk(finish="stop"), USAGE))])
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", lambda req, timeout: next(streams))
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "google/gemma-4-12b", 98304)
+    reloads = []
+    monkeypatch.setattr(guard, "reload", lambda: reloads.append(1))
+    # attempts=1: the reload and the second request are not a try of the request
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {}, guard=guard,
+                                    attempts=1, sleep=lambda s: None, clock=clock)
+    assert reply["choices"][0]["message"]["content"] == "back" and reloads == [1] and "stalled" not in reply
+    # a second stall after the reload ends the turn as turn_limit, the stall on record
+    streams = iter([Stream(flood()), Stream(flood())])
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {}, guard=guard,
+                                    sleep=lambda s: None, clock=clock)
+    assert reply["choices"][0]["finish_reason"] == "turn_limit" and reply["choices"][0]["message"]["content"] == ""
+    assert reply["stalled"]["reloaded"] is True and reply["stalled"]["chunks"] >= 50 and reloads == [1, 1]
+    assert reply["stalled"]["seconds"] >= 300 and reply["usage"] == {"completion_tokens": 0, "estimated": True}
+    # without the guard (vLLM, a hosted endpoint) the turn ends at once: no reload to try, no 30-minute wait
+    streams, slept = iter([Stream(flood())]), []
+    reply = openai_compat.post_chat("http://x/v1/chat/completions", {"model": "m"}, {}, sleep=slept.append,
+                                    clock=clock)
+    assert reply["stalled"]["reloaded"] is False and slept == [] and seconds[0] < 3 * 1800
+
+
+def test_the_probe_runner_keeps_a_stalled_turn_on_record(tmp_path):
+    stalled = {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "turn_limit"}],
+               "usage": {"completion_tokens": 0, "estimated": True},
+               "stalled": {"seconds": 300.5, "chunks": 1200, "reloaded": True}}
+    ep = episode(tmp_path, model="google/gemma-4-12b")
+    out = OpenAIBackend(ep.options, post=lambda body: stalled).run(ep)
+    assert out.stop == "turn_limit" and ep.server.calls == []
+    assert ep.log[-1]["finish_reason"] == "turn_limit" and ep.log[-1]["stalled"] == stalled["stalled"]
+
+
 def test_post_chat_streams_and_retries_a_stalled_stream(monkeypatch):
     import socket
     from roaddraft.runners import openai_compat
