@@ -479,3 +479,22 @@ def test_the_cli_context_budget_defaults_to_the_lms_context():
     assert _budgets(args(lms_context=131072)).context_tokens == 131072
     assert _budgets(args(lms_context=131072, context_tokens=65536)).context_tokens == 65536
     assert _budgets(args(taskset="hard-pilots", lms_context=131072)).steps == 600
+
+
+def test_a_stalled_turn_is_a_turn_time_limit_with_the_stall_in_its_message():
+    """The backend's stall guard (runners.openai_compat) gives a turn up as ``turn_limit`` with ``stalled``
+    beside it; the provider ends the episode as a turn_time budget trip that says so."""
+    from roaddraft.eval.providers.base import LimitReached
+    from roaddraft.eval.providers.openai_compat import parse_reply as parse_openai
+    plain = {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "turn_limit"}]}
+    with pytest.raises(LimitReached, match="ran past the provider's turn limit") as info:
+        parse_openai(plain)
+    assert info.value.limit == "turn_time"
+    stalled = dict(plain, usage={"completion_tokens": 0, "estimated": True},
+                   stalled={"seconds": 300.5, "chunks": 1200, "reloaded": True})
+    with pytest.raises(LimitReached, match=r"carried nothing for 300 s \(1200 empty chunks\), before and after a reload") as info:
+        parse_openai(stalled)
+    assert info.value.limit == "turn_time"
+    stalled["stalled"]["reloaded"] = False
+    with pytest.raises(LimitReached, match=r"1200 empty chunks\)$"):
+        parse_openai(stalled)
