@@ -188,3 +188,44 @@ def test_oversized_results_are_cut_with_a_hint():
     d = Dumper()
     run_episode(task, d, EpisodeConfig(result_cap=2000))
     assert d.result["truncated"] is True and len(d.result["text"]) == 2000 and "hint" in d.result
+
+
+def test_a_harness_failure_inside_a_tool_call_ends_the_episode_on_record(tmp_path, monkeypatch, capsys):
+    """2026-10-28: Gemma 4 12B's D1-001041 raised TypeError inside a tool call; the exception escaped the loop
+    and the file had no end record. Now the call's result names the failure, the episode ends as the harness's
+    error with its end record, no step is counted, and the traceback goes to stderr."""
+    import roaddraft.eval.episode as ep
+
+    class Draws(Agent):
+        name = "draws"
+
+        def act(self, obs):
+            return [ToolCall("list_layers", {}), ToolCall("list_layers", {})]
+
+    def boom(self, call):
+        raise TypeError("unhashable type: 'list'")
+
+    monkeypatch.setattr(ep.Episode, "_execute", boom)
+    r = run_episode(_task(0), Draws(), out_root=tmp_path)
+    assert r.termination == "error" and r.error.startswith("harness: TypeError: unhashable")
+    assert r.steps == 0 and r.turns == 1 and r.faults == 0
+    rec = read_episode(r.path)
+    assert rec["end"]["termination"] == "error" and "unhashable" in rec["end"]["error"]
+    results = rec["turns"][0]["results"]
+    assert len(results) == 1 and results[0]["error"]["type"] == "harness_error"   # the second call never ran
+    assert "Traceback" in capsys.readouterr().err
+
+
+def test_a_scoring_failure_still_writes_the_end_record(tmp_path, monkeypatch, capsys):
+    import roaddraft.eval.episode as ep
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("verifier boom")
+
+    monkeypatch.setattr(ep, "verify", boom)
+    r = run_episode(_task(0), NullAgent(), out_root=tmp_path)
+    assert r.termination == "error" and r.error == "harness: scoring: RuntimeError: verifier boom"
+    assert r.effective_score == 0.0 and r.report.hard_failed is False and r.report.to_dict()["unscored"]
+    rec = read_episode(r.path)
+    assert rec["end"]["termination"] == "error" and rec["end"]["effective_score"] == 0.0 and rec["verify"] is None
+    assert "verifier boom" in capsys.readouterr().err

@@ -98,3 +98,17 @@ def test_episodes_that_die_before_their_first_step_stop_the_run_after_three(tmp_
     # the three that ran have end records; the rest have no file, so a resume runs them
     files = list((tmp_path / "dying" / "episodes").glob("*.jsonl"))
     assert len(files) == DEAD_EPISODES and all(is_complete(f) for f in files)
+
+
+def test_a_cell_that_dies_outside_the_episode_keeps_its_traceback(tmp_path):
+    spec = RunSpec(taskset="d1-dev", agents=("null",), limit=1, results_root=str(tmp_path),
+                   run_id="dies", concurrency=1)
+
+    def factory(name, spec):
+        raise ValueError("no such agent today")
+
+    said = []
+    summary = run(spec, agent_factory=factory, progress=said.append)
+    f = summary["failures"][0]
+    assert "ValueError: no such agent today" in f["error"] and "Traceback" in f["traceback"]
+    assert any("Traceback" in s and "no such agent today" in s for s in said)

@@ -436,7 +436,7 @@ class ProbeEpisode(Episode):
                 "scope": self.scope, "budgets": self.budgets.to_dict(),
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
 
-    def execute(self, call: ToolCall) -> dict:
+    def _execute(self, call: ToolCall) -> dict:   # under Episode.execute's harness-failure guard (2026-10-28)
         name, params = self.dialect.canonical(call.name), call.params or {}
         images = None
         if name not in self.allowed:

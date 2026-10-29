@@ -290,10 +290,12 @@ def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] 
                 cell = running.pop(fut)
                 try:
                     row = fut.result()
-                except Exception as exc:  # a cell that could not even start (bad entry, agent)
+                except Exception as exc:  # a cell that could not start (bad entry, agent), or an escape from the loop
+                    tb = traceback.format_exc()
                     failures.append({"task_id": cell.task_id, "agent": cell.agent,
-                                     "error": "".join(traceback.format_exception_only(type(exc), exc)).strip()})
-                    say(f"ERROR {cell.task_id} {cell.agent}: {exc}")
+                                     "error": "".join(traceback.format_exception_only(type(exc), exc)).strip(),
+                                     "traceback": tb})
+                    say(f"ERROR {cell.task_id} {cell.agent}: {exc}\n{tb}")
                     if isinstance(exc, EngineDown):
                         stop("engine", "the model endpoint is down")
                     continue

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import tempfile
 import time
 import traceback
@@ -134,6 +135,26 @@ def _hash(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _harness_failure(exc: BaseException) -> str:
+    return "".join(traceback.format_exception_only(type(exc), exc)).strip()
+
+
+@dataclass
+class UnscoredReport:
+    """What an episode gets when scoring itself failed (2026-10-28): no credit, no hard fail, the failure in its
+    place. The episode ends as ``error`` and the report leaves it out, as it does every errored episode."""
+    error: str
+    rubric_score: float = 0.0
+    hard_failed: bool = False
+
+    @property
+    def effective_score(self) -> float:
+        return 0.0
+
+    def to_dict(self) -> dict:
+        return {"unscored": True, "error": self.error}
+
+
 class Episode:
     """One agent on one task under one configuration."""
 
@@ -231,7 +252,25 @@ class Episode:
 
     # ------------------------------------------------------------ execute
 
+    harness_error: Optional[str] = None
+
     def execute(self, call: ToolCall) -> dict:
+        """``_execute`` with the harness's own failure caught (2026-10-28: a TypeError inside a tool call on
+        Gemma 4 12B's D1-001041 escaped the loop and the episode ended with no end record, as a d1-variance cell
+        had on Oct 25). The call's result names the failure, the traceback goes to stderr (the run log), and the
+        loop ends the episode as ``error``: the harness's outcome, not the model's, so no step is counted and the
+        report leaves the episode out, for ``clear-errors`` to run again."""
+        try:
+            return self._execute(call)
+        except Exception as exc:
+            self.harness_error = _harness_failure(exc)
+            print(f"harness error in {call.name}: {self.harness_error}\n{traceback.format_exc()}",
+                  file=sys.stderr, flush=True)
+            self._turn_images.append(None)
+            return _error(call.name, "harness_error",
+                          f"the harness failed on this call ({self.harness_error}); the episode ends")
+
+    def _execute(self, call: ToolCall) -> dict:
         """One tool call on the session: a step, whatever it returns.  The
         call's name is resolved through the dialect first; the session runs
         it with file access held to the episode folder, and its result is
@@ -397,6 +436,8 @@ class Episode:
                         self._turn_images.append(None)
                         break
                     results.append(self.execute(call))
+                    if self.harness_error:
+                        break
                 assistant = {"text": "", "tool_calls": [self._call_record(c) for c in calls],
                              "submit": submitted, **self.agent.turn_record()}
                 if submitted and self.submit_note and not assistant.get("text"):
@@ -405,6 +446,9 @@ class Episode:
                     assistant["implicit_submit"] = True
                 record({"type": "turn", "n": n, "assistant": assistant, "results": results,
                         "usage": usage, "elapsed_ms": int(round((time.monotonic() - t0) * 1000))})
+                if self.harness_error:
+                    self.termination, self.error = "error", f"harness: {self.harness_error}"
+                    break
                 if submitted:
                     self.termination = "submit"
                     break
@@ -414,7 +458,13 @@ class Episode:
                     observation["images"] = list(self._turn_images)
         finally:
             self.agent.close()
-        report, records = self.finish()
+        try:
+            report, records = self.finish()
+        except Exception as exc:  # the verifier or the audit failed: the episode still ends on record (2026-10-28)
+            text = _harness_failure(exc)
+            print(f"harness error in scoring: {text}\n{traceback.format_exc()}", file=sys.stderr, flush=True)
+            self.termination, self.error = "error", f"harness: scoring: {text}"
+            report, records = UnscoredReport(text), [{"type": "harness_error", "stage": "scoring", "error": text}]
         elapsed_ms = int(round((time.monotonic() - started) * 1000))
         if writer:
             for rec in records:
