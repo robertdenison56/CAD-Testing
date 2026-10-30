@@ -125,6 +125,21 @@ for the zero-step kind. The reports are written (d1-real's with `--reverify`,
 as its published row was), not published: the two rows change after a look at the numbers, with
 `report --publish` and `scripts/make_leaderboard.py`.
 
+## Harness failures (2026-10-28)
+
+An exception the harness itself raises inside a tool call used to escape the episode loop (only the agent's own
+exceptions were caught): the runner logged `ERROR <task> <model>: <message>` without a traceback and the episode file
+was left with no end record, which the report counts as incomplete and a resume runs again. Seen twice: the d1-variance
+cell D1-001010 s4 on Oct 25 (`'NoneType' object is not iterable`) and Gemma 4 12B's D1-001041 on Oct 28 at 21:05
+(`unhashable type: 'list'`, in its sixth turn). Since Oct 28 (`roaddraft/eval/episode.py`, on main since Oct 29 and on
+Gemma's fix-up pin 7d694792) `Episode.execute` guards the tool bridge: the call's result is a `harness_error`, the
+traceback goes to stderr and so to the run log, and the episode ends as `error` with its end record and no step
+counted; the report leaves errored episodes out and `clear-errors RUN --apply` sets them aside for the resume. Scoring
+has the same cover, and the runner's cell failures keep their traceback. Queue 5 (`results/e3-lms/queue-2026-10-28d.sh`)
+completed Gemma's run from that pin at 12:15 Oct 29: the errored episode and the silent turns after steps (`clear-errors --turn-time`;
+the abandoned D1-001041 had already run clean on the night's last retry); queue 7 (`queue-2026-10-29-glm-fixup.sh`) does
+the same for GLM's run after the self-correct nights.
+
 How the rig differs from the Runpod rows, for the writeup:
 - one model and one episode at a time (Runpod ran r1-r3 as three processes on one vLLM worker);
 - no 570 s proxy cut-off: a turn ends at the runner's own 1,800 s limit, and the 30-minute budget is wall

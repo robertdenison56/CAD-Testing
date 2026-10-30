@@ -103,6 +103,25 @@ change only after a look at the numbers, then `report --publish` (d1-real: `--re
 `scripts/make_leaderboard.py`. Expected start Oct 29 morning (Gemma at 45 of 100 at 21:27, about 6 min an
 episode, so ~03:00; GLM about six hours after), then an hour or two of episodes.
 
+**Queue 5** (Robert, 22:45: "Yes, queue it"; `results/e3-lms/queue-2026-10-28d.sh`, log beside it, started 22:51)
+waits for queue 4's "queue done" and an idle server, then completes and cleans Gemma 4 12B's d1-test run inside its run
+id: `clear-errors --turn-time` sets aside the errored episode (D1-001009, 12:41, LM Studio's 500 "Unexpected empty
+grammar stack", the Oct 27 kind) and the silent turns after steps (D1-001014 after 17 steps, 001025 after 42, 001040
+after 3, and any the rest of the night adds), the abandoned D1-001041 reruns on its own as an incomplete episode, and
+`e3 gemma-4-12b` resumes from the worktree `lms-gemma-fixup` at 7d694792 = 291ae711 + the stall guard 31774181 + the
+harness fix below, at the run's 98,304, under a `watch`; the report is written, not published, and the row changes
+after a look. **The harness fix** (on main since Oct 29; first on the pin as 7d694792, tag
+`pin/e3-d1-test-gemma-4-12b-q8-lms-fixup`): D1-001041 was abandoned at 21:05 when the harness raised
+`TypeError: unhashable type: 'list'` inside a tool call. Only the agent's own exceptions were caught, so the exception
+escaped the episode loop, the runner logged a one-line cell failure without a traceback, and the file was left with no
+end record (the d1-variance cell D1-001010 s4 went the same way on Oct 25, on `'NoneType' object is not iterable`).
+Now `Episode.execute` guards the tool bridge: the call's result names the failure, the traceback goes to the run log,
+and the episode ends as `error` with its end record and no step counted, the harness's outcome rather than the
+model's, so the report leaves it out and `clear-errors` reruns it; scoring has the same cover (an `UnscoredReport`
+when the verifier fails), the probe episode's bridge sits under the guard, and a cell failure in the runner keeps its
+traceback. Three tests. The 9B's rerun (queue 4) runs without this fix, at the pins already set; the crash is rare
+(two in about a thousand local episodes).
+
 **The 9B's hard-pilots run ended 16:01 PDT on 2026-10-27**: 2 of the 24 text-only pilots passed (p02-sources-wfl19a,
 p14-qa-review-ppm045a), effective 8.7 [0.0-17.4] over 23 scored, rubric 31.4 (the share of each pilot's items done),
 four pilots at the 30-minute clock, one lost to an LM Studio server error ("Unexpected empty grammar stack", left out as
