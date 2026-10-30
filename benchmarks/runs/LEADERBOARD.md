@@ -6,26 +6,32 @@ The benchmark board: every published run on the eval sets, scored by the verifie
 
 ## `d1-test`: seeded sheets
 
-**Best model 62.5/100 on d1-test (qwen/qwen3.5-9b · single · explicit, 95% CI 57.2–67.8, hard-fail 15%).**
+**Best model 83.8/100 on d1-test (gpt-6-luna (medium) via codex · single · explicit, 95% CI 79.8–87.4, hard-fail 1%).**
 
 | # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
 |---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
-| 1 | qwen/qwen3.5-9b · single · explicit | default | **62.5** | 57.2–67.8 | 69.6 | 15% | 30% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single` |
-| 2 | google/gemma-4-12b · single · explicit | thinking on | **56.6** | 52.4–61.1 | 66.4 | 15% | 33% | 28% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single` |
+| 1 | gpt-6-luna (medium) via codex · single · explicit | medium | **83.8** | 79.8–87.4 | 84.6 | 1% | 57% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single` |
+| 2 | qwen/qwen3.5-9b · single · explicit | default | **62.5** | 57.2–67.8 | 69.6 | 15% | 30% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single` |
+| 3 | google/gemma-4-12b · single · explicit | thinking on | **56.6** | 52.4–61.1 | 66.4 | 15% | 33% | 28% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single` |
 
 ## `d1-real`: the sample plan sheets
 
-**Best model 64.0/100 on d1-real (qwen/qwen3.5-9b · single · explicit, 95% CI 59.4–68.2, hard-fail 4%).**
+**Best model 77.7/100 on d1-real (gpt-6-luna (medium) via codex · single · explicit, 95% CI 73.5–81.9, hard-fail 6%).**
 
-| # | Model · mode · prompt | Effort | Effective | 95% CI | Draft | Letter | Sheet | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
-|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| 1 | qwen/qwen3.5-9b · single · explicit | default | **64.0** | 59.4–68.2 | 100.0 ± 0.0 (n 9) | 56.4 ± 7.5 (n 45) | 64.3 ± 6.5 (n 45) | 66.8 | 4% | 31% | 0% | – | 99 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single` |
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Draft | Letter | Sheet | Notes | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
+|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | gpt-6-luna (medium) via codex · single · explicit | medium | **77.7** | 73.5–81.9 | 100.0 ± 0.0 (n 25) | 74.3 ± 2.1 (n 25) | 81.2 ± 9.0 (n 25) | 55.2 ± 14.4 (n 25) | 81.0 | 6% | 50% | 1% | – | 100 × 1 | `e3-d1-real-gpt-6-luna-codex-medium-single` |
+| 2 | qwen/qwen3.5-9b · single · explicit | default | **64.0** | 59.4–68.2 | 100.0 ± 0.0 (n 9) | 56.4 ± 7.5 (n 45) | 64.3 ± 6.5 (n 45) | – | 66.8 | 4% | 31% | 0% | – | 99 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single` |
 
-Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Draft = draft linework (`real-draw-alignment`); Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
+Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Draft = draft linework (`real-draw-alignment`); Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`); Notes = notes and dimensions (`real-construction-callouts`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
 
 ## `hard-pilots`: the harder tasks (pass or fail)
 
-No ranked run yet. A row needs a published run on `hard-pilots` that covers every task of the current set (a run on part of it is published as partial and listed among the runs not ranked); each task scores 100 on a pass and 0 on a fail by its own check, whose source hash is the row's verifier version. The nine pilots that come with a page need a model that takes images.
+**Best model 9.1/100 on hard-pilots (gpt-6-luna (medium) via codex · single · explicit, 95% CI 3.0–18.2, hard-fail 91%).**
+
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
+|---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
+| 1 | gpt-6-luna (medium) via codex · single · explicit | medium | **9.1** | 3.0–18.2 | 44.9 | 91% | 9% | 1% | – | 33 × 1 | `e3-hard-pilots-gpt-6-luna-codex-medium-single` |
 
 ## Published runs that are not ranked
 
