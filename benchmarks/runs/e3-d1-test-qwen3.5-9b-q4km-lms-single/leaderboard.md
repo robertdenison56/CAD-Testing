@@ -8,7 +8,7 @@ Effective score: 0 on a hard fail, else the rubric score; per task over its samp
 
 | # | Row | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Submit | Steps (med / p90) | Invalid calls | Recovery | run_check | Cost / sheet | Tasks × k |
 |---:|---|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|
-| 1 | qwen/qwen3.5-9b · single · explicit | default | **62.5** | 57.2–67.8 | 69.4 | 15% | 30% | 90% | 18 / 72 | 0% | 44% | 0.0 | – | 100 × 1 |
+| 1 | qwen/qwen3.5-9b · single · explicit | default | **62.5** | 57.2–67.8 | 69.6 | 15% | 30% | 94% | 18 / 72 | 0% | 44% | 0.0 | – | 100 × 1 |
 
 ## Per-check credit
 
@@ -20,14 +20,14 @@ Mean credit (0–1) over the episodes whose task has the check in scope; – whe
 |---|---:|---:|
 | D1-00 sheet setup | 5 | 0.62 |
 | D1-01 alignment linework on the alignment… | 10 | 1.00 |
-| D1-02 station tick at every interval station… | 9 | 0.50 |
+| D1-02 station tick at every interval station… | 9 | 0.54 |
 | D1-03 station numbers (the Caltrans way… | 12 | 0.73 |
 | D1-04 BC/EC (PCC/PRC) station lettered at… | 14 | 0.51 |
 | D1-05 bearing and distance on every tangent… | 10 | 0.52 |
 | D1-06 curve table on the sheet (No., R, Δ, T… | 14 | 0.92 |
 | D1-07 label position within tolerance of the… | 8 | 0.69 |
 | D1-08 legibility | 6 | 0.55 |
-| D1-09 layers and text heights per spec | 6 | 0.58 |
+| D1-09 layers and text heights per spec | 6 | 0.59 |
 | D1-10 title block fields present; scale… | 5 | 0.86 |
 | D1-11 north arrow present on the sheet | 1 | 0.42 |
 | D1-12 pavement edges | 8 | 0.67 |
@@ -43,30 +43,29 @@ Share of episodes with at least one finding in the category (findings per episod
 |---|---:|---|
 | completeness | 48% (4.2) | missing 398, missing_field 27 |
 | value | 18% (0.7) | geometry_mismatch 37, wrong_value 24, wrong_field 7 |
-| anchoring | 13% (2.9) | unanchored 241, duplicate 47, anchor_inconsistent 1 |
-| placement | 8% (0.7) | misplaced 62, not_visible 4 |
-| legibility | 24% (1.5) | overlap 103, off_sheet 32, clipped 14 |
-| standards | 36% (4.7) | wrong_height 395, wrong_layer 54, wrong_layer_props 20 |
+| anchoring | 14% (2.9) | unanchored 244, duplicate 47, anchor_inconsistent 1 |
+| placement | 7% (0.5) | misplaced 41, not_visible 4 |
+| legibility | 24% (1.5) | overlap 107, off_sheet 32, clipped 11 |
+| standards | 36% (4.2) | wrong_height 368, wrong_layer 33, wrong_layer_props 20 |
 | sheet_setup | 8% (0.1) | not_fitted 10, sheet_missing 2 |
 
 ### Tool use and termination
 
 | | #1 |
 |---|---:|
-| tool calls | 2886 |
+| tool calls | 2909 |
 | invalid-call rate | 0% |
 | other fault rate | 8% |
 | recovery rate | 44% |
 | coordinate path share | 7% |
 | stopped without calling submit | 4% |
 | Δ effective after last run_check | – |
-| ended budget:turn_time | 4 |
 | ended budget:wall_clock | 6 |
-| ended submit | 90 |
+| ended submit | 94 |
 | error budget_exhausted | 6 |
-| error command_failed | 185 |
+| error command_failed | 183 |
 | error invalid_params | 1 |
-| error query_failed | 37 |
+| error query_failed | 36 |
 
 ## By task type and sheet count
 
