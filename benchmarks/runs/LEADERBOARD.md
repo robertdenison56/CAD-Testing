@@ -6,13 +6,18 @@ The benchmark board: every published run on the eval sets, scored by the verifie
 
 ## `d1-test`: seeded sheets
 
-**Best model 83.8/100 on d1-test (gpt-6-luna (medium) via codex · single · explicit, 95% CI 79.8–87.4, hard-fail 1%).**
+**Best model 90.5/100 on d1-test (gpt-6-luna (medium) via codex · self_correct · explicit, 95% CI 87.1–94.1, hard-fail 1%).**
 
 | # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
 |---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
-| 1 | gpt-6-luna (medium) via codex · single · explicit | medium | **83.8** | 79.8–87.4 | 84.6 | 1% | 57% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single` |
-| 2 | qwen/qwen3.5-9b · single · explicit | default | **62.5** | 57.2–67.8 | 69.6 | 15% | 30% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single` |
-| 3 | google/gemma-4-12b · single · explicit | thinking on | **56.6** | 52.4–61.1 | 66.4 | 15% | 33% | 28% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single` |
+| 1 | gpt-6-luna (medium) via codex · self_correct · explicit | medium | **90.5** | 87.1–94.1 | 91.2 | 1% | 68% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-self_correct` |
+| 2 | gpt-6-luna (medium) via codex · vision · explicit | medium | **86.1** | 82.2–89.9 | 88.7 | 4% | 66% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-vision` |
+| 3 | gpt-6-luna (medium) via codex · single · explicit | medium | **83.8** | 79.8–87.4 | 84.6 | 1% | 57% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single` |
+| 4 | gpt-6-luna (medium) via codex · single · explicit · ord | medium | **82.2** | 78.4–85.9 | 85.1 | 4% | 55% | 1% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single-ord` |
+| 5 | gpt-6-luna (medium) via codex · single · explicit · c3d | medium | **78.5** | 74.8–81.8 | 81.1 | 3% | 52% | 1% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single-c3d` |
+| 6 | gpt-6-luna (medium) via codex · single · vague | medium | **67.7** | 64.4–70.9 | 68.2 | 1% | 25% | 1% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single-vague` |
+| 7 | qwen/qwen3.5-9b · single · explicit | default | **62.5** | 57.2–67.8 | 69.6 | 15% | 30% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single` |
+| 8 | google/gemma-4-12b · single · explicit | thinking on | **56.6** | 52.4–61.1 | 66.4 | 15% | 33% | 28% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single` |
 
 ## `d1-real`: the sample plan sheets
 
