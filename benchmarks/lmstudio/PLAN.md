@@ -145,7 +145,47 @@ inside another queue's retry). `clear-errors --turn-time` sets aside the silent 
 and 001046 at 16), the resume runs the nine cells the night never finished, and `e3 glm-4.6v-flash` runs from
 `lms-gemma-fixup` at 7d694792 (GLM's night has the same base, 291ae711, so the pin is that plus the stall guard and
 the harness fix; tag `pin/e3-d1-test-glm-4.6v-flash-q4km-lms-fixup`) at 131,072 under a `watch`; the report is
-written, not published.
+written, not published. Queue 6 ended at 20:37 Oct 30 and queue 7 started at 20:52.
+
+**Queue 8** (Robert, 22:2x Oct 30: "Yes, queue it"; `results/e3-lms/queue-2026-10-30-sc-fixup.sh`, log beside it,
+started 22:25) completes two of queue 6's self-correct nights inside their run ids, from their own worktree
+`lms-selfcorrect` (d2ac876b), after queue 7's "queue done" and 15 idle minutes. First the 9B's three episodes lost
+to LM Link drops (D1-001012, 001030, 001064; `clear-errors`, errors only, so the silent turn after 16 steps on
+D1-001024 stays the model's outcome), about 20 minutes; then GLM's 38 unfinished tasks (its night used all six
+attempts on silent-turn stalls and stopped at 62 of 100, 29.5 effective; D1-001062 aside for its one rerun, D1-001063
+and D1-001064 to D1-001099 left to the resume), with ten attempts, about 4 to 5 hours with its stalls. Gemma 4 12B's
+night ended clean and is not touched. Reports written, not published; the 9B's row, already on the board since
+17:10 Oct 30, republishes in place after a look.
+
+Queue 7 ended at 22:52 Oct 30: GLM's single row is complete, 28.50 [23.4-33.7] over 100, no errors. Queue 8 ended at
+02:44 Oct 31. The 9B's self-correct row is 67.03 [62.0-71.8] over 100. GLM's self-correct row is 28.87 [25.1-32.7]
+over 100, on attempt 4 of 10, with two more watcher-caught stalls. Three of its cells (D1-001065, 001091, 001098) hit a
+harness crash, `unhashable type: 'dict'`, which d2ac876b leaves without a traceback because it predates the crash fix;
+each finished on the next attempt. The three rows were published at 09:3x Oct 31 on Robert's "Yes, publish". Paired
+self-correct gaps over all 100 tasks: the 9B +4.5 [-2.8, +12.3], Gemma +9.6 [+1.3, +17.9], GLM +0.4 [-5.7, +6.4].
+
+**Queue 9** (Robert, 09:3x Oct 31: "finish out the eval set for the local models";
+`results/e3-lms/queue-2026-10-31-trackd.sh`, log beside it, launched 09:35) runs the rest of the local push below for
+the three local models on the board. The 4B waits for its download on the PC. It runs from a new worktree,
+`lms-trackd`, at main 3424132d: the commit the Luna and Terra rows ran from, with tools 60eeeb21 and instructions
+4dff2849, and with the stall guard, the rig and the harness crash fix in. Step 3's engine-branch merges were not done
+before the frontier rows ran d1-real and hard-pilots on this engine, so the local rows run on it too and stay
+comparable with them. The steps, in order:
+
+1. A one-episode smoke (Gemma, d1-real-dev). The queue stops for a look unless the episode ends by submit or budget
+   with at least one step.
+2. d1-real x 1 for Gemma 4 12B, then GLM-4.6V-Flash.
+3. `vision NAME` for each of the three models. A model that does not read the image runs only the 24 text pilots,
+   and the 9B's vision night is skipped if the 9B does not read it.
+4. hard-pilots x 1, all 33, for the 9B, Gemma and GLM. The 9B's run takes a new id,
+   `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-main`, because its old 24-pilot row ran on the pilot-astra engine.
+5. The 9B's d1-test vague and vision runs, x 1 each.
+6. The 9B's d1-test single row to k = 5: samples 1-4, 400 episodes, from that row's own pin 97469b45 (worktree
+   `lms-9b-rerun-test`).
+
+Each run has a `watch` beside it and retries 10 minutes apart. Episodes that ended in error (LM Link drops and harness
+crashes, which are not the model's) are then set aside with `clear-errors` and resumed once. Silent turns after steps
+stay the model's. Reports are written, not published, until Robert looks. About 4 to 5 days in all.
 
 **The 9B's hard-pilots run ended 16:01 PDT on 2026-10-27**: 2 of the 24 text-only pilots passed (p02-sources-wfl19a,
 p14-qa-review-ppm045a), effective 8.7 [0.0-17.4] over 23 scored, rubric 31.4 (the share of each pilot's items done),
