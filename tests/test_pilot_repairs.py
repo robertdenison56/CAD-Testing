@@ -13,6 +13,10 @@ def _sheet(session: Session):
     return next(iter(session.doc.sheets.values()))
 
 
+def _dist(a, b):
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
 def _texts(container):
     return [e for e in container.values() if isinstance(e, Text)]
 
@@ -64,17 +68,33 @@ def test_d10_has_no_placeholders_doubled_landing_or_lettering_under_the_divider(
 
 
 def test_stripped_lines_leave_no_empty_bubble_rings_or_traced_callouts(tmp_path):
-    for pid, start, sheet_file, sheet_id in (
-            ("p04-crowded-ppm045", "p04-crowded-ppm045", "0000000000ea001.rdraft", "PPM-045"),
-            ("p04-crowded-ppm050", "p04-crowded-ppm050", "0000000000ea007.rdraft", "PPM-050")):
+    """A stripped line's curve bubbles, digitised as rings of vertices, go with
+    the line (tasks.real.strip_alignment, since 2026-10-31). A ring that is no
+    line's bubble stays: L-7's kept CURVE DATA table has one round its header's
+    "No. (X)" legend, the X lost in the redraft."""
+    from roaddraft.design.horizontal import Alignment
+    from roaddraft.probes.pilot.layout import _task
+    from roaddraft.tasks.real import BUBBLE_REACH_IN
+    for pid, start, sheet_file, sheet_id, names in (
+            ("p04-crowded-ppm045", "p04-crowded-ppm045", "0000000000ea001.rdraft", "PPM-045",
+             ("D13", "TB2", "TB1")),
+            ("p04-crowded-ppm050", "p04-crowded-ppm050", "0000000000ea007.rdraft", "PPM-050",
+             ("D13", "F3", "F6", "FR", "F2"))):
         out = tmp_path / pid
         doc = fixture.start_document(out, start)
         s = Session.load(doc, out_dir=out)
         sheet = _sheet(s)
+        to_paper = sheet.viewports[0].transform().to_paper
+        mids = []
+        for name in names:
+            align = Alignment.from_dict(_task(sheet_id, name).brief.design["alignments"][name])
+            mids += [to_paper(align.point_at(c.start_dist + c.length / 2.0)) for c in align.curves()]
         for e in sheet.entities.values():
             if e.layer == "S-ANNO-TAG" and isinstance(e, Polyline) and len(e.vertices) >= 8:
-                raise AssertionError(f"{pid}: bubble ring {e.id} left on the sheet")
-        to_paper = sheet.viewports[0].transform().to_paper
+                centre = [sum(v[0] for v in e.vertices) / len(e.vertices),
+                          sum(v[1] for v in e.vertices) / len(e.vertices)]
+                if any(_dist(centre, m) <= BUBBLE_REACH_IN for m in mids):
+                    raise AssertionError(f"{pid}: bubble ring {e.id} left on the sheet")
         boxes = [b for line in STALE_TRACED.get(sheet_id, {}).values() for b, _ in line]
         for name in ("0000000000aa01.rdraft", "0000000000bb01.rdraft"):
             base = Session.load(out / name)
@@ -84,15 +104,32 @@ def test_stripped_lines_leave_no_empty_bubble_rings_or_traced_callouts(tmp_path)
 
 
 def test_l1_redline_start_keeps_tb2s_curve_data(tmp_path):
+    """The strip keeps TB2's row of the published CURVE DATA table (digitised as
+    texts) and takes TB1's ring; the start numbers TB2's curve 2 in that row
+    and in its ring, beside the reference's TB1 table and bubble numbered 1."""
     doc = fixture.start_document(tmp_path, "p11-station-ppm045")
     s = Session.load(doc, out_dir=tmp_path)
     sheet = _sheet(s)
     tables = [e for e in sheet.entities.values() if isinstance(e, Table)]
-    assert len(tables) == 2
-    numbers = sorted(str(row[0]) for t in tables for row in t.rows)
-    assert numbers == ["1", "2"]
-    rings = [e for e in sheet.entities.values()
-             if e.layer == "S-ANNO-TAG" and isinstance(e, Polyline) and len(e.vertices) >= 8]
-    assert len(rings) == 1                      # TB2's; TB1's empty ring went
-    digits = [t.content for t in _texts(sheet.entities) if t.content.strip().isdigit()]
-    assert "2" in digits
+    assert len(tables) == 1                     # the reference's, TB1's curve
+    assert [str(row[0]) for row in tables[0].rows] == ["1"]
+    header = [t for t in _texts(sheet.entities) if t.content.strip().upper() == "NO."]
+    assert len(header) == 1                     # the published table's No. column
+    cells = [t for t in _texts(sheet.entities) if t.content.strip().isdigit()
+             and abs(t.position[0] - header[0].position[0]) <= 0.6
+             and 0 < header[0].position[1] - t.position[1] <= 1.0]
+    assert [t.content for t in cells] == ["2"]  # TB2's kept row, renumbered
+    rings = {e.id: e for e in sheet.entities.values()
+             if e.layer == "S-ANNO-TAG" and isinstance(e, Polyline) and len(e.vertices) >= 8}
+    assert "PL-005" not in rings                # TB1's empty ring went with the strip
+    assert "PL-004" in rings                    # TB2's, numbered 2 below
+    for rid, ring in rings.items():
+        centre = [sum(v[0] for v in ring.vertices) / len(ring.vertices),
+                  sum(v[1] for v in ring.vertices) / len(ring.vertices)]
+        inside = [t.content for t in _texts(sheet.entities)
+                  if abs(t.position[0] - centre[0]) <= 0.1 and abs(t.position[1] - centre[1]) <= 0.1]
+        if rid == "PL-004":
+            assert inside == ["2"]
+        else:                                   # the kept table's "No. (X)" legend ring
+            assert _dist(centre, header[0].position) <= 0.8, rid
+

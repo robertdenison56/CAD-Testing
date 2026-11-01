@@ -306,38 +306,36 @@ def _builder(inst: Redline):
     return build
 
 
-#: L-1's other curve: the real task strips the CURVE DATA table that held both lines'
-#: curves and the reference letters TB1's alone, so TB2's row and bubble come back
+#: L-1's other curve: the real task's strip keeps TB2's row of the CURVE DATA table that
+#: held both lines' curves (reading No. 1, as published) while the reference letters TB1's
+#: bubble and table as 1, and TB2's ring lost its number in the redraft: TB2's curve is 2
 TB2_RING = "PL-004"       # TB2's bubble ring on the sheet (its number the redraft lost)
-TB1_RING = "PL-005"       # TB1's published ring, empty beside the reference's bubble
 TB2_NUMBER = "2"          # TB1's anchored bubble is 1, so TB2's curve is 2
-TABLE_GAP_IN = 0.25
+NO_COLUMN_IN = 0.6        # a No. cell sits within this of the header, in x
+NO_ROWS_IN = 1.0          # and within this below it
 
 
 def _restore_tb2(out: Path) -> None:
+    """Number TB2's curve 2: the digit in its ring and the No. cell of its kept row.
+    (Until 2026-10-31 the strip took the whole shared table and this placed TB2's
+    table back and deleted TB1's ring; the strip now keeps the row and takes the ring.)"""
     s = common.load(out / common.sheet_file(STATION.sheet_id))
     sheet = next(iter(s.doc.sheets.values()))
-    table = next(e for e in sheet.entities.values() if isinstance(e, Table))
     ring = sheet.entities[TB2_RING]
     centre = [sum(p[0] for p in ring.vertices) / len(ring.vertices),
               sum(p[1] for p in ring.vertices) / len(ring.vertices)]
     common.ok(s.execute("place_text", {"space": sheet.name, "layer": ring.layer, "position": centre,
                                        "height": 0.12, "halign": "center", "valign": "middle",
                                        "content": TB2_NUMBER}))
-    old = sheet.entities[TB1_RING]
-    oc = [sum(p[0] for p in old.vertices) / len(old.vertices),
-          sum(p[1] for p in old.vertices) / len(old.vertices)]
-    gone = [TB1_RING] + [e.id for e in sheet.entities.values() if isinstance(e, Line)
-                         and min(geo.distance(e.start, oc), geo.distance(e.end, oc)) <= 0.25]
-    common.ok(s.execute("delete_entities", {"ids": gone}))
-    bb = table.bbox(s.doc)
-    common.ok(s.execute("place_curve_table", {
-        "space": sheet.name, "alignment": f"{DESIGN_REF}:TB2",
-        "position": [bb[0], bb[1] - TABLE_GAP_IN],
-        "text_height": float(table.text_height), "layer": table.layer,
-        "first_curve_number": int(TB2_NUMBER)}))
+    header = [e for e in sheet.entities.values() if isinstance(e, Text) and _norm(e.content) == "NO."]
+    cells = [e for e in sheet.entities.values() if isinstance(e, Text) and e.content.strip() == "1"
+             and any(abs(e.position[0] - h.position[0]) <= NO_COLUMN_IN
+                     and 0 < h.position[1] - e.position[1] <= NO_ROWS_IN for h in header)]
+    if len(header) != 1 or len(cells) != 1:
+        raise RuntimeError(f"L-1's kept CURVE DATA row: {len(header)} No. header(s), "
+                           f"{len(cells)} No. 1 cell(s) under it; expected one of each")
+    common.ok(s.execute("modify_entity", {"id": cells[0].id, "changes": {"content": TB2_NUMBER}}))
     common.save(s, out / common.sheet_file(STATION.sheet_id))
-
 
 for _inst in INSTANCES:
     common.register(_inst.id, common.sheet_file(_inst.sheet_id), _builder(_inst))

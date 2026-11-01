@@ -135,14 +135,16 @@ pilots passed. The three QA-review fails were all the harness's: Astra found eve
   first; "Orchard Creek" in seven pieces, one 0.5 in tall; TB1's bearing and length digitised as
   strokes, stale against the design (L-1); two "See Section X for details" placeholders, a leader
   landing drawn twice and the 153+00 station number under the plan/profile divider (D.10).
-- **What stripping a line left** (`layout._strip`): curve bubbles digitised as rings of vertices,
-  which `strip_alignment` does not see (it looks for circles), and the published BC callout of
-  L-7's F3 that survives only as strokes.
-- **The L-1 redline start** (`redlines._restore_tb2`): the real task's strip takes the CURVE DATA
-  table that held both lines' curves and the reference letters TB1's alone, so TB2's row and its
-  bubble number come back (its curve numbered 2, TB1's anchored bubble being 1). The same loss
-  sits in the E1 real-task starts of every sheet whose table tabulates several lines; not fixed
-  there.
+- **What stripping a line left** (`layout._strip`): the published BC callout of L-7's F3 that
+  survives only as strokes. (Curve bubbles digitised as rings of vertices, which the strip did not
+  see, were the other leftover until 2026-10-31, when the strip fix took them with their digit and
+  leader; `layout._strip_rings` then found nothing to do and went.)
+- **The L-1 redline start** (`redlines._restore_tb2`): the real task's strip keeps TB2's row of
+  the CURVE DATA table that held both lines' curves, reading No. 1 as published, while the
+  reference's TB1 bubble and table say 1 too; the start numbers TB2's row and its empty ring 2.
+  (Until 2026-10-31 the strip took the whole table, and the start placed TB2's table and number
+  back and deleted TB1's ring.) The E1 real-task starts of every sheet whose table tabulates
+  several lines keep the other lines' rows the same way since that strip fix.
 
 - **No way back from a base file** (2026-10-26 rerun, p11-radius-ppm160). Astra opened
   AA01 with `open_document` to revise the curve, then could not reopen PD-1: nothing named the
@@ -283,7 +285,9 @@ does a probe run.
    `redlines._restore_tb2`); once it takes this fix, `_strip_rings` finds nothing to do and can
    go, and `_restore_tb2` should keep only its renumbering (TB2's kept row still reads No. 1, as
    published, while TB1's anchored bubble and table say 1 too) and no longer place a second
-   table or delete TB1's ring, which the strip now does.
+   table or delete TB1's ring, which the strip now does. *Done 2026-10-31 with the merge of the
+   three engine branches into main (Robert: "merge all engine branches"): `_strip_rings` removed,
+   `_restore_tb2` keeps the renumbering alone; the catalogue was rebuilt and `d1-real` redrawn.*
 
 ## The first full pass (GPT-6-Astra, medium, 2026-10-26 to 27)
 

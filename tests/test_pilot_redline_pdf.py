@@ -54,14 +54,16 @@ def test_probes_build():
 
 
 @pytest.mark.parametrize("pid", IDS)
-def test_the_start_is_the_page_and_an_untouched_sheet(starts, pid):
+def test_the_start_is_the_page_and_an_untouched_sheet(starts, pid, tmp_path):
     inst = BY_INST[pid]
     doc = starts[pid]
     page = doc.parent / rp.MARKUPS
     assert (page / f"{inst.page}.png").stat().st_size > 10000
     assert (page / f"{inst.page}.pdf").read_bytes()[:5] == b"%PDF-"
-    # the sheet file is the redraft as staged: nothing to find on it
-    staged = common.folder(inst.sheet_id) / common.sheet_file(inst.sheet_id)
+    # the sheet file is the redraft as staged (repaired as every pilot start is,
+    # repairs.py): nothing to find on it
+    common.stage(tmp_path / "staged", inst.sheet_id)
+    staged = tmp_path / "staged" / common.sheet_file(inst.sheet_id)
     mine, theirs = read_document(doc), read_document(staged)
     for d in (mine, theirs):
         d.pop("meta", None)

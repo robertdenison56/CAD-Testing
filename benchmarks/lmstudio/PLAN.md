@@ -316,7 +316,17 @@ d1-test, the 9B's silent-turn reruns) are through and published:
 3. **The engine branch merges** (recursing-chaum, then jolly-borg, then pilot-astra; tracker step a-pilot-gaps), the
    catalogue rebuild and the trajectory re-recording (CPU on the Mac, in parallel with the nights above), then a new
    worktree at the merged main for everything below. Runs in flight keep their pins. Before the d1-real nights, since the
-   shared-table strip redraws d1-real.
+   shared-table strip redraws d1-real. *MERGED 2026-10-31 21:00 to 21:45 (Robert: "merge all engine branches"): the three
+   branches in that order (d1bfc6ca, 1ecb9451, ac4878f0), the catalogue rebuilt (616 tasks, 50 pairings left out) and
+   `d1-real` redrawn from it: 95 of the 100 pairings keep their ids, 5 are new (one each of bearings, alignment-data,
+   callouts, curve-table, draw-alignment; dropped: PPM-045 TB2 curve-table, PPM-051 WIS1, PPM-047 IN4, PPM-050 F3,
+   PPM-048 IND1). The real-sheet rows keep ranking (held to the builder's version, real-v1, unchanged). The served tool
+   surface is now sha256:379e02f199 (104 tools; instructions unchanged, 4dff2849). The pilot checks' source hash moved
+   (pilot-check-a6cca462de35 to 684c78211b52), and `report --reverify` of the nine hard-pilots rows is NOT sound: a replay
+   runs on starts the models never saw (the branch's sheet repairs on L-1 and D.10 shift entity ids), and every row fell
+   (Opus 5.5 self-correct 84.8 to 57.6) with the changes confined to the PPM-045 and WFL19 pilots; the rows keep their
+   scores and their a6cca462de35 stamp (the re-scored reports sit beside each run as `report-rescored-684c78211b52-2026-10-31`).
+   Queue 9's hard-pilots nights run at 3424132d and stamp the same way. The trajectory re-recording is not done.*
 4. **d1-real x 1** for Gemma 12B, GLM and the 4B (about 14 h each). The 9B's row stands as a draw of the set.
 5. **hard-pilots.** The 9B: `report --reverify --publish` after the merge, then `vision qwen3.5-9b` and its nine image
    pilots under the same run id. Gemma 12B and GLM on all 33 (half a night each; both take images).
