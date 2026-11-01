@@ -17,6 +17,7 @@ the scorers read::
 from __future__ import annotations
 
 import functools
+import os
 import hashlib
 import json
 import shutil
@@ -253,6 +254,37 @@ def estimate_cost(model: str, usage: Dict[str, int]) -> Optional[float]:
                + usage.get("cache_creation_input_tokens", 0) * per_in * CACHE_WRITE
                + usage.get("output_tokens", 0) * per_out) / 1_000_000
     return round(dollars, 4)
+
+
+def check_engine(server_command: Sequence[str], cwd: Optional[Path] = None) -> str:
+    """The folder of the roaddraft package the server command serves from,
+    asked of the command itself (``--where``) from ``cwd`` with the runner's
+    environment, and compared with the package this runner imported. They
+    differ when ``PYTHONPATH`` is relative (the server starts in the
+    episode's ``project/`` folder) or when the command's interpreter has
+    another checkout installed: every episode would then run, trace and pin
+    one engine while the model drew with another. Raises ``RuntimeError``
+    rather than let that happen."""
+    import roaddraft
+    mine = str(Path(roaddraft.__file__).resolve().parent)
+    env = dict(os.environ)
+    if env.get("PYTHONPATH"):
+        env["PYTHONPATH"] = os.pathsep.join(
+            os.path.abspath(e) for e in env["PYTHONPATH"].split(os.pathsep) if e)
+    try:
+        out = subprocess.run([*server_command, "--where"], capture_output=True, text=True,
+                             timeout=120, cwd=str(cwd) if cwd else None, env=env)
+    except (OSError, subprocess.SubprocessError) as ex:
+        raise RuntimeError(f"the server command could not say where it serves from: {ex}")
+    served = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ""
+    if out.returncode != 0 or not served:
+        raise RuntimeError("the server command could not say where it serves from: "
+                           + (out.stderr.strip() or f"exit {out.returncode}"))
+    if Path(served).resolve() != Path(mine).resolve():
+        raise RuntimeError(f"the server would run another engine: it serves from {served}, "
+                           f"this runner is {mine}. Set PYTHONPATH to this checkout's src "
+                           "(absolute), or run from the checkout that is installed")
+    return served
 
 
 @functools.lru_cache(maxsize=1)

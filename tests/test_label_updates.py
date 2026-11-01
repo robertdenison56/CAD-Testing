@@ -229,3 +229,40 @@ def test_labels_lettered_through_a_reference_follow_its_basefile(tmp_path):
     assert host.execute("reload_references", {})["warnings"] == []
     # with no alignment named, every lettered one is brought up to date
     assert "already in step" in host.execute("update_labels", {})["message"]
+
+
+def test_a_set_lettered_through_a_twist_before_the_record_carried_it_keeps_reading_upright():
+    """The redraft base files (2026-10-10) were lettered through their sheets'
+    twists before the anchor recorded ``view_rotation``.  Laid out again through
+    no twist, a line running past 90 degrees in the model had its numbers turned
+    round, upside down through the viewport (L-1's "TB1" at 93.96 degrees under
+    -89.94): Astra marked nine of them on the clean QA-review control, 2026-10-23.
+    The twist is read off the pose instead."""
+    s = Session(project_name="old-twist")
+    # a line running N 04 W: direction 94 degrees, past the model's upright limit
+    pis = [[1000, 1000], [930.0, 2000]]
+    _design(s, pis=pis)
+    s.execute("create_layer", {"name": "STA"})
+    r = s.execute("annotate_stationing", {"space": "model", "alignment": "SR-100",
+                                          "layer": "STA", "view_rotation": -89.94})
+    assert r["ok"], r
+    numbers = [e for e in s.doc.model_entities.values()
+               if isinstance(e, Text) and e.anchor and e.anchor.get("kind") == "station"]
+    assert numbers and all(abs(n.rotation_deg - 94.0) < 0.1 for n in numbers)
+    for n in numbers:                      # an old file: the twist was never recorded
+        n.anchor.pop("view_rotation", None)
+    r = s.execute("modify_alignment", {"name": "SR-100", "changes": {"begin_station": "12+50"}})
+    assert r["ok"] and "stationing set laid out again" in r["message"], r
+    again = [e for e in s.doc.model_entities.values()
+             if isinstance(e, Text) and e.anchor and e.anchor.get("kind") == "station"]
+    assert again and all(abs(n.rotation_deg - 94.0) < 0.1 for n in again), \
+        sorted({round(n.rotation_deg, 2) for n in again})
+    # and without the twist the same change would have turned them round
+    s2 = Session(project_name="no-twist")
+    _design(s2, pis=pis)
+    s2.execute("create_layer", {"name": "STA"})
+    assert s2.execute("annotate_stationing", {"space": "model", "alignment": "SR-100",
+                                              "layer": "STA"})["ok"]
+    flat = [e for e in s2.doc.model_entities.values()
+            if isinstance(e, Text) and e.anchor and e.anchor.get("kind") == "station"]
+    assert flat and all(abs(n.rotation_deg + 86.0) < 0.1 for n in flat)

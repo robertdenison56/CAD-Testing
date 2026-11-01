@@ -734,7 +734,9 @@ class Session:
         if p.get("detail") == "full":
             return {"document": self.doc.to_dict()}
         doc = self.doc
+        path = getattr(doc, "_path", None)
         return {"summary": {
+            "document": Path(path).name if path else None,
             "meta": dict(doc.meta),
             "settings": dict(doc.settings),
             "layers": sorted(doc.layers),

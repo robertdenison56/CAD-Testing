@@ -117,6 +117,60 @@ listed on the board, not ranked (the first local row, Qwen3.5-9B on the 24 text-
 .venv/bin/python -m roaddraft.eval run --taskset hard-pilots --model MODEL [--samples 3]
 ```
 
+## What the first model run found (2026-10-23)
+
+GPT-6-Astra (Codex, medium) ran six pilots before the ChatGPT Plus usage limit stopped the run;
+Robert cancelled the rest until the harness defects it exposed were fixed. The two WFL sources
+pilots passed. The three QA-review fails were all the harness's: Astra found every planted error
+(6 of 6 on L-1, 3 of 3 on D.10) and lost on marks that were right.
+
+- **Labels laid out again through no twist.** The pilot gap-fix branch's `follow_design` re-posed
+  a stationing set after a design change with `view_rotation` 0 when the labels (lettered before
+  the anchor recorded it) carried none, so L-1's TB1 numbers, on a line running 93.96° in the
+  model under a -89.94° twist, turned round: upside down on the paper, nine marks on the clean
+  control. `label_updates._view_rotation` now reads the twist off the label's pose.
+- **The redraft's leftovers**, repaired at staging by `probes/pilot/repairs.py` for every pilot
+  on the sheet (`common.stage`), the example files themselves unchanged: stroke lettering under
+  real text (PD-1's notes and title printed twice) and the notes' second lines set over their
+  first; "Orchard Creek" in seven pieces, one 0.5 in tall; TB1's bearing and length digitised as
+  strokes, stale against the design (L-1); two "See Section X for details" placeholders, a leader
+  landing drawn twice and the 153+00 station number under the plan/profile divider (D.10).
+- **What stripping a line left** (`layout._strip`): curve bubbles digitised as rings of vertices,
+  which `strip_alignment` does not see (it looks for circles), and the published BC callout of
+  L-7's F3 that survives only as strokes.
+- **The L-1 redline start** (`redlines._restore_tb2`): the real task's strip takes the CURVE DATA
+  table that held both lines' curves and the reference letters TB1's alone, so TB2's row and its
+  bubble number come back (its curve numbered 2, TB1's anchored bubble being 1). The same loss
+  sits in the E1 real-task starts of every sheet whose table tabulates several lines; not fixed
+  there.
+
+- **No way back from a base file** (2026-10-26 rerun, p11-radius-ppm160). Astra opened
+  AA01 with `open_document` to revise the curve, then could not reopen PD-1: nothing named the
+  sheet's file, and it guessed 38 names. `get_document_state` now names the open file
+  (`document`), and `open_document` with a path that is no document lists the project's
+  documents, the one handed to the model marked.
+
+- **The server ran another engine** (2026-10-27, the 2:48 AM window). The resume script set
+  `PYTHONPATH=src`, relative; the Codex CLI starts `roaddraft-mcp` in the episode's `project/`
+  folder, where that names nothing, so the server imported the editable install -- the main
+  checkout's engine -- while the runner traced and pinned this branch. Twelve episodes ran that
+  way (kept under `void-main-engine/`, rerun with `--force`). The codex backend now hands the
+  server an absolute `PYTHONPATH`, `roaddraft-mcp --where` says which package a server would
+  serve from, and `runners run` asks it before the first episode and refuses to start on a
+  mismatch (`runners.core.check_engine`).
+
+- **A working route abandoned** (2026-10-26, p04-crowded-ppm050): the first failure that is
+  the model's own. Astra ticked D13 the anchored way (`annotate_stationing` in model space with
+  the sheet's `view_rotation`), deleted the nineteen entities, and hand-drew ticks as sheet lines
+  for all five lines over 3,110 calls; D1-02 credits no unanchored tick. The refusal it met on
+  the sheet-space attempt ("alignment-mode stationing draws in model space; use place_label for
+  sheet labels") points at a command with no tick kind; a hint naming the model-space route with
+  `view_rotation` would serve better. Not changed during the run (it would move the tool digest).
+
+Left as the sample has it: blank title-block fields, the match line with no sheet number, FLH's
+leaders without arrowheads, a plan with no scale note (D.10). Astra's marks on these count against
+the one false alarm allowed, which is the family's whole difficulty so far.
+
 ## Running the pilots on a model (not done; waits on Robert's go)
 
 ```bash
@@ -230,3 +284,15 @@ does a probe run.
    go, and `_restore_tb2` should keep only its renumbering (TB2's kept row still reads No. 1, as
    published, while TB1's anchored bubble and table say 1 too) and no longer place a second
    table or delete TB1's ring, which the strip now does.
+
+## The first full pass (GPT-6-Astra, medium, 2026-10-26 to 27)
+
+All 29 pilots answered, in six ChatGPT Plus windows, on the branch engine (987e2c21; the twelve episodes one window ran on main's engine were voided and rerun). Run folder `benchmarks/pilot_runs/2026-10-26-astra/runs/astra-pilot`. **26 of 29 passed.**
+
+The three failures:
+
+- **p04-crowded-ppm050** (layout, crowded). The one hard failure: Astra had anchored D13 ticks in model space, deleted them, and hand-drew unanchored ticks on the sheet after 3,110 calls; nine ticks get no credit. The engine's "use place_label for sheet labels" hint sent it the wrong way (place_label has no tick kind).
+- **p14-qa-review-wfl19** (QA). Marked two leftovers of the sample sheet (a leader without an arrowhead, a station label over limit linework) where one false alarm is allowed. Whether sample-sheet leftovers count is open.
+- **p15-plan-reading-wflp14** (plan reading). Read one station off the scan as 119+45.98 for 119+46.48; an earlier (voided) attempt read it right, so this is scan-reading variance.
+
+Families where every pilot passed: redraw alignment, sources, survey (grid/ground, international feet, misclosure), sheet breaks, plan-profile, typical sections, redline pick-up, plan set, striping, twist. Faults seen on passes were recoverable: the annotate_stationing sheet-space hint (p04, p06, p17), a create_alignment leg with no distance (p01), measure with too many points (p03).

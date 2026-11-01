@@ -14,8 +14,9 @@ back from disk, against a fresh start, which is how a model's document is
 scored; `python -m roaddraft.probes score <probe> --doc <document>` repeats it.
 
     <probe>/<document>      the completed document: the file the agent is handed, finished
-    <probe>/<design file>   what the document references, untouched
+    <probe>/<design file>   what the document references, untouched unless the task edits it
     <probe>/<name>.jsonl    the journal: the start, then every command the solution ran
+    <probe>/<base>.jsonl    beside a base file the solution changed and saved, its journal
     <probe>/<probe>.pdf     the sheets as plotted (print_pdf); model space when it has none
     <probe>/<probe>.dxf     for AutoCAD, Civil 3D or MicroStation: each sheet a layout, references bound in
     <probe>/reference.json  the probe, its prompt and the verdict

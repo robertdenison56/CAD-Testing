@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -31,7 +32,8 @@ from typing import List, Optional, Sequence
 from roaddraft.mcp import config as mcpconfig
 from roaddraft.probes import tasks
 from roaddraft.runners import anthropic_api, claude_code, codex_cli, leaderboard, openai_compat  # noqa: F401  (register)
-from roaddraft.runners.core import BACKENDS, Options, run_probe
+from roaddraft.runners.codex_cli import absolute_path_list
+from roaddraft.runners.core import BACKENDS, Options, check_engine, run_probe
 from roaddraft.runners.score import format_table, score_label
 
 
@@ -89,8 +91,16 @@ def cmd_run(args) -> int:
         return 2
     backend = build_backend(args)
     server_command = mcpconfig.server_command()
-    labels = [args.label] if args.repeat <= 1 else [f"{args.label}-r{i}" for i in range(1, args.repeat + 1)]
+    if os.environ.get("PYTHONPATH"):   # the server starts elsewhere; a relative entry would miss
+        os.environ["PYTHONPATH"] = absolute_path_list(os.environ["PYTHONPATH"])
     out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        print(f"engine: {check_engine(server_command, cwd=out)}", flush=True)
+    except RuntimeError as ex:
+        print(f"refusing to run: {ex}", file=sys.stderr)
+        return 2
+    labels = [args.label] if args.repeat <= 1 else [f"{args.label}-r{i}" for i in range(1, args.repeat + 1)]
     for label in labels:
         for probe in probes:
             folder = out / "runs" / label / probe.id

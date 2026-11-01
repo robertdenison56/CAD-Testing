@@ -96,7 +96,7 @@ from roaddraft.design.anchors import parse_anchor, resolve_anchor
 from roaddraft.design.errors import DesignError
 from roaddraft.design.horizontal import Alignment
 from roaddraft.design.labels import compile_label
-from roaddraft.document.entities import Table, Text
+from roaddraft.document.entities import Line, Polyline, Table, Text
 from roaddraft.document.fileformat import write_document
 from roaddraft.document.references import find_reference_alignment
 from roaddraft.probes import plotted as pl
@@ -622,7 +622,79 @@ def _strip(out: Path, sheet_id: str, names: Sequence[str]):
         real.strip_alignment(work, bases, task.brief.deliverable["design_file"], align,
                              task.truth.labels)
         _strip_reversed(work, bases, align, task.truth.labels)
+        _strip_rings(work, align)
+        _strip_traced(work, bases, STALE_TRACED.get(sheet_id, {}).get(name, ()))
     return work, bases, src.sheet_file
+
+
+#: a curve bubble digitised as a ring of vertices (S-ANNO-TAG polylines) is no
+#: Circle, so strip_alignment leaves it: its size and reach, paper inches
+RING_MAX_IN = 0.5
+RING_REACH_IN = 2.5
+#: published lettering that survives only as strokes in a base file (a trace layer,
+#: traced.py, or the road layers the digitiser used): paper boxes and layers per sheet
+#: and line, gone with the line's annotation
+STALE_TRACED = {"PPM-050": {"F3": [((13.2, 12.95, 16.3, 13.4),      # '"F3" 705+03.23 BC'
+                                    ("V-ANNO-TRACE", "V-ROAD", "V-ROAD-THIN", "V-ROAD-HTCH"))]}}
+
+
+def _ring_center(e):
+    pts = [list(v) for v in e.vertices] if isinstance(e, Polyline) else []
+    if len(pts) < 8:
+        return None
+    bb = geo.bbox_of_points(pts)
+    w, h = bb[2] - bb[0], bb[3] - bb[1]
+    if not (0.05 <= w <= RING_MAX_IN and abs(w - h) <= 0.1 * max(w, h)):
+        return None
+    return [(bb[0] + bb[2]) / 2.0, (bb[1] + bb[3]) / 2.0], max(w, h) / 2.0
+
+
+def _strip_rings(work, align: Alignment) -> List[str]:
+    """The line's curve bubbles drawn as rings: the ring, the number in it and
+    the leader from it."""
+    sheet = next(iter(work.sheets.values()))
+    vp = sheet.viewports[0]
+    t = vp.transform()
+    mids = [t.to_paper(align.point_at(c.start_dist + c.length / 2.0)) for c in align.curves()]
+    gone = []
+    for e in list(sheet.entities.values()):
+        ring = _ring_center(e)
+        if ring is None:
+            continue
+        center, radius = ring
+        if not any(geo.distance(center, m) <= RING_REACH_IN for m in mids):
+            continue
+        gone.append(e.id)
+        for o in list(sheet.entities.values()):
+            if isinstance(o, Text) and o.content.strip().isdigit() and geo.distance(
+                    o.position, center) <= 1.3 * radius:
+                gone.append(o.id)
+            elif isinstance(o, Line) and min(geo.distance(o.start, center),
+                                             geo.distance(o.end, center)) <= radius + 0.05:
+                gone.append(o.id)
+    for i in gone:
+        sheet.entities.pop(i, None)
+    return gone
+
+
+def _strip_traced(work, bases, boxes) -> List[str]:
+    """Strokes of the line's lettering left in the base files, by paper box and layer."""
+    if not boxes:
+        return []
+    sheet = next(iter(work.sheets.values()))
+    to_paper = sheet.viewports[0].transform().to_paper
+    gone = []
+    for doc in bases.values():
+        for e in list(doc.model_entities.values()):
+            pts = ([list(e.start), list(e.end)] if isinstance(e, Line)
+                   else [list(v) for v in e.vertices] if isinstance(e, Polyline) else [])
+            paper = [to_paper(p) for p in pts]
+            if paper and any(e.layer in layers and all(
+                    b[0] <= p[0] <= b[2] and b[1] <= p[1] <= b[3] for p in paper)
+                             for b, layers in boxes):
+                del doc.model_entities[e.id]
+                gone.append(e.id)
+    return gone
 
 
 REVERSED_REACH_IN = 1.0   # a tangent's bearing lettered the other way, within this of it

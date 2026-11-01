@@ -56,7 +56,10 @@ EXTRA_TOOLS = {
         "description": "Open a RoadDraft document (.rdraft, or .rdoc.json) as "
                        "the working document, replacing the current one. Relative "
                        "reference paths in the file resolve from its own folder, "
-                       "so a sheet file finds the model it references.",
+                       "so a sheet file finds the model it references. "
+                       "get_document_state names the open file ('document'); a "
+                       "path that is not a document lists the project's documents, "
+                       "the one handed to you among them.",
         "inputSchema": {"type": "object", "additionalProperties": False,
                         "required": ["path"],
                         "properties": {"path": {"type": "string", "minLength": 1,
@@ -248,6 +251,9 @@ class RoadDraftMCP:
         #: where autosave writes: the file the document was opened from. It does
         #: not follow a save_document to somewhere else (see _autosave).
         self.home = getattr(session.doc, "_path", None)
+        #: the document the session started on: the one handed to the model, and
+        #: what gets graded; open_document moves ``home``, never this
+        self.handed = self.home
         #: the folder every tool's file access is held to (``--root``); None
         #: holds nothing
         self.root = confine.Root(root) if root else None
@@ -331,7 +337,7 @@ class RoadDraftMCP:
         except confine.OutsideRoot as ex:
             return self._tool_error(f"cannot open {path}: {ex} ({ex.hint})")
         except FileNotFoundError:
-            return self._tool_error(f"no such document: {path}")
+            return self._tool_error(f"no such document: {path}. {self._documents_here()}")
         except DocumentFormatError as ex:  # not a document, or malformed JSON
             return self._tool_error(f"cannot open {path}: {ex}")
         except Exception as ex:  # failed validation
@@ -339,6 +345,26 @@ class RoadDraftMCP:
         summary = self.session.query("get_document_state", {})
         return {"content": [_text({"ok": True, "opened": str(Path(path).resolve()),
                                    "state": summary})], "isError": False}
+
+    def _documents_here(self) -> str:
+        """The project's documents, by name: the folder of the document handed to
+        the model (a model that opened a base file has to find its way back)."""
+        folder = (self.handed or self.home or Path(".")).parent
+        try:
+            files = sorted(p for p in folder.iterdir()
+                           if p.suffix == ".rdraft" or p.name.endswith(".rdoc.json"))
+        except OSError:
+            files = []
+        if not files:
+            return "The project folder holds no documents."
+        def tag(p: Path) -> str:
+            notes = []
+            if self.handed and p.resolve() == self.handed.resolve():
+                notes.append("handed to you")
+            if self.home and p.resolve() == self.home.resolve():
+                notes.append("open now")
+            return p.name + (f" ({', '.join(notes)})" if notes else "")
+        return "The project's documents: " + ", ".join(tag(p) for p in files) + "."
 
     def _view_attachment(self, arguments: dict) -> dict:
         """``view_attachment``: list the attachments, or show one (a region of it)
@@ -595,6 +621,12 @@ def _start_inside(args) -> None:
     print(f"roaddraft-mcp: working directory moved into --root {root.real}", file=sys.stderr)
 
 
+def package_dir() -> str:
+    """The folder of the ``roaddraft`` package this process imported."""
+    import roaddraft
+    return str(Path(roaddraft.__file__).resolve().parent)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roaddraft-mcp",
@@ -630,6 +662,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "scanned sheet or markup)")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool names that would be served, then exit")
+    parser.add_argument("--where", action="store_true",
+                        help="print the folder of the roaddraft package this server "
+                             "would serve from, then exit: a client that starts the "
+                             "server with a path of its own can check it got the "
+                             "engine it meant")
     parser.add_argument("--config", metavar="CLIENT", choices=sorted(mcpconfig.CLIENTS),
                         help="instead of serving, print the registration of this server -- "
                              "with the options given here -- for an MCP client, then exit: "
@@ -641,6 +678,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "(or FILE), merged in beside the servers already there")
     args = parser.parse_args(argv)
 
+    if args.where:
+        print(package_dir())
+        return 0
     if args.config:
         if args.doc and not Path(args.doc).is_file():
             print(f"note: {args.doc} does not exist yet", file=sys.stderr)
