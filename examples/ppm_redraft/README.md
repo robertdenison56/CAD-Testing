@@ -62,6 +62,13 @@ no model, so they are a sheet file only.
      - **Drainage (AA02):** on drainage plans, the heavy non-centerline linework.
      - **Proposed (AA01):** everything else.
      - **Small symbols** follow the line they sit on.
+     - **Traced lettering** (`traced.py`): words the PDF letters as linework with no text layer (an
+       outlined font, a stroke font, a dotted `DITCH`) are found among these strokes: small strokes
+       close together in a band a letter or two tall, standing side by side in more than one
+       direction. They go to the same base file as before, on its trace layer (`V-ANNO-TRACE`,
+       `E-TOPO-TRACE`, `D-DRAIN-TRACE`), drawn as before. They are not read as text. Fence marks,
+       hatching, rows of symbols and single symbols are left alone, and `trace_exclude` boxes in a
+       config keep a region out.
 4. **Build** (`ppmbuild.py`). Files are written through the RoadDraft command bus:
    - **Alignments:** `create_alignment` (elements), `draw_alignment`, `annotate_stationing`.
    - **The sheet:** `attach_reference`, `create_sheet`, `fill_title_block`, `create_viewport`.

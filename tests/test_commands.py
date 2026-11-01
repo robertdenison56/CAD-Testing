@@ -483,3 +483,50 @@ def test_title_block_template_survives_a_round_trip(tmp_path):
     path = s.query("save_document", {"path": str(tmp_path / "plans.rdraft")})["path"]
     again = Session.load(path, out_dir=str(tmp_path))
     assert again.doc.sheet_by_ref("L-2").title_block_template == "caltrans"
+
+
+def test_each_border_says_which_title_block_keys_it_letters():
+    """fill_title_block named only the standard keys, so the Caltrans revision
+    block (revised_by_1 / date_revised_1) and sheet_id could not be found
+    (pilot work, 2026-10-19). The keys are read off the templates: the schema
+    lists every border's, get_sheet_state a sheet's own, and a key the border
+    does not letter comes back as a warning naming the ones it does."""
+    from roaddraft.render.titleblock import keys_text, template_keys, title_block_entities
+
+    caltrans = template_keys("caltrans")
+    for key in ("revised_by_1", "date_revised_1", "revised_by_3", "date_revised_3",
+                "sheet_id", "dist", "post_miles", "seal_name"):
+        assert key in caltrans, key
+    assert "rev_desc_8" in template_keys("fdot") and "nps_pmis" in template_keys("wfl")
+    assert template_keys("none") == ()
+    assert "revised_by_1..3, date_revised_1..3" in keys_text("caltrans")
+    assert "rev_date_1..8, rev_desc_1..8" in keys_text("fdot")
+
+    s = make_session()
+    described = s.manifest()
+    fields = next(c for c in described["commands"] if c["name"] == "fill_title_block")
+    text = fields["params_schema"]["properties"]["fields"]["description"]
+    assert "caltrans: revised_by_1..3, date_revised_1..3" in text and "sheet_id" in text
+    assert "fdot:" in text and "wfl:" in text and "title_block_keys" in text
+
+    s.execute("create_sheet", {"name": "L-2", "size": "ANSI_D",
+                               "title_block_template": "caltrans"})
+    state = s.query("get_sheet_state", {"sheet": "L-2"})["sheet"]
+    assert state["title_block_keys"] == list(caltrans)
+
+    r = s.execute("fill_title_block", {"sheet": "L-2", "fields": {
+        "revised_by_1": "R. D.", "date_revised_1": "10-19-26", "sheet_id": "L-2"}})
+    assert r["ok"] and not r.get("warnings"), r
+    drawn = {e.content for e in title_block_entities(s.doc.sheet_by_ref("L-2"))
+             if getattr(e, "content", None)}
+    assert {"R. D.", "10-19-26", "L-2"} <= drawn
+
+    r = s.execute("fill_title_block", {"sheet": "L-2", "fields": {"revision_1": "R. D."}})
+    assert r["ok"] and s.doc.sheet_by_ref("L-2").title_block_fields["revision_1"] == "R. D."
+    (warning,) = r["warnings"]
+    assert "letters no revision_1" in warning and "revised_by_1..3" in warning
+
+    s.execute("create_sheet", {"name": "N", "title_block_template": "none"})
+    r = s.execute("fill_title_block", {"sheet": "N", "fields": {"anything": "x"}})
+    assert r["ok"] and not r.get("warnings")
+    assert s.query("get_sheet_state", {"sheet": "N"})["sheet"]["title_block_keys"] == []

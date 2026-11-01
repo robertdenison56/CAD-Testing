@@ -240,6 +240,17 @@ def draw_sheet(ax, doc, sheet, show_viewport_frames=True, ppd=72.0, mono=False,
                         lw_scale=lw_scale)
 
 
+def hold_text_legible(fig, dpi) -> None:
+    """Letter no text under a pixel at ``dpi``: FreeType refuses a size that
+    rounds to no pixels at all ('invalid ppem value'), which _text_artists'
+    1 pt floor is below 72 dpi. Nothing changes from 72 dpi up."""
+    from matplotlib.text import Text as MplText
+    floor = 72.0 / float(dpi)
+    for artist in fig.findobj(MplText):
+        if artist.get_fontsize() < floor:
+            artist.set_fontsize(floor)
+
+
 def sheet_figure(doc, sheet, show_viewport_frames=True):
     fig, ax = _new_axes(sheet.width_in, sheet.height_in)
     draw_sheet(ax, doc, sheet, show_viewport_frames)
@@ -248,6 +259,7 @@ def sheet_figure(doc, sheet, show_viewport_frames=True):
 
 def render_sheet_png(doc, sheet, path, dpi=150, show_viewport_frames=True):
     fig = sheet_figure(doc, sheet, show_viewport_frames)
+    hold_text_legible(fig, dpi)
     fig.savefig(path, dpi=dpi, facecolor="white")
     plt.close(fig)
 
@@ -315,6 +327,7 @@ def render_model_png(doc, path, bounds=None, dpi=150, max_size_in=14.0,
                      dark=False):
     fig, bounds = model_figure(doc, bounds=bounds, max_size_in=max_size_in,
                                dark=dark)
+    hold_text_legible(fig, dpi)
     fig.savefig(path, dpi=dpi, facecolor=fig.get_facecolor())
     plt.close(fig)
     return bounds

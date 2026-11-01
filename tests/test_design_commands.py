@@ -114,10 +114,18 @@ def test_modify_alignment_rename_rewrites_anchors_and_profiles():
     for e in s.doc.model_entities.values():
         assert e.anchor["alignment"] == "SR-100"
     assert r["warnings"] == []
-    # station change warns about anchored entities and is re-validated
+    # a station change is re-validated, and the label follows it (no line moves)
+    label = next(e for e in s.doc.model_entities.values() if e.anchor["kind"] == "pc")
+    before = label.content
     r = s.execute("modify_alignment", {"name": "SR-100", "changes": {"begin_station": "20+00"}})
-    assert r["ok"] and r["warnings"] and "anchored to SR-100" in r["warnings"][0]
+    assert r["ok"] and r["warnings"] == [] and "labels: 1 label re-placed" in r["message"]
     assert s.doc.design.alignments["SR-100"].begin_station == 2000.0
+    assert label.id in r["modified"] and label.content != before
+    # new PIs move the centerline, which is drawn, not lettered: a warning says so
+    r = s.execute("modify_alignment", {"name": "SR-100", "changes": {
+        "pis": [A_PIS[0], A_PIS[1][:2] + [600], A_PIS[2]]}})
+    assert r["ok"] and "still follow the old design" in r["warnings"][0]
+    assert "redraw=true" in r["warnings"][0]
     r = s.execute("modify_alignment", {"name": "SR-100", "changes": {"bogus": 1}})
     assert not r["ok"] and "pis" in r["error"]["hint"]
     r = s.execute("modify_alignment", {"name": "SR-100", "changes": {

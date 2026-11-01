@@ -301,21 +301,37 @@ def modify_alignment(doc: Document, p: dict):
             style = {"alignment": final, "layer": drawn[0].layer, "color": drawn[0].color,
                      "linetype": drawn[0].linetype, "replace": True}
             redrawn, rd_diff, _ = draw_alignment(doc, style)
+            for eid in rd_diff["created"]:  # draw_alignment's work (bus: REGENERATORS)
+                doc.model_entities[eid].anchor["placed_by"] = "draw_alignment"
             created += rd_diff["created"]
             deleted += rd_diff["deleted"]
             modified_ids = [i for i in modified_ids if i not in rd_diff["deleted"]]
 
     warnings = []
-    anchored = [e for _k, e in _anchored(doc, final)
-                if not (redrawn and e.anchor.get("kind") == "element")]
-    if stations_changed and anchored:
-        warnings.append(
-            f"{len(anchored)} entities are anchored to {final} and were not regenerated; "
-            f"re-run " + ("" if redrawn else "draw_alignment / ")
-            + "annotate_stationing / place_label")
+    lettered = ""
+    if stations_changed:
+        # the labels follow the design, as Civil 3D's do (commands/label_updates.py)
+        from roaddraft.commands.label_updates import follow_design
+        followed = follow_design(doc, final, new, before=align)
+        created += followed.created
+        deleted += followed.deleted
+        modified_ids += [i for i in followed.modified if i not in modified_ids]
+        warnings += followed.warnings()
+        if followed.changed or followed.stranded:
+            lettered = f"; labels: {followed.summary()}"
+        # a new begin station or equation moves no line; new PIs move them all
+        linework = [eid for eid in followed.linework
+                    if "pis" in changes and not (redrawn and eid in created)]
+        if linework:
+            warnings.append(
+                f"{_plural(len(linework), 'line')} drawn from {final} ({', '.join(linework[:6])}"
+                + (", ..." if len(linework) > 6 else "") + ") still follow the old design; "
+                + ("" if redrawn else "redraw=true or draw_alignment replace=true redraws the "
+                   "centerline, ") + "draw_offset replace=true the offsets")
     st = new.stations()
     return (f"alignment {final} updated: {', '.join(sorted(changes))} "
-            f"({st.begin_text()} to {st.end_text()})" + (f"; {redrawn}" if redrawn else ""),
+            f"({st.begin_text()} to {st.end_text()})" + (f"; {redrawn}" if redrawn else "")
+            + lettered,
             _diff(created=created, modified=[f"alignment:{final}"] + modified_ids,
                   deleted=deleted), warnings)
 
@@ -345,6 +361,14 @@ def delete_alignment(doc: Document, p: dict):
 
 def create_profile(doc: Document, p: dict):
     name, aname = p["name"], p["alignment"]
+    if ":" in str(aname) and aname not in doc.design.alignments:
+        raise CommandFault(
+            f"{aname!r} is an alignment in an attached reference: a profile is kept in "
+            f"the file that owns its alignment",
+            hint="open that basefile (open_document), create_profile there and save it; "
+                 "this file then reads the profile through the reference as "
+                 "'REFNAME:PROFILE' (get_design_data profile=..., or list_alignments "
+                 "include_references=true)")
     align = _alignment(doc, {"alignment": aname})
     if name in doc.design.profiles:
         raise CommandFault(f"profile {name!r} already exists", hint="delete_profile first")

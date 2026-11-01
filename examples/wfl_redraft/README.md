@@ -95,7 +95,11 @@ for it, and why a page was not redrafted.
      in a configured `sheet_regions` box) stays on the sheet, as do tags and symbols. Thin
      dashed linework is existing (`_sur`). On a drainage plan the heavy solid linework is the
      drainage system (`_hyd_cor`). Everything else is proposed (`_cor`). Small symbols follow
-     the line they sit on.
+     the line they sit on. Words the PDF letters as linework with no text layer (an outlined
+     font: contour elevations, a plant schedule, utility line labels) are found among these
+     strokes by `ppm_redraft/traced.py` and kept, as drawn, on the file's trace layer
+     (`P_ROAD_TRACE`, `E_TOPO_TRACE`, `P_DRAIN_TRACE`); `trace_exclude` boxes in a config keep a
+     region out.
 4. **Build** (`wflbuild.py`). Files are written through the RoadDraft command bus:
    `create_alignment`, `draw_alignment`, `annotate_stationing` (then each station label is
    relettered as the sheet letters it); `attach_reference`, `create_sheet` (ANSI B, the `wfl`

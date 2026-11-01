@@ -14,6 +14,7 @@ import re
 from collections import Counter
 
 import alignfit
+import traced
 from calibrate import calibrate
 from leaders import landings, component, ends_of, poly_dist, closed, plen
 from sheetgeom import Sheet, run_box, in_box, extent, Grid, bbox_of, box_bbox
@@ -869,6 +870,7 @@ def digitise(ppm_id, rel, extract, cfg):
     # ---------------------------------------------------------- plan view
     aligns, twist = [], cfg.get("twist")
     twist_how = "config" if twist is not None else None
+    traced_words = 0
     if kind == "plan":
         cand = [p for p in paths if p["dest"] is None and not p["fill"] and not in_regions(p["pts"])
                 and plen(p["pts"]) > 0.05 and
@@ -937,6 +939,10 @@ def digitise(ppm_id, rel, extract, cfg):
                 twist_how = "north arrow"
         if twist is None:
             twist, twist_how = 0.0, "none"
+        # lettering drawn as strokes with no text layer: routed like the rest, then
+        # drawn on its base file's trace layer
+        traced_words = traced.mark(paths, keep=lambda p: not in_regions(p["pts"]),
+                                   exclude=[tuple(b) for b in cfg.get("trace_exclude", [])])
         for p in paths:
             if p["dest"] is not None:
                 continue
@@ -1002,4 +1008,5 @@ def digitise(ppm_id, rel, extract, cfg):
             "aligns": [dict({k: v for k, v in al.items() if k != "chain"}, length=al["chain"].length())
                        for al in aligns],
             "counts": dict(Counter(str(p["dest"]) for p in paths)),
+            "traced": {"words": traced_words, "strokes": sum(1 for p in paths if p.get("traced"))},
             "text_counts": dict(Counter(r["kind"] for r in runs))}

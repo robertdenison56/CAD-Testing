@@ -122,3 +122,85 @@ def test_the_tracked_references_cover_every_probe_and_still_pass(tmp_path, l2_bu
         for name, path in record["references"].items():
             assert (folder / path).is_file(), f"{probe.id}: reference {name} is not beside it"
     assert {pid: n for pid, n in asked.items() if n > 1} == ITEMS_ASKED
+
+
+def _edits_its_base_file(session: Session) -> None:
+    """A solution that saves a change over the referenced design file, as a
+    pilot that edits a base drawing through open_document does."""
+    base_path = session.doc._path.parent / fixture.MODEL_FILE
+    base = Session.load(base_path, out_dir=base_path.parent)
+    assert base.execute("draw_line", {"space": "model", "start": [0, 0], "end": [10, 0]})["ok"]
+    assert base.query("save_document", {"path": str(base_path)})["ok"]
+    assert session.execute("create_layer", {"name": "SOLVED"})["ok"]
+
+
+def _referenced_count(session: Session) -> int:
+    return session.query("get_model_state", {"include_references": True})["count"]
+
+
+def test_the_baseline_is_the_start_even_when_the_solve_edits_a_base_file(tmp_path):
+    """The baseline loaded its references lazily, from the folder the solve
+    edits, so it showed the edited base file instead of the start (pilot work,
+    2026-10-19). It now reads a copy of the start, with or without start_dir."""
+    from roaddraft.probes.base import Probe, Result
+
+    def check(baseline: Session, finished: Session) -> Result:
+        before, after = _referenced_count(baseline), _referenced_count(finished)
+        return Result(after == before + 1, f"{before} -> {after}")
+
+    probe = Probe(id="edits-base", prompt="draw a line in the design file", check=check,
+                  solve=_edits_its_base_file)
+    ref = reference.write(probe, tmp_path / "built", plots=False)
+    assert ref.result.passed, ref.result.detail
+    start_dir = tmp_path / "start"
+    fixture.start_document(start_dir, probe.start)
+    ref = reference.write(probe, tmp_path / "copied", start_dir=start_dir, plots=False)
+    assert ref.result.passed, ref.result.detail
+    # the start the folder was copied from is untouched, and no copy is left behind
+    start = Session.load(start_dir / fixture.SHEET_FILE, out_dir=tmp_path)
+    assert _referenced_count(start) + 1 == _referenced_count(
+        Session.load(ref.document, out_dir=tmp_path))
+    assert sorted(p.name for p in (tmp_path / "copied").iterdir()) == [
+        "SR-100.model.jsonl", "SR-100.model.rdoc.json", "SR-100.sheets.jsonl",
+        "SR-100.sheets.rdoc.json", "reference.json"]
+
+
+def test_a_base_file_the_solution_edits_keeps_its_journal_beside_it(tmp_path):
+    """The journal held only the handed document's commands, so a design
+    changed in its base file left no record of how (pilot work, 2026-10-19).
+    Each file the solution saves now has its journal beside it, and it
+    rebuilds the file as saved."""
+    from roaddraft.probes.base import Probe, Result
+
+    probe = Probe(id="edits-base", prompt="draw a line in the design file",
+                  check=lambda base, done: Result(True, "kept"), solve=_edits_its_base_file)
+    folder = tmp_path / "built"
+    ref = reference.write(probe, folder, plots=False)
+    base_journal = folder / "SR-100.model.jsonl"
+    assert ref.base_journals == [base_journal.resolve()]
+    record = json.loads((folder / reference.RECORD).read_text())
+    assert record["base_journals"] == ["SR-100.model.jsonl"]
+    replayed = Session.replay_journal(base_journal)
+    saved = Session.load(folder / fixture.MODEL_FILE)
+    assert replayed.doc.to_dict() == saved.doc.to_dict()
+    assert [e["name"] for e in replayed.bus.journal] == ["draw_line"]
+    # a solution that edits only the handed document records no base journal
+    plain = reference.write(tasks.get("line-data"), tmp_path / "plain", plots=False)
+    assert plain.base_journals == []
+    assert "base_journals" not in json.loads((tmp_path / "plain" / reference.RECORD).read_text())
+
+
+def test_journals_beside_saves_is_only_on_inside_its_block(tmp_path):
+    from roaddraft.api.session import journals_beside_saves
+
+    s = Session(project_name="j", out_dir=tmp_path)
+    s.execute("create_layer", {"name": "A"})
+    s.query("save_document", {"path": str(tmp_path / "outside.rdraft")})
+    assert not (tmp_path / "outside.jsonl").exists()
+    with journals_beside_saves() as written:
+        s.query("save_document", {"path": str(tmp_path / "inside.rdraft")})
+        s.query("save_document", {"path": str(tmp_path / "inside.rdraft")})
+    assert written == [(tmp_path / "inside.jsonl").resolve()]
+    assert Session.replay_journal(tmp_path / "inside.jsonl").doc.to_dict() == s.doc.to_dict()
+    s.query("save_document", {"path": str(tmp_path / "after.rdraft")})
+    assert not (tmp_path / "after.jsonl").exists()

@@ -13,6 +13,7 @@ from roaddraft.core.units import LENGTH_FORMATS
 from roaddraft.document.document import LINETYPES
 from roaddraft.document.entities import DIM_ARROWS, DIM_KINDS
 from roaddraft.document.sheets import SHEET_SIZES, TITLE_BLOCK_TEMPLATES
+from roaddraft.render.titleblock import keys_text
 
 POINT = {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
          "description": "[x, y]"}
@@ -103,6 +104,13 @@ TRAVERSE_PROPS = {
                              "drawing, add the closing course"},
 }
 
+
+#: the keys each border letters, read off the templates (render/titleblock.py)
+TITLE_BLOCK_KEYS = (
+    "the keys the sheet's border letters -- "
+    + "; ".join(f"{t}: {keys_text(t)}" for t in TITLE_BLOCK_TEMPLATES if t != "none")
+    + ". A key the border does not letter is kept with the sheet, and the result warns; "
+      "get_sheet_state lists a sheet's own (title_block_keys)")
 
 _ENTITY_COMMON = {
     "space": SPACE,
@@ -415,9 +423,7 @@ SCHEMAS = {
         {"sheet": NSTR,
          "fields": {"type": "object", "minProperties": 1,
                     "additionalProperties": SCALAR,
-                    "description": "standard keys: project, agency, sheet_title, "
-                                   "sheet_number, total_sheets, designed_by, "
-                                   "drawn_by, checked_by, date, scale"}},
+                    "description": TITLE_BLOCK_KEYS}},
         ["sheet", "fields"]),
     "annotate_stationing": obj(
         {"space": SPACE,
