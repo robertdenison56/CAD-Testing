@@ -220,3 +220,13 @@ does a probe run.
    stripping a line's annotation can leave traced text behind.
 8. On the anthropic backend, a text-only run replaces a `view_attachment` image with a note saying
    "the text above carries the file path", which is not true for an attachment.
+9. Two defects of the real-task strip (`tasks.real.strip_alignment`) that the first model run on
+   the pilots showed (2026-10-23) are fixed in the catalogue itself: a CURVE DATA table that
+   tabulates several lines' curves (L-1 lists TB2's and TB1's) now loses only the stripped line's
+   rows and stays, closed up, with the reference's table placed below it; and curve bubbles
+   digitised as rings of vertices (S-ANNO-TAG polylines) go with their digit and leader like
+   circles. The `pilot-astra` branch worked around both at staging (`layout._strip_rings`,
+   `redlines._restore_tb2`); once it takes this fix, `_strip_rings` finds nothing to do and can
+   go, and `_restore_tb2` should keep only its renumbering (TB2's kept row still reads No. 1, as
+   published, while TB1's anchored bubble and table say 1 too) and no longer place a second
+   table or delete TB1's ring, which the strip now does.
