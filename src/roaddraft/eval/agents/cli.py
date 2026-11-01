@@ -2,13 +2,13 @@
 episode, with the harness as its MCP server.
 
 The CLI drives its own tool-calling loop against an MCP server it starts, so
-the harness becomes that server: the episode's tools -- the dialect's names,
-the whitelist, the harness's own three -- are served to the CLI by a small
+the harness becomes that server: the episode's tools -- the whitelist and
+the harness's own three -- are served to the CLI by a small
 stdio bridge (``eval/bridge.py``, the CLI's one MCP server) that forwards
 every ``tools/call`` to this agent over a local socket.  ``act`` hands each
 call to the loop as a turn and, on the next ``act``, hands the loop's
 results back to the bridge, in order, with a render's image in the vision
-mode.  So the budgets, the whitelist, the dialect, the result cap, the file
+mode.  So the budgets, the whitelist, the result cap, the file
 confinement and the trajectory are the harness's, as for an API row; what a
 CLI row keeps of its own is the CLI's harness between the model and the
 tools (its context handling, retries and parallel calls), which is why the
@@ -197,7 +197,6 @@ class CLIAgent(Agent):
         self.fixed_system = system
         self.system = ""
         self.budgets: Optional[Budgets] = None
-        self.skin = None
         self.episode_path = None
         self._clear()
 
@@ -229,7 +228,6 @@ class CLIAgent(Agent):
 
     def begin(self, context: dict) -> None:
         self.budgets = context.get("budgets")
-        self.skin = context.get("skin")
         self.episode_path = context.get("episode_path")
         self._started = time.monotonic()
         if not self.fixed_system:
@@ -322,9 +320,6 @@ class CLIAgent(Agent):
                               not r.get("ok", False))
         self._pending = []
 
-    def _canonical(self, name: str) -> str:
-        return self.skin.canonical(name) if self.skin is not None else name
-
     def _deadline(self) -> Optional[float]:
         wall = getattr(self.budgets, "wall_clock_s", 0) or 0
         return self._started + wall if wall else None
@@ -368,7 +363,7 @@ class CLIAgent(Agent):
         turn, submit = [], None
         for _, call_id, name, args in calls:
             args = dict(args) if isinstance(args, dict) else {}
-            if submit is None and self._canonical(name) == "submit":
+            if submit is None and name == "submit":
                 submit = (call_id, name, args)
             else:
                 turn.append((call_id, name, args))

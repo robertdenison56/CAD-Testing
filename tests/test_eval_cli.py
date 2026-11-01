@@ -379,18 +379,16 @@ def test_a_cli_that_dies_mid_run_is_an_error(tmp_path, monkeypatch, fake_cli):
     assert r.termination == "error" and "exited 3" in r.error and r.steps == 1
 
 
-def test_a_dialect_hands_the_cli_the_skin_names(tmp_path, monkeypatch, fake_cli):
+def test_the_cli_is_handed_the_api_rows_tool_names(tmp_path, monkeypatch, fake_cli):
     script, record = fake_cli
     task = _task(2)
     fake = FakeProvider([turn([("submit", {})])])
-    run_episode(task, LLMAgent(fake), EpisodeConfig(dialect="c3d"))
-    skinned = fake.requests[0]["tools"]
+    run_episode(task, LLMAgent(fake), EpisodeConfig())
     provider = ClaudeCodeProvider("claude-fake", claude_bin=str(script))
-    r = run_episode(task, CLIAgent(provider), EpisodeConfig(dialect="c3d"))
+    r = run_episode(task, CLIAgent(provider), EpisodeConfig())
     assert r.termination == "submit"
     seen = json.loads(record.read_text())
-    assert seen["tools"] == skinned and seen["tools"] != sorted(t for t in seen["tools"] if t == t.lower()) or True
-    assert seen["tools"] == skinned
+    assert seen["tools"] == fake.requests[0]["tools"]
     assert seen["system"] == fake.requests[0]["system"]
 
 

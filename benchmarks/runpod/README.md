@@ -1,5 +1,8 @@
 # Runpod serverless: open-weight models for the probe runs
 
+**Track D on Runpod (2026-10-28): the model tree, the $110 spread and what comes before a go are in [`PLAN.md`](PLAN.md)**;
+this file is the rig and the run records.
+
 The local GPU (RTX 4060, 8 GB) needed ~35 h for Qwen3.5-9B at k = 3, so that run was stopped and deleted on
 Oct 9 2026 (654e434). This folder records the serverless endpoint that replaces it. The runner needs nothing
 Runpod-specific: Runpod's vLLM worker speaks the OpenAI chat-completions API, so `--backend openai` drives it

@@ -25,7 +25,7 @@ Consequences for this plan:
 2. **The harness does not have to wait.** The episode loop, agents, logging, runner and CLI only need `Session` and a `Task` protocol, both of which exist or are fully specified. E2 can be built against a stub task while E0 lands.
 3. **Two small contract additions** are needed in Phase 1 for the anti-reward-hacking layer to hold (§3.5): a bus-stamped `placed_by` field on the anchor record, and `truth.design_fingerprint` enforcement. Both are one-line WP6/WP9 follow-ups and are listed in E0. *(2026-09-10: `placed_by` has landed — see §3.5 item 3.)*
 
-PRD mapping: this plan is M2 (verifier), M3 (eval harness + trajectory logging), the Phase 2/3 leaderboard and writeup, the M4 `run_check` budget and dialect skins as harness features, and the M5 hooks (a Gymnasium-style adapter) without the training run itself.
+PRD mapping: this plan is M2 (verifier), M3 (eval harness + trajectory logging), the Phase 2/3 leaderboard and writeup, the M4 `run_check` budget as a harness feature (the dialect skins were dropped 2026-10-30, §4.5), and the M5 hooks (a Gymnasium-style adapter) without the training run itself.
 
 ## 1. Goals and the numbers at the end
 
@@ -33,7 +33,7 @@ PRD mapping: this plan is M2 (verifier), M3 (eval harness + trajectory logging),
 
 > *best model scores X/100 on a basic plan sheet* (mean effective score over `d1-test`, with a confidence interval).
 
-**Secondary numbers** the same run yields for free: hard-fail rate, clean-sheet rate, per-check credit profile, invalid-call rate, steps and cost per sheet, and later the dialect transfer gap.
+**Secondary numbers** the same run yields for free: hard-fail rate, clean-sheet rate, per-check credit profile, invalid-call rate, steps and cost per sheet.
 
 **Non-goals for v0.1:** D2+ checks (profiles, VC tables), the VLM judge, raw-code mode and its sandbox, the GRPO training run (only the environment adapter it needs), and GUI computer-use evals.
 
@@ -98,7 +98,6 @@ src/roaddraft/eval/
   agents/llm.py              provider-driven tool-calling agent                      [E3]
   providers/base.py, anthropic.py, openai_compat.py, fake.py                         [E3]
   prompts/system_neutral.md, system_c3d.md, system_ord.md                            [E3]
-  dialects.py                alias tables for tool names per skin                    [E3]
   prices.json                dated price table used only at report time             [E3]
   report.py                  summary.json, leaderboard.md, per-check CSV, taxonomy   [E4]
   __main__.py                python -m roaddraft.eval {run,verify,taskset,report,human}
@@ -378,8 +377,8 @@ One interface, `Agent.act(observation) -> list[ToolCall] | Submit`, and five imp
 
 ### 4.5 Dialects and modes
 
-- **Dialects** are tool-name skins over the same manifest: `neutral` (canonical names), `c3d` and `ord` (the aliases every command spec already carries, e.g. `ADDALIGNMENTSTAOFFLABEL`, `place label`). The harness presents the skin's names and resolves calls back through `CommandBus.resolve`. Each skin's system prompt uses that vocabulary (view frames versus named boundaries and so on, per PRD §4). Transfer gap = mean effective score (neutral) − mean effective score (skin), paired by task.
-- **Modes**: `single` (no `run_check`, no render), `self_correct` (`run_check` budget 3, `render_sheet` allowed, PNG path only), `vision` (self-correct plus the PNG returned as an image). Mode and dialect are independent run dimensions.
+- **Dialects** — *Dropped 2026-10-30 (Robert): no episode renames the tools. The eval tests a model's readiness for RoadDraft itself; the writeup states that readiness for other CAD software would be built the same way, rather than measuring a transfer gap. `eval/dialects.py` and the `c3d` / `ord` system prompts are removed, `neutral` is the only dialect (kept as a field for run ids and episode file names), and the four `d1-test` skin rows (Luna and Sonnet 5.5, `c3d` and `ord`) are off the board, kept under `results/_retired-skins/`. The command specs' aliases stay, for the command line.* As first planned, dialects were tool-name skins over the same manifest: `neutral` (canonical names), `c3d` and `ord` (the aliases every command spec already carries, e.g. `ADDALIGNMENTSTAOFFLABEL`, `place label`). The harness presents the skin's names and resolves calls back through `CommandBus.resolve`. Each skin's system prompt uses that vocabulary (view frames versus named boundaries and so on, per PRD §4). Transfer gap = mean effective score (neutral) − mean effective score (skin), paired by task.
+- **Modes**: `single` (no `run_check`, no render), `self_correct` (`run_check` budget 3, `render_sheet` allowed, PNG path only), `vision` (self-correct plus the PNG returned as an image). Mode and prompt level are the run dimensions.
 
 ### 4.6 Trajectory log
 
@@ -431,7 +430,6 @@ python -m roaddraft.eval run --taskset d1-test --models claude-opus-5,claude-son
 - **Leaderboard** rows per (model, dialect, mode, effort): effective score mean ± 95% CI (bootstrap over tasks), rubric score, hard-fail rate, clean-sheet rate, submit rate, steps, invalid-call rate, `run_check` uses, cost per sheet, n.
 - **Per-check heatmap**: mean credit per check per model.
 - **Failure taxonomy**: finding codes rolled up to completeness / value / anchoring / placement / legibility / standards / sheet_setup, plus harness-level tool_use (invalid params, unknown command, faults, recovery) and termination. This table is the writeup's spine.
-- **Transfer gap** table when more than one dialect ran.
 - Published runs copy `summary.json` and `leaderboard.md` into `benchmarks/runs/<run_id>/`; the README leaderboard is generated from them, never edited by hand.
 
 ### 4.10 As built (E3, 2026-10-14)
@@ -443,7 +441,7 @@ python -m roaddraft.eval run --taskset d1-test --models claude-opus-5,claude-son
 - *Thinking and effort per model.* Adaptive thinking on every model that takes it, with `display: "summarized"` where the default omits the text, so the trajectory keeps the reasoning summary; Haiku 4.5 runs without (it takes only a fixed budget). `effort` defaults to `high` and is always sent (Opus 5.5 and Haiku 5.5 default to `medium` otherwise), except to models that reject it. Model ids moved on since §4.4: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1` are current, and the price table carries them and their predecessors.
 - *How a turn ends.* A turn with no tool call is the model's final answer: an implicit submit, recorded (`end.implicit_submit`, the turn's `implicit_submit`), termination `submit`. A turn cut off at the output limit without a call is answered with a one-line request to go on, twice at most; a third ends the episode as a budget, `budget_tripped = "output_limit"`. A conversation past the context the model is served at is `context`, a turn past the provider's time limit `turn_time` (`providers.base.LimitReached`): the model's outcomes, scored like any budget. `error` is left to the harness's own failures (HTTP, credentials), which the E4 report keeps out of scores.
 - *Results.* Every result of a turn goes back in one message, in call order, as compact JSON of the bus result; a call the episode did not run (the turn stopped at a budget or at `submit`) gets a `not_run` error result so every tool call has its result. When 15 steps or 3 faults remain, the results carry a one-line `[harness]` note. In the vision mode a render's PNG goes back as an image beside its result and never into the trajectory.
-- *Dialects.* A skin name is the first of a command's aliases for that program that is a valid tool name for every vendor (an ORD phrase written with `_`) and not already taken; queries and harness tools keep their names (43 commands renamed in `c3d`, 37 in `ord`). The system prompt, the task text and the tool descriptions are rewritten to the skin's names (multi-word names only: `trim` and `undo` stay English in prose); tool results stay the engine's words. Each skin has its own system prompt in the program's vocabulary. The transfer runs are E5.
+- *Dialects.* A skin name is the first of a command's aliases for that program that is a valid tool name for every vendor (an ORD phrase written with `_`) and not already taken; queries and harness tools keep their names (43 commands renamed in `c3d`, 37 in `ord`). The system prompt, the task text and the tool descriptions are rewritten to the skin's names (multi-word names only: `trim` and `undo` stay English in prose); tool results stay the engine's words. Each skin has its own system prompt in the program's vocabulary. The transfer runs were E5. *Dropped 2026-10-30 with the skins (§4.5).*
 - *Cost.* Usage is recorded per turn under Anthropic's key names whatever the vendor (an OpenAI-compatible prompt is split into uncached input and `cache_read_input_tokens`). The episode prices each turn from `prices.json` (dated 2026-10-06; Haiku 5.5's 100k-prompt tier makes cost a per-turn sum) into `end.cost_usd` and `end.prices_checked`; an unpriced model's cost is null, not zero. The runner's `--cost-cap` starts episodes only as workers free up and starts none once the finished ones (the resumed included) have spent the cap; `--dry-run` projects the cost from the model's measured episodes under `results/`.
 
 ## 5. Metrics
@@ -461,7 +459,6 @@ python -m roaddraft.eval run --taskset d1-test --models claude-opus-5,claude-son
 | Fault rate, recovery rate | `command_failed` / calls; faults followed within 3 calls by a successful call of the same command | % |
 | `run_check` use | uses per episode and Δ effective score before/after the last check | mean |
 | Cost per sheet | recorded usage × price table | USD |
-| Transfer gap | effective(neutral) − effective(skin), paired by task | points ± CI |
 | Prompt gap | effective(explicit prompt) − effective(vague prompt), paired by task (§3.8) | points ± CI |
 | Per task type | every metric above, split by task type and by 1 / 2 sheets (§3.8) | table |
 
@@ -481,7 +478,7 @@ Same conventions as the Phase 1 spec: disjoint file ownership per stage, an acce
 | **E2 Harness core** | §4.1–4.3, 4.6–4.8: `eval/*` except providers/llm/report, four non-LLM agents, CLI `run` / `taskset` / `verify` / `human`, the three taskset manifests, `results/` gitignored, `tests/test_eval_{episode,budget,tools,trajectory,runner,taskset}.py` | `Session` now; E0 + E1 for the oracle test | `pytest -q tests/test_eval_*.py`; `python -m roaddraft.eval run --taskset d1-dev --agent oracle` | oracle through the loop 50/50 = 100; scripted ≈ 65 and stable; human playtest = 100 with the journal committed under `benchmarks/expert/` |
 | **E3 LLM agents** | §4.2, 4.4, 4.5: `agents/llm.py`, `providers/*`, `prompts/*`, `dialects.py`, `prices.json`, `tests/test_eval_llm.py` (fake provider only) | E2 | `pytest -q tests/test_eval_llm.py`; smoke run `d1-dev[:5]` × one model × single | measured cost and steps per sheet; invalid-call rate on the smoke run |
 | **E4 Leaderboard v0.1** | §4.9: `eval/report.py`, `scripts/make_leaderboard.py`, README section, the writeup draft | E3, spec frozen at v1 | `d1-variance` × 5 samples first, then `d1-test` × ≥ 3 models × neutral × {single, self_correct} | **best model X/100**, hard-fail rate, taxonomy table, CI half-width < 5 points |
-| **E5 Transfer + vision** | dialect system prompts, `c3d` / `ord` runs, vision-mode runs | E4 | same runner | transfer gap per skin ± CI |
+| **E5 Vision** | vision-mode runs (the transfer runs were dropped 2026-10-30, §4.5) | E4 | same runner | vision gain ± CI |
 | **E6 Adapters** | §6: `eval/gym.py`, `verifiers` / Inspect wrappers, TRL/GRPO example | E4 | oracle scores 100 through each adapter | one measured reward curve (Phase 5) |
 
 Sequencing given the Portfolio arc (RoadDraft is Arc 2, after the EKG arc): E0 is one more workflow-driven session like the Phase 1 build; E1 and E2 are independent of each other after E0 and can run in parallel; E3 is small; E4 is mostly run time and writing. The PE decisions in §3.7 are the only human-gated step before E4 and should be made during E1.
@@ -527,4 +524,4 @@ E0, E1 and E2 are done. E0 landed 2026-09-10 (6df5252, 029658e) and was re-verif
 3. The human playtest on seed 42 (`python -m roaddraft.eval human start`, then `human score`); commit the expert journal under `benchmarks/expert/`.
 4. E4: `d1-variance` × 5 samples to size the interval (*planned 2026-10-18:* Qwen3.6-35B-A3B on Runpod, `runpod_campaign.py e3 qwen3.6-35b-a3b`: 20 tasks × 5 samples × single × explicit = 100 episodes, 4 at a time, from the worktree pinned at the commit carrying the engine fix and v5; about 1.5 h and $4–8 of worker time at $3.49/h; it measures the within-task spread against the between-task spread, which sets the samples `d1-test` needs for a CI half-width under 5; waits on Robert's go), then `d1-test` × three or more models × neutral × {single, self-correct}; `report --publish`; `scripts/make_leaderboard.py`; write *"Why frontier models can't draft a plan sheet (yet)"* from the taxonomy table.
 5. The sample sheets and the harder tasks (*added 2026-10-22*): `d1-real-dev` smoke on one open-weight model, then `d1-real` and `hard-pilots` × the same models as `d1-test` (`hard-pilots` needs an image-capable provider for its five scanned-sheet pilots). The oracle and null agents through the loop on both real sets are the free acceptance check (§4.8).
-6. E5 (the `c3d` and `ord` skins exist in `eval/dialects.py`; the transfer and vision runs do not) and E6 (the adapters), after E4.
+6. E5 (vision runs; the `c3d` and `ord` skins were dropped 2026-10-30, §4.5) and E6 (the adapters), after E4.

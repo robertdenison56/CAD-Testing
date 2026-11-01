@@ -35,6 +35,11 @@ What it fixes, so a run tomorrow is the same run as the plan:
 
 Nothing here starts a worker until ``smoke``, ``k3`` or ``e3-smoke`` sends a request: ``create`` makes
 endpoints with ``workers.min = 0``, which bill nothing while idle.
+
+The Track D spread (2026-10-28, ``PLAN.md`` beside this file): a spec with ``public: true`` is a Runpod public
+endpoint, served and billed per token by Runpod on the same /openai/v1 route, so ``create``, ``warm``, ``status``,
+``workers`` and ``delete`` refuse it; a spec with ``trackd_local`` already has its Track D row on RobertsPC, so
+``e3`` refuses it without ``--force`` (Robert: do not duplicate a model that runs locally).
 """
 from __future__ import annotations
 
@@ -139,6 +144,25 @@ def route(m: dict) -> str:
     return ROUTE.format(id=m["endpoint"])
 
 
+def is_public(m: dict) -> bool:
+    """A Runpod public endpoint (``public: true``): Runpod serves the model and bills per token, the account
+    owns no endpoint resource, and the route is the ladder's /openai/v1 with the same key. Nothing here
+    creates, arms, warms, parks or deletes one (2026-10-28: GLM-5.3, b1dd8hy2hqo1nb)."""
+    return bool(m.get("public"))
+
+
+def not_public(m: dict, name: str, what: str) -> None:
+    if is_public(m):
+        sys.exit(f"{name}: a Runpod public endpoint ({m.get('endpoint')}); `{what}` does not apply, Runpod runs it")
+
+
+def local_row(m: dict) -> Optional[str]:
+    """The Track D row this model already has on RobertsPC (``trackd_local``), when it has one. Robert,
+    2026-10-28: the Runpod spread does not duplicate a model that runs locally; ``e3`` refuses such a
+    model without ``--force``."""
+    return m.get("trackd_local") or None
+
+
 # ------------------------------------------------------------------ preflight and commands
 
 def git(*args: str, cwd: Path = WORKTREE) -> str:
@@ -167,6 +191,8 @@ def preflight(need_key: bool = True) -> None:
 def arm(m: dict) -> None:
     """A parked endpoint (max workers 0) is paused: the gateway answers 409 ENDPOINT_PAUSED. Set max 1 and
     give the two planes the 20-25 s they take to agree (Runpod's own cold-start write-up measured it)."""
+    if is_public(m):
+        return
     workers = request("GET", f"{API}/serverless/{m['endpoint']}")["workers"]
     if int(workers.get("max", 0)) >= 1:
         return
@@ -219,8 +245,15 @@ def cmd_list(args) -> int:
     data = load()
     print(f"{'name':20} {'rung':34} {'model':34} {'pools':26} {'$/h':>5} {'est $':>7}  endpoint")
     for name, m in data["models"].items():
+        if is_public(m):
+            pr = m.get("pricing_usd_per_m") or {}
+            where = f"public ${pr.get('input')}/${pr.get('output')} per M"
+            print(f"{name:20} {m['rung'][:34]:34} {m['model'][:34]:34} {where[:26]:26} "
+                  f"{'':>5} {m.get('est_usd', '')[:7]:>7}  {m.get('endpoint') or '-'}")
+            continue
+        tail = "  LOCAL ROW: not on the Runpod spread" if local_row(m) else ""
         print(f"{name:20} {m['rung'][:34]:34} {m['model'][:34]:34} {','.join(m['pools'])[:26]:26} "
-              f"{m['rate_usd_h']:>5.2f} {m['est_usd'][:7]:>7}  {m.get('endpoint') or '-'}")
+              f"{m['rate_usd_h']:>5.2f} {m['est_usd'][:7]:>7}  {m.get('endpoint') or '-'}{tail}")
     print("\nout of range:")
     for model, why in data.get("out_of_range", {}).items():
         print(f"  {model}: {why}")
@@ -243,6 +276,7 @@ def cmd_workers(args) -> int:
     """The account allows 10 max workers across all endpoints: a finished endpoint set to 0 frees one."""
     data = load()
     m = spec(data, args.name)
+    not_public(m, args.name, "workers")
     if not m.get("endpoint"):
         sys.exit(f"{args.name}: no endpoint")
     before = request("GET", f"{API}/serverless/{m['endpoint']}")["workers"]
@@ -273,6 +307,7 @@ def cmd_create(args) -> int:
     data = load()
     for name in args.names:
         m = spec(data, name)
+        not_public(m, name, "create")
         body = endpoint_body(data, name)
         if m.get("endpoint") and not args.again:
             print(f"{name}: already has endpoint {m['endpoint']} (pass --again to create another)")
@@ -304,6 +339,9 @@ def cmd_status(args) -> int:
     names = args.names or list(data["models"])
     for name in names:
         m = spec(data, name)
+        if is_public(m):
+            print(f"{name:20} {m['endpoint']} public endpoint: Runpod runs it, no workers of ours to read")
+            continue
         if not m.get("endpoint"):
             print(f"{name:20} no endpoint")
             continue
@@ -325,6 +363,7 @@ def cmd_warm(args) -> int:
     start without that limit; the smoke or the campaign then meets a warm worker (idle timeout permitting)."""
     data = load()
     m = spec(data, args.name)
+    not_public(m, args.name, "warm")
     preflight(need_key=True)
     arm(m)
     base = f"https://api.runpod.ai/v2/{m['endpoint']}"
@@ -417,6 +456,9 @@ def cmd_e3(args) -> int:
     the harness resumes a run id, skipping every episode that already has an end record."""
     data = load()
     m = spec(data, args.name)
+    if local_row(m) and not getattr(args, "force", False):
+        sys.exit(f"{args.name}: its Track D row runs on RobertsPC ({local_row(m)}); the Runpod spread does not "
+                 f"duplicate it (Robert, 2026-10-28). --force runs a Runpod row of it anyway.")
     run_id = args.run_id or f"e3-{args.taskset}-{args.name}-{args.mode}"
     cmd = [str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", args.taskset,
            "--model", m["model"], "--provider", "openai", "--base-url", route(m), "--api-key-env", "RUNPOD_API_KEY",
@@ -426,6 +468,8 @@ def cmd_e3(args) -> int:
         cmd += ["--limit", str(args.limit)]
     if m.get("extra_body"):
         cmd += ["--extra-body", json.dumps(m["extra_body"])]
+    if m.get("context"):   # the harness's own context budget (291ae711): a public endpoint's window, no MAX_MODEL_LEN of ours
+        cmd += ["--context-tokens", str(m["context"])]
     if args.dry_run:
         cmd.append("--dry-run")
     log = E3_OUT / f"{run_id}.log"
@@ -533,6 +577,7 @@ def cmd_delete(args) -> int:
     data = load()
     for name in args.names:
         m = spec(data, name)
+        not_public(m, name, "delete")
         if not m.get("endpoint"):
             print(f"{name}: no endpoint")
             continue
@@ -569,13 +614,16 @@ def main(argv=None) -> int:
     k.add_argument("--force", action="store_true"); k.add_argument("--print", action="store_true"); k.set_defaults(fn=cmd_k3)
     e = sub.add_parser("e3-smoke"); e.add_argument("name"); e.add_argument("--limit", type=int, default=5)
     e.add_argument("--concurrency", type=int, default=3); e.add_argument("--dry-run", action="store_true")
-    e.add_argument("--print", action="store_true"); e.set_defaults(fn=cmd_e3_smoke)
+    e.add_argument("--print", action="store_true")
+    e.add_argument("--force", action="store_true", help="run a model whose Track D row is local (trackd_local)")
+    e.set_defaults(fn=cmd_e3_smoke)
     e3 = sub.add_parser("e3"); e3.add_argument("name"); e3.add_argument("--taskset", default="d1-variance")
     e3.add_argument("--samples", type=int, default=5); e3.add_argument("--limit", type=int)
     e3.add_argument("--mode", default="single", choices=["single", "self_correct", "vision"])
     e3.add_argument("--level", default="explicit", choices=["explicit", "vague"])
     e3.add_argument("--concurrency", type=int, default=4); e3.add_argument("--run-id")
     e3.add_argument("--dry-run", action="store_true"); e3.add_argument("--print", action="store_true")
+    e3.add_argument("--force", action="store_true", help="run a model whose Track D row is local (trackd_local)")
     e3.set_defaults(fn=cmd_e3)
     sc = sub.add_parser("score"); sc.add_argument("name"); sc.add_argument("--print", action="store_true")
     sc.set_defaults(fn=cmd_score)

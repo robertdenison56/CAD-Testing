@@ -7,7 +7,7 @@ ends the conversation (``stop = "end"``).
 
 ``FakeProvider.oracle()`` replays the task's reference solution as tool
 calls, ``per_turn`` at a time, through the whole LLM stack -- the agent's
-transcript, the dialect's tool names, the provider's turn shape -- and must
+transcript, the tool names, the provider's turn shape -- and must
 score what the oracle agent scores: 100.  From the CLI it is ``--provider
 fake --model fake-oracle``.
 """

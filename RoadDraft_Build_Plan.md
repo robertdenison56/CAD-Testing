@@ -31,13 +31,13 @@ The engine is no longer the deliverable; the measurements and the trained models
 |---|---|---|---|
 | RQ1 | Can an LLM, given only an MCP tool surface, locate, draft and annotate correctly in a 2D CAD program? | Frontier models can; smaller models fail on specific, nameable skills rather than uniformly. | Fable 17/17, Haiku 14/17, gpt-oss:120b 12 to 15 of 17, Qwen3.5-9B 11/17; each miss names a skill (§2.2). |
 | RQ2 | Does a probe-and-verifier benchmark rank models stably and discriminate between them? | Yes: tiers saturate for strong models and discriminate for the rest, so a tiered score orders the field. | The T2 find-probes are saturated (a 9B model scores 8/9); T1, Tier 2 and Tier 3 spread the models. |
-| RQ3 | Does fine-tuning on the app's own trajectories and rewards raise a small open model's rank, and does the gain hold on held-out tasks and renamed tool surfaces? | SFT on reference trajectories closes the schema and convention gaps; RL with the verifier closes the arithmetic and scope gaps; a dialect skin exposes tool memorisation. | Untested. No training code exists yet. |
+| RQ3 | Does fine-tuning on the app's own trajectories and rewards raise a small open model's rank, and does the gain hold on held-out tasks? | SFT on reference trajectories closes the schema and convention gaps; RL with the verifier closes the arithmetic and scope gaps. | Untested. No training code exists yet. |
 
 **What is novel.**
 
 - A tool-use benchmark on a real application, scored deterministically from the saved document, where the report the model gives is checked against the file it left.
 - A training environment whose expert demonstrations are generated with the tasks, because the generator knows the truth.
-- The dialect transfer gap: the same tasks through neutral, Civil 3D-style and ORD-style tool names, which separates "learned drafting" from "memorised a schema".
+- *Dropped 2026-10-30 (Robert):* the dialect transfer gap. No run renames the tools: the eval measures a model's readiness for RoadDraft itself, and the writeup states that readiness for other CAD software (Civil 3D, OpenRoads) would follow the same path -- the same verifier-graded tasks, and training on that program's own tool surface -- rather than measuring it here.
 - Domain knowledge encoded as checks by a licensed PE, each cited to a page of the Caltrans Plans Preparation Manual.
 
 ---
@@ -61,7 +61,7 @@ The engine is no longer the deliverable; the measurements and the trained models
 | Sample sheets | The PPM, FDOT, CFL and WFL sample plan sets split one sheet to a PDF (`Sheets/manifest.csv`) and redrafted as RoadDraft file sets under each agency's naming and title block (Oct 9 to 11); the `real-*` tasks start from these sheets with their real base files. | `examples/Exmple Plans/` |
 | Human interfaces | Web GUI, terminal REPL and RoadDraft.app on the same bus, so a human session leaves the same journal an agent does. | `web/`, `cli/`, `desktop/`, `scripts/build_app.sh` |
 
-Not built: the Track D runs (E4's `d1-variance` and `d1-test` wait on the E3 smoke run and the spec v1 freeze), the Track X runs (E5; the skins exist), the Gymnasium, `verifiers` and Inspect adapters (E6), and any training code. The Track P leaderboard is generated (`python -m roaddraft.runners leaderboard`, `benchmarks/leaderboard/`); Track D's generator exists and has no ranked run.
+Not built: the Track D runs (E4's `d1-variance` and `d1-test` wait on the E3 smoke run and the spec v1 freeze), the Gymnasium, `verifiers` and Inspect adapters (E6), and any training code. The Track P leaderboard is generated (`python -m roaddraft.runners leaderboard`, `benchmarks/leaderboard/`); Track D's generator exists and has no ranked run.
 
 ### 2.2 Current standings
 
@@ -106,7 +106,7 @@ What the k = 3 campaign says, and what §3.2 now measures:
                   MCP tool calls │                  │ results, faults, renders
                  ┌───────────────▼──────────────────┴───────────────┐
                  │  roaddraft-mcp  (103 tools, one manifest;         │
-                 │  a dialect skin is the same tools renamed)        │
+                 │  every tool under its own name)                   │
                  │  --autosave  → document + journal on disk         │
                  │  --trace     → every call, query and fault        │
                  └───────────────┬──────────────────────────────────┘
@@ -124,7 +124,7 @@ What the k = 3 campaign says, and what §3.2 now measures:
 
 Invariants, already in force for the probe runs and carried into everything below:
 
-1. The model under test touches the app only through MCP. Same tools, descriptions and schemas for every model; the only permitted differences are the dialect skin and the mode (text, self-correct, vision).
+1. The model under test touches the app only through MCP. Same tools, descriptions and schemas for every model; the only permitted difference is the mode (text, self-correct, vision); no run renames the tools (2026-10-30).
 2. Scores come from the document on disk. The model's report is kept and compared, never scored.
 3. Every run folder keeps its rig: runner, prompts, traces, documents, journals, engine commit. A re-score runs against the current checks, which is why the documents are kept and not just the numbers.
 4. Every reference solution is a finished drawing that opens in the app, replays from its journal, and passes its own check.
@@ -156,7 +156,7 @@ These are the columns of the model card that accompanies every leaderboard row.
 |---|---|---|---|
 | P: probes | the 33 probes, three tiers | pass rate over k = 3 attempts, per tier and overall | built; seven models ranked at k = 3 (§2.2) |
 | D: drafted sheets | the eval plan's `d1-test` set, 100 held-out generated plan sheets | effective score mean ± 95% CI; hard-fail rate; clean-sheet rate | generator, verifier and harness built; no ranked run (the spec is `draft-v4`; the E3 smoke run and the freeze come first) |
-| X: transfer | Track P and D tasks through the `c3d` and `ord` dialect skins, and in vision mode | transfer gap = neutral − skin, paired by task | aliases exist on every command; the skins are wired in `roaddraft.eval` (43 and 37 commands renamed); no transfer run yet |
+| X: transfer | *Dropped 2026-10-30 (Robert): no run renames the tools.* Vision mode runs as part of Track D | – | the skins are removed from `roaddraft.eval`; the commands' `c3d` / `ord` aliases stay, for the command line |
 
 Ranking rules:
 
@@ -223,7 +223,7 @@ Phases B and C are independent once A has produced the runner, so they can inter
 |---|---|
 | RQ1 measure | every model on the leaderboard has a model card with the §3.2 measures, computed from traces, at k ≥ 3 |
 | RQ2 rank | Track P covers four or more models across all 33 probes at k = 3; Track D reports best model X/100 with a CI half-width under 5 points; the ordering is stable across k |
-| RQ3 train | a fine-tuned checkpoint beats its base on held-out Tier 2, Tier 3 and `d1-test` with non-overlapping CIs, without widening its transfer gap; the data and recipe reproduce from the repo |
+| RQ3 train | a fine-tuned checkpoint beats its base on held-out Tier 2, Tier 3 and `d1-test` with non-overlapping CIs; the data and recipe reproduce from the repo |
 
 Secondary signals: inbound from labs, environment vendors and AEC firms; the probe set adopted by anyone else; and the verifier pointed at human-drawn sheets as a QA tool (the v1 product probe, unchanged).
 
@@ -236,13 +236,13 @@ These decisions stand and are not repeated here. v1 section numbers are listed f
 | v1 | Decision | Where it lives now |
 |---|---|---|
 | §3, §5.1 | the command bus as action space, trajectory and replay; zero CAD-program imports in core | `README.md`, `commands/bus.py` |
-| §4 | one ontology with Civil 3D and ORD dialects; the transfer gap as a headline metric | every command's `c3d` / `ord` aliases; Track X |
+| §4 | one ontology with Civil 3D and ORD dialects; the transfer gap as a headline metric | every command's `c3d` / `ord` aliases, for the command line; the transfer gap and Track X dropped 2026-10-30 |
 | §5.2 | text-first, a diff and warnings on every action, teaching errors, anchors not coordinates, a `run_check` budget | the engine; eval plan §4 |
 | §5.4 | human-play mode: if a PE cannot score 100 through the tools, the tools are wrong | GUI, REPL, RoadDraft.app; the eval plan's human playtest |
-| M2 to M5 | verifier, harness, dialect skins, RL mode | eval plan E0 to E6 |
+| M2 to M5 | verifier, harness, RL mode (the dialect skins dropped 2026-10-30) | eval plan E0 to E6 |
 | §8 | open-core: harness, D1 generator, probes and leaderboard public; full spec depth, D3/D4 generators and the QA linter internal | unchanged |
 | §9 | IP hygiene: own time, own hardware, procedural and public data only; no employer or client files | unchanged |
-| §6 | the D2 to D5 curriculum (profiles, multi-sheet sets, redlines, dialect transfer) | deferred; Tier 2 and 3 already cover redlines (`draft-fix-the-drawing`, `qa-alignment-data`) and multi-sheet scope |
+| §6 | the D2 to D5 curriculum (profiles, multi-sheet sets, redlines, dialect transfer) | deferred (dialect transfer dropped 2026-10-30); Tier 2 and 3 already cover redlines (`draft-fix-the-drawing`, `qa-alignment-data`) and multi-sheet scope |
 
 ---
 

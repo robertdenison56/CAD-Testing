@@ -13,9 +13,10 @@
              the audit over the bus journal
     record   the trajectory: header, turns, journal, verify, audit, end
 
-The dialect is the harness's: the agent is shown the skin's tool names and
-task text, and every call is resolved back to the canonical command before
-the whitelist sees it.  In the vision mode a render's PNG goes to the agent
+The agent sees every tool under its own name: no episode renames them
+(Robert, 2026-10-30: the eval tests readiness for RoadDraft itself), so
+``dialect`` is always ``neutral``, a field kept for the run ids and files
+it names.  In the vision mode a render's PNG goes to the agent
 as an image beside the results and never into the trajectory.
 
 The episode folder is a fresh temporary folder: the task's files, the
@@ -41,7 +42,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from roaddraft.api.session import Session
 from roaddraft.document import confine
 from roaddraft.document.fileformat import INTERCHANGE_EXT
-from roaddraft.eval import dialects, prices
+from roaddraft.eval import prices
 from roaddraft.eval.agents import Agent, AgentRefusal, Submit, ToolCall
 from roaddraft.eval.budget import Budgets, BudgetState
 from roaddraft.eval.providers.base import LimitReached
@@ -172,8 +173,7 @@ class Episode:
         self.state = BudgetState()
         self.scope = list(task.truth.scope)
         self.allowed = allowed_names(config.mode, self.scope)
-        self.dialect = dialects.get(config.dialect, self.allowed)
-        self.brief_text = self.dialect.text(task_text(task.brief, config.level))
+        self.brief_text = task_text(task.brief, config.level)
         self.tools: List[dict] = []
         self.turns: List[dict] = []
         self.termination: Optional[str] = None
@@ -196,12 +196,11 @@ class Episode:
 
     def reset(self) -> dict:
         self.session = self._open_session()
-        self.tools = self.dialect.tools(
-            tool_definitions(self.session.manifest(), self.config.mode, self.scope))
+        self.tools = tool_definitions(self.session.manifest(), self.config.mode, self.scope)
         self.state = BudgetState()
         self.agent.reset(self.task, self.config.level, self.config.mode)
         self.agent.begin({"mode": self.config.mode, "level": self.config.level,
-                          "dialect": self.config.dialect, "skin": self.dialect,
+                          "dialect": self.config.dialect,
                           "budgets": self.budgets, "scope": self.scope, "episode_path": self.path})
         return {"turn": 0, "brief": self.brief_text, "tools": self.tools,
                 "state": self.state_summary(), "budget": self.state.remaining(self.budgets),
@@ -272,16 +271,15 @@ class Episode:
 
     def _execute(self, call: ToolCall) -> dict:
         """One tool call on the session: a step, whatever it returns.  The
-        call's name is resolved through the dialect first; the session runs
-        it with file access held to the episode folder, and its result is
-        shown with the folder's paths relative.  A render's image in the
-        vision mode, read from disk by the session, is kept for the agent in
-        ``_turn_images``."""
-        name, params = self.dialect.canonical(call.name), call.params or {}
+        session runs it with file access held to the episode folder, and its
+        result is shown with the folder's paths relative.  A render's image in
+        the vision mode, read from disk by the session, is kept for the agent
+        in ``_turn_images``."""
+        name, params = call.name, call.params or {}
         images = None
         if name not in self.allowed:
             hint = ("tools in this episode: "
-                    + ", ".join(sorted(self.dialect.present(n) for n in self.allowed)))
+                    + ", ".join(sorted(self.allowed)))
             result = _error(call.name, "unknown_command",
                             f"{call.name!r} is not a tool of this episode", hint)
         elif name in HARNESS_TOOLS:
@@ -425,7 +423,7 @@ class Episode:
                 results = []
                 self._turn_images = []
                 for call in calls:
-                    if self.dialect.canonical(call.name) == "submit":
+                    if call.name == "submit":
                         results.append(self.execute(call))
                         submitted = True
                         break
@@ -438,7 +436,7 @@ class Episode:
                     results.append(self.execute(call))
                     if self.harness_error:
                         break
-                assistant = {"text": "", "tool_calls": [self._call_record(c) for c in calls],
+                assistant = {"text": "", "tool_calls": [c.to_dict() for c in calls],
                              "submit": submitted, **self.agent.turn_record()}
                 if submitted and self.submit_note and not assistant.get("text"):
                     assistant["text"] = self.submit_note
@@ -506,13 +504,6 @@ class Episode:
         if self.task.files:
             journal["files"] = self.task.files
         return report, [journal, {"type": "verify", **report.to_dict()}, {"type": "audit", **audit}]
-
-    def _call_record(self, call: ToolCall) -> dict:
-        d = call.to_dict()
-        canonical = self.dialect.canonical(call.name)
-        if canonical != call.name:
-            d["tool"] = canonical
-        return d
 
 
 def run_episode(task: Task, agent: Agent, config: EpisodeConfig = EpisodeConfig(),

@@ -19,7 +19,7 @@ score 100: that is the harness's own acceptance test, kept permanent in
 
 E3 adds the model under test: ``LLMAgent`` over a provider
 (``eval.providers``: ``anthropic``, ``openai``-compatible, ``fake``), the
-system prompts (``eval.prompts``), the dialect skins (``eval.dialects``) and
+system prompts (``eval.prompts``) and
 the dated price table (``eval.prices``); ``run --model ID`` runs one.
 """
 from roaddraft.eval.agents import (

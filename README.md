@@ -111,8 +111,8 @@ learned here transfer (PRD section 4):
 Design geometry lives in model space at real-world coordinates; annotation and
 sheet composition live on sheets in paper inches; viewports window model space
 onto paper at a plot scale (1"=50' → `feet_per_inch: 50`). Commands carry
-C3D-style and ORD-style aliases (`LINE`, `place line`) as the seed of the
-dialect skins.
+C3D-style and ORD-style aliases (`LINE`, `place line`) for the command line;
+an eval episode only ever shows a model the tools' own names.
 
 ## Roadway drafting commands
 
@@ -1034,13 +1034,14 @@ each type, on three Caltrans sheets `d1-real` never uses, for smoke runs), and `
 the 33 harder-task pilots run as probe tasks: each on its own sample-sheet project with
 the MCP server's tools, graded pass (100) or fail (0) by its own check
 (`src/roaddraft/eval/probe_tasks.py`, `docs/Probes_Pilots.md`).
-Prompt level, mode and dialect are run dimensions. Runs go under `results/`
+Prompt level and mode are run dimensions. The tools always carry their own
+names: the eval measures readiness for RoadDraft itself (no renamed skins). Runs go under `results/`
 (gitignored) and resume by skipping any episode file with an end record.
 
 #### Models: the LLM agents
 
 ```
-.venv/bin/python -m roaddraft.eval run --taskset d1-dev --model fake-oracle --dialect c3d --dialect ord   # offline: 100
+.venv/bin/python -m roaddraft.eval run --taskset d1-dev --model fake-oracle                               # offline: 100
 .venv/bin/python -m roaddraft.eval run --taskset d1-dev --limit 5 --model claude-sonnet-5-5 --cost-cap 10 # ANTHROPIC_API_KEY
 .venv/bin/python -m roaddraft.eval run --taskset d1-dev --limit 5 --model google/gemma-4-e4b --lms-context 65536
 .venv/bin/python -m roaddraft.eval run --taskset d1-test --model claude-sonnet-5-5 --provider claude-code --effort high  # a signed-in claude
@@ -1056,11 +1057,11 @@ caching and no server-side fallbacks, so a refusal ends the episode as a
 refusal; `openai` is any OpenAI-compatible endpoint (LM Studio, Ollama,
 vLLM, Runpod) with the Track P runner's streaming and LM Studio guards;
 `fake` is scripted turns for the tests, and `fake-oracle` replays the
-reference solution through the whole LLM stack and scores 100 in every
-dialect. The system prompt (`eval/prompts/system_<dialect>.md`) gives the
-role, how the engine works and the episode's budgets; the `c3d` and `ord`
-dialects show the Civil 3D and OpenRoads names the commands carry as
-aliases (`ADDALIGNMENTLABELS`, `level_create`) and resolve each call back.
+reference solution through the whole LLM stack and scores 100. The system
+prompt (`eval/prompts/system_neutral.md`) gives the role, how the engine
+works and the episode's budgets, and every tool keeps its own name: the eval
+tests readiness for RoadDraft, and readiness for other CAD software would be
+built the same way.
 A model that stops talking without calling `submit` has submitted (recorded
 as implicit); one cut off at the output limit is asked to go on twice, then
 ends as a budget (`output_limit`), like a conversation past its context
@@ -1102,7 +1103,7 @@ parallel runs with 429s, so `--concurrency 1`.
 
 `report` turns a run folder into `leaderboard.md`, `summary.json`,
 `per_check.csv`, `taxonomy.csv` and `episodes.csv`. A row is one model ×
-effort × dialect × mode × prompt level. The headline is the effective score
+effort × mode × prompt level. The headline is the effective score
 (0 on a hard fail, else the rubric score), averaged per task over its samples
 and then over tasks, with a 95% bootstrap interval over tasks stratified by
 task type. Rubric score, hard-fail and clean-sheet rates, steps,
@@ -1111,7 +1112,7 @@ the last check, and cost per sheet (from the dated price table) sit beside
 it. Below the rows are the per-check credit, the failure taxonomy (finding
 codes rolled up to completeness, value, anchoring, placement, legibility,
 standards and sheet setup, plus tool use and termination), the paired gaps
-(explicit − vague, neutral − skin, self-correct − single), the split by task
+(explicit − vague, self-correct − single, vision − self-correct), the split by task
 type and sheet count, and how many tasks would bring the interval under ±5.
 Only a run on `d1-test`, `d1-real` or `hard-pilots` under a frozen spec, scored by one
 verifier throughout, is ranked, each set on its own board. A draft-spec or dev-set run reports normally but
@@ -1428,7 +1429,7 @@ generator) is in. Still to come, on top of this bus:
 - **LLM agents and the leaderboard (E3, E4)**: the verifier (`roaddraft.verify`,
   E1) and the harness (`roaddraft.eval`, E2: episode loop, budgets, whitelist,
   oracle / null / scripted / replay agents, trajectories, task sets, runner) are
-  in; the provider-driven agent, the dialect skins, the report generator and the
+  in; the provider-driven agent, the report generator and the
   published leaderboard are next — see `RoadDraft_Eval_Plan.md`.
 - **Spirals** (`"spiral"` is reserved and rejected everywhere), asymmetric
   vertical curves, **profile views** on sheets, station-offset labels, match

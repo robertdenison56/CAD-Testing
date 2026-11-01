@@ -34,9 +34,9 @@ A row is one (model, provider, effort, dialect, mode, level).  The rules:
   wall_clock, output_limit, context, turn_time) and ``refusal`` are the
   model's outcomes and count.  A submit the model never called (it stopped
   talking) is a submit, and its rate is reported.
-- Gaps are paired by task: the prompt gap (explicit - vague), the transfer
-  gap (neutral - a skin), the self-correct gain (self_correct - single) and
-  the vision gain (vision - self_correct), each wherever both rows ran.
+- Gaps are paired by task: the prompt gap (explicit - vague), the
+  self-correct gain (self_correct - single) and the vision gain (vision -
+  self_correct), each wherever both rows ran.
 - Every episode carries the spec, generator and verifier it was scored
   under.  A mix, or a verifier older than the current one, is flagged;
   ``--reverify`` re-scores every episode from its journal block with the
@@ -132,7 +132,6 @@ GROUP_DIMS = ("model", "provider", "effort", "dialect", "mode", "level")
 #: b None means every other value of the dimension
 GAPS: Tuple[Tuple[str, str, str, Optional[str]], ...] = (
     ("prompt gap", "level", "explicit", "vague"),
-    ("transfer gap", "dialect", "neutral", None),
     ("self-correct gain", "mode", "self_correct", "single"),
     ("vision gain", "mode", "vision", "self_correct"),
 )

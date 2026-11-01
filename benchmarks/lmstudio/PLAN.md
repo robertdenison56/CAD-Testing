@@ -166,7 +166,7 @@ self-correct gaps over all 100 tasks: the 9B +4.5 [-2.8, +12.3], Gemma +9.6 [+1.
 
 **Queue 9** (Robert, 09:3x Oct 31: "finish out the eval set for the local models";
 `results/e3-lms/queue-2026-10-31-trackd.sh`, log beside it, launched 09:35) runs the rest of the local push below for
-the three local models on the board. The 4B waits for its download on the PC. It runs from a new worktree,
+the three local models on the board. The 4B is off the list (Robert, Oct 31 21:00: "dont run the qwen 4B"). It runs from a new worktree,
 `lms-trackd`, at main 3424132d: the commit the Luna and Terra rows ran from, with tools 60eeeb21 and instructions
 4dff2849, and with the stall guard, the rig and the harness crash fix in. Step 3's engine-branch merges were not done
 before the frontier rows ran d1-real and hard-pilots on this engine, so the local rows run on it too and stay
@@ -286,6 +286,51 @@ Total: about six model-nights for the d1-test rows that exist today (steps 1, 3,
 two more for d1-real, a weekend for Qwen3.6 if it fits. Nothing else is needed for the board except the
 `NAMES` entries in `src/roaddraft/runners/leaderboard.py` the README names, so the rows read "Qwen3.5-9B
 (Q4_K_M, LM Studio)" and so on.
+
+## The local push through Track D (Robert, Oct 28 22:45: "lets push through track D locally before any runpod runs")
+
+Runpod waits: the model tree (`benchmarks/runpod/PLAN.md`) and the cost plan (`RoadDraft_Cost_Plan.md`) stand, and nothing
+runs there until Track D has gone as far as the PC takes it. One run at a time, each night on Robert's go, pinned to a
+worktree at main 31774181 or later (the stall guard is in). In order, once queues 2, 3 and 4 (Gemma 4 12B's d1-test, GLM's
+d1-test, the 9B's silent-turn reruns) are through and published:
+
+1. **The 4B.** `lms get` on the PC (only the PC can start it), `fit`, `check`, then d1-test x 1 (5-7 h). Four local
+   d1-test rows. *Dropped 2026-10-31 21:00 (Robert: "dont run the qwen 4B"): no 4B row on any set; the download was never
+   started; `models.json` marks it dropped so the rig refuses it.*
+2. **Self-correct on d1-test**, x 1, for the 9B, Gemma 12B, GLM-4.6V-Flash and the 4B: `e3 NAME --taskset d1-test
+   --samples 1 --mode self_correct` (the rig passes the mode through; `run_check` x 3 and `render_sheet` join the
+   whitelist). About 1.4 x a single night, 8-15 h each. A one-episode smoke first (`--taskset d1-dev --limit 1`), since no
+   self-correct run has been made on any rig. The board pairs each with its single row by task: the self-correct gap.
+   **Queue 6, the self-correct nights, LAUNCHED 23:15 Oct 28 and waiting** (Robert, 22:50: "Yes, build queue 5";
+   23:14: "Go, launch it"): `results/e3-lms/queue-2026-10-28e.sh`, log beside it, from the worktree `lms-selfcorrect` at
+   main d2ac876b (the stall guard plus the rig commit; a clean checkout). It was written first as queue-2026-10-28d.sh at
+   22:47; the queue session wrote its own queue 5 (Gemma 4 12B's fix-up, above) over that file at 22:50 and launched it
+   at 22:51, so the self-correct queue is queue 6 and waits for queue 5's "queue done" and an idle server (a duplicate
+   launch of the fix-up script at 23:14 was stopped at once). It runs the one-episode smoke
+   (`e3-smoke-self-correct-d1-dev-qwen3.5-9b-lms`) and stops for a look unless that episode ends by submit or budget with
+   a step, then the three nights in turn (`e3-d1-test-qwen3.5-9b-q4km-lms-self_correct`,
+   `e3-d1-test-gemma-4-12b-q8-lms-self_correct`, `e3-d1-test-glm-4.6v-flash-q4km-lms-self_correct`), a `watch` beside
+   each, six attempts a run, reports written and not published. The 4B is not in it (its download has not started).
+   The tool-call exception fix on the fix-up worktree is not committed and not in this worktree: an episode it would
+   save ends without an end record and the retry's resume runs it again.
+3. **The engine branch merges** (recursing-chaum, then jolly-borg, then pilot-astra; tracker step a-pilot-gaps), the
+   catalogue rebuild and the trajectory re-recording (CPU on the Mac, in parallel with the nights above), then a new
+   worktree at the merged main for everything below. Runs in flight keep their pins. Before the d1-real nights, since the
+   shared-table strip redraws d1-real.
+4. **d1-real x 1** for Gemma 12B, GLM and the 4B (about 14 h each). The 9B's row stands as a draw of the set.
+5. **hard-pilots.** The 9B: `report --reverify --publish` after the merge, then `vision qwen3.5-9b` and its nine image
+   pilots under the same run id. Gemma 12B and GLM on all 33 (half a night each; both take images).
+6. **k = 5 on d1-test for the 9B**: four more nights. The training baseline, and RQ3's interval.
+7. **The paired gaps on the 9B**: the vague level (one night), vision mode (one). *The `c3d` and `ord` skins were dropped 2026-10-30 (Robert: no run renames the tools).*
+8. **Frontier rows through the CLI route** (`--provider claude-code` / `codex`), on the Mac in parallel with the PC's
+   nights, on the subscriptions: Sonnet 5.5, Opus 5.5, GPT-6.1-Sol on d1-test x 1, days each, one at a time. Only on
+   Robert's word, since the Oct 24 rule named local models. *Done Oct 29 to 31 for GPT-6 Luna, Sonnet 5.5, GPT-6.1 Terra
+   and Opus 5.5, each through all eight runs (Opus's d1-test vague the last, Oct 31 evening); GPT-6.1-Sol is not run
+   (Robert, Oct 31 21:00: "dont run sol").*
+
+About 22 model-nights, five to six weeks at one run a night. What stays out of reach locally: the open rungs above 12B
+(Qwen3.6-35B-A3B at Q4 with its experts in PC RAM is the one maybe, a weekend and likely cap-bound), GLM-5.3, and GRPO.
+Those are the Runpod spread's Stage 0 onward, after this.
 
 ## Rules carried over
 

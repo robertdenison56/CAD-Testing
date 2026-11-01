@@ -3,10 +3,10 @@ works, and how the episode runs -- the budgets, the mode's tools, submit.
 The task's own rules (anchor your labels, leave the design alone) go with
 the task text (``tasks.prompts``), not here.
 
-One template per dialect, ``system_<dialect>.md``, each in that program's
-vocabulary (layouts and XREFs, sheet models and references).  ``$steps``,
-``$faults`` and ``$mode_rules`` are filled from the episode's budgets and
-mode; the dialect then renames the tools the text mentions.  The rendered
+One template, ``system_neutral.md``, in RoadDraft's own words and tool
+names: no episode renames the tools (Robert, 2026-10-30), so ``neutral``
+is the only dialect.  ``$steps``, ``$faults`` and ``$mode_rules`` are
+filled from the episode's budgets and mode.  The rendered
 prompt's digest goes into the trajectory header, so a changed word is a
 changed run.
 """

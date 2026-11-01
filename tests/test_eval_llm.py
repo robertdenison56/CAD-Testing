@@ -1,10 +1,10 @@
 """The LLM agents (eval plan sections 4.2, 4.4, 4.5): the agent, the
-providers, the system prompts, the dialect skins and the price table.
+providers, the system prompts and the price table.
 
 Every test runs on the fake provider or on a provider whose HTTP is a stub:
 nothing here touches the network.  The fake oracle -- the reference solution
-replayed as model turns through the whole LLM stack -- scores 100 in every
-dialect, which is the E3 counterpart of E2's oracle-through-the-loop test."""
+replayed as model turns through the whole LLM stack -- scores 100, which is
+the E3 counterpart of E2's oracle-through-the-loop test."""
 from __future__ import annotations
 
 import json
@@ -15,14 +15,13 @@ from roaddraft.eval import prices, prompts
 from roaddraft.eval import taskset as tasksets
 from roaddraft.eval.agents import LLMAgent
 from roaddraft.eval.budget import Budgets
-from roaddraft.eval.dialects import DIALECTS, NAME_RE, Dialect
 from roaddraft.eval.episode import EpisodeConfig, run_episode
 from roaddraft.eval.providers import FakeProvider, Turn, infer, make
 from roaddraft.eval.providers.anthropic import AnthropicProvider, parse_reply
 from roaddraft.eval.providers.fake import turn
 from roaddraft.eval.providers.openai_compat import OpenAICompatProvider
 from roaddraft.eval.runner import RunSpec, matrix, run
-from roaddraft.eval.tools import allowed_names
+from roaddraft.eval.tools import DIALECTS, allowed_names
 from roaddraft.eval.trajectory import read_episode
 
 DEV = tasksets.load("d1-dev")["tasks"]
@@ -159,38 +158,17 @@ def test_vision_mode_returns_the_render_as_an_image_and_keeps_it_out_of_the_traj
 # ------------------------------------------------------------------ dialects
 
 
-def test_skins_are_unique_valid_names_that_resolve_back():
-    names = allowed_names("vision", ["design"])
-    for d in ("c3d", "ord"):
-        skin = Dialect.build(d, names)
-        shown = [skin.present(n) for n in names]
-        assert len(set(shown)) == len(shown)
-        assert all(NAME_RE.match(s) for s in shown)
-        assert all(skin.canonical(skin.present(n)) == n for n in names)
-        assert len(skin.shown) > 30
-    assert Dialect.build("c3d", names).present("place_text") == "TEXT"
-    assert Dialect.build("ord", names).present("create_layer") == "level_create"
-    assert Dialect.build("neutral", names).shown == {}
+def test_no_episode_renames_the_tools():
+    # Robert, 2026-10-30: the eval tests readiness for RoadDraft itself, so the
+    # tools always carry their own names; neutral is the only dialect
+    assert DIALECTS == ("neutral",)
     with pytest.raises(ValueError):
-        Dialect.build("microstation", names)
-
-
-def test_a_skin_renames_the_tools_the_brief_and_the_prompt():
-    provider = FakeProvider([turn([("submit", {})])])
-    run_episode(_task(1), LLMAgent(provider), EpisodeConfig(dialect="c3d"))
-    req = provider.requests[0]
-    assert "TEXT" in req["tools"] and "place_text" not in req["tools"]
-    assert "ADDALIGNMENTLABELS" in req["tools"] and "annotate_stationing" not in req["tools"]
-    brief = req["transcript"][0]["text"]
-    assert "ADDALIGNMENTSTAOFFLABEL" in brief and "place_label" not in brief
-    assert "Civil 3D" in req["system"]
-
-
-def test_under_a_skin_the_unknown_command_hint_lists_the_skin_names():
+        EpisodeConfig(dialect="c3d")
     provider = FakeProvider([turn([("nope", {})]), turn([("submit", {})])])
-    run_episode(_task(1), LLMAgent(provider), EpisodeConfig(dialect="ord"))
+    run_episode(_task(1), LLMAgent(provider), EpisodeConfig(mode="self_correct"))
+    assert set(provider.requests[0]["tools"]) == allowed_names("self_correct", _task(1).truth.scope)
     err = json.loads(provider.requests[1]["transcript"][-1]["results"][0]["content"])
-    assert "level_create" in err["error"]["hint"] and "create_layer" not in err["error"]["hint"]
+    assert "place_text" in err["error"]["hint"]
 
 
 # ------------------------------------------------------------------- prompts
@@ -340,16 +318,15 @@ def test_price_table_rates_and_tiers():
 # -------------------------------------------------------------------- runner
 
 
-def test_runner_runs_models_and_dialects(tmp_path):
-    spec = RunSpec(taskset="d1-dev", agents=(), models=("fake-oracle",), dialects=("neutral", "ord"),
+def test_runner_runs_models(tmp_path):
+    spec = RunSpec(taskset="d1-dev", agents=(), models=("fake-oracle",),
                    limit=2, results_root=str(tmp_path), run_id="m", concurrency=2)
-    assert len(matrix(spec)) == 4
+    assert len(matrix(spec)) == 2
     summary = run(spec)
-    assert summary["episodes"] == 4 and not summary["failures"]
+    assert summary["episodes"] == 2 and not summary["failures"]
     assert summary["groups"]["fake-oracle|explicit|single"]["mean_effective"] == 100.0
-    assert summary["groups"]["fake-oracle|explicit|single|ord"]["mean_effective"] == 100.0
     files = sorted((tmp_path / "m" / "episodes").glob("*.jsonl"))
-    assert len(files) == 4 and sum(".ord." in f.name for f in files) == 2
+    assert len(files) == 2 and all(".neutral." in f.name for f in files)
 
 
 def test_the_cost_cap_stops_new_episodes(tmp_path):

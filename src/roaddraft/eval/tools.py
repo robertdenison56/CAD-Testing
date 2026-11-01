@@ -20,9 +20,10 @@ from __future__ import annotations
 import json
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from roaddraft.eval.dialects import DIALECTS  # tool-name skins (dialects.py)
 
 MODES = ("single", "self_correct", "vision")
+#: the tools always carry their own names: no episode renames them (Robert, 2026-10-30)
+DIALECTS = ("neutral",)
 
 #: commands every task may call
 COMMANDS = frozenset({

@@ -1,8 +1,8 @@
 """The LLM agent (eval plan sections 4.2, 4.3): a provider-driven
 tool-calling loop behind the same ``act(observation)`` as every other agent.
 
-Turn 0 hands the model the system prompt (``eval.prompts``, in the
-episode's dialect, with its budgets and mode), the task text as the first
+Turn 0 hands the model the system prompt (``eval.prompts``, with the
+episode's budgets and mode), the task text as the first
 user message, and the episode's tool definitions.  Each later turn hands
 back every result of the calls the model made, in order, in one message --
 the bus result JSON verbatim, a fault as an error result carrying the
@@ -84,14 +84,12 @@ def message_size(message: dict) -> Tuple[int, int]:
 
 def system_for(context: dict) -> str:
     """The system prompt an episode's ``begin`` context asks for: the task's
-    own where it has one (a probe task), else the dialect's template filled
-    with the mode and budgets, in the skin's tool names."""
+    own where it has one (a probe task), else the template filled with the
+    mode and budgets."""
     if context.get("system"):
         return context["system"]
-    text = prompts.system_prompt(context.get("dialect", "neutral"), context["mode"],
+    return prompts.system_prompt(context.get("dialect", "neutral"), context["mode"],
                                  context.get("budgets"))
-    skin = context.get("skin")
-    return skin.text(text) if skin is not None else text
 
 
 class LLMAgent(Agent):

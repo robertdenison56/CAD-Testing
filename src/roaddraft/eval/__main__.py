@@ -7,7 +7,7 @@
     python -m roaddraft.eval run --taskset d1-dev --model claude-sonnet-5-5 [--model ...]
         [--provider anthropic|openai|fake|claude-code|codex] [--effort high] [--max-tokens N]
         [--strict] [--base-url URL] [--api-key-env VAR] [--extra-body JSON] [--lms-context N]
-        [--dialect neutral|c3d|ord ...] [--cost-cap USD] [--output-tokens N]
+        [--dialect neutral] [--cost-cap USD] [--output-tokens N]
         [--context-tokens N] ...                      # defaults to --lms-context
         [--claude-bin PATH] [--claude-arg ARG ...] [--max-budget-usd D]   # --provider claude-code
         [--codex-bin PATH] [--codex-arg ARG ...]                          # --provider codex
@@ -34,7 +34,7 @@ from roaddraft.eval import taskset as tasksets
 from roaddraft.eval.agents import AGENTS, ReplayAgent
 from roaddraft.eval.budget import Budgets
 from roaddraft.eval.episode import Episode, EpisodeConfig
-from roaddraft.eval.dialects import DIALECTS
+from roaddraft.eval.tools import DIALECTS
 from roaddraft.eval.providers import PROVIDERS
 from roaddraft.eval.runner import RunSpec, make_agent, matrix, measured_cost, run
 from roaddraft.eval.tools import MODES

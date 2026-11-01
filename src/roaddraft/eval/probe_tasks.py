@@ -41,7 +41,6 @@ from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.document import confine
-from roaddraft.eval import dialects
 from roaddraft.eval.agents import Agent, Submit, ToolCall
 from roaddraft.eval.agents.basic import _QueueAgent
 from roaddraft.eval.budget import Budgets, BudgetState
@@ -382,14 +381,13 @@ class ProbeEpisode(Episode):
         self.scope: List[str] = []
         self.engine_calls = 0
         with tempfile.TemporaryDirectory() as tmp:
-            # the tool names, for the dialect, before the episode's own server exists
+            # the tool names, before the episode's own server exists
             names = {t["name"] for t in RoadDraftMCP(
                 Session(), attachments=tmp if "--attachments" in self.probe.server_args
                 else None).tools()}
         self.allowed = names | {"get_task_brief", "submit"} | (
             {"run_check"} if config.mode != "single" else set())
-        self.dialect = dialects.get(config.dialect, self.allowed)
-        self.brief_text = self.dialect.text(task.brief)
+        self.brief_text = task.brief
         self.tools: List[dict] = []
         self.turns: List[dict] = []
         self.termination = None
@@ -423,14 +421,14 @@ class ProbeEpisode(Episode):
         for name in ("get_task_brief", "run_check", "submit"):
             if name in self.allowed:
                 defs.append({"name": name, "kind": "harness", **HARNESS_DEFINITIONS[name]})
-        self.tools = self.dialect.tools(sorted(defs, key=lambda d: d["name"]))
+        self.tools = sorted(defs, key=lambda d: d["name"])
         self.state = BudgetState()
         self.agent.reset(self.task, self.config.level, self.config.mode)
         system = system_prompt(self.config.mode, self.budgets)
         self.agent.begin({"mode": self.config.mode, "level": self.config.level,
-                          "dialect": self.config.dialect, "skin": self.dialect,
+                          "dialect": self.config.dialect,
                           "budgets": self.budgets, "scope": self.scope, "episode_path": self.path,
-                          "system": self.dialect.text(system)})
+                          "system": system})
         return {"turn": 0, "brief": self.brief_text, "tools": self.tools,
                 "state": self.state_summary(), "budget": self.state.remaining(self.budgets),
                 "mode": self.config.mode, "dialect": self.config.dialect}
@@ -460,11 +458,11 @@ class ProbeEpisode(Episode):
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
 
     def _execute(self, call: ToolCall) -> dict:   # under Episode.execute's harness-failure guard (2026-10-28)
-        name, params = self.dialect.canonical(call.name), call.params or {}
+        name, params = call.name, call.params or {}
         images = None
         if name not in self.allowed:
             hint = ("tools in this task: "
-                    + ", ".join(sorted(self.dialect.present(n) for n in self.allowed)))
+                    + ", ".join(sorted(self.allowed)))
             result = _error(call.name, "unknown_command",
                             f"{call.name!r} is not a tool of this task", hint)
         elif name in ("get_task_brief", "run_check", "submit"):
