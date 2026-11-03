@@ -41,6 +41,31 @@ Instances, one per agency:
   BEGIN PROJECT block moved down in the profile; a survey note added; the
   county struck in the title block; a blue cloud round the curve data.
 
+Six more (2026-11-03), on sheets the family had not used, 5 to 7 marks each:
+
+* ``p18-redline-pdf-ppm051`` (Caltrans L-38): FENCE (TYPE CL-6) -> WM on one of
+  four, REMOVE -> RESET on one of two REMOVE FENCE notes, one of six REMOVE /
+  FENCE callouts deleted, END FENCE (TYPE CL-6) added, the county struck, a
+  blue cloud round a POT callout.
+* ``p18-redline-pdf-ppm049`` (Caltrans L-5): one of four 10' CHAIN LINK GATE
+  cells -> 16', one of two APPROACH SLAB callouts deleted, SOUND WALL 1 moved,
+  a bike path note added, the post miles struck, a blue cloud round two of the
+  fence and gates table's 22 rows.
+* ``p18-redline-pdf-fdot916`` (FDOT sheet 1): TYPE 1 -> TYPE 2 on one of six
+  inlet notes, one of two CONST. 47 LF callouts deleted, S-110's notes moved, a
+  note added, the county struck, a blue cloud round a pipe callout.
+* ``p18-redline-pdf-fdot923`` (FDOT sheet 102, utility adjustments): one of four
+  (TO REMAIN) -> (TO BE RELOCATED), one of four vault callouts deleted, SR 22 WB
+  moved, a SUE note added, the FPID struck, a blue cloud round one of two EXIST.
+  BRIDGE labels.
+* ``p18-redline-pdf-wflp04`` (WFL F.4 site plan): three legend and callout
+  revisions (4-inch and 6-inch on two of the legend's look-alike lines), a
+  callout deleted, a note added, the project struck, a blue cloud round a legend
+  entry.
+* ``p18-redline-pdf-cfld1`` (CFL parking lot D1): three culvert callout
+  revisions (one Riprap apron, Rt of three), one of two Install gate callouts
+  deleted, a note added, a blue cloud round a culvert callout.
+
 Graded from the documents on disk, one item per markup and one for the rest:
 a revised text reads the new wording where the old one was (the old wording
 gone from that spot); a deleted text is gone from its spot; a moved label's
@@ -239,7 +264,167 @@ FDOT915 = Instance(
           "below the grade line; a survey note arrowed into the profile; WAKULLA struck for LEON in "
           "the title block; a blue cloud round the curve data reading VERIFIED - NO CHANGE."))
 
-INSTANCES = [PPM045, WFL19, CFLPLA, FDOT915]
+# ----------------------------------------------- more instances (2026-11-03)
+
+PPM051 = Instance(
+    id="p18-redline-pdf-ppm051", sheet_id="PPM-051", sheet="L-38", page="L-38-redlines",
+    hand_in=0.26, text_in=0.14, tags=["caltrans"],
+    markups=[
+        Markup("replace", ids=["TX-104"], old="CL-6", new="WM", note="WM", note_at=(6.45, 16.02),
+               item="FENCE (TYPE CL-6) at the north-west fence reads FENCE (TYPE WM)"),
+        Markup("replace", ids=["TX-095"], old="REMOVE", new="RESET", note="RESET", note_at=(15.3, 4.62),
+               item="the REMOVE FENCE note on the south side of the road reads RESET FENCE"),
+        Markup("delete", ids=["TX-100"], note_at=(17.3, 10.0),
+               item="the REMOVE FENCE callout east of the NB10 line deleted"),
+        Markup("add", new="END FENCE (TYPE CL-6)", tip=(7.95, 18.95),
+               note="ADD: END FENCE (TYPE CL-6)", note_at=(2.6, 18.2),
+               item="END FENCE (TYPE CL-6) lettered at the top of the west fence"),
+        Markup("field", key="county", old="Pla", new="Sut", note="Sut",
+               item="the title block's county reads Sut"),
+        Markup("comment", ids=["TX-098"], note="TIES OK - NO CHANGE", note_at=(2.6, 7.1),
+               item="the SB10 / WIS1 POT callout, clouded in blue, left as it was"),
+    ],
+    note=("Six marks on L-38, none a move: CL-6 struck for WM on the north-west FENCE (TYPE CL-6) "
+          "(TX-104; TX-103, TX-091 and TX-092 read the same); REMOVE struck for RESET in the REMOVE "
+          "FENCE note on the south side (TX-095; TX-093 reads the same, and six more read "
+          "REMOVE / FENCE on two lines); a green X on the REMOVE FENCE callout east of the NB10 "
+          "line (TX-100); ADD: END FENCE (TYPE CL-6) arrowed to the top of the west fence, words "
+          "that contain a look-alike; Pla struck for Sut in the county box; a blue cloud round the "
+          "SB10 / WIS1 POT callout (the NB10 one is its look-alike) reading TIES OK - NO CHANGE."))
+
+PPM049 = Instance(
+    id="p18-redline-pdf-ppm049", sheet_id="PPM-049", sheet="L-5", page="L-5-redlines",
+    hand_in=0.26, text_in=0.14, tags=["caltrans"],
+    markups=[
+        Markup("replace", ids=["TX-031"], old="10’", new="16’", note="16'", note_at=(32.55, 9.38),
+               item="FC13's note in the fence and gates table reads 16’ CHAIN LINK GATE"),
+        Markup("delete", ids=["TX-025", "TX-021"], note_at=(18.7, 8.2),
+               item="the APPROACH SLAB callout at the south end of the bridges deleted"),
+        Markup("move", ids=["TX-121", "TX-122", "TX-123"], tip=(12.6, 11.55), note_at=(12.9, 12.25),
+               item="SOUND WALL 1 moved west along the wall to where the arrow points"),
+        Markup("add", new="PROTECT EXISTING BIKE PATH", tip=(18.9, 4.6),
+               note="ADD: PROTECT EXISTING BIKE PATH", note_at=(22.8, 4.45),
+               item="PROTECT EXISTING BIKE PATH lettered at the bike path"),
+        Markup("field", key="post_miles", old="R11.9", new="R12.0", note="R12.0",
+               item="the title block's post miles read R12.0/R24.1"),
+        Markup("comment", ids=["TX-072", "TX-073", "TX-074", "TX-075", "TX-076", "TX-077"],
+               note="IND1 TIES OK - NO CHANGE", note_at=(24.0, 14.65),
+               item="the FB1 and FB2 rows of the fence and gates table, clouded in blue, left as they were"),
+    ],
+    note=("Six marks on L-5: 10’ struck for 16’ in FC13's NOTE cell (TX-031; FC2, FC4 and FC19 "
+          "read 10’ CHAIN LINK GATE too, a row apart); a green X on the APPROACH SLAB / (SEE "
+          "STRUCTURE PLANS) callout at the south end of the bridges (TX-025, TX-021; TX-051 and "
+          "TX-047 are its look-alike at the north end); SOUND WALL 1 clouded and arrowed west along "
+          "the wall; ADD: PROTECT EXISTING BIKE PATH arrowed to the bike path; R11.9 struck for "
+          "R12.0 in the post miles; a blue cloud round the FB1 and FB2 rows (twenty FC rows read "
+          "alike) reading IND1 TIES OK - NO CHANGE."))
+
+FDOT916 = Instance(
+    id="p18-redline-pdf-fdot916", sheet_id="FDOT-916-1-Drainage-Network-Plan-Sheet", sheet="1",
+    page="sheet-1-redlines", hand_in=0.2, text_in=0.07, tags=["fdot"],
+    markups=[
+        Markup("replace", ids=["TX-043"], old="TYPE 1", new="TYPE 2", note="TYPE 2", note_at=(10.15, 8.0),
+               item="S-105's inlet reads CONST. CURB INLET TYPE 2"),
+        Markup("delete", ids=["TX-073", "TX-074"], note_at=(9.45, 5.75),
+               item="the CONST. 47 LF / OF 18\" PIPE callout at S-104 deleted"),
+        Markup("move", ids=["TX-016", "TX-014", "TX-012", "TX-010", "TX-008"], tip=(11.75, 2.75),
+               note_at=(12.85, 3.15), item="the S-110 notes moved down and to the right, clear of the pipe"),
+        Markup("add", new="SEE SHEET 2 FOR PIPE DATA", tip=(3.6, 8.25),
+               note="ADD: SEE SHEET 2 FOR PIPE DATA", note_at=(5.2, 8.9),
+               item="SEE SHEET 2 FOR PIPE DATA lettered above the structure notes"),
+        Markup("field", key="county", old="BAY", new="GULF", note="GULF",
+               item="the title block's county reads GULF"),
+        Markup("comment", ids=["TX-067", "TX-068"], note="LF CHECKED - OK", note_at=(5.3, 3.7),
+               item="the CONST. 197 LF callout, clouded in blue, left as it was"),
+    ],
+    note=("Six marks on FDOT sheet 1: TYPE 1 struck for TYPE 2 in S-105's notes (TX-043; five more "
+          "notes read CONST. CURB INLET TYPE 1 and S-107's already reads TYPE 2); a green X on the "
+          "CONST. 47 LF / OF 18\" PIPE callout at S-104 (TX-073, TX-074; TX-069 and TX-070 read the "
+          "same at S-106); the five lines of S-110's notes clouded and arrowed clear of the pipe; "
+          "ADD: SEE SHEET 2 FOR PIPE DATA arrowed above the notes; BAY struck for GULF; a blue cloud "
+          "round the CONST. 197 LF callout (six CONST. ... LF callouts) reading LF CHECKED - OK."))
+
+FDOT923 = Instance(
+    id="p18-redline-pdf-fdot923", sheet_id="FDOT-923-1-Utility-Adjustments", sheet="102",
+    page="sheet-102-redlines", hand_in=0.2, text_in=0.07, tags=["fdot"],
+    markups=[
+        Markup("replace", ids=["TX-016"], old="TO REMAIN", new="TO BE RELOCATED", note="TO BE RELOCATED",
+               note_at=(11.2, 8.47),
+               item="the AT&T / Century Link conduit east of the bridge reads (TO BE RELOCATED)"),
+        Markup("delete", ids=["TX-073", "TX-074"], note_at=(3.75, 9.55),
+               item="the VAULT - AT&T FLORIDA (TO BE REMOVED) callout at the north-west deleted"),
+        Markup("move", ids=["TX-012"], tip=(9.6, 6.55), note_at=(8.3, 6.85),
+               item="SR 22 WB moved east along the westbound lanes to where the arrow points"),
+        Markup("add", new="UTILITY DEPTHS TO BE VERIFIED BY SUE", tip=(3.3, 2.35),
+               note="ADD: UTILITY DEPTHS TO BE VERIFIED BY SUE", note_at=(1.3, 1.75),
+               item="UTILITY DEPTHS TO BE VERIFIED BY SUE lettered at the south-west"),
+        Markup("field", key="fpid", old="1-52", new="2-52", note="2-52",
+               item="the title block's financial project ID reads 123456-2-52-01"),
+        Markup("comment", ids=["TX-011"], note="OK PER STRUCTURES", note_at=(14.55, 6.35),
+               item="EXIST. BRIDGE NO. 234567 north of the road, clouded in blue, left as it was"),
+    ],
+    note=("Six marks on FDOT sheet 102 (utility adjustments): TO REMAIN struck for TO BE RELOCATED "
+          "on the east conduit (TX-016; three more read (TO REMAIN)); a green X on the north-west "
+          "VAULT - AT&T FLORIDA / (TO BE REMOVED) callout (TX-073, TX-074; three more vault callouts "
+          "read the same); SR 22 WB clouded and arrowed east (SR 22 EB is its look-alike); ADD: "
+          "UTILITY DEPTHS TO BE VERIFIED BY SUE; 1-52 struck for 2-52 in the FPID; a blue cloud round "
+          "the north EXIST. BRIDGE NO. 234567 (the south one reads the same) reading OK PER STRUCTURES."))
+
+WFLP04 = Instance(
+    id="p18-redline-pdf-wflp04", sheet_id="WFL-Parking-Lot-Section-p04", sheet="F.4",
+    page="F-4-redlines", hand_in=0.2, text_in=0.084, tags=["wfl"],
+    markups=[
+        Markup("replace", ids=["TX-032"], old="Dectable", new="Detectable", note="Detectable",
+               note_at=(9.15, 9.05), item="the warning panel callout reads Detectable warning panel"),
+        Markup("replace", ids=["TX-005"], old="4-inch", new="5-inch", note="5-inch", note_at=(14.6, 8.52),
+               item="the third sidewalk in the legend reads (5-inch depth)"),
+        Markup("replace", ids=["TX-001"], old="6-inch", new="8-inch", note="8-inch", note_at=(14.6, 7.7),
+               item="the last sidewalk in the legend reads (8-inch depth)"),
+        Markup("delete", ids=["TX-021"], note_at=(12.35, 6.62),
+               item="the Sidewalk, aggregate callout east of the lot deleted"),
+        Markup("add", new="Bike rack", tip=(11.6, 5.6), note="ADD: BIKE RACK", note_at=(12.3, 4.9),
+               item="Bike rack lettered east of the parking lot"),
+        Markup("field", key="project", old="10(1)", new="10(2)", note="10(2)",
+               item="the title block's project reads WA NP FOVA 10(2)"),
+        Markup("comment", ids=["TX-009", "TX-010"], note="COLOR OK PER NPS", note_at=(12.3, 10.05),
+               item="the minor concrete pavement legend entry, clouded in blue, left as it was"),
+    ],
+    note=("Seven marks on WFL F.4 (site plan): Dectable struck for Detectable; 4-inch struck for "
+          "5-inch on the third sidewalk in the legend (TX-005; TX-003 also reads 4-inch, the line "
+          "above); 6-inch struck for 8-inch on the last sidewalk in the legend (TX-001; the "
+          "minor concrete pavement's 6-inch depth (rustic brown color) is the one clouded in "
+          "blue); a green X on the Sidewalk, aggregate "
+          "callout east of the lot (TX-021; the legend's three Sidewalk, exposed aggregate concrete "
+          "entries read nearly the same); ADD: BIKE RACK arrowed east of the lot; 10(1) struck for 10(2) "
+          "in the project box; a blue cloud round the minor concrete pavement legend entry reading "
+          "COLOR OK PER NPS."))
+
+CFLD1 = Instance(
+    id="p18-redline-pdf-cfld1", sheet_id="CFL-F-Parking-Lot", sheet="D1", page="D1-redlines",
+    hand_in=0.2, text_in=0.084, tags=["cfl"],
+    markups=[
+        Markup("replace", ids=["TX-013"], old="44'", new="48'", note="48'", note_at=(15.0, 8.3),
+               item="the east culvert reads Install 24\" x 48' CMP"),
+        Markup("replace", ids=["TX-020"], old="Rt", new="Lt and Rt", note="LT AND RT", note_at=(13.35, 9.2),
+               item="the north culvert's riprap reads Riprap apron, Lt and Rt"),
+        Markup("delete", ids=["TX-016"], note_at=(12.95, 8.75), item="the Install gate callout at the east end deleted"),
+        Markup("replace", ids=["TX-018"], old="28", new="28'", note="28'", note_at=(13.95, 10.05),
+               item="the north culvert reads Install 24\" x 28' CMP"),
+        Markup("add", new="Install cattle guard", tip=(15.6, 4.75), note="ADD: INSTALL CATTLE GUARD",
+               note_at=(12.6, 2.7), item="Install cattle guard lettered at the east end of the road"),
+        Markup("comment", ids=["TX-006", "TX-007", "TX-008"], note="SIZE OK - NO CHANGE", note_at=(1.2, 4.95),
+               item="the west culvert callout, clouded in blue, left as it was"),
+    ],
+    note=("Six marks on the CFL parking lot plan D1: 44' struck for 48' on the east culvert (TX-013; "
+          "the other two culverts read 52' and 28); Rt struck for Lt and Rt in the north culvert's "
+          "Riprap apron, Rt (TX-020; TX-006 and TX-015 read the same, and End section, Lt and Rt "
+          "sits a line away); a green X on the east Install gate (TX-016; TX-012 reads the same); "
+          "28 struck for 28' on the north culvert, the line above it; ADD: INSTALL CATTLE GUARD "
+          "arrowed to the east end of the road; a blue cloud round the west culvert's three lines "
+          "reading SIZE OK - NO CHANGE. No title block mark: the two-line sheet title does not "
+          "take a clean strike."))
+
+INSTANCES = [PPM045, WFL19, CFLPLA, FDOT915, PPM051, PPM049, FDOT916, FDOT923, WFLP04, CFLD1]
 
 
 def _instance(inst_id: str) -> Instance:

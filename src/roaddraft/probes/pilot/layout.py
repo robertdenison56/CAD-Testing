@@ -51,9 +51,11 @@ this module's orientation check, which is what catches a station number or
 bearing set along the line but reading from the wrong side (E1 accepts any
 paper rotation up to 135 degrees). Both twists are chosen so that
 lettering without the viewport's twist (no ``view_rotation``) reads upside
-down; on PD-1 so does lettering with the published twist. A straight line
-cannot trap both mistakes at one twist (the two fail on complementary
-halves of the circle), which is why there are two instances.
+down; on PD-1 so does lettering with the published twist. Where the
+published twist letters a line the opposite way round from no twist (as on
+FDOT-916), the two mistakes fail on complementary halves of the circle and
+no twist traps both on a straight line, which is why there are two
+instances.
 
 **Pilot 5, the model picks the sheet breaks** (``p05-breaks-*``). A fresh
 sheet file that references the base files of a long alignment and has no
@@ -77,6 +79,34 @@ greedy fit of the stretch into the border's usable area over every twist
 that keeps it left to right; greedy is optimal for covering an interval.
 Both stretches need 2, each run corner to corner, so 3 sheets cut the
 conventional way pass and 4 fail).
+
+**The expansion (2026-11-03)**, 30 instances in the same tables:
+
+* Pilot 4, +11: every other multi-line sheet of the real-task catalogue where
+  the labelers' default poses (tables placed clear) fail D1-08: Route 65 L-38,
+  L-39, PD-2, PD-3, PD-11 and PD-32, Route 78 PD-1 and PD-2, Electrical K5
+  E-18, FDOT plan-profile sheet 12 and L-3. L-4, D-1, U-7, Route 65's PD-1 and
+  E-1 were left out: their defaults pass. On L-3 only IN4 is lettered: D13
+  and IN3 are curves with no tangent, which ``_task`` cannot build, so they
+  keep their published lettering (``kept``). PD-3 and PD-11 are slow to build
+  (20 s, 80 s: their lines' truths).
+* Pilot 17, +13: one line each on Caltrans E-3, PD-2 (Route 78), U-1, PD-3,
+  PD-32, PD-2 (Route 65), E-18 and L-2, FDOT sheets 12 and 102, WFL F.4 and
+  D.12 and the CFL Davis Dam Road plan, re-cut at twists chosen by scanning
+  every label's plotted reading angle: lettering without ``view_rotation``
+  reads from the wrong side on all of them, and with the published twist on
+  all but FDOT sheet 12 (where no twist traps both).
+* Pilot 5, +6: FDOT-918's CL2 (reverse curves), FDOT-904's CL2, CL4 and CL9,
+  Route 65's D13 on the Caltrans 22 x 34 border and the CFL sample project's
+  CL2. Two optional keys: ``fpi`` (1" = 40' where 50' leaves room to spare)
+  and ``spare`` (sheets allowed past the fewest: 1 by default, 0 on every new
+  instance, which the prompt's "no more sheets than the stretch needs" already
+  says). All but the CFL one need 3 or more sheets; north-up sheets fail all
+  but the CFL one, the conventional level cut all but Route 65's.
+
+A bearing is re-placed along its line's offset or side, never slid along its
+tangent: d1-verify-v7 reads a bearing anchored at a station inside a tangent
+as that tangent's but then expects it at the tangent's middle (``BEARING_SLIDE``).
 """
 from __future__ import annotations
 
@@ -362,9 +392,12 @@ OFFSETS_IN = {"station": (0.12, 0.24, 0.36), "pc": (0.45, 0.75, 1.05, 1.35),
               "pt": (0.45, 0.75, 1.05, 1.35), "pcc": (0.45, 0.75, 1.05, 1.35),
               "prc": (0.45, 0.75, 1.05, 1.35), "bearing": (0.06, 0.2, 0.35, 0.5),
               "mc": (0.8, 1.2, 1.6, 2.0)}
-#: a bearing may also slide along its tangent (d1-verify-v5 reads a bearing anchored at
-#: a station inside the tangent as that tangent's)
-BEARING_SLIDE = (0.5, 0.35, 0.65, 0.2, 0.8)
+#: where along its tangent a bearing is anchored: the middle only. d1-verify-v5 reads a
+#: bearing anchored at a station inside the tangent as that tangent's, but d1-verify-v7
+#: then expects it at the tangent's middle, so one slid along the tangent is "misplaced"
+#: (D1-07). The four instances built with (0.5, 0.35, 0.65, 0.2, 0.8) never kept a slid
+#: bearing: their solves come out identical with the middle alone (checked 2026-11-03).
+BEARING_SLIDE = (0.5,)
 #: which labels move first when two collide
 MOVE_ORDER = {"mc": 0, "bearing": 1, "pc": 2, "pt": 2, "pcc": 2, "prc": 2, "station": 3}
 OUT_COST = 100
@@ -719,11 +752,42 @@ def _write(out: Path, work, bases, sheet_file: str) -> Path:
 
 # ================================================================ pilot 4
 
+#: one instance per sheet: the lines stripped and lettered (``names``), the 500-ft stations
+#: lettered whole on them (``whole``, as ``_whole`` derives it from their truths), and, for a
+#: sheet with a line ``_task`` cannot build (a curve with no tangent), that line's name in
+#: ``kept``: its published lettering stays on the sheet. ``set`` and ``way`` word a sheet
+#: that is not a Caltrans layout.
 P4 = {
     "p04-crowded-ppm045": {"sheet_id": "PPM-045", "sheet": "L-1", "ref": "AA01",
                            "whole": "640, 645", "names": ("D13", "TB2", "TB1")},
     "p04-crowded-ppm050": {"sheet_id": "PPM-050", "sheet": "L-7", "ref": "AA01",
                            "whole": "705, 710", "names": ("D13", "F3", "F6", "FR", "F2")},
+    # (2026-11-03) the expansion: the catalogue's other multi-line sheets where the labelers'
+    # default poses fail D1-08 (L-4, D-1, U-7, PD-1 of Route 65 and E-1 pass them: too easy)
+    "p04-crowded-ppm051": {"sheet_id": "PPM-051", "sheet": "L-38", "ref": "AA01",
+                           "whole": "40, 45, 50, 1030", "names": ("NB10", "SB10", "WIS1")},
+    "p04-crowded-ppm052": {"sheet_id": "PPM-052", "sheet": "L-39", "ref": "AA01",
+                           "whole": "1035, 1040, 1045", "names": ("CL2", "SB10")},
+    "p04-crowded-ppm155": {"sheet_id": "PPM-155", "sheet": "PD-2", "ref": "AA01",
+                           "whole": "625, 630, 635", "names": ("CL2", "D13")},
+    "p04-crowded-ppm156": {"sheet_id": "PPM-156", "sheet": "PD-3", "ref": "AA01",
+                           "whole": "640, 645, 650", "names": ("D13", "TBR1", "TBR2")},
+    "p04-crowded-ppm157": {"sheet_id": "PPM-157", "sheet": "PD-11", "ref": "AA01",
+                           "whole": "70, 75, 705, 710, 715", "names": ("D13", "F5", "F6", "FR")},
+    "p04-crowded-ppm158": {"sheet_id": "PPM-158", "sheet": "PD-32", "ref": "AA01",
+                           "whole": "40, 45, 1025, 1030, 1035",
+                           "names": ("CL4", "NB10", "SB10", "WIS1")},
+    "p04-crowded-ppm160": {"sheet_id": "PPM-160", "sheet": "PD-1", "ref": "AA01",
+                           "whole": "840, 845", "names": ("B", "NWR", "WS")},
+    "p04-crowded-ppm161": {"sheet_id": "PPM-161", "sheet": "PD-2", "ref": "AA01",
+                           "whole": "850, 855, 860", "names": ("B", "ENRA", "SE")},
+    "p04-crowded-ppm230": {"sheet_id": "PPM-230", "sheet": "E-18", "ref": "AA01",
+                           "whole": "30, 35, 40, 45, 330, 335, 340", "names": ("A", "CL2", "D")},
+    "p04-crowded-fdot915": {"sheet_id": "FDOT-915-1-Roadway-Plan-Profile", "sheet": "12",
+                            "ref": "ALI", "whole": "705", "names": ("CL1", "CL2"),
+                            "set": "FDOT set", "way": "as follows"},
+    "p04-crowded-ppm047": {"sheet_id": "PPM-047", "sheet": "L-3", "ref": "AA01",
+                           "whole": "665, 670", "names": ("IN4",), "kept": ("D13", "IN3")},
 }
 
 
@@ -742,6 +806,10 @@ def _p4_check(pid: str):
     def check(baseline: Session, submitted: Session) -> Result:
         tally = Tally()
         _grade_lettering(baseline, submitted, cfg["sheet_id"], cfg["sheet"], cfg["names"], tally)
+        if len(cfg["names"]) == 1:
+            return tally.result(f"{_q(cfg['names'][0])} of {cfg['sheet']} lettered in full and "
+                                f"to the spec, its table titled with it, and nothing over "
+                                f"anything")
         return tally.result(f"all {len(cfg['names'])} lines of {cfg['sheet']} lettered in full "
                             f"and to the spec, every table titled with its line, and nothing over "
                             f"anything")
@@ -756,20 +824,56 @@ def _p4_solve(pid: str):
     return solve
 
 
+def _and(names: Sequence[str]) -> str:
+    quoted = [f'"{n}"' for n in names]
+    return quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + f" and {quoted[-1]}"
+
+
 def _p4_prompt(pid: str) -> str:
     cfg = P4[pid]
     names = cfg["names"]
     ref = cfg["ref"]
-    lines = ", ".join(f'"{n}"' for n in names[:-1]) + f' and "{names[-1]}"'
-    return (f"Sheet {cfg['sheet']} of this Caltrans layout has lost the alignment data of all "
-            f"{len(names)} of its lines: {lines} (alignments {', '.join(names)} of the base file "
-            f"attached as {ref}, reached as {ref}:{names[0]} and so on). Letter all of them, in "
-            f"this sheet file, for every line the way a Caltrans layout shows it:\n"
-            + CONVENTIONS.format(whole=cfg["whole"]) +
+    where, way = cfg.get("set", "Caltrans layout"), cfg.get("way", "the way a Caltrans layout "
+                                                                 "shows it")
+    kept = cfg.get("kept", ())
+    if len(names) == 1:  # one line lettered among lines that keep their published lettering
+        name = names[0]
+        head = (f"Sheet {cfg['sheet']} of this {where} has lost the alignment data of its "
+                f"{_q(name)} line (alignment {name} of the base file attached as {ref}, reached "
+                f"as {ref}:{name})" + (f"; {_and(kept)} keep theirs" if kept else "") +
+                f". Letter it, in this sheet file, {way}:\n" + _one_line(name, cfg["whole"]))
+    else:
+        lines = ", ".join(f'"{n}"' for n in names[:-1]) + f' and "{names[-1]}"'
+        head = (f"Sheet {cfg['sheet']} of this {where} has lost the alignment data of all "
+                f"{len(names)} of its lines: {lines} (alignments {', '.join(names)} of the base "
+                f"file attached as {ref}, reached as {ref}:{names[0]} and so on)"
+                + (f"; {_and(kept)} keep theirs" if kept else "") +
+                f". Letter all of them, in this sheet file, for every line {way}:\n"
+                + CONVENTIONS.format(whole=cfg["whole"]))
+    return (head +
             f"\nThe sheet is crowded: nothing you add may sit on other lettering (the sheet's "
             f"own, the base file's, or another line's), run under a leader, be cut by the edge of "
             f"the viewport, leave the border or read upside down as plotted. Keep everything "
             f"already on the sheet.")
+
+
+def _one_line(name: str, whole: str) -> str:
+    """The conventions for lettering a single line (its table titled with it)."""
+    return CONVENTIONS.format(whole=whole).replace(
+        ", titled with the line (CURVE DATA \"F3\" LINE)", f", titled with the line (CURVE DATA "
+        f"\"{name}\" LINE)").replace("for each line that has curves", "for the line")
+
+
+def _whole(sheet_id: str, names: Sequence[str]) -> str:
+    """The 500-ft stations lettered whole on ``names``, as their truths letter them, in
+    station order (the ``whole`` of the P4 and P17 tables)."""
+    found = {}
+    for name in names:
+        for l in _task(sheet_id, name).truth.labels:
+            if l["kind"] == "station" and abs(float(l["station"]) / 500.0
+                                              - round(float(l["station"]) / 500.0)) < 1e-9:
+                found[float(l["station"])] = l["content"]
+    return ", ".join(found[s] for s in sorted(found))
 
 
 # ================================================================ pilot 17
@@ -782,6 +886,44 @@ P17 = {
     "p17-twist-fdot916": {"sheet_id": "FDOT-916-1-Drainage-Network-Plan-Sheet", "sheet": "1",
                           "name": "CL1", "ref": "ALI", "agency": "FDOT", "whole": "705", "twist": -113.0,
                           "fit": True},
+    # (2026-11-03) the expansion: each twist chosen (scan of every label's plotted reading
+    # angle) so that the labelers without view_rotation letter upside down, and, where any
+    # twist does it, with the published twist too; each but D.12 (turned half a turn)
+    # crosses the sheet on a diagonal, as the prompt says
+    "p17-twist-ppm209": {"sheet_id": "PPM-209", "sheet": "E-3", "name": "A1", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "535, 540, 545", "twist": 120.0,
+                         "fit": True},
+    "p17-twist-ppm161": {"sheet_id": "PPM-161", "sheet": "PD-2", "name": "ENRA", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "850, 855", "twist": 170.0, "fit": True},
+    "p17-twist-ppm111": {"sheet_id": "PPM-111", "sheet": "U-1", "name": "IND1", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "30, 35", "twist": 160.0, "fit": True},
+    "p17-twist-ppm156": {"sheet_id": "PPM-156", "sheet": "PD-3", "name": "TBR1", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "640, 645", "twist": 40.0, "fit": True},
+    "p17-twist-ppm158": {"sheet_id": "PPM-158", "sheet": "PD-32", "name": "SB10", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "1025, 1030, 1035", "twist": 50.0,
+                         "fit": True},
+    "p17-twist-ppm155": {"sheet_id": "PPM-155", "sheet": "PD-2", "name": "CL2", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "630, 635", "twist": 140.0, "fit": True},
+    "p17-twist-ppm230": {"sheet_id": "PPM-230", "sheet": "E-18", "name": "CL2", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "35, 40, 45", "twist": 120.0, "fit": True},
+    "p17-twist-ppm046": {"sheet_id": "PPM-046", "sheet": "L-2", "name": "D13", "ref": "AA01",
+                         "agency": "Caltrans", "whole": "655, 660", "twist": 140.0, "fit": True},
+    "p17-twist-fdot915": {"sheet_id": "FDOT-915-1-Roadway-Plan-Profile", "sheet": "12",
+                          "name": "CL1", "ref": "ALI", "agency": "FDOT", "whole": "705",
+                          "twist": 175.0, "fit": True},
+    "p17-twist-fdot923": {"sheet_id": "FDOT-923-1-Utility-Adjustments", "sheet": "102",
+                          "name": "CL1", "ref": "ALI", "agency": "FDOT", "whole": "225, 230",
+                          "twist": 150.0, "fit": True},
+    "p17-twist-wfl04": {"sheet_id": "WFL-Parking-Lot-Section-p04", "sheet": "F.4",
+                        "name": "MAIN 01", "ref": "ALI", "agency": "Western Federal Lands",
+                        "whole": "40", "twist": 140.0, "fit": True},
+    # the published D.12 turned half a turn, as PD-1 above
+    "p17-twist-wfl21": {"sheet_id": "WFL-Plan-Profile-Sheets-p21", "sheet": "D.12",
+                        "name": "MAIN 01", "ref": "ALI", "agency": "Western Federal Lands",
+                        "whole": "160, 165", "turn": 180.0},
+    "p17-twist-cflpla": {"sheet_id": "CFL-D-Plan-and-Plan", "sheet": "PLA(SAMPLE)", "name": "CL1",
+                         "ref": "ALI", "agency": "Central Federal Lands", "whole": "35, 40",
+                         "twist": 145.0, "fit": True},
 }
 
 
@@ -865,9 +1007,7 @@ def _p17_prompt(pid: str) -> str:
     how = ("so that it runs the other way: the plan is turned half a turn from the published "
            "sheet" if "turn" in cfg else "at a new twist, so the plan crosses the sheet on a "
                                          "diagonal")
-    conventions = CONVENTIONS.format(whole=cfg["whole"]).replace(
-        ", titled with the line (CURVE DATA \"F3\" LINE)", f", titled with the line (CURVE DATA "
-        f"\"{name}\" LINE)").replace("for each line that has curves", "for the line")
+    conventions = _one_line(name, cfg["whole"])
     return (f"Sheet {cfg['sheet']} of this {agency} set has been re-cut {how}, at the same "
             f"scale and on the same base files; the plan callouts drawn for the old view were "
             f"taken off. The {_q(name)} line (alignment {name} of the base file attached as "
@@ -880,6 +1020,9 @@ def _p17_prompt(pid: str) -> str:
 
 
 # ================================================================ pilot 5
+
+_FDOT_FILES = {"ALGNRD01.rdraft": "ALI", "DSGNRD01.rdraft": "COR"}
+_FDOT_BORDER = "the FDOT 11 x 17 plan sheet border (ANSI B, title block template fdot)"
 
 P5 = {
     "p05-breaks-fdot904": {
@@ -898,6 +1041,49 @@ P5 = {
         "border": "the Federal Lands 11 x 17 plan sheet border (ANSI B, title block template "
                   "wfl)",
         "road": "the main road"},
+    # (2026-11-03) the expansion: stretches that need 3 or more sheets (or, on the Federal Lands
+    # border, 2 where the conventional level cut makes 3), all graded strictly: ``spare`` 0
+    # allows only the fewest sheets (the two above allow one more); ``fpi`` 40 where 1" = 50'
+    # would leave too much room
+    "p05-breaks-fdot918": {
+        "sheet_id": "FDOT-918-1-Drainage-Map", "agency": "FDOT", "files": _FDOT_FILES,
+        "doc": "PLANRD01.rdraft", "alignment": "ALI:CL2", "line": "CL2",
+        "a": "18+00.00", "b": "41+00.00", "size": "ANSI_B", "template": "fdot",
+        "border": _FDOT_BORDER, "road": "this FDOT project", "spare": 0},
+    "p05-breaks-fdot904cl2": {
+        "sheet_id": "FDOT-904-1-Landscape-Opportunity-Plan", "agency": "FDOT",
+        "files": _FDOT_FILES, "doc": "PLANRD01.rdraft", "alignment": "ALI:CL2", "line": "CL2",
+        "a": "3270+00.00", "b": "3303+00.00", "size": "ANSI_B", "template": "fdot",
+        "border": _FDOT_BORDER, "road": "the SR 50 (W Colonial Drive) project", "spare": 0},
+    "p05-breaks-fdot904cl4": {
+        "sheet_id": "FDOT-904-1-Landscape-Opportunity-Plan", "agency": "FDOT",
+        "files": _FDOT_FILES, "doc": "PLANRD01.rdraft", "alignment": "ALI:CL4", "line": "CL4",
+        "a": "2030+00.00", "b": "2050+00.00", "size": "ANSI_B", "template": "fdot",
+        "border": _FDOT_BORDER, "road": "the SR 50 (W Colonial Drive) project", "fpi": 40.0,
+        "spare": 0},
+    "p05-breaks-fdot904cl9": {
+        "sheet_id": "FDOT-904-1-Landscape-Opportunity-Plan", "agency": "FDOT",
+        "files": _FDOT_FILES, "doc": "PLANRD01.rdraft", "alignment": "ALI:CL9", "line": "CL9",
+        "a": "71+00.00", "b": "92+00.00", "size": "ANSI_B", "template": "fdot",
+        "border": _FDOT_BORDER, "road": "the SR 50 (W Colonial Drive) project", "fpi": 40.0,
+        "spare": 0},
+    "p05-breaks-ppm048": {
+        "sheet_id": "PPM-048", "agency": "Caltrans",
+        "files": {"0000000000aa01.rdraft": "AA01", "0000000000bb01.rdraft": "BB01"},
+        "doc": "0000000000ea001.rdraft", "alignment": "AA01:D13", "line": "D13",
+        "a": "655+00.00", "b": "690+00.00", "size": "ANSI_D", "template": "caltrans",
+        "border": "the Caltrans 22 x 34 plan sheet border (ANSI D, title block template "
+                  "caltrans)",
+        "road": "Route 65", "fpi": 40.0, "spare": 0},
+    "p05-breaks-cflswppp": {
+        "sheet_id": "CFL-G-Blank-Sheets-SWPPP", "agency": "CFL",
+        "files": {"TERSample.rdraft": "SUR", "ALISample.rdraft": "ALI",
+                  "CORSample.rdraft": "COR"},
+        "doc": "PLA(Sample).rdraft", "alignment": "ALI:CL2", "line": "CL2",
+        "a": "24+00.00", "b": "37+00.00", "size": "ANSI_B", "template": "wfl",
+        "border": "the Federal Lands 11 x 17 plan sheet border (ANSI B, title block template "
+                  "wfl)",
+        "road": "the Central Federal Lands sample project", "fpi": 40.0, "spare": 0},
 }
 FPI = 50.0
 STEP_FT = 5.0             # stations sampled along the stretch
@@ -940,9 +1126,9 @@ def _samples(align: Alignment, a: float, b: float, step: float = STEP_FT):
 
 
 def _fit(align: Alignment, a: float, b: float, W: float, H: float,
-         level: Optional[float] = None) -> Optional[Tuple[float, float]]:
+         level: Optional[float] = None, fpi: float = FPI) -> Optional[Tuple[float, float]]:
     """``(twist, slack in)`` fitting stations a..b in a W x H in viewport at
-    1" = 50' with the line running left to right, or None. Any twist will do
+    1" = ``fpi``' (50') with the line running left to right, or None. Any twist will do
     (corner to corner, if that is what fits) and the roomiest is returned;
     with ``level``, only twists that set the chord from a to b within that many
     degrees of level, the most nearly level first -- the way plan sheets are cut."""
@@ -954,8 +1140,8 @@ def _fit(align: Alignment, a: float, b: float, W: float, H: float,
     th = np.radians(np.arange(lo, hi + 1e-9, THETA_STEP))
     x = pts[:, 0:1] * np.cos(th) - pts[:, 1:2] * np.sin(th)
     y = pts[:, 0:1] * np.sin(th) + pts[:, 1:2] * np.cos(th)
-    w = (x.max(axis=0) - x.min(axis=0)) / FPI
-    h = (y.max(axis=0) - y.min(axis=0)) / FPI
+    w = (x.max(axis=0) - x.min(axis=0)) / fpi
+    h = (y.max(axis=0) - y.min(axis=0)) / fpi
     slack = np.minimum(W - w, H - h)
     if level is None:
         k = int(np.argmax(slack))
@@ -970,19 +1156,19 @@ def _fit(align: Alignment, a: float, b: float, W: float, H: float,
 
 
 def _greedy(align: Alignment, a: float, b: float, W: float, H: float,
-            round_to: float = 0.0, level: Optional[float] = None) -> List[float]:
+            round_to: float = 0.0, level: Optional[float] = None, fpi: float = FPI) -> List[float]:
     """The sheet ends of the fewest sheets for a..b: each sheet takes the longest
     stretch that fits (greedy is optimal: a stretch that fits, every part of it
     fits), optionally ending on a round station."""
     ends, start = [], a
     while True:
-        if _fit(align, start, b, W, H, level) is not None:
+        if _fit(align, start, b, W, H, level, fpi) is not None:
             ends.append(b)
             return ends
         lo, hi = start, b
         while hi - lo > 0.5:
             mid = (lo + hi) / 2.0
-            if _fit(align, start, mid, W, H, level) is not None:
+            if _fit(align, start, mid, W, H, level, fpi) is not None:
                 lo = mid
             else:
                 hi = mid
@@ -1000,7 +1186,7 @@ def _fewest(pid: str) -> int:
     ua = _usable(cfg["size"], cfg["template"])
     st = align.stations()
     return len(_greedy(align, st.parse(cfg["a"]), st.parse(cfg["b"]), ua[2] - ua[0],
-                       ua[3] - ua[1]))
+                       ua[3] - ua[1], fpi=cfg.get("fpi", FPI)))
 
 
 @lru_cache(maxsize=None)
@@ -1042,14 +1228,14 @@ def _shows(vp, usable, q) -> bool:
             and usable[1] - 1e-6 <= q[1] <= usable[3] + 1e-6)
 
 
-def _seen(sheet, pts) -> List[Optional[object]]:
-    """For each model point, the 1" = 50' viewport of ``sheet`` that shows it."""
+def _seen(sheet, pts, fpi: float = FPI) -> List[Optional[object]]:
+    """For each model point, the 1" = ``fpi``' (50') viewport of ``sheet`` that shows it."""
     usable = sheet.usable_area()
     out = []
     for p in pts:
         hit = None
         for vp in sheet.viewports:
-            if abs(float(vp.feet_per_inch) - FPI) < 1e-6 and _shows(vp, usable,
+            if abs(float(vp.feet_per_inch) - fpi) < 1e-6 and _shows(vp, usable,
                                                                     vp.transform().to_paper(p)):
                 hit = vp
                 break
@@ -1067,7 +1253,8 @@ def _lettered(plot) -> List[Tuple[float, object]]:
     return out
 
 
-def _match_problem(plot, align: Alignment, vp, station: float, text) -> Optional[str]:
+def _match_problem(plot, align: Alignment, vp, station: float, text,
+                   fpi: float = FPI) -> Optional[str]:
     """Whether the match line at ``station`` crosses the line square to it on
     this sheet, far enough each side, and is lettered along itself."""
     begin = float(align.begin_station)
@@ -1076,12 +1263,12 @@ def _match_problem(plot, align: Alignment, vp, station: float, text) -> Optional
     q = t.to_paper(align.point_at(dist))
     d = align.direction_at(dist) + float(vp.rotation_deg)
     label = align.stations().format(station)
-    near = [s for s in plot.segs if not s.closed and s.distance(q) <= AIM_FT / FPI]
+    near = [s for s in plot.segs if not s.closed and s.distance(q) <= AIM_FT / fpi]
     good = []
     for s in near:
         if pl.turn_between(s.angle, d + 90.0, 180.0) > SQUARE_DEG:
             continue
-        lefts = [pl.offset_from(p, q, d)[1] * FPI for p in (s.a, s.b)]
+        lefts = [pl.offset_from(p, q, d)[1] * fpi for p in (s.a, s.b)]
         if min(lefts) <= -REACH_FT and max(lefts) >= REACH_FT:
             good.append(s)
     if not good:
@@ -1091,7 +1278,7 @@ def _match_problem(plot, align: Alignment, vp, station: float, text) -> Optional
         if pl.turn_between(s.angle, d + 90.0, 180.0) > SQUARE_DEG:
             return (f"the match line at {label} runs at {s.angle % 180.0:.2f}° on the sheet; "
                     f"square to the line there is {(d + 90.0) % 180.0:.2f}°")
-        lefts = [pl.offset_from(p, q, d)[1] * FPI for p in (s.a, s.b)]
+        lefts = [pl.offset_from(p, q, d)[1] * fpi for p in (s.a, s.b)]
         return (f"the match line at {label} reaches {min(lefts):.0f} ft to {max(lefts):.0f} ft "
                 f"from the centerline; it should run at least {REACH_FT:g} ft past it each side")
     line = good[0]
@@ -1106,6 +1293,9 @@ def _match_problem(plot, align: Alignment, vp, station: float, text) -> Optional
 
 def _p5_check(pid: str):
     cfg = P5[pid]
+
+    fpi, spare = float(cfg.get("fpi", FPI)), int(cfg.get("spare", 1))
+    scale = f"1\" = {fpi:g}'"
 
     def check(baseline: Session, submitted: Session) -> Result:
         tally = Tally()
@@ -1135,11 +1325,11 @@ def _p5_check(pid: str):
                 problem = (f"sheet {sheet.name} is {sheet.size} with the {template} border, not "
                            f"{cfg['size']} with the {cfg['template']} border")
             for vp in sheet.viewports:
-                if abs(float(vp.feet_per_inch) - FPI) > 1e-6 and any(
+                if abs(float(vp.feet_per_inch) - fpi) > 1e-6 and any(
                         _shows(vp, sheet.usable_area(), vp.transform().to_paper(p)) for p in pts):
                     problem = problem or (f"a viewport on {sheet.name} shows the stretch at 1\" = "
                                           f"{float(vp.feet_per_inch):g}'")
-            tally.add(f"{sheet.name}: border and 1\" = 50'", problem)
+            tally.add(f"{sheet.name}: border and {scale}", problem)
             ua = sheet.usable_area()
             outside = [vp for vp in sheet.viewports if not (
                 vp.paper_bbox()[0] >= ua[0] - 0.01 and vp.paper_bbox()[1] >= ua[1] - 0.01
@@ -1147,17 +1337,18 @@ def _p5_check(pid: str):
             tally.add(f"{sheet.name}: viewports inside the border's usable area",
                       f"a viewport on {sheet.name} runs outside the usable area of its border"
                       if outside else None)
-        # every station shows somewhere at 1" = 50'
-        seen = [any(v is not None for v in vs) for vs in zip(*[_seen(s, pts) for s in sheets])]
+        # every station shows somewhere at the scale
+        seen = [any(v is not None for v in vs)
+                for vs in zip(*[_seen(s, pts, fpi) for s in sheets])]
         missing = [stations[k] for k, ok in enumerate(seen) if not ok]
         tally.add(f"every station {cfg['a']} to {cfg['b']} shown",
-                  f"{len(missing)} stations show on no sheet at 1\" = 50', first "
+                  f"{len(missing)} stations show on no sheet at {scale}, first "
                   f"{st.format(missing[0])}" if missing else None)
-        # how many sheets
+        # how many sheets: the fewest, plus ``spare`` (1; 0 on the strict instances)
         fewest = _fewest(pid)
         tally.add("number of sheets", f"{len(sheets)} sheets; the stretch needs {fewest} at "
-                                      f"1\" = 50' on this border, so at most {fewest + 1}"
-                  if len(sheets) > fewest + 1 else None)
+                                      f"{scale} on this border, so at most {fewest + spare}"
+                  if len(sheets) > fewest + spare else None)
         # the breaks, from the lettered match lines
         plots, letters = {}, {}
         for sheet in sheets:
@@ -1196,11 +1387,12 @@ def _p5_check(pid: str):
                 for sh in pair:
                     text = next((t for s, t in letters[sh.id] if abs(s - b) <= 0.5), None)
                     vp = next((v for v in _seen(sh, [align.point_at(
-                        min(max(b - float(align.begin_station), 0.0), align.length))]) if v), None)
+                        min(max(b - float(align.begin_station), 0.0), align.length))], fpi)
+                               if v), None)
                     if text is None or vp is None:
                         problem = f"sheet {sh.name} does not show the break at {st.format(b)}"
                     else:
-                        problem = _match_problem(plots[sh.id], align, vp, b, text)
+                        problem = _match_problem(plots[sh.id], align, vp, b, text, fpi)
                     tally.add(f"match line {st.format(b)} on {sh.name}: square to "
                               f"{cfg['line']} at its station, lettered along it",
                               f"{sh.name}: {problem}" if problem else None)
@@ -1209,7 +1401,7 @@ def _p5_check(pid: str):
             for k, sheet in enumerate(sheets):
                 lo, hi = bounds[k], bounds[k + 1]
                 idx = [i for i, s in enumerate(stations) if lo - 1e-6 <= s <= hi + 1e-6]
-                views = _seen(sheet, [pts[i] for i in idx])
+                views = _seen(sheet, [pts[i] for i in idx], fpi)
                 gap = [stations[i] for i, v in zip(idx, views) if v is None]
                 tally.add(f"{sheet.name}: shows all of {st.format(lo)} to {st.format(hi)}",
                           f"sheet {sheet.name} does not show {st.format(gap[0])} of its stretch "
@@ -1226,7 +1418,7 @@ def _p5_check(pid: str):
                           f"or down) at {st.format(wrong[0])}"
                           + (f" to {st.format(wrong[-1])}" if len(wrong) > 1 else "")
                           if wrong else None)
-        return tally.result(f"{len(sheets)} sheets at 1\" = 50' on the {cfg['template']} border "
+        return tally.result(f"{len(sheets)} sheets at {scale} on the {cfg['template']} border "
                             f"(the stretch needs {fewest}), every station shown, stationing left "
                             f"to right on each, match lines square and lettered alike at "
                             f"{', '.join(st.format(b) for b in breaks) or 'no break'}")
@@ -1244,14 +1436,18 @@ def _p5_solve(pid: str):
         ua = _usable(cfg["size"], cfg["template"])
         W, H = ua[2] - ua[0] - 0.1, ua[3] - ua[1] - 0.1
         fewest = _fewest(pid)
-        for margin, level in ((1.0, 3.0), (0.6, 10.0), (0.3, None), (0.0, None)):
-            ends = _greedy(align, A, B, W - margin, H - margin, round_to=10.0, level=level)
-            if len(ends) <= fewest + 1:
+        fpi, spare = float(cfg.get("fpi", FPI)), int(cfg.get("spare", 1))
+        # the roomiest cut that keeps to the count; a strict instance (spare 0) may need the
+        # viewport to fill the usable area to within the check's 0.01 in
+        for margin, level in ((1.0, 3.0), (0.6, 10.0), (0.3, None), (0.0, None), (-0.09, None)):
+            ends = _greedy(align, A, B, W - margin, H - margin, round_to=10.0, level=level,
+                           fpi=fpi)
+            if len(ends) <= fewest + spare:
                 break
         # as many sheets as that, cut evenly where even cuts still fit
         n = len(ends)
         even = [round((A + (B - A) * (k + 1) / n) / 10.0) * 10.0 for k in range(n - 1)] + [B]
-        if all(_fit(align, a, b, W - margin, H - margin, level) is not None
+        if all(_fit(align, a, b, W - margin, H - margin, level, fpi) is not None
                for a, b in zip([A] + even[:-1], even)):
             ends = even
         common.ok(session.execute("create_layer", {"name": "MATCH-LINE", "color": "black",
@@ -1259,7 +1455,7 @@ def _p5_solve(pid: str):
         starts = [A] + ends[:-1]
         names = [f"PL-{k + 1}" for k in range(len(ends))]
         for name, a, b in zip(names, starts, ends):
-            twist, _slack = _fit(align, a, b, W - margin, H - margin, level)
+            twist, _slack = _fit(align, a, b, W - margin, H - margin, level, fpi)
             _s, pts, _d = _samples(align, a, b)
             turned = [geo.rotate_point(list(p), twist) for p in pts]
             bb = geo.bbox_of_points(turned)
@@ -1268,9 +1464,9 @@ def _p5_solve(pid: str):
                                                        "title_block_template": cfg["template"]}))
             common.ok(session.execute("create_viewport", {
                 "sheet": name, "center_paper": [(ua[0] + ua[2]) / 2.0, (ua[1] + ua[3]) / 2.0],
-                "width_in": round(W, 3), "height_in": round(H, 3),
+                "width_in": round(max(W, W - margin), 3), "height_in": round(max(H, H - margin), 3),
                 "model_center": [round(centre[0], 2), round(centre[1], 2)],
-                "feet_per_inch": FPI, "rotation_deg": round(twist, 3)}))
+                "feet_per_inch": fpi, "rotation_deg": round(twist, 3)}))
         for k, b in enumerate(ends[:-1]):
             label = f"MATCH LINE STA {st.format(b)}"
             for name in names[k:k + 2]:
@@ -1298,7 +1494,8 @@ def _p5_prompt(pid: str) -> str:
     refs = ", ".join(f"{f} (attached as {r})" for f, r in cfg["files"].items())
     return (f"This sheet file references the base files of {cfg['road']}: {refs}. The "
             f"centerline is alignment {cfg['line']}, reached as {cfg['alignment']}. Lay out the "
-            f"plan sheets for {cfg['line']} from STA {cfg['a']} to STA {cfg['b']} at 1\" = 50' on "
+            f"plan sheets for {cfg['line']} from STA {cfg['a']} to STA {cfg['b']} at 1\" = "
+            f"{float(cfg.get('fpi', FPI)):g}' on "
             f"{cfg['border']}. You decide how many sheets, where to break between them and how "
             f"to turn each viewport: on every sheet {cfg['line']}'s stationing must read left to "
             f"right, each sheet's viewport must stay inside its border, and every station from "
@@ -1328,6 +1525,70 @@ _P4_NOTES = {
                           "placed clear leave 7 overlaps (labels on the 180 surviving callouts, on "
                           "the base's lettering and on each other); with the four tables at one "
                           "spot, 25. Lettering without view_rotation reads upside down.",
+    # (2026-11-03) the expansion; "naive" below is the labelers' default poses at the sheet's
+    # twist with every table placed clear (tests/test_pilot_layout.py feeds it to each check)
+    "p04-crowded-ppm051": "L-38 of Route 65 (untwisted) with NB10 (one tangent), SB10 "
+                          "(tangent, curve) and WIS1 (one tangent) stripped: 33 labels and 1 "
+                          "table. Naive answer checked: 4 overlaps on D1-08 (a station number on "
+                          "the base's \"NB10\" LINE, NB10's bearing on the sheet's ROUTE 65 and "
+                          "NB callouts).",
+    "p04-crowded-ppm052": "L-39 (twist -89.90°) with CL2 (one tangent) and SB10 (tangent, curve, "
+                          "tangent) stripped: 29 labels and 1 table. The two lines run side by "
+                          "side, so their station numbers land on each other. Naive answer "
+                          "checked: 4 overlaps (\"1045\" on \"1045\", station numbers on the "
+                          "sheet's 12' and 8' width callouts); lettering without view_rotation "
+                          "reads upside down.",
+    "p04-crowded-ppm155": "PD-2 of Route 65 (twist -89.95°) with CL2 (tangent, curve, tangent) and "
+                          "D13 (one tangent) stripped: 28 labels and 1 table. Naive answer "
+                          "checked: a station number on the sheet's 14' width callout (D1-08); "
+                          "without view_rotation it reads upside down.",
+    "p04-crowded-ppm156": "PD-3 of Route 65 (twist -89.94°) with D13 (one tangent), TBR1 (three "
+                          "tangents, a curve) and TBR2 (tangent, two curves) stripped: 47 labels "
+                          "and 2 tables. Naive answer checked: 3 overlaps (bearings on the base's "
+                          "\"TBR2\" LINE, on ROUTE 65 and on a 12' callout); without "
+                          "view_rotation it reads upside down. (Slow: building the start takes "
+                          "about 20 s.)",
+    "p04-crowded-ppm157": "PD-11 of Route 65, the Ferrari Ranch Road interchange as on L-7 (twist "
+                          "-131.46°), with D13 (one tangent), F5 (two tangents, a curve), F6 "
+                          "(three tangents, three curves) and FR (tangent, curve) stripped: 58 "
+                          "labels and 3 tables. Naive answer checked: 8 overlaps (BC and bearing "
+                          "labels on the sheet's width callouts); without "
+                          "view_rotation it reads upside down. (Slow: building the four lines' "
+                          "truths and the start takes about 80 s.)",
+    "p04-crowded-ppm158": "PD-32 of Route 65 (twist -85.00°) with CL4 (three tangents, a curve), "
+                          "NB10 (one tangent), SB10 (two tangents, a curve) and WIS1 (one "
+                          "tangent) stripped: 57 labels and 2 tables, NB10 and SB10 side by side. "
+                          "Naive answer checked: 6 overlaps (\"1035\" on \"1035\", an EC on "
+                          "the sheet's +18 \"SB10\" callout, a bearing on a 12' callout); without "
+                          "view_rotation it reads upside down.",
+    "p04-crowded-ppm160": "PD-1 of Route 78 at its published twist (28.00°) with B (one tangent), "
+                          "NWR (three tangents, two curves) and WS (two tangents, a curve) "
+                          "stripped: 50 labels and 2 tables. Naive answer checked: NWR's BC on "
+                          "the sheet's ASPH callout (D1-08). (p17-twist-ppm160 turns this sheet "
+                          "half a turn and asks for NWR alone.)",
+    "p04-crowded-ppm161": "PD-2 of Route 78 (twist 28.02°) with B (one tangent), ENRA and SE (two "
+                          "tangents and a curve each) stripped: 44 labels and 2 tables. Naive "
+                          "answer checked: an ENRA bearing on the sheet's own \"ENRA\" LINE "
+                          "lettering (D1-08).",
+    "p04-crowded-ppm230": "E-18 (Electrical Example K5, twist -157.24°) with A (one tangent), CL2 "
+                          "(two tangents, two curves) and D (two tangents, a curve) stripped: 50 "
+                          "labels and 2 tables. Naive answer checked: 3 overlaps (a station number "
+                          "on the sheet's D, a BC and an EC on its (TR) callouts); without "
+                          "view_rotation it reads upside down.",
+    "p04-crowded-fdot915": "FDOT roadway plan-profile sheet 12 (twist -149.21°) with CL1 (tangent, "
+                           "curve) and CL2 (one tangent) stripped: 13 labels and 1 table; the "
+                           "published sheet has no clear space for the table (the catalogue's "
+                           "real-alignment-data job is excluded for it), so the table must go "
+                           "over the plan clear of lettering. Naive answer checked: CL1's BC on "
+                           "the sheet's TYPE E CURB AND GUTTER note (D1-08); without "
+                           "view_rotation it reads upside down.",
+    "p04-crowded-ppm047": "L-3 of Route 65 (twist -111.10°) with IN4 (a curve, a tangent, a curve) "
+                          "stripped: 14 labels and 1 table. D13 and IN3 are curves with no "
+                          "tangent, which _task cannot build (no real-alignment-data or "
+                          "real-bearings job), so they are left out and keep their published "
+                          "lettering, which crowds IN4's. Naive answer checked: IN4's BC on the "
+                          "sheet's NB callout (D1-08); without view_rotation it reads upside "
+                          "down.",
 }
 _P17_NOTES = {
     "p17-twist-ppm160": "PD-1 (Route 78, Example A-1) turned from 28.00° to -152.00°: NWR "
@@ -1342,6 +1603,67 @@ _P17_NOTES = {
                          "answer checked: lettered without view_rotation the labels plot at "
                          "-143° and read upside down. (The published twist, -148.34°, happens to "
                          "letter right here.)",
+    # (2026-11-03) the expansion: each re-cut with the viewport fitted to the usable area and
+    # centred on the line (wfl21 turned half a turn instead); "wrong side" counts the station
+    # numbers, BC/EC and bearings the orientation item rejects; the labelers' default poses at
+    # the new twist pass every one (none of these re-cut sheets is crowded)
+    "p17-twist-ppm209": "E-3 (Electrical Example C) re-cut from -27.94° to 120.00°: A1 (533+06.89 "
+                        "to 546+76.62, tangent and curve) now climbs right to left at 35°. Naive "
+                        "answers checked: without view_rotation, and with the published "
+                        "-27.94°, all 15 labels read from the wrong side (147.9° as plotted).",
+    "p17-twist-ppm161": "PD-2 (Route 78, Example A-2) re-cut from 28.02° to 170.00° (not the "
+                        "half turn of p17-twist-ppm160): ENRA (849+41.34 to 858+01.51, two "
+                        "tangents and a curve) climbs right to left at 45°. Naive answers "
+                        "checked: without view_rotation, and with the published 28.02°, all 13 "
+                        "labels read from the wrong side.",
+    "p17-twist-ppm111": "U-1 of Route 65 re-cut from -72.31° to 160.00°: IND1 (26+79.06 to "
+                        "39+04.01, two tangents, two curves) falls right to left at 50°. Naive "
+                        "answers checked: without view_rotation all 18 labels, with the "
+                        "published -72.31° 15 of them, read from the wrong side.",
+    "p17-twist-ppm156": "PD-3 of Route 65 re-cut from -89.94° to 40.00°: TBR1 (635+24.27 to "
+                        "647+14.23, three tangents, a curve) climbs right to left at 60°. Naive "
+                        "answers checked: without view_rotation 15 of its 17 labels, with the "
+                        "published -89.94° all 17, read from the wrong side.",
+    "p17-twist-ppm158": "PD-32 of Route 65 re-cut from -85.00° to 50.00°: SB10 (1023+51.25 to "
+                        "1037+51.35, two tangents, a curve) climbs right to left at 46°. Naive "
+                        "answers checked: without view_rotation 16 of its 18 labels, with the "
+                        "published -85.00° all 18, read from the wrong side.",
+    "p17-twist-ppm155": "PD-2 of Route 65 re-cut from -89.95° to 140.00°: CL2 (629+77.66 to "
+                        "638+02.34), whose R 175.00' curve turns it 175°39' about, so it runs "
+                        "both ways across the sheet. Naive answers checked: without "
+                        "view_rotation, and with the published -89.95°, 9 of its 13 labels read "
+                        "from the wrong side (not the same 9).",
+    "p17-twist-ppm230": "E-18 (Electrical Example K5) re-cut from -157.24° to 120.00°: CL2 "
+                        "(32+90.08 to 46+35.14, ending in a R 158.70' loop that turns it 244°). Naive "
+                        "answers checked: without view_rotation 17 of its 19 labels, with the "
+                        "published -157.24° 3 of them, read from the wrong side.",
+    "p17-twist-ppm046": "L-2 of Route 65 re-cut from -92.36° to 140.00°: D13 (651+24.30 to "
+                        "662+41.77, tangent and curve) falls right to left at 53°. Naive answers "
+                        "checked: without view_rotation 5 of its 13 labels, with the published "
+                        "-92.36° 12 of them, read from the wrong side.",
+    "p17-twist-fdot915": "FDOT roadway plan-profile sheet 12 re-cut from -149.21° to 175.00° "
+                         "(the plan viewport fitted to the usable area): CL1 (700+00.01 "
+                         "to 706+99.99, tangent and curve) falls left to right at 36°. Naive "
+                         "answer checked: without view_rotation all 8 labels read from the wrong "
+                         "side (145.0° as plotted). As on FDOT-916, no twist traps the published "
+                         "one too: lettered with -149.21° it passes.",
+    "p17-twist-fdot923": "FDOT utility adjustment sheet 102 re-cut from 0° to 150.00°: CL1 "
+                         "(224+65.00 to 232+35.00, one tangent) climbs right to left at 30°. "
+                         "Naive answer checked: without view_rotation (here also the published "
+                         "twist) all 9 labels read from the wrong side (150.0°).",
+    "p17-twist-wfl04": "WFL parking lot sheet F.4 (1\" = 40') re-cut from 0° to 140.00°: MAIN 01 "
+                       "(36+41.78 to 40+18.35, a compound pair of left curves, then one right) "
+                       "climbs right to left at 44°. Naive answer checked: without view_rotation (the "
+                       "published twist too) all 10 labels read from the wrong side. (F.7, F.10 "
+                       "and F.12 show the same line, so only F.4 is used.)",
+    "p17-twist-wfl21": "WFL plan and profile sheet D.12 turned half a turn, from 44.73° to "
+                       "-135.27°: MAIN 01 (159+85.00 to 166+81.83, two tangents) now runs right "
+                       "to left. Naive answers checked: without view_rotation, and with the "
+                       "published 44.73°, all 9 labels read from the wrong side (-179.7°).",
+    "p17-twist-cflpla": "CFL Davis Dam Road plan (PLA(SAMPLE)) re-cut from 1.90° to 145.00°: CL1 "
+                        "(34+12.52 to 41+62.50, tangent, curve, tangent) climbs right to left at "
+                        "37°. Naive answers checked: without view_rotation, and with the "
+                        "published 1.90°, all 10 labels read from the wrong side (127.1°).",
 }
 _P5_NOTES = {
     "p05-breaks-fdot904": "SR 50 CL1 472+00 to 490+00, 1800 ft: the end of a R 2862.46' curve "
@@ -1357,12 +1679,54 @@ _P5_NOTES = {
                       "sheets is 2, so 3 pass. North-up sheets read left to right here but need "
                       "3 cut close; naive answers checked: four sheets, match lines vertical on "
                       "the paper (8° off square).",
+    # (2026-11-03) the expansion, all strict (spare 0): only the fewest sheets pass. "Level"
+    # below is the conventional cut, each sheet's chord within 3° of level
+    "p05-breaks-fdot918": "FDOT drainage map base (FDOT-918), CL2 18+00 to 41+00, 2300 ft heading "
+                          "S 48° E: tangents with two small angle points, then a reverse pair, R "
+                          "14997.04' left (Δ 1°12') and R 10699.75' right (Δ 3°26'), and a 709 "
+                          "ft tangent. FDOT usable area 15.4 x 9.6 in (770 x 480 ft): the fewest "
+                          "is 3, each run corner to corner. Naive answers checked: north-up "
+                          "sheets (4), the level cut (4), four even sheets.",
+    "p05-breaks-fdot904cl2": "SR 50 project base, CL2 3270+00 to 3303+00, 3300 ft: N 81°40' E, a R "
+                             "3272.33' curve right (Δ 19°17') to S 79°03' E, 1335 ft of tangent. "
+                             "The fewest at 1\" = 50' on the FDOT border is 4. Naive answers "
+                             "checked: north-up sheets (5), the level cut (5), five even "
+                             "sheets.",
+    "p05-breaks-fdot904cl4": "SR 50 project base, CL4 2030+00 to 2050+00 at 1\" = 40' (FDOT usable "
+                             "area 616 x 384 ft): N 81°41' E, a broken back of two right curves "
+                             "(R 6146.98', Δ 4°01'; R 3232.53', Δ 12°01') with 293 ft between, "
+                             "to S 82°21' E. The fewest is 3. Naive answers checked: north-up "
+                             "sheets (4), the level cut (4), four even sheets.",
+    "p05-breaks-fdot904cl9": "SR 50 project base, CL9 71+00 to 92+00 at 1\" = 40': S 49°36' E, a "
+                             "R 954.96' curve left (Δ 25°28'), 678 ft of tangent, a R 8346.97' "
+                             "curve left (Δ 5°40'), to S 80°47' E. The fewest is 3, with 0.5 in "
+                             "to spare each way. Naive answers checked: north-up sheets (4), the "
+                             "level cut (4), four even sheets.",
+    "p05-breaks-ppm048": "Route 65 D13 (the L-4 base) 655+00 to 690+00 at 1\" = 40' on the "
+                         "Caltrans 22 x 34 border (usable 31.6 x 21.0 in, 1264 x 840 ft): one R "
+                         "4999.98' curve left (Δ 41°18') from due north to N 41°15' W, so "
+                         "north-up viewports run it straight up, then right to left. The fewest "
+                         "is 3. Naive answers checked: north-up sheets (4, and right to left), "
+                         "four even sheets; the level cut makes 3 and passes. (p12-route65-d13 "
+                         "lays out 640+00 to 672+00 of the same line at 1\" = 50'.)",
+    "p05-breaks-cflswppp": "CFL sample project CL2 (the SWPPP sheets' base) 24+00 to 37+00 at 1\" "
+                           "= 40' on the Federal Lands border (624 x 416 ft): S 71°25' E, a R "
+                           "500.23' curve left (Δ 64°32') to N 44°01' E, 358 ft of tangent. The "
+                           "fewest is 2: the one instance that needs only 2, kept for the "
+                           "Federal Lands border (no CFL or WFL line other than the p05-breaks-cfl "
+                           "road needs 3). Naive answers checked: the level cut (3 sheets) and "
+                           "three even sheets fail; two north-up sheets pass.",
 }
+
+#: the tags of the instances that are not twisted Caltrans layouts
+_P4_TAGS = {"p04-crowded-ppm051": ["layout", "crowded", "caltrans", "verifier"],
+            "p04-crowded-fdot915": ["layout", "crowded", "fdot", "twist", "verifier"]}
 
 for _pid in P4:
     PROBES.append(Probe(
         id=_pid, prompt=_p4_prompt(_pid), check=_p4_check(_pid), solve=_p4_solve(_pid),
-        note=_P4_NOTES[_pid], tags=["layout", "crowded", "caltrans", "twist", "verifier"],
+        note=_P4_NOTES[_pid],
+        tags=_P4_TAGS.get(_pid, ["layout", "crowded", "caltrans", "twist", "verifier"]),
         start=common.register(_pid, common.sheet_file(P4[_pid]["sheet_id"]),
                               _p4_builder(_pid))))
 for _pid in P17:

@@ -73,6 +73,19 @@ target alignment's own lettering is stripped from the base file.
   lettering and title block, the base files' bearing text, the viewport's
   scale), and derived values are computed from them there.
 
+The later instances (2026-11) lean on working out over copying. p01 adds L-7's "F6" loop
+(two curves, the middle tangent lettered against the stationing, the loop's table radius a
+rounded 55 m that only its L over its delta reproduces, held at its POT on FR), CFL Plan 1's
+Main Road (two reversing curves, the last bearing lettered nowhere, held at a staked PI that
+is T + tangent + T, not the station difference, from the one before) and WFL D.11's "MAIN 01"
+(the bearing past the curve lettered nowhere, held at an equation with APPR 01 that falls on
+the curve). p15 adds FDOT's Drainage Network 1, Caltrans L-39 and L-5 and WFL D.7 and D.12:
+six questions each, most of them worked out (an off-sheet BC, PI or PT, a bearing ahead, a
+grade elevation, coordinates carried back from End Project, an arc along an offset), one a
+scale on an 11 x 17 print of a 22 x 34 sheet or off the profile grid, and one a trap (a PC
+lettered without its hundreds, a grade's minus a half-height dash, the left bridge's stations
+beside the right one's, a lettered tangent length a hundredth off its stations).
+
 The two need images to reach the model: the claude-code and codex backends
 pass MCP image content through themselves, the anthropic backend only with
 ``--vision``, and the openai-compatible backend (LM Studio, Runpod) never.
@@ -179,6 +192,13 @@ class Redraw:
     prompt: str = ""
     note: str = ""
     solve: Optional[Callable[[Session], None]] = None
+    #: bearings another line letters alike, cut from every base file too (no file may
+    #: hold one of the rebuilt line's bearings as text)
+    also_strip: Tuple[str, ...] = ()
+    #: how far the redraft's own (fitted) alignment may run from the truth
+    redraft_ft: float = 0.3
+    #: how the redraft's strokes beside the line are found (``_traces``' options)
+    traces: Optional[dict] = None
 
 
 def _engine_alignment(name: str, start, legs: list, begin_station: float) -> Alignment:
@@ -198,11 +218,14 @@ def _vertices(e) -> List[List[float]]:
 
 
 def _traces(session: Session, path: Sequence[Sequence[float]], trace_ft: float = 13.0,
-            glyph_ft: float = 8.0) -> List[str]:
+            glyph_ft: float = 8.0, layers: str = "", layers_ft: float = 13.0) -> List[str]:
     """Small loose linework hugging a path: lettering the redraft digitized as
     strokes and curve points it drew as little circles (L-1's "N 01°05'14\" W",
     "328.15'" and the quotes of "TB1" LINE, partly in the design file and
-    partly in the topo file; its BC and POT circles)."""
+    partly in the topo file; its BC and POT circles). With ``layers`` (a pattern),
+    strokes on those layers are taken out to ``layers_ft`` as well: where the redraft
+    draws a plan in short segments (CFL's contours and hatching), 13 ft round the line
+    would take half the corridor, so the rest stays to ``trace_ft``."""
     out = []
     for eid, e in session.doc.model_entities.items():
         pts = _vertices(e)
@@ -211,20 +234,21 @@ def _traces(session: Session, path: Sequence[Sequence[float]], trace_ft: float =
         xs, ys = [p[0] for p in pts], [p[1] for p in pts]
         if max(max(xs) - min(xs), max(ys) - min(ys)) > glyph_ft:
             continue
-        if all(min(math.dist(p, q) for q in path) <= trace_ft for p in pts):
+        reach = layers_ft if layers and re.search(layers, e.layer or "") else trace_ft
+        if all(min(math.dist(p, q) for q in path) <= reach for p in pts):
             out.append(eid)
     return out
 
 
 def _strip_alignment(session: Session, name: str, others: Sequence[Session] = (),
-                     reach_ft: float = 30.0) -> None:
+                     reach_ft: float = 30.0, traces: Optional[dict] = None) -> None:
     """Cut an alignment out of its base file: the design, everything anchored to
     it (centerline, ticks, station numbers), the loose lettering beside it that
     is its own -- its bearings and its name -- so nothing in the file holds its
     data as text, and (here and in the ``others``) the small strokes hugging it."""
     align = session.doc.design.alignments[name]
     path = [align.point_at(align.length * i / 400.0) for i in range(401)]
-    gone = set(_traces(session, path))
+    gone = set(_traces(session, path, **(traces or {})))
     for eid, e in session.doc.model_entities.items():
         anchor = getattr(e, "anchor", None) or {}
         if anchor.get("alignment") == name:
@@ -239,9 +263,19 @@ def _strip_alignment(session: Session, name: str, others: Sequence[Session] = ()
         common.ok(session.execute("delete_entities", {"ids": sorted(gone)}))
     common.ok(session.execute("delete_alignment", {"name": name, "cascade": True}))
     for other in others:
-        strokes = _traces(other, path)
+        strokes = _traces(other, path, **(traces or {}))
         if strokes:
             common.ok(other.execute("delete_entities", {"ids": strokes}))
+
+
+def _strip_bearings(session: Session, bearings: Sequence[str]) -> None:
+    """Delete the loose text lettering any of these bearings."""
+    want = [_azimuth(b) for b in bearings]
+    gone = [eid for eid, e in session.doc.model_entities.items()
+            if isinstance(e, Text) and any(nt.azimuth_close(a, w) for a in nt.bearings(e.content)
+                                           for w in want)]
+    if gone:
+        common.ok(session.execute("delete_entities", {"ids": sorted(gone)}))
 
 
 def _redraw_builder(spec: Redraw):
@@ -254,7 +288,9 @@ def _redraw_builder(spec: Redraw):
         session = common.load(doc)
         others = {path: common.load(path) for fname, path in files.items()
                   if fname != spec.design_file}
-        _strip_alignment(session, spec.alignment, list(others.values()))
+        _strip_alignment(session, spec.alignment, list(others.values()), traces=spec.traces)
+        for one in [session] + list(others.values()):
+            _strip_bearings(one, spec.also_strip)
         common.save(session, doc)
         for path, other in others.items():
             common.save(other, path)
@@ -534,6 +570,274 @@ CL1_SPEC = Redraw(
 )
 
 
+# ------------------------------------------- a line from its lettered legs, held at a tie
+
+#: the redraft's strokes on the line (curve point circles, 3 ft) and its digitized lettering
+#: (the TRACE layers, 13 ft), for the sheets drawn in short segments
+TIGHT_TRACES = {"trace_ft": 3.0, "layers": r"TRACE"}
+
+
+def _legs(bearings: Sequence[str], lengths: Sequence[float], radii: Sequence[float]):
+    """``(legs, vectors)``: a line as a sheet letters it -- the tangent bearings in the
+    direction of stationing, each tangent's length between curve points (the first from the
+    begin, the last to the end) and each curve's radius -- as create_alignment legs, with each
+    leg's vector, so a tie at any PI can place it."""
+    az = [_azimuth(b) for b in bearings]
+    tans = [r * math.tan(math.radians(abs((az[i + 1] - az[i] + 180.0) % 360.0 - 180.0)) / 2.0)
+            for i, r in enumerate(radii)]
+    legs, vectors = [], []
+    for i, b in enumerate(bearings):
+        dist = lengths[i] + (tans[i - 1] if i else 0.0) + (tans[i] if i < len(tans) else 0.0)
+        leg = {"bearing": b, "distance": dist}
+        if i:
+            leg["radius"] = radii[i - 1]
+        legs.append(leg)
+        vectors.append(_step([0.0, 0.0], az[i], dist))
+    return legs, vectors
+
+
+def _held_at_pi(name: str, legs: list, vectors: list, begin_station: float,
+                tie: Sequence[float], k: int) -> Alignment:
+    """The line with its k-th PI (0 the begin, ``len(legs)`` the end) on the tie."""
+    start = [tie[0] - sum(v[0] for v in vectors[:k]), tie[1] - sum(v[1] for v in vectors[:k])]
+    return _engine_alignment(name, start, legs, begin_station)
+
+
+def _held_at_station(name: str, legs: list, begin_station: float, station: float,
+                     tie: Sequence[float]) -> Alignment:
+    """The line with the point at ``station`` (on a curve, say) on the tie."""
+    at = _engine_alignment(name, [0.0, 0.0], legs, begin_station).station_to_xy(station)[0]
+    return _engine_alignment(name, [tie[0] - at[0], tie[1] - at[1]], legs, begin_station)
+
+
+# ------------------------------------------------- L-7, the F6 loop (Caltrans PPM-050)
+
+#: Caltrans layout L-7 (PPM-050): ramp "F6", the loop, as lettered. N 42°23'13" W 328.15' to
+#: the BC at 703+83.48; curve 44 of the CURVE DATA table (R 3280' -- 1000 m --, delta
+#: 02°51'53", T 82.04', L 164.04'), turning left (drawn, not lettered); EC 705+47.52; the
+#: next tangent lettered S 45°15'06" E 353.79', against the stationing (F6 runs N 45°15'06" W
+#: up-station); BC 709+01.31; curve 45 (R 180', delta 176°11'09", T 5419.20', L 554.87'), the
+#: loop, left; EC 714+56.18; S 41°26'15" E 261.57' to "F6" 717+17.75 POT = "FR" 71+69.42 POT.
+#: The table's R 180' is 55 m rounded to the foot: its T and L are those of R 180.44 (L over
+#: delta), and R 180' itself would bring the loop's EC up 1.37 ft short of 714+56.18.
+F6 = {"b1": "N 42°23'13\" W", "l1": 328.15, "bc44": 70383.48, "ec44": 70547.52,
+      "r44": 1000.0 * 3937.0 / 1200.0, "d44": "02°51'53\"", "t44": 82.04,
+      "b2": "N 45°15'06\" W", "l2": 353.79, "bc45": 70901.31, "ec45": 71456.18,
+      "r45": 554.87 / math.radians(176.0 + 11.0 / 60.0 + 9.0 / 3600.0), "d45": "176°11'09\"",
+      "t45": 5419.20, "b3": "S 41°26'15\" E", "l3": 261.57, "pot": 71717.75, "fr": 7169.42}
+
+
+def _f6_legs():
+    return _legs([F6["b1"], F6["b2"], F6["b3"]], [F6["l1"], F6["l2"], F6["l3"]],
+                 [F6["r44"], F6["r45"]])
+
+
+def _f6_pot(session: Session) -> List[float]:
+    return common.ok(session.query("station_to_xy", {"alignment": "FR",
+                                                     "station": F6["fr"]}))["point"]
+
+
+def _f6_truth(baseline: Session) -> Alignment:
+    legs, vectors = _f6_legs()
+    return _held_at_pi("F6", legs, vectors, F6["bc44"] - F6["l1"], _f6_pot(baseline), len(legs))
+
+
+def _f6_solve(session: Session) -> None:
+    """Work back from the POT on FR with the traverse query (curve 45's R from its L and
+    delta), then lay F6 out by bearings and distances and draw it."""
+    pot = _f6_pot(session)
+    t44, t45 = F6["t44"], F6["t45"]          # the table's T; the engine fits the curves at the PIs
+    r = common.ok(session.query("traverse", {"start": pot, "legs": [
+        {"bearing": "N 41°26'15\" W", "distance": F6["l3"] + t45},
+        {"bearing": "S 45°15'06\" E", "distance": t45 + F6["l2"] + t44},
+        {"bearing": "S 42°23'13\" E", "distance": t44 + F6["l1"]}]}))
+    run(session, "create_alignment", {
+        "name": "F6", "start": r["points"][-1], "begin_station": "700+55.33",
+        "legs": [{"bearing": F6["b1"], "distance": F6["l1"] + t44},
+                 {"bearing": F6["b2"], "distance": t44 + F6["l2"] + t45, "radius": 3280.83},
+                 {"bearing": F6["b3"], "distance": t45 + F6["l3"], "radius": 180.444}]})
+    run(session, "draw_alignment", {"alignment": "F6", "layer": "V-ALIGN-CNTR"})
+
+
+F6_SPEC = Redraw(
+    id="p01-redraw-alignment-ppm050",
+    sheet="PPM-050", design_file="0000000000aa01.rdraft", alignment="F6", aliases=(),
+    scan="L-7-scan.png",
+    begin_by=70200.00, end_by=F6["pot"],
+    tangents=[(70250.00, F6["b1"]), (70700.00, F6["b2"]), (71600.00, F6["b3"])],
+    curves=[Curve("curve 44", F6["bc44"], F6["ec44"], (3279.5, 3281.5), F6["d44"], "L",
+                  ("BC", "EC")),
+            Curve("curve 45", F6["bc45"], F6["ec45"], (180.40, 180.50), F6["d45"], "L",
+                  ("BC", "EC"))],
+    truth=_f6_truth, layer="V-ALIGN-CNTR", also_strip=(F6["b3"],), redraft_ft=0.35,
+    traces=TIGHT_TRACES,
+    prompt=(
+        "We lost the \"F6\" line (the loop ramp at Ferrari Ranch Road) out of the roadway "
+        "design file you have open, 0000000000aa01.rdraft. All we have to go on is a scan of "
+        "layout sheet L-7, L-7-scan.png: look at it with view_attachment, and zoom in with "
+        "region to read the lettering. Rebuild F6 in this file from the alignment data "
+        "lettered on the sheet (the tangent bearings and lengths, the curve data, the curve "
+        "point stations) over the whole length of it the sheet shows, name it F6, and draw "
+        "it. The FR line is still in the file: hold the tie the sheet gives between F6's end "
+        "and FR. The proposed roadway linework is still there too, if you want to check your "
+        "work against it."),
+    note=("F6's design, centerline, stationing and bearing/name text cut out of AA01 (with "
+          "F2's S 41°26'15\" E beside it, the same bearing as F6's last tangent) and the sheet "
+          "file left out of the project. Expected: N 42°23'13\" W to BC 703+83.48, curve 44 "
+          "(R 3280', delta 02°51'53\", left), EC 705+47.52, N 45°15'06\" W 353.79' (lettered "
+          "S 45°15'06\" E, against the stationing) to BC 709+01.31, curve 45 (the loop: delta "
+          "176°11'09\", left, R 180.44 -- the table letters 180', 55 m rounded, and only "
+          "L 554.87 / delta gives the lettered EC 714+56.18), S 41°26'15\" E 261.57' to the POT "
+          "717+17.75 on FR 71+69.42; the begin is 328.15 ft back from the BC, off the sheet. "
+          "Naive wrong answers that fail: curve 45 at the table's R 180' (EC 1.37 ft short); "
+          "the loop turned right; the middle tangent laid out S 45°15'06\" E as lettered; the "
+          "tie taken at F2's POT on FR (71+28.97)."),
+    solve=_f6_solve,
+)
+
+
+# ---------------------------------------------- Plan 1, the Main Road (CFL plan and profile)
+
+#: CFL plan and profile sheet Plan 1 (Main Road, Schedule A): CL1 as lettered. BEGIN PROJECT
+#: 10+00.00 on N13°33'40"E; PC 16+84.93, PI 18+20.33, delta 22°41'06" (RT), R 675.00',
+#: T 135.40', L 267.25', PT 19+52.18; N36°14'46"E; PC 20+71.70, PI 21+60.40, delta 20°07'09"
+#: (LT), R 500.00', T 88.70', L 175.57', PT 22+47.27; the bearing on past the second curve,
+#: N16°07'37"E, is lettered nowhere. The published N/E are state plane; the file is on a local
+#: datum, and the tie (the prompt's) is the second curve's PI, fitted to the redraft.
+CFL1 = {"b1": "N 13°33'40\" E", "b2": "N 36°14'46\" E", "b3": "N 16°07'37\" E",
+        "begin": 1000.00, "pc1": 1684.93, "pt1": 1952.18, "d1": "22°41'06\"", "r1": 675.00,
+        "pc2": 2071.70, "pt2": 2247.27, "d2": "20°07'09\"", "r2": 500.00, "end": 2500.00,
+        "pi2": [9889.59, 10486.51]}
+
+
+def _cfl1_legs():
+    return _legs([CFL1["b1"], CFL1["b2"], CFL1["b3"]],
+                 [CFL1["pc1"] - CFL1["begin"], CFL1["pc2"] - CFL1["pt1"],
+                  CFL1["end"] + 50.0 - CFL1["pt2"]], [CFL1["r1"], CFL1["r2"]])
+
+
+def _cfl1_truth(_baseline: Session) -> Alignment:
+    legs, vectors = _cfl1_legs()
+    return _held_at_pi("CL1", legs, vectors, CFL1["begin"], CFL1["pi2"], 2)
+
+
+def _cfl1_solve(session: Session) -> None:
+    """Back from the staked PI to Begin Project (PI to PI is T + tangent + T, not the
+    difference of the PI stations), then forward by deflections."""
+    t1, t2 = 135.40, 88.70
+    r = common.ok(session.query("traverse", {"start": CFL1["pi2"], "legs": [
+        {"bearing": "S 36°14'46\" W", "distance": t2 + (2071.70 - 1952.18) + t1},
+        {"bearing": "S 13°33'40\" W", "distance": t1 + 684.93}]}))
+    run(session, "create_alignment", {
+        "name": "CL1", "start": r["points"][-1], "begin_station": "10+00.00",
+        "legs": [{"bearing": CFL1["b1"], "distance": 684.93 + t1},
+                 {"deflection": "22°41'06\" RT", "radius": 675.0,
+                  "distance": t1 + (2071.70 - 1952.18) + t2},
+                 {"deflection": "20°07'09\" LT", "radius": 500.0,
+                  "distance": t2 + (2500.00 - 2247.27)}]})
+    run(session, "draw_alignment", {"alignment": "CL1", "layer": "P_ALIGN"})
+
+
+CFL1_SPEC = Redraw(
+    id="p01-redraw-alignment-cflpnp",
+    sheet="CFL-D-Plan-and-Profile", design_file="ALI(MAIN)Sample.rdraft", alignment="CL1",
+    aliases=("MAIN", "MAIN ROAD", "MAINROAD", "MAINRD"),
+    scan="plan-1-scan.png",
+    begin_by=CFL1["begin"], end_by=CFL1["end"],
+    tangents=[(1300.00, CFL1["b1"]), (2000.00, CFL1["b2"]), (2400.00, CFL1["b3"])],
+    curves=[Curve("curve 1", CFL1["pc1"], CFL1["pt1"], (674.5, 675.5), CFL1["d1"], "R"),
+            Curve("curve 2", CFL1["pc2"], CFL1["pt2"], (499.5, 500.5), CFL1["d2"], "L")],
+    truth=_cfl1_truth, layer="P_ALIGN", traces=TIGHT_TRACES,
+    prompt=(
+        "Our alignments file ALI(MAIN)Sample.rdraft (open) has lost the Main Road centerline, "
+        "CL1. The proposed roadway linework is in COR(MAIN)Sample.rdraft beside it. What we "
+        "have is a scan of plan and profile sheet Plan 1, plan-1-scan.png: look at it with "
+        "view_attachment, and zoom in with region to read the lettering. Rebuild CL1 in this "
+        "file from what the sheet letters (the tangent bearings, the curve data, the "
+        "stations) from Begin Project through station 25+00.00, name it CL1, and draw it. This "
+        "file is on a local datum, not state plane: the survey staked the PI of the second "
+        "curve at N 10486.51, E 9889.59."),
+    note=("CL1's design, centerline, stationing and bearing text cut out of the ALI file and "
+          "the sheet file left out of the project. Expected: N13°33'40\"E from Begin Project "
+          "10+00.00 to the PC 16+84.93, R 675.00 right through 22°41'06\" to the PT 19+52.18, "
+          "N36°14'46\"E to the PC 20+71.70, R 500.00 left through 20°07'09\" to the PT "
+          "22+47.27, then N16°07'37\"E (lettered nowhere: the bearing before turned left by the "
+          "delta) to 25+00.00, held at the staked PI 21+60.40, 343.62 ft along the tangents "
+          "from PI 18+20.33 (T + tangent + T). Naive wrong answers that fail: the PIs 340.07 "
+          "apart (the difference of their stations); the second curve turned right; the "
+          "lettered state-plane N/E taken for Begin Project."),
+    solve=_cfl1_solve,
+)
+
+
+# --------------------------------------------- D.11, "MAIN 01" past the 643' curve (WFL)
+
+#: WFL plan and profile sheet D.11: "MAIN 01" as lettered. PT 152+96.54 (of the 81°35'22"
+#: curve on D.10); S12°39'14"E; PC 155+27.34; PI 157+19.23, delta 33°13'58" (LT), R 643.00',
+#: T 191.89', L 372.95'; PT 159+00.29; the bearing on past it, S45°53'12"E, is lettered
+#: nowhere on this sheet (D.12 letters S45°53'11"E, the design's own rounding).
+#: "MAIN 01" 155+69.97 = "APPR 01" 610+00.00, on the curve: the tie (the prompt's coordinates
+#: of APPR 01 610+00.00, fitted to the redraft on its local datum).
+D11 = {"b1": "S 12°39'14\" E", "b2": "S 45°53'12\" E", "begin": 15296.54, "pc": 15527.34,
+       "pt": 15900.29, "delta": "33°13'58\"", "radius": 643.00, "end": 16000.00,
+       "eq": 15569.97, "tie": [10058.92, 10090.40]}
+
+
+def _d11_legs():
+    return _legs([D11["b1"], D11["b2"]], [D11["pc"] - D11["begin"], D11["end"] + 50.0 - D11["pt"]],
+                 [D11["radius"]])[0]
+
+
+def _d11_truth(_baseline: Session) -> Alignment:
+    return _held_at_station("MAIN 01", _d11_legs(), D11["begin"], D11["eq"], D11["tie"])
+
+
+def _d11_solve(session: Session) -> None:
+    """Lay the line out anywhere, find where its 155+69.97 (on the curve) lands, and move
+    the start by the difference to the equation's point."""
+    legs = [{"bearing": D11["b1"], "distance": 230.80 + 191.89},
+            {"deflection": "33°13'58\" LT", "radius": 643.0, "distance": 191.89 + 99.71}]
+    spec = {"name": "MAIN 01", "begin_station": "152+96.54", "legs": legs}
+    run(session, "create_alignment", dict(spec, start=[0.0, 0.0]))
+    at = common.ok(session.query("station_to_xy", {"alignment": "MAIN 01",
+                                                   "station": "155+69.97"}))["point"]
+    run(session, "delete_alignment", {"name": "MAIN 01"})
+    run(session, "create_alignment", dict(spec, start=[D11["tie"][0] - at[0],
+                                                       D11["tie"][1] - at[1]]))
+    run(session, "draw_alignment", {"alignment": "MAIN 01", "layer": "P_ALIGN"})
+
+
+D11_SPEC = Redraw(
+    id="p01-redraw-alignment-wfl20",
+    sheet="WFL-Plan-Profile-Sheets-p20", design_file="SamplePlan_ali.rdraft",
+    alignment="MAIN 01", aliases=("MAIN01", "MAIN"),
+    scan="D11-scan.png",
+    begin_by=D11["begin"], end_by=D11["end"],
+    tangents=[(15400.00, D11["b1"]), (15950.00, D11["b2"])],
+    curves=[Curve("the curve", D11["pc"], D11["pt"], (642.5, 643.5), D11["delta"], "L")],
+    truth=_d11_truth, layer="P_ALIGN", traces=TIGHT_TRACES,
+    prompt=(
+        "Our alignments file SamplePlan_ali.rdraft (open) has lost the \"MAIN 01\" line over "
+        "sheet D.11. The proposed roadway linework is in SamplePlan_cor.rdraft beside it. What "
+        "we have is a scan of plan and profile sheet D.11, D11-scan.png: look at it with "
+        "view_attachment, and zoom in with region to read the lettering. Rebuild MAIN 01 in "
+        "this file from what the sheet letters (the bearing, the curve data, the stations), "
+        "from the PT where this sheet picks up the curve coming in from D.10 through station "
+        "160+00.00, name it MAIN 01, and draw it. This file is on a local datum: the survey "
+        "has \"APPR 01\" 610+00.00 at N 10090.40, E 10058.92; hold MAIN 01 to the equation "
+        "the sheet letters there."),
+    note=("MAIN 01's design, centerline and stationing cut out of the ALI file and the sheet "
+          "file left out of the project. Expected: from the PT 152+96.54, S12°39'14\"E to the "
+          "PC 155+27.34, R 643.00 left through 33°13'58\" to the PT 159+00.29, then "
+          "S45°53'12\"E (lettered nowhere on D.11: the bearing in turned left by the delta) to "
+          "160+00.00, held where the equation \"MAIN 01\" 155+69.97 = \"APPR 01\" 610+00.00 "
+          "puts it -- on the curve, 42.63 ft past the PC. Naive wrong answers that fail: the "
+          "curve turned right; the PC (not 155+69.97) put on the APPR 01 point; the line run "
+          "on at S12°39'14\"E + 33°13'58\" (the delta added the wrong way)."),
+    solve=_d11_solve,
+)
+
+
 # ======================================================================= p15
 
 
@@ -541,7 +845,7 @@ CL1_SPEC = Redraw(
 class Question:
     key: str                       # q1 ...
     ask: str                       # as the prompt puts it
-    kind: str                      # station | feet | bearing | angle | turn-angle | text | scale | number
+    kind: str                      # station | feet | bearing | angle | turn-angle | turn | text | scale | number
     truth: Callable[["Sources"], object]
     places: int = 2                # decimals a number is held to
 
@@ -670,6 +974,9 @@ def _graded(q: Question, want, got: Optional[str]) -> Optional[str]:
             if turn:
                 ok = ok and _turn(nt.DMS_RE.sub(" ", got)) == turn
             shown = angle + (f" {turn}T" if turn else "")
+        elif q.kind == "turn":
+            ok = _turn(nt.DMS_RE.sub(" ", got)) == want
+            shown = f"{want}T"
         elif q.kind == "text":
             def norm(s: str) -> str:
                 return re.sub(r"\s+", "", s.upper().replace("’", "'"))
@@ -882,6 +1189,468 @@ CFL_SPEC = Reading(
 )
 
 
+# ------------------------------------------------------- shared readers for the later sheets
+
+
+def _bearing_text(azimuth: float) -> str:
+    """An azimuth as a quadrant bearing to the second: ``N 30°00'32" E``."""
+    az = azimuth % 360.0
+    ns, ew, ang = (("N", "E", az) if az < 90.0 else ("S", "E", 180.0 - az) if az < 180.0
+                   else ("S", "W", az - 180.0) if az < 270.0 else ("N", "W", 360.0 - az))
+    sec = int(round(ang * 3600.0))
+    return f"{ns} {sec // 3600:02d}°{sec % 3600 // 60:02d}'{sec % 60:02d}\" {ew}"
+
+
+def _dms_text(degrees: float) -> str:
+    sec = int(round(abs(degrees) * 3600.0))
+    return f"{sec // 3600:02d}°{sec % 3600 // 60:02d}'{sec % 60:02d}\""
+
+
+def _turned(bearing: str, delta: str, turn: str) -> float:
+    """The azimuth on past a curve: the bearing in, turned by the delta."""
+    return (_azimuth(bearing) + (1.0 if turn == "R" else -1.0) * _dms(delta)) % 360.0
+
+
+def _station_of(src: Sources, pattern: str) -> float:
+    return nt.stations(src.one(pattern).content)[0][0]
+
+
+def _offset(text: str) -> float:
+    """``45.50 LT`` / ``34.78' Rt``: signed feet, right positive."""
+    m = re.search(r"([\d.]+)\s*'?’?\)?\s*\(?\s*(LT|RT)\b", text.upper().replace("’", "'"))
+    if not m:
+        raise ValueError(f"no offset in {text!r}")
+    return float(m.group(1)) * (1.0 if m.group(2) == "RT" else -1.0)
+
+
+def _base_alignment(src: Sources, name: str) -> Alignment:
+    found = [doc.design.alignments[name] for doc in src.bases.values()
+             if name in doc.design.alignments]
+    if len(found) != 1:
+        raise LookupError(f"{len(found)} alignments {name} in {src.sheet.name}'s base files")
+    return found[0]
+
+
+def _print_fpi(src: Sources, print_long_in: float = 17.0) -> float:
+    """The plan scale on a print of the sheet whose long side is ``print_long_in``."""
+    return src.fpi() * max(src.sheet.width_in, src.sheet.height_in) / print_long_in
+
+
+# ------------------------------------- Drainage Network 1 (FDOT drainage plan, sheet 1)
+
+
+def _fdot_block(src: Sources, name: str) -> List[str]:
+    """An FDOT structure's data block: the lines lettered under its name (``S-104``)."""
+    head = src.one(r"^" + re.escape(name) + r"$")
+    below = sorted((t for t in src.texts if abs(t.position[0] - head.position[0]) < 0.02
+                    and 0.0 < head.position[1] - t.position[1] < 1.2),
+                   key=lambda t: -t.position[1])
+    lines, y = [], head.position[1]
+    for t in below:
+        if y - t.position[1] > 0.16:
+            break
+        lines.append(t.content)
+        y = t.position[1]
+    return lines
+
+
+def _fdot_place(src: Sources, name: str) -> Tuple[float, float]:
+    line = next(v for v in _fdot_block(src, name) if v.startswith("STA."))
+    return nt.stations(line)[0][0], _offset(line)
+
+
+def _fdot_depth(src: Sources, name: str) -> float:
+    block = _fdot_block(src, name)
+    grate = _number(next(v for v in block if v.startswith("ELEV.")))
+    return round(grate - min(_number(v) for v in block if v.startswith("FL ")), 2)
+
+
+def _fdot_apart(src: Sources, a: str, b: str) -> float:
+    (sa, oa), (sb, ob) = _fdot_place(src, a), _fdot_place(src, b)
+    if abs(sa - sb) > 1e-6:
+        raise ValueError(f"{a} and {b} are not at one station")
+    return round(abs(oa - ob), 2)
+
+
+def _fdot_pipe(src: Sources, size: int) -> float:
+    """Feet of pipe of one size the sheet constructs: each ``CONST. 87 LF`` over its
+    ``OF 18" PIPE``."""
+    total = 0.0
+    for t in src.texts:
+        m = re.fullmatch(r"CONST\.\s*(\d+)\s*LF", t.content.strip())
+        if not m:
+            continue
+        under = min((u for u in src.texts if abs(u.position[0] - t.position[0]) < 0.12
+                     and 0.05 < t.position[1] - u.position[1] < 0.3),
+                    key=lambda u: t.position[1] - u.position[1])
+        if re.fullmatch(rf'OF {size}" PIPE', under.content.strip()):
+            total += float(m.group(1))
+    return total
+
+
+def _fdot_baseline(src: Sources) -> Alignment:
+    return _base_alignment(src, "CL1")
+
+
+def _fdot_pc(src: Sources) -> float:
+    """``PC STA. +70.72`` lettered without its hundreds: they come from where the PC is."""
+    plus = _number(src.one(r"^PC STA\.\s*\+\d\d\.\d\d$").content.split("+", 1)[1])
+    cl1 = _fdot_baseline(src)
+    pc = cl1.begin_station + cl1.curves()[0].start_dist
+    return round(math.floor((pc - plus + 50.0) / 100.0) * 100.0 + plus, 2)
+
+
+def _fdot_cross_pipe(src: Sources) -> str:
+    """S-101 (Lt) to S-102 (Rt), square across the baseline at one station: the bearing
+    up-station turned 90° right."""
+    (bearing, _t), = _split_bearings(src)
+    return _bearing_text(_azimuth(bearing) + 90.0)
+
+
+FDOT916_SPEC = Reading(
+    id="p15-plan-reading-fdot916", sheet="FDOT-916-1-Drainage-Network-Plan-Sheet",
+    scan="drainage-network-1-scan.png", kind="FDOT drainage plan sheet",
+    questions=[
+        Question("q1", "At what station is the PC of the SR 22 baseline?", "station", _fdot_pc),
+        Question("q2", "How deep is inlet S-104, from its grate elevation down to its lowest "
+                       "flow line?", "feet", lambda s: _fdot_depth(s, "S-104")),
+        Question("q3", "How far apart are inlets S-101 and S-102, center to center?", "feet",
+                 lambda s: _fdot_apart(s, "S-101", "S-102")),
+        Question("q4", "How much 18-inch pipe does this sheet construct, in all?", "feet",
+                 lambda s: _fdot_pipe(s, 18), 0),
+        Question("q5", "What is the bearing of pipe P-101, from S-101 to S-102?", "bearing",
+                 _fdot_cross_pipe),
+        Question("q6", "Past the PC, which way does the baseline curve, looking up-station: "
+                       "left or right?", "turn", lambda s: _fdot_baseline(s).curves()[0].direction),
+    ],
+    answers={"q1": "705+70.72", "q2": "5.69 ft", "q3": "91.00 ft", "q4": "564 LF",
+             "q5": "N 30°00'32\" E", "q6": "Right"},
+    note=("Truth from the redraft: the PC callout lettered \"PC STA. +70.72\" with no hundreds "
+          "(they come from the station numbers either side of it, 705 and 706; the redraft's "
+          "CL1 has its PC at 705+70.74); S-104's block (ELEV. 31.69, lowest FL 26.00); S-101 and "
+          "S-102 both at STA. 703+00.00, 45.50 LT and 45.50 RT, so 91.00 apart (P-101 between "
+          "them is lettered 87 LF, inside wall to inside wall); the six CONST. ... LF OF 18\" "
+          "PIPE callouts, 87 + 47 + 197 + 95 + 47 + 91 = 564 (the 53 LF of 24\" is not one); "
+          "the baseline's N59°59'28\"W turned 90° right for the run from the Lt inlet to the Rt "
+          "one, N30°00'32\"E; the redraft CL1's curve turns right (drawn, not lettered here). "
+          "Naive wrong answers that fail: q1 as 700+70.72 or 706+70.72, q3 as the pipe's 87, "
+          "q4 with the 24\" pipe counted (617), q5 reversed (S30°00'32\"W)."),
+)
+
+
+# ---------------------------------------------------- L-39 (Caltrans PPM-052, "SB10")
+
+
+def _l39_curve(src: Sources, number: str) -> Tuple[float, float, float, float]:
+    r, delta, t, length = _curve_table(src)[number]
+    return _number(r), _dms(delta), _number(t), _number(length)
+
+
+def _l39_ec14(src: Sources) -> float:
+    return _station_of(src, r'^"SB10"\s*\d+\+\d+\.\d+\s*EC$')
+
+
+def _l39_bc15(src: Sources) -> float:
+    return _station_of(src, r'^"SB10"\s*\d+\+\d+\.\d+\s*BC$')
+
+
+L39_SPEC = Reading(
+    id="p15-plan-reading-ppm052", sheet="PPM-052", scan="L-39-scan.png",
+    kind="Caltrans layout sheet",
+    questions=[
+        Question("q1", "Curve 14 ends on this sheet. At what station is its BC on the "
+                       "\"SB10\" line?", "station",
+                 lambda s: round(_l39_ec14(s) - _l39_curve(s, "14")[3], 2)),
+        Question("q2", "At what station is the PI of curve 15?", "station",
+                 lambda s: round(_l39_bc15(s) + _l39_curve(s, "15")[2], 2)),
+        Question("q3", "Which way does curve 15 turn, and through what angle?", "turn-angle",
+                 lambda s: (_curve_table(s)["15"][1],
+                            _base_alignment(s, "SB10").curves()[0].direction)),
+        Question("q4", "The scan is of an 11 x 17 in print. At what scale is the plan on that "
+                       "print, in feet per inch?", "scale", _print_fpi),
+        Question("q5", "What radius do curve 14's T and L give, to the nearest foot?", "feet",
+                 lambda s: float(round(_l39_curve(s, "14")[3]
+                                       / math.radians(_l39_curve(s, "14")[1]))), 0),
+        Question("q6", "How long is the \"SB10\" tangent between curves 14 and 15, from the "
+                       "stations at its ends?", "feet",
+                 lambda s: round(_l39_bc15(s) - _l39_ec14(s), 2)),
+    ],
+    answers={"q1": "1032+94.34", "q2": "1044+23.79", "q3": "02°57'06\" LT", "q4": "1\" = 100'",
+             "q5": "3281 ft", "q6": "453.28 ft"},
+    note=("Truth from the redraft: the CURVE DATA table (14: 3,280', 02°57'06\", 84.52', "
+          "169.01'; 15: 19,685', 02°57'06\", 507.16', 1,014.09'), the \"SB10\" 1034+63.35 EC and "
+          "1039+16.63 BC callouts, the redraft SB10's curve 15 turning left (drawn, not lettered: "
+          "it brings SB10 back from N 02°57'06\" E to the NB10 line's N 00°00'00\" E), the "
+          "viewport's 50 ft/in on the 22 x 34 in sheet; worked out: BC 14 = EC - L = 1032+94.34, "
+          "PI 15 = BC + T = 1044+23.79, the print is half size, so 1\" = 100' (the sheet letters "
+          "1\" = 50', true of the full-size sheet; the border's inch bar shows the reduction), "
+          "R 14 = L / delta = 3280.7, 3281 to the foot (a 1000 m radius; T / tan(delta/2) gives "
+          "3280.9), and the tangent BC 15 - EC 14 = 453.28 (lettered 453.29'). Naive wrong "
+          "answers that fail: q4 as the lettered 1\" = 50', q5 as the table's 3,280', q6 as the "
+          "lettered 453.29', q3 turned right."),
+)
+
+
+# --------------------------------------------------- L-5 (Caltrans PPM-049, Ingram Slough)
+
+
+def _l5_curve(src: Sources) -> Tuple[float, float, float, float]:
+    r, delta, t, length = _curve_table(src)["3"]
+    return _number(r), _dms(delta), _number(t), _number(length)
+
+
+def _l5_ec(src: Sources) -> float:
+    return _station_of(src, r'^"D13"\s*\d+\+\d+\.\d+\s*EC$')
+
+
+def _l5_bridge(src: Sources, end: str, side: str) -> float:
+    return _station_of(src, rf"^\d+\+\d+\.\d+\s*{end}\s*\({side}\)$")
+
+
+def _l5_fence(src: Sources, point: str) -> Tuple[float, float]:
+    """A FENCE AND GATES row: ``(station, signed offset)`` of its location."""
+    key = src.one(r"^" + re.escape(point) + r"$")
+    loc = min((t for t in src.texts if abs(t.position[1] - key.position[1]) < 0.03
+               and 0.5 < t.position[0] - key.position[0] < 2.5 and '"D13"' in t.content),
+              key=lambda t: t.position[0])
+    return nt.stations(loc.content)[0][0], _offset(loc.content)
+
+
+def _l5_fence_apart(src: Sources, a: str, b: str) -> float:
+    (sa, oa), (sb, ob) = _l5_fence(src, a), _l5_fence(src, b)
+    if abs(sa - sb) > 1e-6:
+        raise ValueError(f"{a} and {b} are not at one station")
+    return round(abs(oa - ob), 2)
+
+
+def _l5_along(src: Sources, a: str, b: str) -> float:
+    """Two fence points at one offset on curve 3: the arc between them at that offset, the
+    offset outside the curve (longer) or inside it, as the redraft's D13 turns."""
+    (sa, oa), (sb, ob) = _l5_fence(src, a), _l5_fence(src, b)
+    if abs(oa - ob) > 1e-6:
+        raise ValueError(f"{a} and {b} are not at one offset")
+    radius = _l5_curve(src)[0]
+    turn = _base_alignment(src, "D13").curves()[0].direction
+    outside = oa if turn == "L" else -oa            # right offsets lie outside a left curve
+    return round(abs(sb - sa) * (radius + outside) / radius, 1)
+
+
+L5_SPEC = Reading(
+    id="p15-plan-reading-ppm049", sheet="PPM-049", scan="L-5-scan.png",
+    kind="Caltrans layout sheet",
+    questions=[
+        Question("q1", "How long is the South Ingram Slough Right Bridge, from its BB to its EB?",
+                 "feet", lambda s: round(_l5_bridge(s, "EB", "R") - _l5_bridge(s, "BB", "R"), 2)),
+        Question("q2", "Curve 3 ends on this sheet. At what station is its PI?", "station",
+                 lambda s: round(_l5_ec(s) - _l5_curve(s)[3] + _l5_curve(s)[2], 2)),
+        Question("q3", "How far is the gate at FC4 from fence point FC3?", "feet",
+                 lambda s: _l5_fence_apart(s, "FC3", "FC4")),
+        Question("q4", "Fence points FC8 and FC7 are both 86.58' Rt of \"D13\". How far apart are "
+                       "they along that offset line, to the tenth of a foot?", "feet",
+                 lambda s: _l5_along(s, "FC8", "FC7"), 1),
+        Question("q5", "The scan is of an 11 x 17 in print. At what scale is the plan on that "
+                       "print, in feet per inch?", "scale", _print_fpi),
+        Question("q6", "How far is the EB of the right bridge from the EC of curve 3?", "feet",
+                 lambda s: round(_l5_ec(s) - _l5_bridge(s, "EB", "R"), 2)),
+    ],
+    answers={"q1": "225.57 ft", "q2": "672+90.72", "q3": "61.22 ft", "q4": "229.5 ft",
+             "q5": "1\" = 100'", "q6": "110.13 ft"},
+    note=("Truth from the redraft: the bridge callouts 686+74.74 BB (R) and 689+00.31 EB (R) "
+          "(the left bridge's, 686+74.72 and 689+00.33, sit beside them), \"D13\" 690+10.44 EC, "
+          "the CURVE DATA table (curve 3: R 5000', T 1884.32', L 3604.04'), the FENCE AND GATES "
+          "table (FC3 301.15' Rt and FC4 239.93' Rt, both at 688+64.26; FC8 and FC7 86.58' Rt at "
+          "686+74.73 and 689+00.32), the redraft D13's curve turning left, and the viewport's "
+          "50 ft/in on the 22 x 34 in sheet. Worked out: the right bridge 225.57; PI = EC - L + T "
+          "= 672+90.72; FC3 to FC4 61.22 (on one radial); FC8 to FC7 225.59 x (5000 + 86.58) / "
+          "5000 = 229.5 (right offsets lie outside the left-turning curve, which the drawing "
+          "shows bowing to the right); 1\" = 100' on the half-size print; EB (R) to the EC 110.13. "
+          "Naive wrong answers that fail: q1 as the left bridge's 225.61, q4 as the station "
+          "difference 225.59 or the inside arc 221.7, q5 as the lettered 1\" = 50'."),
+)
+
+
+# ------------------------------------------------- D.7 (WFL plan-profile p16, the 910' curve)
+
+
+def _wfl_curve(src: Sources, letter: str) -> str:
+    return src.one(r"^" + letter + r"\s*=\s*").content.split("=", 1)[1].strip()
+
+
+def _d7_pc(src: Sources) -> float:
+    return _station_of(src, r"^PC\s*\d+\+\d+\.\d+$")
+
+
+def _grades(src: Sources) -> List[Tuple[float, float]]:
+    """The profile's grade labels, ``(paper x, percent)``: the figures with a ``%`` just
+    after them and the sign lettered with them or, smaller, just before them (D.7's
+    "-3.90%" is a 0.056 in dash, a 0.084 in "3.90" and a 0.14 in "%")."""
+    out = []
+    for t in src.texts:
+        m = re.fullmatch(r"([-+]?)(\d+\.\d\d)", t.content.strip())
+        if not m or not any(u.content.strip() == "%" and 0.0 < u.position[0] - t.position[0] < 0.5
+                            and abs(u.position[1] - t.position[1]) < 0.1 for u in src.texts):
+            continue
+        sign = m.group(1) or next((u.content.strip() for u in src.texts
+                                   if u.content.strip() in "-+" and u.content.strip()
+                                   and 0.0 < t.position[0] - u.position[0] < 0.12
+                                   and abs(u.position[1] - t.position[1]) < 0.06), "+")
+        out.append((t.position[0], (-1.0 if sign == "-" else 1.0) * float(m.group(2))))
+    return sorted(out)
+
+
+def _evc_elevation(src: Sources, vpi_station: str) -> float:
+    """The end of the vertical curve at a VPI: the VPI's elevation run on half the curve
+    at the grade lettered on past it."""
+    vpi = src.one(r"^" + re.escape(vpi_station) + r"$")
+    elev = _number(src.nearest(r"^\d{4}\.\d\d$", vpi).content)
+    length = _number(src.nearest(r"^\d+' VC$", vpi).content)
+    grade = next(g for x, g in _grades(src) if x > vpi.position[0])
+    return round(elev + grade / 100.0 * length / 2.0, 2)
+
+
+def _d7_grade_at_pc(src: Sources) -> float:
+    """The profile grade at the plan's PC, on the tangent grade past the vertical curve."""
+    vpi = src.one(r"^123\+50$")
+    elev = _number(src.nearest(r"^\d{4}\.\d\d$", vpi).content)
+    length = _number(src.nearest(r"^\d+' VC$", vpi).content)
+    grade = next(g for x, g in _grades(src) if x > vpi.position[0])
+    run_ = _d7_pc(src) - nt.stations(vpi.content)[0][0]
+    if run_ < length / 2.0:
+        raise ValueError("the PC is inside the vertical curve")
+    return round(elev + grade / 100.0 * run_, 2)
+
+
+def _profile_fpi_v(src: Sources) -> float:
+    """The profile's vertical scale, from its elevation grid labels (feet per paper inch)."""
+    left = sorted((t for t in src.texts if re.fullmatch(r"\d,\d{3}", t.content.strip())),
+                  key=lambda t: (round(t.position[0], 1), t.position[1]))
+    a, b = left[0], left[1]
+    return round(abs(_number(b.content) - _number(a.content)) / abs(b.position[1] - a.position[1]), 2)
+
+
+def _d7_throat(src: Sources) -> float:
+    """The driveway's width where its returns end: the two ``+NN.NN`` over ``30.76' Lt``."""
+    at = [t for t in src.texts if t.content.strip() == "30.76' Lt"]
+    plus = [_number(src.nearest(r"^\+\d\d\.\d\d$", t).content.lstrip("+")) for t in at]
+    if len(plus) != 2:
+        raise LookupError(f"{len(plus)} return ends at 30.76' Lt")
+    return round(abs(plus[0] - plus[1]), 2)
+
+
+D7_SPEC = Reading(
+    id="p15-plan-reading-wflp16", sheet="WFL-Plan-Profile-Sheets-p16", scan="D7-scan.png",
+    kind="WFL plan and profile sheet",
+    questions=[
+        Question("q1", "The \"MAIN 01\" curve runs on past this sheet. At what station is its PT?",
+                 "station", lambda s: round(_d7_pc(s) + _number(_wfl_curve(s, "L")), 2)),
+        Question("q2", "What is the bearing of \"MAIN 01\" ahead of that curve, past its PT?",
+                 "bearing", lambda s: _bearing_text(_turned(
+                     _base_bearing(s), _wfl_curve(s, "Δ").split("(")[0],
+                     _turn(_wfl_curve(s, "Δ").split("(", 1)[1])))),
+        Question("q3", "What is the profile grade elevation at the end of the vertical curve at "
+                       "VPI 123+50?", "number", lambda s: _evc_elevation(s, "123+50")),
+        Question("q4", "The sheet is plotted full size, 11 x 17 in. What is the profile's "
+                       "vertical scale, in feet per inch?", "scale", _profile_fpi_v),
+        Question("q5", "What is the profile grade elevation at the PC of the \"MAIN 01\" curve?",
+                 "number", _d7_grade_at_pc),
+        Question("q6", "How wide is the driveway on the left near the PC where its returns end, "
+                       "at 30.76' Lt?", "feet", _d7_throat),
+    ],
+    answers={"q1": "131+82.51", "q2": "N 85°45'25\" E", "q3": "6239.93", "q4": "1\" = 10'",
+             "q5": "6236.30", "q6": "12.00 ft"},
+    note=("Truth from the redraft: the curve data (PC126+43.20, Δ = 33°57'22\" (RT), "
+          "L = 539.31'), the ali file's N51°48'03\"E, the profile's VPI 123+50 at 6247.73 with "
+          "400' VC and -3.90% on past it (its minus a dash half the height of the figures), its "
+          "grid labels 10 ft to the inch, and the driveway's return ends (+58.91 and +70.91, "
+          "30.76' Lt). Worked out: PT = PC + L = 131+82.51 (the next sheet letters 131+82.50); "
+          "N51°48'03\"E turned 33°57'22\" right = N85°45'25\"E (the next sheet letters "
+          "N85°45'24\"E, the design's own rounding, which the grader's half-second does not "
+          "reach); the EVC 125+50 at 6247.73 - 3.90% x 200 = 6239.93; the PC, past the EVC, at "
+          "6247.73 - 3.90% x 293.20 = 6236.30; 1\" = 10' vertical against 1\" = 50' across; "
+          "70.91 - 58.91 = 12.00. Naive wrong answers that fail: q1 as PI + T (131+98.86), q2 with "
+          "the delta turned left (N17°50'41\"E), q3 with the dash missed (+3.90%: 6255.53) or "
+          "at the VPI's own 6247.73, q5 with the dash missed (6259.16), q4 as the plan's 50."),
+)
+
+
+# ------------------------------------------------ D.12 (WFL plan-profile p21, End Project)
+
+
+def _d12_tangent(src: Sources) -> str:
+    """The bearing lettered on the tangent from PI 163+50.00 on to End Project."""
+    main = _base_alignment(src, "MAIN 01")
+    pi = _station_of(src, r"^PI\s*\d+\+\d+\.\d+$")
+    found = []
+    for doc in src.bases.values():
+        for e in doc.model_entities.values():
+            if isinstance(e, Text) and nt.bearings(e.content):
+                at = main.stations().to_display(main.xy_to_station(e.position)["station"])[0]
+                if at > pi:
+                    found.append(e.content)
+    if len(found) != 1:
+        raise LookupError(f"{len(found)} bearings past the PI: {found}")
+    return found[0]
+
+
+def _d12_pi(src: Sources) -> List[float]:
+    """PI 163+50.00 worked back from End Project's coordinates along that tangent."""
+    end = _station_of(src, r'^"MAIN 01"\s*\d+\+\d+\.\d+$')
+    north = _number(src.one(r"^N=\s*\d").content.split("=", 1)[1])
+    east = _number(src.one(r"^E=\s*\d").content.split("=", 1)[1])
+    back = end - _station_of(src, r"^PI\s*\d+\+\d+\.\d+$")
+    e, n = _step([east, north], _azimuth(_d12_tangent(src)), -back)
+    return [round(n, 2), round(e, 2)]
+
+
+def _d12_turn(src: Sources) -> Tuple[str, str]:
+    bearings = [e.content for doc in src.bases.values() for e in doc.model_entities.values()
+                if isinstance(e, Text) and nt.bearings(e.content)]
+    ahead = _d12_tangent(src)
+    (back,) = [b for b in bearings if b != ahead]
+    d = (_azimuth(ahead) - _azimuth(back) + 180.0) % 360.0 - 180.0
+    return _dms_text(d), "R" if d > 0 else "L"
+
+
+def _d12_width(src: Sources) -> float:
+    """Edge to edge at End Project: the two ``+00.00`` callouts' offsets."""
+    offs = [_offset(src.nearest(r"^[\d.]+' (Lt|Rt)$", t).content) for t in src.texts
+            if t.content.strip() == "+00.00"]
+    if len(offs) != 2:
+        raise LookupError(f"{len(offs)} +00.00 callouts")
+    return round(abs(offs[0] - offs[1]), 2)
+
+
+D12_SPEC = Reading(
+    id="p15-plan-reading-wflp21", sheet="WFL-Plan-Profile-Sheets-p21", scan="D12-scan.png",
+    kind="WFL plan and profile sheet",
+    questions=[
+        Question("q1", "What northing does the PI at 163+50.00 have?", "number",
+                 lambda s: _d12_pi(s)[0]),
+        Question("q2", "What easting does that PI have?", "number", lambda s: _d12_pi(s)[1]),
+        Question("q3", "Through what angle does \"MAIN 01\" turn at that PI, and which way?",
+                 "turn-angle", _d12_turn),
+        Question("q4", "What is the profile grade elevation at the end of the vertical curve at "
+                       "VPI 165+40?", "number", lambda s: _evc_elevation(s, "165+40")),
+        Question("q5", "The sheet is plotted full size, 11 x 17 in. What is the plan scale, in "
+                       "feet per inch?", "scale", lambda s: s.fpi()),
+        Question("q6", "How wide is the pavement at End Project, edge to edge?", "feet",
+                 _d12_width),
+    ],
+    answers={"q1": "N 938,122.20", "q2": "E 544,061.48", "q3": "01°06'20\" RT", "q4": "6273.64",
+             "q5": "1\" = 50'", "q6": "21.00 ft"},
+    note=("Truth from the redraft: END PROJECT \"MAIN 01\" 166+00.00, N= 937944.7494, "
+          "E= 544237.5831, PI 163+50.00, the ali file's two bearings (S45°53'11\"E before the PI, "
+          "S44°46'51\"E after it, told apart by where they lie along the redraft's MAIN 01), the "
+          "profile's VPI 165+40 at 6273.16 with 100' VC and +0.96% on past it, the +00.00 "
+          "callouts 10.50' Lt and 10.50' Rt at End Project, and the viewport's 50 ft/in (the "
+          "sheet letters no scale). Worked out: the PI is 250.00 ft back from End Project on "
+          "N44°46'51\"W, N 938122.20, E 544061.48; S45°53'11\"E to S44°46'51\"E turns "
+          "01°06'20\" right; 6273.16 + 0.96% x 50 = 6273.64; 21.00 ft edge to edge. Naive wrong "
+          "answers that fail: the PI worked back on the other tangent's S45°53'11\"E "
+          "(N 938118.77), the turn called left, q6 as the 30.00 lettered at the PI."),
+)
+
+
 # ======================================================================= probes
 
 
@@ -899,8 +1668,8 @@ def _reading_probe(spec: Reading) -> Probe:
                  start=start, server_args=list(SERVER_ARGS))
 
 
-REDRAWS = [TB1_SPEC, CL1_SPEC]
-READINGS = [L2_SPEC, D5_SPEC, CFL_SPEC]
+REDRAWS = [TB1_SPEC, CL1_SPEC, F6_SPEC, CFL1_SPEC, D11_SPEC]
+READINGS = [L2_SPEC, D5_SPEC, CFL_SPEC, FDOT916_SPEC, L39_SPEC, L5_SPEC, D7_SPEC, D12_SPEC]
 
 PROBES: List[Probe] = [_redraw_probe(s) for s in REDRAWS] + [_reading_probe(s) for s in READINGS]
 

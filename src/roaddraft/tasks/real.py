@@ -80,7 +80,7 @@ from roaddraft.tasks.brief import Task, TaskBrief, compute_task_id
 from roaddraft.tasks.ground_truth import compute_ground_truth
 from roaddraft.tasks.prompts import render_prompts
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, SPEC_VERSION, spec_hash, spec_subset
-from roaddraft.tasks.types import PHASE_ORDER, REAL_TASK_TYPES, TaskType, task_type
+from roaddraft.tasks.types import PHASE_ORDER, REAL_JOB_TYPES, REAL_TASK_TYPES, TaskType, task_type
 
 REAL_GENERATOR_VERSION = "real-v1"  # (2026-10-13) first cut: one sheet, one alignment per task
 
@@ -107,6 +107,9 @@ START_KIND = {
     "real-title-block": "title", "real-sheet-setup": "setup",
     "real-annotate-sheet": "blank", "real-plan-sheet": "scratch",
     "real-construction-callouts": "notes",
+    # the whole job (types.REAL_JOB_TYPES): a sheet from scratch or a blank sheet, its
+    # construction callouts asked for with the rest
+    "real-sheet-job": "scratch", "real-annotate-job": "blank",
 }
 #: types about the sheet itself, not one of its alignments: one task per sheet
 SHEET_TYPES = ("real-attach-reference", "real-title-block", "real-construction-callouts")
@@ -286,8 +289,9 @@ def type_fits(align: Alignment, ttype: TaskType) -> Optional[str]:
     return None
 
 
-def candidates() -> List[Tuple[RealSheet, str, str]]:
-    """``(sheet, alignment, task type)`` for every pairing worth building."""
+def candidates(types: Optional[Dict[str, TaskType]] = None) -> List[Tuple[RealSheet, str, str]]:
+    """``(sheet, alignment, task type)`` for every pairing worth building, of
+    ``types`` (``REAL_TASK_TYPES``; ``REAL_JOB_TYPES`` for the whole-job catalogue)."""
     out = []
     for src in real_sheets():
         doc = _load(src.folder / src.sheet_file)
@@ -300,7 +304,7 @@ def candidates() -> List[Tuple[RealSheet, str, str]]:
         every = [align for _ref, _base, align, placement in reference_alignments(doc)
                  if placement.is_identity]
         aligns = [align for align in every if not usable_alignment(align)]
-        for name, ttype in REAL_TASK_TYPES.items():
+        for name, ttype in (types or REAL_TASK_TYPES).items():
             pool = every if name in ANY_LINE_TYPES else aligns
             fits = [a for a in pool if not type_fits(a, ttype)]
             for align in fits[:1] if name in SHEET_TYPES else fits:
@@ -1318,9 +1322,9 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
     make one."""
     src = real_sheet(sheet_id)
     ttype = task_type(type_name)
-    if ttype.name not in REAL_TASK_TYPES:
+    if ttype.name not in REAL_TASK_TYPES and ttype.name not in REAL_JOB_TYPES:
         raise ValueError(f"{type_name} is not a real-sheet task type; types: "
-                         f"{', '.join(REAL_TASK_TYPES)}")
+                         f"{', '.join(list(REAL_TASK_TYPES) + list(REAL_JOB_TYPES))}")
     kind = START_KIND[ttype.name]
     sheet_doc = _load(src.folder / src.sheet_file)
     sheet = _only_sheet(sheet_doc)
@@ -1337,7 +1341,7 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
     if why:
         raise ValueError(f"{src.id} {alignment}: {why}")
     notes: list = []
-    if kind == "notes":
+    if "notes" in ttype.asks:  # the construction callouts task, or a whole job
         from roaddraft.tasks.real_callouts import MIN_NOTES, published_callouts, task_notes
         notes = task_notes(published_callouts(sheet_doc, sheet))
         if len(notes) < MIN_NOTES:
@@ -1523,7 +1527,54 @@ def build_real_task(sheet_id: str, alignment: str, type_name: str) -> Task:
     for tsh in truth.sheets:
         tsh["given_entities"] = given
         tsh["stripped"] = stripped["removed"]
+    if notes and kind != "notes":
+        # a whole job: a note the reference cannot place legibly once it has lettered the
+        # sheet itself (on its own labels, the table or the north arrow, or a leader through
+        # them) leaves the task, as the callouts task leaves such a note on the sheet; the
+        # sheet starts blank here, so nothing of it is handed over
+        bad = _notes_in_the_way(task)
+        if bad:
+            from roaddraft.tasks.real_callouts import MIN_NOTES, note_rows
+            notes = [c for i, c in enumerate(notes) if i not in bad]
+            if len(notes) < MIN_NOTES:
+                raise ValueError(f"{src.id} {alignment}: {len(notes)} construction callouts can be "
+                                 f"placed clear of the sheet's own lettering (fewer than "
+                                 f"{MIN_NOTES})")
+            D["callouts"] = note_rows(notes, {n: Alignment.from_dict(a)
+                                              for n, a in design["alignments"].items()})
+            brief = _brief(src, ttype, project, design, D)
+            truth = compute_ground_truth(brief)
+            for tsh in truth.sheets:
+                tsh["given_entities"] = given
+                tsh["stripped"] = stripped["removed"]
+            start = Document.from_dict(task.baseline)
+            start.meta.update(task_id=brief.task_id)
+            task = Task(brief=brief, truth=truth, baseline=start.to_dict(), files=task.files)
     return task
+
+
+def _notes_in_the_way(task: Task) -> List[int]:
+    """Indexes of a whole job's construction callouts (``D["callouts"]``) that
+    the reference cannot place legibly after drafting the rest of the sheet:
+    a note on its labels, table or north arrow, or a leader through them.  Of
+    two notes on each other, the later one goes."""
+    from roaddraft.tasks.reference import solution_commands
+    from roaddraft.verify import verify
+    session = _session(task)
+    made: Dict[str, int] = {}
+    for name, params in solution_commands(task):
+        result = session.execute(name, params)
+        if not result["ok"]:
+            raise ValueError(f"drafting {name} on {task.brief.deliverable['source']['sheet']}: "
+                             f"{result['error']['message']}")
+        if name == "place_callout":  # only the notes phase places callouts
+            made[result["created"][-1]] = len(made)  # the callout's text is created last
+    bad = set()
+    for finding in verify(session.doc, task.truth).check("D1-08").findings:
+        mine = sorted(made[i] for i in finding.entity_ids if i in made)
+        if mine:
+            bad.add(mine[-1])
+    return sorted(bad)
 
 
 # ===================================================================== checks
@@ -1553,13 +1604,13 @@ def validate(task: Task) -> dict:
     return out
 
 
-def catalog(progress=None) -> dict:
-    """Build and validate every candidate (``candidates``): the tasks that
-    verify 100 / 0, and the rest with the reason they were left out.
-    ``progress(row)`` is called after each."""
+def catalog(progress=None, types: Optional[Dict[str, TaskType]] = None) -> dict:
+    """Build and validate every candidate (``candidates``) of ``types``: the
+    tasks that verify 100 / 0, and the rest with the reason they were left
+    out.  ``progress(row)`` is called after each."""
     from roaddraft.verify import VERIFIER_VERSION
     tasks, excluded = [], []
-    for src, alignment, type_name in candidates():
+    for src, alignment, type_name in candidates(types):
         row = {"agency": src.agency, "sheet_id": src.id, "alignment": alignment,
                "type": type_name}
         try:

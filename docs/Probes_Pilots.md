@@ -1,6 +1,6 @@
 # Harder-task pilots
 
-*2026-10-19. Status: built and self-tested; no model has run them yet.*
+*2026-10-19. Status: built and self-tested; no model has run them yet.* *2026-11-03: grown from 33 to 112 pilots (Robert: "expand the hard pilots to a set of at least 100"); see [the expansion](#the-expansion-to-112-2026-11-03).*
 
 On the 33 Track P probes the frontier has run out of room: GPT-6.1-Sol 32/33 (97.0%), GPT-6-Astra and
 Sonnet 96%. Sol's one miss was a bearing lettered at 0° on a sheet where its line ran at 5.03° through a
@@ -23,7 +23,7 @@ anyone builds a generator. The ones it fails become benchmark families; the ones
   `benchmarks/pilot_runs/`.
 - `benchmarks/pilot_references/<id>/`: each scripted solution kept as a finished project: the
   completed `.rdraft` set, journal, PDF, DXF and `reference.json`.
-- Tests: `tests/test_pilot_*.py` (108 tests, about a minute) and `tests/test_mcp_profiles.py`.
+- Tests: `tests/test_pilot_*.py` and `tests/test_mcp_profiles.py` (463 tests, a few minutes).
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m roaddraft.probes.pilot list
@@ -32,7 +32,7 @@ PYTHONPATH=src .venv/bin/python -m roaddraft.probes.pilot reference --out benchm
 ```
 
 `selftest`: every scripted solution passes its check read back from disk, and every untouched start
-fails it (33/33). Each family's tests also feed the check at least one plausible wrong answer and
+fails it (112/112 since 2026-11-03). Each family's tests also feed the check at least one plausible wrong answer and
 confirm it fails.
 
 ## The pilots
@@ -300,3 +300,56 @@ The three failures:
 - **p15-plan-reading-wflp14** (plan reading). Read one station off the scan as 119+45.98 for 119+46.48; an earlier (voided) attempt read it right, so this is scan-reading variance.
 
 Families where every pilot passed: redraw alignment, sources, survey (grid/ground, international feet, misclosure), sheet breaks, plan-profile, typical sections, redline pick-up, plan set, striping, twist. Faults seen on passes were recoverable: the annotate_stationing sheet-space hint (p04, p06, p17), a create_alignment leg with no distance (p01), measure with too many points (p03).
+
+## The expansion to 112 (2026-11-03)
+
+Robert, 2026-11-03, after the Track D review found the frontier at 100 on `d1-test` and `d1-real` and
+`hard-pilots` the only set with headroom, but too small to rank inside ±5: "expand the hard pilots to a
+set of at least 100". 79 instances were added to twelve of the fourteen families, every one on a real
+sample sheet, most of them on sheets the family had not used, across all four agencies. The 33 earlier
+pilots keep their prompts and ids (byte-identical text; their checks grade them as before). Every pilot
+passes `selftest` (112/112), every family's tests feed each new instance at least one naive answer and
+see it fail, and every reference builds. The set's generator is `probe-b34493be3004`, 112 tasks, 23 with
+a page. The pilot checks' source hash moved with the modules, so earlier rows are held to the old
+checks until rerun; the 33-pilot rows on the board are published runs and keep their place (a re-report
+would list them as partial, 33 of 112).
+
+| # | Family | Added | The new instances | What the new ones add |
+|---|---|---:|---|---|
+| 4 | Crowded annotation | 11 | `p04-crowded-ppm051` (L-38, 3 lines, untwisted), `-ppm052` (L-39, 2 side by side), `-ppm155` (Route 65 PD-2), `-ppm156` (PD-3, 3), `-ppm157` (PD-11 interchange, 4), `-ppm158` (PD-32, 4), `-ppm160`, `-ppm161` (Route 78 PD-1/PD-2, 3 each), `-ppm230` (E-18, 3), `-fdot915` (FDOT sheet 12, 2), `-ppm047` (L-3, IN4 among published lettering) | The catalogue's other multi-line sheets where the labelers' default poses fail D1-08 (each note names the overlaps); most also read upside down without the twist |
+| 17 | Twisted variants | 13 | `p17-twist-ppm209`, `-ppm161`, `-ppm111`, `-ppm156`, `-ppm158`, `-ppm155` (a 175° loop), `-ppm230` (a 244° loop), `-ppm046`, `-fdot915`, `-fdot923`, `-wfl04` (1" = 40', 3 curves), `-wfl21` (D.12 half a turn), `-cflpla` | Twists chosen by scanning every label's plotted angle: lettering without the twist reads from the wrong side on all thirteen, and with the published twist on all but FDOT sheet 12 |
+| 5 | The model picks the sheet breaks | 6 | `p05-breaks-fdot918` (CL2, reverse curves), `-fdot904cl2` (4 sheets), `-fdot904cl4`, `-fdot904cl9` (1" = 40'), `-ppm048` (Route 65 D13 at 1" = 40' on the Caltrans 22 x 34 border), `-cflswppp` (1" = 40') | Strict (`spare: 0`): only the fewest sheets pass, three or four on five of the six; north-up fails all but the CFL stretch, the level cut all but Route 65's |
+| 11 | Redlines with knock-on edits | 10 | `p11-radius-ppm048` (L-4, IN4 R = 250'), `-radius-ppm230` (E-18, D R = 350'), `-radius-wfl07` (WFL F.7, curve 1 R = 600'), `-radius-ppm158` (PD-32, SB10 R = 4000'), `-pi-ppm161` (PD-2, ENRA's PI 30 ft ahead on its back tangent), `-pi-ppm154` (PD-1 Route 65, R1's PI 30 ft back), `-station-fdot916` (FDOT sheet 1, CL1 -41 ft), `-station-ppm046` (L-2, D13 +38 ft), `-station-ppm050` (L-7, F3 -53 ft), `-station-ppm111` (U-1, IND1 +62 ft) | A new revision kind, `pi`; tangents a change opens at a line's end (a new bearing, a BC or EC off BEGIN or END); the next curve pushed; a tie restationed by the line's new length; structure callouts that cite stations without the line's name; ties whose other line must not move; a location table and a general note citing stations |
+| 14 | Open-ended QA review | 6 | `p14-qa-review-fdot916a` (FDOT sheet 1, clean control, north pointing down the paper), `-fdot916b` (6 plants), `-ppm048a` (L-4, clean control), `-ppm048b` (6), `-wfl19b` (D.10, 5 others than `-wfl19`'s), `-cflpla` (CFL Davis Dam Rd, 6, two of them in a plan with no design in the files) | Visual plants (a north arrow turned, a missing tick, upside-down numbers), a table cell, a plant found only from the sheet's own data; the new checks compare model space too |
+| 2 | Sources that disagree | 5 | `p02-sources-ppm048a` (L-4 table T), `-ppm048b` (IN4's R wrong in the base file), `-cflpla` (the PT lettering wrong against both the curve data and the design), `-fdot916` (the PC lettered wrong), `-ppm045b` (D13's bearing wrong in the base file) | The fix may live in a table cell or a base file, and the obvious "fit" (bend the design, change L) fails |
+| 18 | Redline understanding | 6 | `p18-redline-pdf-ppm051` (L-38, 6 marks), `-ppm049` (L-5, 6), `-fdot916` (FDOT sheet 1, 6), `-fdot923` (FDOT sheet 102, 6), `-wflp04` (WFL F.4, 7), `-cfld1` (CFL D1, 6) | Look-alikes a table row apart, one callout of four or six, a blue comment cloud on every page, a struck title-block field on five |
+| 13 | Striping | 4 | `p13-striping-wfl17` (D.8, 65 mph), `-wfl19` (D.10, 60 mph, a sag then a climb), `-wfl20` (D.11, 55 mph, both directions), `-cflpnp` (CFL Plan 1, 55 mph, a summit that restricts one direction) | Zones caused by a crest whose PVC is off the sheet, a sag that restricts nothing, both directions on one sheet |
+| 6 | Plan and profile | 3 | `p06-plan-profile-wfl18` (D.9, a low point with no PVI on the sheet), `-wfl21` (D.12 at 1" = 10' vertical), `-fdot915` (FDOT sheet 12, a grade break with no curve, the low point just off the sheet) | Grade drawn PVI to PVI fails; lettering a high or low point that is not on the sheet fails |
+| 10 | Typical section | 3 | `p10-typical-fdot9132` (FDOT 913-2, four-lane divided, 1" = 20'), `-wfl04` (WFL JEFF, a sidehill whose slopes come from height tables), `-wfl05` (WFL ADA, 6 % superelevation with widening) | Profile grade off the centerline, slopes that depend on the catch they decide, rotation about the centerline with the high shoulder breaking over |
+| 3 | Survey traps | 4 | `p03-misclosure-ppm049` (10 courses, 1:4,840), `-misclosure-fdot915` (a tangent curve on the R/W, 1:4,259), `p03-grid-ground-cflpnp` (a ground drawing with grid data: the factor divided out about CP-1), `p03-intl-feet-wfl15` (an international-feet drawing with US-foot and metre data) | A curve course kept on its balanced arc (a new item, 0.05 ft at mid-curve); the factor applied the other way |
+| 1 | Redraw from a scan | 3 | `p01-redraw-alignment-ppm050` (L-7, the F6 loop), `-cflpnp` (CFL Plan 1, CL1), `-wfl20` (WFL D.11, MAIN 01) | Two-curve lines; a loop whose table R (55 m rounded) must come from L/Δ; a tangent lettered against the stationing; a last bearing lettered nowhere; ties at a staked PI and at an equation that falls on a curve |
+| 15 | Plan reading | 5 | `p15-plan-reading-fdot916`, `-ppm052` (L-39), `-ppm049` (L-5), `-wflp16` (WFL D.7), `-wflp21` (WFL D.12) | Mostly worked out: off-sheet BC, PI and PT, a bearing ahead, grade elevations, coordinates carried back from End Project, an arc along an offset, the scale of an 11 x 17 print of a 22 x 34 sheet or off the profile grid; a trap each |
+
+p12 (the plan set) keeps its one instance.
+
+### Caveats of the new instances
+
+- **4 and 17:** on L-3 the curve-only lines (D13, IN3) cannot be built as a lettering task and keep their published lettering. PD-3 and PD-11 take 20 s and 80 s to build. The labeler's bearing slide is held to the tangent's middle (`BEARING_SLIDE = (0.5,)`) because of the verifier issue below; the four earlier solves come out identical. Five Caltrans sheets appear in both p04 (every line at the published twist) and p17 (one line re-cut); no sheet repeats within a family.
+- **5:** no WFL alignment is long enough (the longest is 838 ft), so the Federal Lands border is covered by the CFL stretch alone. `-ppm048` covers the same Route 65 line as p12.
+- **11:** rebuilding an element-built line in PI form moves bearings, the next curve's Δ and the end station by seconds and hundredths; the truth is built from the design the model saved. E-18's "D" has an angle point that `key_points` does not list (`angle_points` holds it). WFL F.7 has no room for a curve table, so it is graded on D1-02 to D1-05, and the FLH border has no revision block, so the revision is a note. FDOT records it in `rev_date_N` / `rev_desc_N`. Bare station pluses (`+46 BEGIN MBGR`) name no line, so the new instances let them be re-lettered without asking for it.
+- **14 and 2:** the new sheets are normalized before planting (FDOT sheet 1's PC lettered from the design, its structure and pipe tags numbered as published, pieced lettering joined; L-4's curve 36 R lettered 328.08', IND1's design run out to the 4833.49' its bearing letters, IN4 given 25 ft of back tangent; CFL PLA's lower curve rebuilt from its curve data). On L-4, "+96.28" and "+59.6" belong to lines the base file does not carry. `p02-sources-ppm048b` allows any change to IN4-anchored entities, which a redraw re-places.
+- **18:** a replacement much longer than its original would move its centre past the 0.6 in limit, so new wordings stay about the same length. CFL D1 has no title-block mark.
+- **13:** the profile extensions are constructed, as the earlier 104+00 one was (MAIN 01 carried at +0.97 % to 172+00; CFL back to 0+00 at +0.50 % and on to 30+00 at -0.50 %), and the prompt says so. No sample profile has a summit that restricts both directions, so there is no overlapping-zones instance.
+- **6:** the FDOT leaving grade (+0.30 %) is worked out from the lettered L and K, the next sheet not being in the samples. No second high point could be used: CFL's 22+00 crest sits on CL1's reverse curves, where the plan-to-profile line-up check cannot pass.
+- **10:** ground lines and some numbers are invented, as before; the JEFF slope tables stand in for the published "Varies (1:10 to 1:2)"; FDOT's cross slopes may be written as bare decimals.
+- **3:** the PPM-049 fence courses, the FDOT deed's off-R/W courses, the CFL datum note, factor and control, and the Montana re-georeference are constructed; the FDOT R/W curve uses the redraft's R 878.86'.
+- **1:** the later redraws strip only strokes within 3 ft of the line and on trace layers (CFL and WFL draw their plans in short segments, which L-1's 13-ft rule would take by the thousand). F6's truth runs up to 0.32 ft from the redraft's F6, whose stations lag the lettered ones by about 0.2 ft. The CFL and D.11 ties are local-datum points fitted to the redraft (worst 0.16 and 0.14 ft).
+- **15:** answers are graded against truth computed from the redraft's lettering and design, and some deliberately differ from lettering elsewhere when the question asks for the worked value (D.7's bearing ahead, 25" against the next sheet's 24"; L-39's tangent from its end stations, 453.28 against the lettered 453.29').
+
+### Found on the way, not changed (Robert's call)
+
+1. **The verifier marks a bearing slid along its tangent as misplaced** (`verify/match.py`: `_as_tangent_bearing` reads a bearing anchored inside a tangent as `T-n`, and `_expected_pose` expects it at the tangent's middle), while the p04 and p17 prompts tell the model to re-place a label "along its tangent" to clear something. A model that slides a bearing to clear a callout loses D1-07 on every D1 set. Fixing it is a verifier bump (every run re-verified).
+2. **p04's two earlier prompts list too few whole stations:** `-ppm045` says "640, 645" where the truth also letters 650 whole, `-ppm050` says "705, 710" where it also has 715. Fixing the text changes their ids. The new instances derive the list from the truth (`_whole()`, tested).
+3. **The earlier p14 and p02 checks never compared model space:** `qa.changed_outside` read the key `"model_entities"`, but a document keeps model space under `"model"`, so a model that fixes the TB1 bearing in AA01 instead of marking it still passes `p14-qa-review-ppm045b` (a test records it), and `p02-sources-wfl19b`'s "stationing unchanged" item checks nothing. Left as it was so past grades do not move; the new instances compare model space. Fixing the earlier six would only make them stricter (their solutions still pass).
+4. **`p11-station-ppm045`'s sheet has five bare pluses** (`+31 END MBGR`, `+93.5 BEGIN MBGR`, ...): if they are TB1's, a model that correctly restations them fails "nothing unrelated changed".
+5. **Engine issue 2 above may be stale:** `modify_alignment` with `redraw` now re-places labels anchored to the line and regenerates its stationing.

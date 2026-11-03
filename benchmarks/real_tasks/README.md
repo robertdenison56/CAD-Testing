@@ -32,6 +32,17 @@ The first five letter one alignment around everything the published sheet alread
 shows. `real-attach-reference`, `real-title-block` and `real-construction-callouts`
 are one task per sheet; the rest are one per alignment.
 
+### The whole job (2026-11-03)
+
+Two composite types, `tasks.types.REAL_JOB_TYPES`, the `job` question group, kept out of `REAL_TASK_TYPES` so this catalogue, `d1-real` and `d1-real-dev` stay as they are. They have a catalogue of their own, `catalog-jobs.json` (`scripts/real_tasks.py --jobs`), and only `d1-real-hard` draws them.
+
+| Type | The drafter starts with | Asks for |
+|---|---|---|
+| `real-sheet-job` | the base files attached and nothing else (as `real-plan-sheet`) | the sheet and viewport, the alignment's data, the table, the north arrow, the title block, and the sheet's construction callouts |
+| `real-annotate-job` | the sheet set up but blank (as `real-annotate-sheet`) | all of that but the sheet, construction callouts included |
+
+Built like their single-group counterparts, with the construction callouts of `real-construction-callouts` asked for too (the sheet is cleared, so they go with it). After the rest of the sheet is placed, the reference places the notes; a note it cannot place clear of its own labels, table or north arrow leaves the task (the sheet starts blank, so there is no published note to leave in its place), and a job left with fewer than three notes is not built. 43 tasks validate (100 / 0 at both levels) on 16 sheets, 22 alignments: 34 Caltrans, 4 WFL, 3 FDOT, 2 CFL.
+
 ## How a lettering task is made (`src/roaddraft/tasks/real.py`)
 
 1. **Design.** The base file's alignment, as rebuilt by the redraft. The sheet

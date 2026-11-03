@@ -225,7 +225,8 @@ def test_board_ranks_only_rankable_model_rows():
     assert [r["label"].split(" ")[0] for r in b["reference"]] == ["oracle"]
     others = {o["run_id"]: o["reasons"] for o in b["others"]}
     assert others["draft-run"] == ["spec draft-v4 is a draft"]
-    assert others["var"] == ["run on d1-variance, not a leaderboard set (d1-test, d1-real, hard-pilots)"]
+    assert others["var"] == ["run on d1-variance, not a leaderboard set (d1-test, d1-real, hard-pilots, "
+                             "d1-test-hard, d1-real-hard)"]
     md = R.render_board(b)
     assert "**Best model 72.5/100" in md and "Published runs that are not ranked" in md
     assert "| Model · mode · prompt | Effort |" in md

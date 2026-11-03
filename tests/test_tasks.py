@@ -274,14 +274,17 @@ def test_every_real_type_sits_in_one_question_group():
     """The real-sheet types by question type (decided 2026-10-24): the draw and
     the real board's columns rest on every real type having exactly one group,
     and on the seeded types having none."""
-    from roaddraft.tasks.types import (REAL_GROUP_OF, REAL_GROUP_ORDER, REAL_GROUPS, REAL_TASK_TYPES,
-                                       real_group)
+    from roaddraft.tasks.types import (D1_REAL_GROUPS, REAL_GROUP_OF, REAL_GROUP_ORDER, REAL_GROUPS,
+                                       REAL_JOB_TYPES, REAL_TASK_TYPES, real_group)
     listed = [ty for _, _, types in REAL_GROUPS for ty in types]
     assert len(listed) == len(set(listed)), "a type sits in one group"
-    assert set(listed) == set(REAL_TASK_TYPES), "every real type has a group; every grouped type exists"
+    assert set(listed) == set(REAL_TASK_TYPES) | set(REAL_JOB_TYPES), \
+        "every real type has a group; every grouped type exists"
     assert REAL_GROUP_ORDER == ("draft", "letter", "sheet", "notes", "job")
     assert {real_group(ty) for ty in REAL_TASK_TYPES} == {"draft", "letter", "sheet", "notes"}
-    assert REAL_GROUPS[4][:2] == ("job", "the whole job") and REAL_GROUPS[4][2] == ()   # no composite yet
+    # the whole job (2026-11-03): its own group, the composites only, which d1-real does not draw
+    assert REAL_GROUPS[4][:2] == ("job", "the whole job") and set(REAL_GROUPS[4][2]) == set(REAL_JOB_TYPES)
+    assert D1_REAL_GROUPS == ("draft", "letter", "sheet", "notes")
     assert not any(ty in REAL_GROUP_OF for ty in TASK_TYPES), "the seeded types are not grouped"
     with pytest.raises(ValueError, match="REAL_GROUPS"):
         real_group("plan-sheet")

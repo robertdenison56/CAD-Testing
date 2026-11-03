@@ -61,13 +61,13 @@ def test_dials_cycle():
 
 
 def test_real_quotas_split_each_group_evenly_over_its_types():
-    from roaddraft.tasks.types import REAL_GROUPS, REAL_TASK_TYPES, real_group
+    from roaddraft.tasks.types import D1_REAL_GROUPS, REAL_GROUPS, REAL_TASK_TYPES, real_group
     q = tasksets.real_quotas()
     assert list(q) == list(REAL_TASK_TYPES), "quotas run in type order, every real type in"
-    assert sum(q.values()) == tasksets.REAL_PER_GROUP * sum(1 for _, _, ts in REAL_GROUPS if ts) == 100
+    assert sum(q.values()) == tasksets.REAL_PER_GROUP * len(D1_REAL_GROUPS) == 100
     for key, _, types in REAL_GROUPS:
-        if not types:
-            continue  # the whole-job group has no type yet
+        if key not in D1_REAL_GROUPS:
+            continue  # the whole job is d1-real-hard's (2026-11-03)
         shares = [q[ty] for ty in types]
         assert sum(shares) == tasksets.REAL_PER_GROUP
         assert max(shares) - min(shares) <= 1 and shares == sorted(shares, reverse=True)
@@ -81,11 +81,11 @@ def test_real_quotas_split_each_group_evenly_over_its_types():
 
 
 def test_real_sets_draw_every_group_type_and_agency_from_the_catalogue():
-    from roaddraft.tasks.types import REAL_GROUPS, REAL_TASK_TYPES, real_group
+    from roaddraft.tasks.types import D1_REAL_GROUPS, REAL_TASK_TYPES, real_group
     catalogue = {t["task_id"]: t for t in tasksets.load_catalog()["tasks"]}
     real, dev = (tasksets.load(n) for n in tasksets.REAL_NAMES)
     real, real_groups, dev = real["tasks"], real["groups"], dev["tasks"]
-    groups_with_types = [key for key, _, ts in REAL_GROUPS if ts]
+    groups_with_types = list(D1_REAL_GROUPS)  # the whole job is d1-real-hard's
     assert len(real) == tasksets.REAL_PER_GROUP * len(groups_with_types) == 100
     assert len(dev) == tasksets.REAL_DEV_PER_TYPE * len(REAL_TASK_TYPES) == 24
     # held out: the same number of tasks in every question group, split over the group's types
@@ -128,3 +128,70 @@ def test_a_catalogue_validated_under_another_verifier_trips_the_real_sets(monkey
     saved = tasksets.load("d1-real-dev")
     problems = tasksets._check_real({**saved, "tasks": saved["tasks"][:1]})
     assert any("verifier_version" in p and "real_tasks.py" in p for p in problems)
+
+
+# ------------------------------------------------------------ the harder sets (2026-11-03)
+
+
+def test_d1_test_hard_is_whole_sheet_jobs_on_its_own_seeds():
+    hard = tasksets.load("d1-test-hard")["tasks"]
+    assert len(hard) == 100 and [t["seed"] for t in hard] == list(tasksets.HARD_SEEDS)
+    others = {t["task_id"] for n in tasksets.SEEDED_NAMES for t in tasksets.load(n)["tasks"]}
+    assert not {t["task_id"] for t in hard} & others
+    types = Counter(t["task_type"] for t in hard)
+    assert set(types) == set(tasksets.HARD_SEEDED_TYPES) and max(types.values()) - min(types.values()) <= 2
+    assert {t["curves"] for t in hard} == {3, 4, 5} and {t["sheets"] for t in hard} == {2, 3}
+    assert all(t["equations"] for t in hard)
+    # the hard types stay out of the seeded sets' type cycle, so their ids do not move
+    from roaddraft.tasks.types import HARD_TASK_TYPES
+    assert not set(HARD_TASK_TYPES) & set(tasksets.SEEDED_TYPES)
+
+
+def test_hard_dials_cycle():
+    d = [tasksets.hard_dials(i) for i in range(12)]
+    assert [x["curves"] for x in d] == [3, 4, 5] * 4
+    assert [x["sheets"] for x in d] == [2] * 3 + [3] * 3 + [2] * 3 + [3] * 3
+    assert [x["task_type"] for x in d[:5]] == list(tasksets.HARD_SEEDED_TYPES)
+
+
+@pytest.mark.parametrize("ttype", ["plan-sheet-pavement", "create-plan-sheet", "base-plan-sheet"])
+def test_a_hard_seeded_task_verifies_100_and_its_start_0(ttype):
+    from roaddraft.tasks.generator import generate_task
+    from roaddraft.tasks.reference import reference_solution, session_for_task
+    from roaddraft.verify import verify
+    task = generate_task(2003, curves=3, equations=True, task_type=ttype, sheets=3)
+    start = session_for_task(task)
+    done = session_for_task(task)
+    reference_solution(task, done)
+    for level in ("explicit", "vague"):
+        assert verify(start.doc, task.truth, prompt_level=level).effective_score == 0.0
+        assert verify(done.doc, task.truth, prompt_level=level).effective_score == 100.0
+    # three sheets: the prompt names both breaks, and the title block all three numbers
+    stations = sorted({m["station_text"] for sh in task.brief.deliverable["sheets"]
+                       for m in sh["matches"]})
+    assert len(stations) == 2
+    for level in ("explicit", "vague"):
+        text = task.brief.prompts[level]
+        assert all(s in text for s in stations), (level, text)
+    assert "C-101, C-102 and C-103 of 3" in task.brief.prompts["explicit"]
+
+
+def test_d1_real_hard_holds_every_whole_job_and_none_of_d1_real():
+    hard = tasksets.load("d1-real-hard")
+    real = {t["task_id"] for n in tasksets.REAL_NAMES for t in tasksets.load(n)["tasks"]}
+    ids = [t["task_id"] for t in hard["tasks"]]
+    assert len(ids) == tasksets.REAL_HARD_SIZE == len(set(ids)) and not set(ids) & real
+    dev = set(tasksets.real_dev_sheets(tasksets.load_catalog()["tasks"]))
+    assert not {t["sheet_id"] for t in hard["tasks"]} & dev
+    jobs = {t["task_id"] for t in tasksets.load_catalog(tasksets.JOB_CATALOG)["tasks"]
+            if t["sheet_id"] not in dev}
+    assert {t["task_id"] for t in hard["tasks"] if t["group"] == "job"} == jobs
+    fill = Counter(t["task_type"] for t in hard["tasks"] if t["group"] != "job")
+    assert set(fill) == set(tasksets.REAL_HARD_FILL) and max(fill.values()) - min(fill.values()) <= 1
+    assert sum(hard["groups"].values()) == len(ids)
+
+
+def test_d1_real_draws_no_whole_job():
+    from roaddraft.tasks.types import REAL_JOB_TYPES
+    assert not set(REAL_JOB_TYPES) & set(tasksets.real_quotas())
+    assert not {t["task_type"] for t in tasksets.load("d1-real")["tasks"]} & set(REAL_JOB_TYPES)

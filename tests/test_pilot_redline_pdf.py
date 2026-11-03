@@ -15,7 +15,10 @@ from roaddraft.probes import fixture, reference
 from roaddraft.probes.pilot import common, redline_pdf as rp
 
 IDS = ["p18-redline-pdf-ppm045", "p18-redline-pdf-wfl19", "p18-redline-pdf-cflpla",
-       "p18-redline-pdf-fdot915"]
+       "p18-redline-pdf-fdot915", "p18-redline-pdf-ppm051", "p18-redline-pdf-ppm049",
+       "p18-redline-pdf-fdot916", "p18-redline-pdf-fdot923", "p18-redline-pdf-wflp04",
+       "p18-redline-pdf-cfld1"]
+NEW = IDS[4:]
 BY_ID = {p.id: p for p in rp.PROBES}
 BY_INST = {i.id: i for i in rp.INSTANCES}
 
@@ -136,3 +139,64 @@ def test_a_mark_left_undone_fails_only_its_item(tmp_path, starts):
     done = dict(r.items)
     assert not done["the title block's station range reads 29+67.45 to 41+32.03"]
     assert sum(not d for d in done.values()) == 1
+
+
+# ------------------------------------------------- the instances added on 2026-11-03
+
+
+def test_new_instances_mix_their_marks():
+    """5 to 7 marks each, spread over the agencies; struck title block fields and
+    blue comment clouds on at least two of them."""
+    insts = [BY_INST[i] for i in NEW]
+    assert all(5 <= len(i.markups) <= 7 for i in insts)
+    assert sum(any(m.kind == "field" for m in i.markups) for i in insts) >= 2
+    assert sum(any(m.kind == "comment" for m in i.markups) for i in insts) >= 2
+    assert {t for i in insts for t in i.tags} == {"caltrans", "fdot", "wfl", "cfl"}
+    assert len({i.sheet_id for i in rp.INSTANCES}) == len(rp.INSTANCES)
+
+
+@pytest.mark.parametrize("pid", NEW)
+def test_new_marks_sit_on_look_alikes(starts, pid):
+    """Every revised or deleted text has a twin on the sheet that reads the same
+    words it is marked for (the mark's place decides which one)."""
+    inst = BY_INST[pid]
+    doc = starts[pid]
+    sheet = next(s for s in Session.load(doc, out_dir=doc.parent).doc.sheets.values() if s.name == inst.sheet)
+    texts = [e for e in sheet.entities.values() if isinstance(e, Text)]
+    twinned = 0
+    for m in inst.markups:
+        if m.kind not in ("replace", "delete"):
+            continue
+        e = sheet.entities[m.ids[0]]
+        words = m.old if m.kind == "replace" and m.old else e.content
+        twinned += any(o.id not in m.ids and rp._norm(words) in rp._norm(o.content) for o in texts)
+    assert twinned >= 2, pid
+
+
+@pytest.mark.parametrize("pid", ["p18-redline-pdf-ppm051", "p18-redline-pdf-ppm049", "p18-redline-pdf-fdot916",
+                                 "p18-redline-pdf-fdot923", "p18-redline-pdf-cfld1"])
+def test_new_revising_the_look_alike_fails(tmp_path, starts, pid):
+    doc = starts[pid]
+    sheet = next(iter(Session.load(doc, out_dir=doc.parent).doc.sheets.values()))
+    twinned = [m.item for m in BY_INST[pid].markups if m.kind == "replace" and any(
+        o.id != m.ids[0] and rp._norm(o.content) == rp._norm(sheet.entities[m.ids[0]].content)
+        for o in sheet.entities.values() if isinstance(o, Text))]
+    assert twinned
+    r = _attempt(tmp_path, starts, pid, wrong="twin")
+    assert not r.passed
+    done = dict(r.items)
+    assert not any(done[item] for item in twinned)
+    assert not done["nothing unrelated changed"]
+
+
+@pytest.mark.parametrize("pid", ["p18-redline-pdf-ppm049", "p18-redline-pdf-wflp04", "p18-redline-pdf-cfld1"])
+def test_new_acting_on_the_comment_fails(tmp_path, starts, pid):
+    r = _attempt(tmp_path, starts, pid, wrong="comment")
+    assert not r.passed and "blue cloud" in r.detail
+
+
+@pytest.mark.parametrize("pid", ["p18-redline-pdf-fdot923", "p18-redline-pdf-ppm051"])
+def test_new_naive_answers_fail(tmp_path, starts, pid):
+    assert not _attempt(tmp_path / "keep", starts, pid, wrong="keep_old").passed
+    r = _attempt(tmp_path / "hand", starts, pid, wrong="handwriting")
+    assert not r.passed and not dict(r.items)["nothing unrelated changed"]

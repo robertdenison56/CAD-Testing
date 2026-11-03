@@ -180,14 +180,15 @@ def _length_value(content: str) -> Optional[float]:
 # ----------------------------------------------------------------- the checks
 
 
-def _check_label(start: str, eid: str, value_of, want: float, what: str):
+def _check_label(start: str, eid: str, value_of, want: float, what: str, model: bool = False):
+    """``model``: model space compared too (``qa.changed_outside``)."""
     def check(baseline: Session, submitted: Session) -> Result:
         expected = Path(qa._built(start))
         truth = c.load(expected)
         tally = Tally()
         allow = _corrected_label(truth, submitted, eid, value_of, want, 0.006, what, tally)
         tally.add("every other source unchanged",
-                  qa.changed_outside(expected, submitted, allow_ids=allow))
+                  qa.changed_outside(expected, submitted, allow_ids=allow, model=model))
         tally.add("the finding recorded", None if _finding(submitted) else
                   "no finding recorded (set_meta {\"updates\": {\"finding\": ...}})")
         return tally.result(f"{what} corrected to {want:.2f}, every other source unchanged, "
@@ -372,6 +373,432 @@ PROBES: List[Probe] = [
           note="Planted: \"TB2\"'s tangent lettered 462.42' (426.42 transposed). The design, the EC "
                "and POT stations (426.42 ft apart) and the drawn line agree. Naive wrong: moving the "
                "POT or the design to make T-1 462.42 ft."),
+]
+
+
+# ======================================================= more instances (2026-11-03)
+#
+# * ``p02-sources-ppm048a`` -- Caltrans L-4 (pilot 14's prepared sheet): curve 36's T
+#   in the CURVE DATA table lettered 215.05'. Its R 328.08' and Δ 74°50'50", its L
+#   428.58', the design and the EC give 251.05'. Fix: the table cell.
+# * ``p02-sources-ppm048b`` -- L-4, "IN4"'s radius changed to 300 ft in the design
+#   file (PIs kept) and its centerline redrawn: the curve table (R, T, L), the EC
+#   681+58.69, the POT 683+40.13 = "IND1" 59+72.49, the ramp's edges and its
+#   station numbers all describe R 328.08. Fix: the base file, R at the PI back to
+#   328.08 and the centerline redrawn.
+# * ``p02-sources-cflpla`` -- CFL Davis Dam Road (pilot 14's prepared sheet): the
+#   lower plan's PT lettered 38+48.48. The design's PT and the curve data (PC
+#   34+00.32 lettered beside it, L 484.15') give 38+84.48: the sheet's lettering is
+#   wrong against both the curve data and the design. Fix: the label.
+# * ``p02-sources-fdot916`` -- FDOT sheet 1: the PC lettered +70.47 (digits
+#   transposed); the design's PC, the drawn centerline's curve and the pavement
+#   edges put it at 705+70.74. Fix: the label.
+# * ``p02-sources-ppm045b`` -- L-1, "D13"'s bearing lettered N 00°03'30" W in the
+#   design file (where L-1 keeps its bearings): the design, the drawn "D13" and the
+#   POT offsets of "TB2" and "TB1" from it give N 00°03'30" E. Fix: the label, in the
+#   base file it lives in.
+
+PPM048_TABLE_T = "215.05'"
+PPM048_DESIGN_R = 300.0
+CFL_PT = "PT 38+48.48"
+FDOT916_PC = "PC STA. +70.47"
+#: how far a corrected label in a base file may sit from the one it replaces (feet, 0.5 in at 50 scale)
+NEAR_FT = 25.0
+
+
+def _build_ppm048_table(out: Path) -> Path:
+    path = qa.prepare_ppm048(out)
+    s = c.load(path)
+    sheet = next(iter(s.doc.sheets.values()))
+    rows = [list(r) for r in sheet.entities[qa.PPM048_TABLE].rows]
+    if rows[1][3] != "251.05'":
+        raise RuntimeError(f"L-4: curve 36's T reads {rows[1][3]!r}, not 251.05'")
+    rows[1][3] = PPM048_TABLE_T
+    c.ok(s.execute("modify_entity", {"id": qa.PPM048_TABLE, "changes": {"rows": rows}}))
+    return c.save(s, path)
+
+
+def _in4_pis(ali: Session, radius: Optional[float] = None) -> list:
+    pis = [list(p["point"]) + ([p["radius"]] if p.get("radius") else [])
+           for p in ali.doc.design.alignments["IN4"].to_dict()["pis"]]
+    if radius is not None:
+        pis[1] = pis[1][:2] + [radius]
+    return pis
+
+
+def _build_ppm048_design(out: Path) -> Path:
+    path = qa.prepare_ppm048(out)
+    aa = c.load(Path(out) / qa.PPM048_AA01)
+    c.ok(aa.execute("modify_alignment", {"name": "IN4", "redraw": True,
+                                         "changes": {"pis": _in4_pis(aa, PPM048_DESIGN_R)}}))
+    c.save(aa, Path(out) / qa.PPM048_AA01)
+    return path
+
+
+def _build_cfl_pt(out: Path) -> Path:
+    path = qa.prepare_cflpla(out)
+    s = c.load(path)
+    c.ok(s.execute("modify_entity", {"id": "TX-057", "changes": {"content": CFL_PT}}))
+    return c.save(s, path)
+
+
+def _build_fdot916_pc(out: Path) -> Path:
+    path = qa.prepare_fdot916(out)
+    s = c.load(path)
+    sheet = next(iter(s.doc.sheets.values()))
+    if sheet.entities["TX-057"].content != "PC STA. +70.74":
+        raise RuntimeError(f"FDOT 1: the PC reads {sheet.entities['TX-057'].content!r}")
+    c.ok(s.execute("modify_entity", {"id": "TX-057", "changes": {"content": FDOT916_PC}}))
+    return c.save(s, path)
+
+
+def _build_ppm045_d13(out: Path) -> Path:
+    path = qa.prepare_ppm045(out)
+    aa = c.load(Path(out) / qa.PPM_AA01)
+    e = aa.doc.model_entities["TX-029"]
+    if not e.content.endswith(" E"):
+        raise RuntimeError(f"L-1: D13's bearing reads {e.content!r}")
+    c.ok(aa.execute("modify_entity", {"id": "TX-029", "changes": {"content": e.content[:-1] + "W"}}))
+    c.save(aa, Path(out) / qa.PPM_AA01)
+    return path
+
+
+START_PPM048_TABLE = c.register("p02-ppm048a", qa.PPM048_FILE, _build_ppm048_table)
+START_PPM048_DESIGN = c.register("p02-ppm048b", qa.PPM048_FILE, _build_ppm048_design)
+START_CFL_PT = c.register("p02-cflpla", qa.CFL_FILE, _build_cfl_pt)
+START_FDOT916_PC = c.register("p02-fdot916", qa.FDOT916_FILE, _build_fdot916_pc)
+START_PPM045_D13 = c.register("p02-ppm045b", qa.PPM_FILE, _build_ppm045_d13)
+
+
+# ----------------------------------------------------------------- reading them
+
+
+def _station_value(word: str):
+    """A station lettered with ``word`` (PT, PC): its feet, else None."""
+    def value_of(content: str) -> Optional[float]:
+        if not re.search(rf"\b{word}\b", content or ""):
+            return None
+        found = nt.stations(content)
+        if found:
+            return found[0][0]
+        m = re.search(r"\+\s*(\d{2}\.\d{2})", content)
+        return float(m.group(1)) if m else None
+    return value_of
+
+
+def _cell_value(content: str) -> Optional[float]:
+    m = re.match(r"^\s*([\d,]+(?:\.\d+)?)\s*(?:[’']|FT\.?)?\s*$", content or "")
+    return float(m.group(1).replace(",", "")) if m else None
+
+
+def _check_cell(start: str, table: str, row: int, col: int, want: float, what: str):
+    """A table cell corrected to ``want``; the table's other cells, and everything
+    else in every file, unchanged."""
+    def check(baseline: Session, submitted: Session) -> Result:
+        from roaddraft.document.entities import Table
+        expected = Path(qa._built(start))
+        truth = c.load(expected)
+        old = next(iter(truth.doc.sheets.values())).entities[table]
+        sheet = next(iter(submitted.doc.sheets.values()))
+        tally = Tally()
+        cands = [e for e in sheet.entities.values() if isinstance(e, Table)
+                 and (e.id == table or math.dist(e.position, old.position) <= NEAR_IN)]
+        allow = [table] + [e.id for e in cands]
+        if len(cands) != 1:
+            tally.add(what, f"{len(cands)} curve tables where the one was")
+        else:
+            new = cands[0]
+            rows_ok = (len(new.rows) == len(old.rows) and
+                       all(new.rows[i][j] == old.rows[i][j] for i in range(len(old.rows))
+                           for j in range(len(old.rows[i])) if (i, j) != (row, col)))
+            v = _cell_value(new.rows[row][col]) if rows_ok else None
+            tally.add(what, None if rows_ok and v is not None and abs(v - want) <= 0.006 else
+                      (f"{what} reads {new.rows[row][col]!r}; the other sources say {want:.2f}"
+                       if rows_ok else "the curve table's other cells were changed"))
+        tally.add("every other source unchanged",
+                  qa.changed_outside(expected, submitted, allow_ids=allow, model=True))
+        tally.add("the finding recorded", None if _finding(submitted) else
+                  "no finding recorded (set_meta {\"updates\": {\"finding\": ...}})")
+        return tally.result(f"{what} corrected to {want:.2f}, every other source unchanged, "
+                            f"the finding recorded")
+    return check
+
+
+def _check_base_label(start: str, base: str, eid: str, want_az: float, what: str):
+    """A label in a base file's model corrected where it lives: the bearing it
+    letters within 1\" of ``want_az``; the rest of that file and of every other
+    file unchanged."""
+    def check(baseline: Session, submitted: Session) -> Result:
+        expected = Path(qa._built(start))
+        tally = Tally()
+        home = Path(getattr(submitted.doc, "_path", "") or ".").parent
+        want = qa.model_entities(read_document(expected.parent / base))
+        got = qa.model_entities(read_document(home / base)) if (home / base).exists() else {}
+        at = want[eid]["position"]
+        cands = [(i, e["content"]) for i, e in got.items() if e.get("type") == "text"
+                 and (i == eid or i not in want) and math.dist(e.get("position", [1e9, 1e9]), at) <= NEAR_FT
+                 and nt.bearings(e.get("content", ""))]
+        if len(cands) != 1:
+            tally.add(what, f"{what} is lettered {len(cands)} times in {base} where the one was"
+                      + (": " + ", ".join(repr(x[1]) for x in cands) if cands else ""))
+        else:
+            az = nt.bearings(cands[0][1])[0]
+            off = abs((az - want_az + 180.0) % 360.0 - 180.0) * 3600.0
+            tally.add(what, None if off <= 1.0 else f"{what} reads {cands[0][1]!r}")
+        allow = {eid} | {i for i, _c in cands}
+        other = next((i for i, e in want.items() if i not in allow and got.get(i) != e), None) or \
+            next((i for i in got if i not in want and i not in allow), None)
+        tally.add(f"the rest of {base} unchanged", f"{base}'s {other} was changed" if other else None)
+        tally.add("every other source unchanged",
+                  qa.changed_outside(expected, submitted, allow_files=[base], model=True))
+        tally.add("the finding recorded", None if _finding(submitted) else
+                  "no finding recorded (set_meta {\"updates\": {\"finding\": ...}})")
+        return tally.result(f"{what} corrected in {base}, every other source unchanged, the finding "
+                            f"recorded")
+    return check
+
+
+def _scratch_alignment(source: dict) -> Session:
+    """An alignment rebuilt from its PIs as ``TRUE`` in a scratch session."""
+    pis = [list(p["point"]) + ([p["radius"]] if p.get("radius") else []) for p in source["pis"]]
+    s = Session()
+    c.ok(s.execute("create_alignment", {"name": "TRUE", "begin_station": source["begin_station"],
+                                        "pis": pis}))
+    return s
+
+
+def _design_problem_of(ali: Session, true: Session, name: str, radius: float) -> Optional[str]:
+    if name not in ali.doc.design.alignments:
+        return f"the design file has no {name} any more"
+    curves = c.ok(ali.query("get_design_data", {"kind": "curves", "alignment": name}))["rows"]
+    want = len(c.ok(true.query("get_design_data", {"kind": "curves", "alignment": "TRUE"}))["rows"])
+    if len(curves) != want:
+        return f"{name} has {len(curves)} curves; it has {want}"
+    R = float(curves[0]["radius"])
+    if abs(R - radius) > RADIUS_FT:
+        return f"{name}'s curve is still R {R:.2f} ft; the other sources describe R {radius:.2f}"
+    a = true.doc.design.alignments["TRUE"]
+    b = ali.doc.design.alignments[name]
+    station = math.ceil(max(a.begin_station, b.begin_station) / STEP_FT) * STEP_FT
+    while station <= min(a.end_station, b.end_station):
+        p = c.ok(true.query("station_to_xy", {"alignment": "TRUE", "station": station}))["point"]
+        q = c.ok(ali.query("station_to_xy", {"alignment": name, "station": station}))["point"]
+        if math.dist(p, q) > POSITION_FT:
+            return (f"{name} at {station / 100:.0f}+{station % 100:05.2f} is {math.dist(p, q):.2f} ft "
+                    f"from where the restored design puts it")
+        station += STEP_FT
+    return None
+
+
+def _samples(e, n=8):
+    if isinstance(e, Line):
+        return [[e.start[0] + (e.end[0] - e.start[0]) * k / n,
+                 e.start[1] + (e.end[1] - e.start[1]) * k / n] for k in range(n + 1)]
+    if isinstance(e, Arc):
+        a0, a1 = e.start_angle_deg, e.end_angle_deg
+        sweep = (a1 - a0) % 360.0
+        return [[e.center[0] + e.radius * math.cos(math.radians(a0 + sweep * k / n)),
+                 e.center[1] + e.radius * math.sin(math.radians(a0 + sweep * k / n))] for k in range(n + 1)]
+    return [list(v) for v in e.vertices]
+
+
+def _check_design_of(start: str, prepared: str, base: str, name: str, layer: str, radius: float,
+                     what: str):
+    """``name`` restored in ``base`` to what the clean ``prepared`` start has, its
+    centerline redrawn on ``layer`` (new elements, or ones anchored to it, lie on
+    the restored design and cover it), the rest of ``base`` and every other file
+    as the start has them."""
+    def check(baseline: Session, submitted: Session) -> Result:
+        expected = Path(qa._built(start))
+        clean = c.document(Path(qa._built(prepared)).parent / base)
+        true = _scratch_alignment(clean.design.alignments[name].to_dict())
+        tally = Tally()
+        home = Path(getattr(submitted.doc, "_path", "") or ".").parent
+        if not (home / base).exists():
+            tally.add(what, f"{base} is missing")
+        else:
+            ali = c.load(home / base)
+            tally.add(what, _design_problem_of(ali, true, name, radius))
+            want = qa.model_entities(read_document(expected.parent / base))
+            got = qa.model_entities(read_document(home / base))
+            # the line's own drawn elements and labels: a redraw replaces them, and the
+            # engine re-places what is anchored to the line when its design changes
+            mine = {i for d in (want, got) for i, e in d.items()
+                    if (e.get("anchor") or {}).get("alignment") == name}
+            drawn = [e for e in ali.doc.model_entities.values() if isinstance(e, (Line, Arc, Polyline))
+                     and e.layer == layer and (e.id not in want or e.id in mine)]
+            problem = None if drawn else f"{name}'s centerline is no longer drawn in {base}"
+            for e in drawn:
+                for p in _samples(e):
+                    r = c.ok(true.query("xy_to_station", {"alignment": "TRUE", "point": p}))
+                    if abs(r["offset"]) > DRAWN_FT:
+                        problem = (f"{name}'s centerline drawn in {base} ({e.id}) runs "
+                                   f"{abs(r['offset']):.1f} ft off the restored design")
+                        break
+                if problem:
+                    break
+            if not problem:
+                a = true.doc.design.alignments["TRUE"]
+                pts = [p for e in drawn for p in _samples(e, 40)]
+                station = math.ceil(a.begin_station / STEP_FT) * STEP_FT
+                while station <= a.end_station:
+                    q = c.ok(true.query("station_to_xy", {"alignment": "TRUE", "station": station}))["point"]
+                    if min(math.dist(q, p) for p in pts) > STEP_FT:
+                        problem = f"{name}'s centerline is not drawn near {station / 100:.0f}+{station % 100:05.2f}"
+                        break
+                    station += STEP_FT
+            tally.add(f"{name}'s centerline redrawn from it", problem)
+            moved = next((i for i, e in want.items() if i not in mine and got.get(i) != e), None)
+            added = next((i for i, e in got.items() if i not in want and i not in mine
+                          and e.get("layer") != layer), None)
+            tally.add(f"the rest of {base} unchanged",
+                      f"{base}'s {moved or added} was changed" if (moved or added) else None)
+        tally.add("every other source unchanged",
+                  qa.changed_outside(expected, submitted, allow_files=[base], model=True))
+        tally.add("the finding recorded", None if _finding(submitted) else
+                  "no finding recorded (set_meta {\"updates\": {\"finding\": ...}})")
+        return tally.result(f"{what}, its centerline redrawn, every other source unchanged, the "
+                            f"finding recorded")
+    return check
+
+
+# ----------------------------------------------------------------- their solutions
+
+
+def _solve_cell(row: int, col: int, content: str, finding: str):
+    def solve(session: Session) -> None:
+        sheet = next(iter(session.doc.sheets.values()))
+        rows = [list(r) for r in sheet.entities[qa.PPM048_TABLE].rows]
+        rows[row][col] = content
+        c.ok(session.execute("modify_entity", {"id": qa.PPM048_TABLE, "changes": {"rows": rows}}))
+        c.ok(session.execute("set_meta", {"updates": {"finding": finding}}))
+    return solve
+
+
+def _solve_ppm048_design(session: Session) -> None:
+    """Over MCP: open_document the design file, put the PI's radius back to the
+    curve table's 328.08, redraw, save; the finding on the sheet."""
+    path = Path(session.doc._path).parent / qa.PPM048_AA01
+    aa = c.load(path)
+    was = c.ok(aa.query("get_design_data", {"kind": "curves", "alignment": "IN4"}))["rows"][0]["radius"]
+    c.ok(aa.execute("modify_alignment", {"name": "IN4", "redraw": True,
+                                         "changes": {"pis": _in4_pis(aa, 328.08)}}))
+    c.save(aa, path)
+    c.ok(aa.query("save_journal", {"path": str(journal_path(path))}))
+    c.ok(session.execute("set_meta", {"updates": {"finding": (
+        f"\"IN4\"'s curve in {qa.PPM048_AA01} was R {was:.2f}; the curve table (R 328.08', T "
+        f"251.05', L 428.58'), the EC 681+58.69 and the POT 683+40.13 all give R 328.08. "
+        f"Restored R 328.08 at the PI and redrew the centerline.")}}))
+
+
+def _solve_base_label(base: str, eid: str, content: str, finding: str):
+    def solve(session: Session) -> None:
+        path = Path(session.doc._path).parent / base
+        aa = c.load(path)
+        c.ok(aa.execute("modify_entity", {"id": eid, "changes": {"content": content}}))
+        c.save(aa, path)
+        c.ok(aa.query("save_journal", {"path": str(journal_path(path))}))
+        c.ok(session.execute("set_meta", {"updates": {"finding": finding}}))
+    return solve
+
+
+def _ppm045_d13_bearing() -> str:
+    aa = c.document(Path(qa._built(START_PPM045_D13)).parent / qa.PPM_AA01)
+    return aa.model_entities["TX-029"].content[:-1] + "E"
+
+
+def _solve_ppm045_d13(session: Session) -> None:
+    right = _ppm045_d13_bearing()
+    _solve_base_label(qa.PPM_AA01, "TX-029", right,
+                      f"\"D13\"'s bearing was lettered {right[:-1]}W in the design file; the "
+                      f"design, the drawn line and the POT offsets give {right}. Corrected the "
+                      f"label in {qa.PPM_AA01}.")(session)
+
+
+def _check_ppm045_d13(baseline: Session, submitted: Session) -> Result:
+    want = nt.bearings(_ppm045_d13_bearing())[0]
+    return _check_base_label(START_PPM045_D13, qa.PPM_AA01, "TX-029", want,
+                             "\"D13\"'s bearing in the design file")(baseline, submitted)
+
+
+PPM048_PROMPT = ("Sheet L-4 and the base files it references are meant to tell one story about the "
+                 "\"D13\", \"IND1\" and \"IN4\" lines: the alignment designs in the design file, the "
+                 "centerlines drawn from them, the station ticks and numbers, the bearings and "
+                 "distances, the EC, POC and POT stations and the curve table. They disagree in one "
+                 "place. Find it, work out from the rest of the evidence which one is wrong, and "
+                 "correct that one, in whichever file it lives, so it agrees with the others. Change "
+                 "nothing else; the construction notes are not part of this. Then record what was "
+                 "wrong in the sheet file with set_meta {\"updates\": {\"finding\": \"...\"}}.")
+CFL_PROMPT = ("Sheet PLA(SAMPLE) and the base files it references are meant to tell one story about "
+              "CL1 in the lower plan: the alignment design in the alignment file, the centerline "
+              "drawn from it, the pavement edges in the corridor file, the station ticks and "
+              "numbers, the bearing, the PC and PT stations and the curve data. They disagree in "
+              "one place. Find it, work out from the rest of the evidence which one is wrong, and "
+              "correct that one, in whichever file it lives, so it agrees with the others. Change "
+              "nothing else; the construction notes are not part of this. Then record what was "
+              "wrong in the sheet file with set_meta {\"updates\": {\"finding\": \"...\"}}.")
+FDOT916_PROMPT = ("Sheet 1 and the base files it references are meant to tell one story about CL1: "
+                  "the alignment design in the alignment file, the centerline drawn from it, the "
+                  "pavement edges in the design file, the station ticks and numbers, the bearing "
+                  "and the PC station. They disagree in one place. Find it, work out from the rest "
+                  "of the evidence which one is wrong, and correct that one, in whichever file it "
+                  "lives, so it agrees with the others. Change nothing else; the drainage notes "
+                  "are not part of this. Then record what was wrong in the sheet file with "
+                  "set_meta {\"updates\": {\"finding\": \"...\"}}.")
+
+PROBES += [
+    Probe(id="p02-sources-ppm048a", start=START_PPM048_TABLE, tags=["pilot", "sources", "caltrans", "edit"],
+          prompt=PPM048_PROMPT,
+          check=_check_cell(START_PPM048_TABLE, qa.PPM048_TABLE, 1, 3, 251.05, "curve 36's T in the curve table"),
+          solve=_solve_cell(1, 3, "251.05'", "Curve 36's T read 215.05'; its R 328.08' and Δ "
+                            "74°50'50\", its L 428.58' and the design give 251.05'. Corrected the table."),
+          note="Planted: curve 36's T lettered 215.05' in L-4's CURVE DATA table (251.05 transposed); "
+               "R and Δ in the same row, L, the design and the EC agree on 251.05. The table is a "
+               "Table entity: the fix is its rows, the other nine cells untouched. Naive wrong "
+               "(tests): bending \"IN4\" to R 281 so its T is 215.05 (the design changes, the cell "
+               "not), or putting the cell right and \"refining\" the R beside it to the design's "
+               "328.0793 (another cell changed)."),
+    Probe(id="p02-sources-ppm048b", start=START_PPM048_DESIGN,
+          tags=["pilot", "sources", "caltrans", "edit", "basefile"], prompt=PPM048_PROMPT,
+          check=_check_design_of(START_PPM048_DESIGN, "p14-ppm048a", qa.PPM048_AA01, "IN4",
+                                 "V-ALIGN-CNTR", 328.0793, "\"IN4\" restored to R 328.08 in the design file"),
+          solve=_solve_ppm048_design,
+          note="Planted: \"IN4\"'s radius 300 ft in the design file (PIs kept) with its centerline "
+               "redrawn; the curve table, EC 681+58.69, POT 683+40.13 = \"IND1\" 59+72.49 and the "
+               "ramp's station numbers describe R 328.08. \"D13\" and \"IND1\", drawn on the same "
+               "layer, must stay as they are. Naive wrong (tests): re-lettering the table and the "
+               "EC from get_design_data (the sheet changes, the design not), or restoring the "
+               "radius without redrawing."),
+    Probe(id="p02-sources-cflpla", start=START_CFL_PT, tags=["pilot", "sources", "cfl", "edit"],
+          prompt=CFL_PROMPT,
+          check=_check_label(START_CFL_PT, "TX-057", _station_value("PT"), 3884.48, "the lower PT label", model=True),
+          solve=_solve_label("TX-057", "PT 38+84.48",
+                             "The lower PT was lettered 38+48.48; the design's PT and the curve data "
+                             "(PC 34+00.32 + L 484.15') give 38+84.48. Corrected the label."),
+          note="Planted: the lower plan's PT lettered 38+48.48; the curve data (the PC lettered "
+               "34+00.32 plus L 484.15') and the design both put it at 38+84.48, so the sheet's "
+               "lettering is wrong against the table and the design together. The design is pilot "
+               "14's rebuild of the whole curve. Naive wrong (tests): changing the curve data's L "
+               "to fit the label."),
+    Probe(id="p02-sources-fdot916", start=START_FDOT916_PC, tags=["pilot", "sources", "fdot", "edit"],
+          prompt=FDOT916_PROMPT,
+          check=_check_label(START_FDOT916_PC, "TX-057", _station_value("PC"), 70.74, "the PC label", model=True),
+          solve=_solve_label("TX-057", "PC STA. +70.74",
+                             "The PC was lettered +70.47; the design's PC, the drawn centerline's "
+                             "curve and the pavement edges put it at 705+70.74. Corrected the label."),
+          note="Planted: FDOT sheet 1's PC lettered +70.47 (digits transposed); the design puts it at "
+               "705+70.74, where the drawn centerline and the edges begin to curve. The label is "
+               "the sheet's only alignment lettering besides the bearing and the station numbers. "
+               "Naive wrong (tests): sliding the design's stationing 0.27 ft so its PC is 705+70.47."),
+    Probe(id="p02-sources-ppm045b", start=START_PPM045_D13,
+          tags=["pilot", "sources", "caltrans", "edit", "basefile"], prompt=PPM_PROMPT,
+          check=_check_ppm045_d13, solve=_solve_ppm045_d13,
+          note="Planted: \"D13\"'s bearing lettered N 00°03'30\" W, a 7' turn on a line that runs "
+               "almost due north, in the design file, where L-1 keeps its bearings (the sheet file "
+               "has none of its own). The design, the drawn line and the POT offsets give E. The "
+               "fix is in the base file. Naive wrong (tests): placing a corrected bearing on the "
+               "sheet over the wrong one (the base file still says W). Replacing the label in the "
+               "base file with a new text near it passes."),
 ]
 
 __all__ = ["PROBES"]

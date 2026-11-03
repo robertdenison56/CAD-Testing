@@ -12,7 +12,8 @@ from roaddraft.design import cogo
 from roaddraft.probes import fixture, reference
 from roaddraft.probes.pilot import common, survey
 
-IDS = [survey.MIS_ID, survey.GG_ID, survey.IF_ID]
+IDS = [survey.MIS_ID, survey.GG_ID, survey.IF_ID, survey.DEED_PPM049.id, survey.DEED_FDOT915.id,
+       survey.GG2_ID, survey.IF2_ID]
 
 
 def test_probes_build():
@@ -78,3 +79,176 @@ def test_naive_answers_fail(tmp_path):
         {"number": n, "northing": north, "easting": east}
         for n, _d, _u, north, east in survey.IF_POINTS]})
     assert not probes[survey.IF_ID].check(base, s).passed
+
+
+# ------------------------------------------------- the instances added Nov 2026
+
+DEEDS = [survey.DEED_PPM049, survey.DEED_FDOT915]
+
+
+def test_new_deed_truths():
+    t = survey.deed_truth(survey.DEED_PPM049)
+    assert len(survey.DEED_PPM049.legs) == 10
+    assert t["misclosure"] == pytest.approx(0.3541, abs=1e-3)
+    assert t["precision"] == pytest.approx(4840, abs=5)
+    t = survey.deed_truth(survey.DEED_FDOT915)
+    assert t["misclosure"] == pytest.approx(0.2823, abs=1e-3)
+    assert t["precision"] == pytest.approx(4259, abs=5)
+    assert len(t["arcs"]) == 1
+    # the arc adds its segment: the chord polygon is short by about 156 sq ft
+    assert t["area"] - survey._shoelace(t["corners"]) == pytest.approx(156.4, abs=1.0)
+    for deed in DEEDS:
+        t = survey.deed_truth(deed)
+        moves = [math.dist(a, b) for a, b in zip(t["raw"], t["corners"])]
+        assert moves[0] == 0.0 and all(m > 3 * survey.DEED_CORNER_FT for m in moves[2:])
+
+
+def test_new_deeds_sit_on_the_drawing(tmp_path):
+    """The deeds' R/W courses run on the drawn R/W: L-5's POB is the end of
+    LN-433; the FDOT POB is 67.95 ft right of CL1 at 702+50."""
+    doc = common.document(common.folder("PPM-049") / "0000000000aa01.rdraft")
+    ln = doc.model_entities["LN-433"]
+    assert math.dist(ln.start[:2], survey.DEED_PPM049.pob) < 0.01
+    ali = common.document(common.folder(survey.DEED_FDOT915.sheet_id) / "ALGNRD01.rdraft")
+    r = ali.design.alignments["CL1"].xy_to_station(list(survey.DEED_FDOT915.pob))
+    assert r["station"] == pytest.approx(70250.0, abs=0.01)
+    assert r["offset"] == pytest.approx(67.95, abs=0.01)
+
+
+@pytest.mark.parametrize("deed", DEEDS, ids=[d.id for d in DEEDS])
+def test_new_deeds_naive_answers_fail(tmp_path, deed):
+    probe = {p.id: p for p in survey.PROBES}[deed.id]
+    # as written, closed with a closing course
+    base, s, _ = _session_pair(tmp_path / "raw", probe)
+    survey.solve_deed(deed, s, balance=False)
+    result = probe.check(base, s)
+    assert not result.passed
+    assert dict(result.items)["corners on the compass-rule balance (0.02 ft)"] is False
+    # the last corner moved onto the POB
+    base, s, _ = _session_pair(tmp_path / "last", probe)
+    survey.solve_deed(deed, s)
+    t = survey.deed_truth(deed)
+    pl = [e for e in s.doc.model_entities.values() if e.layer == deed.layer
+          and e.TYPE == "polyline"][0]
+    verts = [list(v) for v in t["raw"][:-1]]
+    assert s.execute("modify_entity", {"id": pl.id, "changes": {"vertices": verts}})["ok"]
+    assert not probe.check(base, s).passed
+
+
+def test_corrected_deed_fails(tmp_path):
+    """Finding the two scrivener's errors and plotting the true courses closes
+    exactly, but it is not the compass balance the task asks for."""
+    probe = {p.id: p for p in survey.PROBES}[survey.DEED_PPM049.id]
+    legs = list(survey.DEED_PPM049.legs)
+    legs[4] = dict(legs[4], distance=143.07)
+    legs[7] = dict(legs[7], bearing="S 13°35'05\" W")
+    fixed = survey.Deed(id="x", sheet_id="PPM-049", file="x", pob=survey.DEED_PPM049.pob,
+                        legs=tuple(legs))
+    assert survey.deed_truth(fixed)["misclosure"] < 0.02
+    base, s, _ = _session_pair(tmp_path / "fixed", probe)
+    survey.solve_deed(fixed, s)
+    assert not probe.check(base, s).passed
+
+
+def test_curve_as_its_chord_or_short_chords(tmp_path):
+    """The FDOT curve drawn as its chord fails the area; drawn as short chords
+    on the balanced arc it is accepted."""
+    deed = survey.DEED_FDOT915
+    probe = {p.id: p for p in survey.PROBES}[deed.id]
+    t = survey.deed_truth(deed)
+    base, s, _ = _session_pair(tmp_path / "chord", probe)
+    s.execute("create_layer", {"name": deed.layer})
+    s.execute("draw_polyline", {"space": "model", "layer": deed.layer, "vertices": t["corners"],
+                                "closed": True})
+    s.execute("place_text", {"space": "model", "layer": deed.layer,
+                             "position": t["corners"][3],
+                             "content": f"{survey._shoelace(t['corners']):,.0f} SQ FT"})
+    s.execute("set_meta", {"updates": {"misclosure_ft": round(t["misclosure"], 3),
+                                       "precision": f"1:{t['precision']:.0f}",
+                                       "area_sqft": round(survey._shoelace(t["corners"]))}})
+    result = probe.check(base, s)
+    items = dict(result.items)
+    assert not result.passed
+    assert items["corners on the compass-rule balance (0.02 ft)"]
+    assert items["curve course 2 drawn on its balanced arc (0.05 ft)"] is False
+    # turned the wrong way: a left curve on the same chord
+    base, s, _ = _session_pair(tmp_path / "left", probe)
+    survey.solve_deed(deed, s)
+    pl = [e for e in s.doc.model_entities.values() if e.layer == deed.layer
+          and e.TYPE == "polyline"][0]
+    assert s.execute("modify_entity", {"id": pl.id, "changes": {
+        "bulges": [-b for b in pl.bulges]}})["ok"]
+    assert not probe.check(base, s).passed
+    base, s, _ = _session_pair(tmp_path / "dense", probe)
+    survey.solve_deed(deed, s)
+    pl = [e for e in s.doc.model_entities.values() if e.layer == deed.layer
+          and e.TYPE == "polyline"][0]
+    i = t["arcs"][0][0]
+    pts = survey._arc_points(t["corners"][i], t["corners"][i + 1], t["arcs"][0][1],
+                             t["arcs"][0][2], step_ft=10.0)
+    verts = t["corners"][:i + 1] + pts[1:-1] + t["corners"][i + 1:]
+    assert s.execute("modify_entity", {"id": pl.id, "changes": {"vertices": verts,
+                                                               "bulges": [0.0] * len(verts)}})["ok"]
+    result = probe.check(base, s)
+    items = dict(result.items)
+    assert items["no unbalanced or extra corners on V-PROP"], result.detail
+
+
+def test_grid_to_ground_naive_answers_fail(tmp_path):
+    probe = {p.id: p for p in survey.PROBES}[survey.GG2_ID]
+    truth = {n: xy for n, _d, xy in survey.grid_to_ground_truth()}
+    _n, cn, ce, _d = survey.GG2_CONTROL[0]
+    variants = {
+        "as given": lambda north, east: [east, north],
+        "times the factor": lambda north, east: [ce + (east - ce) * survey.GG2_FACTOR,
+                                                 cn + (north - cn) * survey.GG2_FACTOR],
+        "about the origin": lambda north, east: [east / survey.GG2_FACTOR,
+                                                 north / survey.GG2_FACTOR],
+    }
+    for name, fn in variants.items():
+        base, s, _ = _session_pair(tmp_path / name.replace(" ", "-"), probe)
+        pts = [{"number": n, "point": fn(north, east)} for n, _d, north, east in survey.GG2_LOCATES]
+        s.execute("create_points", {"points": pts})
+        assert not probe.check(base, s).passed, name
+        off = [math.dist(p["point"], truth[p["number"]]) for p in pts]
+        assert min(off) > 2 * survey.GG_TOL_FT, name
+
+
+def test_grid_to_ground_lands_on_the_culverts():
+    """The truth is CL1 station/offset of the culvert ends, in the moved set."""
+    ali = common.document(common.folder(survey.GG2_SHEET) / "ALI(MAIN)Sample.rdraft")
+    a = ali.design.alignments["CL1"]
+    dx, dy = survey.GG2_DELTA
+    for (n, _d, xy), (st, off) in zip(survey.grid_to_ground_truth(),
+                                      [(1254, -23), (1254, 23), (1690, -21), (1690, 21),
+                                       (2198, -18), (2198, 18)]):
+        r = a.xy_to_station([xy[0] - dx, xy[1] - dy])
+        assert r["station"] == pytest.approx(st, abs=0.01), n
+        assert r["offset"] == pytest.approx(off, abs=0.01), n
+
+
+def test_intl_drawing_start_and_naive_answers(tmp_path):
+    probe = {p.id: p for p in survey.PROBES}[survey.IF2_ID]
+    base, s, doc = _session_pair(tmp_path / "start", probe)
+    assert s.doc.meta.get("model_units") == "ft"
+    for path in doc.parent.glob("*.rdraft"):
+        assert common.document(path).meta.get("model_units") == "ft", path.name
+    variants = {
+        "as given": (1.0, 3937.0 / 1200.0),
+        "us factor the wrong way": (0.999998, 1.0 / 0.3048),
+        "metres by 3937/1200": (survey.US_TO_INTL, 3937.0 / 1200.0),
+    }
+    for name, (k_us, k_m) in variants.items():
+        base, s, _ = _session_pair(tmp_path / name.replace(" ", "-").replace("/", ""), probe)
+        s.execute("create_points", {"points": [
+            {"number": n, "northing": north * (k_us if u == "usft" else k_m),
+             "easting": east * (k_us if u == "usft" else k_m)}
+            for n, _d, u, north, east in survey.IF2_POINTS]})
+        assert not probe.check(base, s).passed, name
+    # the converted monuments sit on one line 40 ft left of MAIN 01
+    ali = common.document(common.folder(survey.IF2_SHEET) / "SamplePlan_ali.rdraft")
+    a = ali.design.alignments["MAIN 01"]
+    dx, dy = survey.IF2_DELTA
+    for n, _d, xy in survey.intl_drawing_truth()[:4]:
+        r = a.xy_to_station([xy[0] - dx, xy[1] - dy])
+        assert r["offset"] == pytest.approx(-40.0, abs=0.02), n

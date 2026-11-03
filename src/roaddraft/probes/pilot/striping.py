@@ -79,6 +79,29 @@ Naive answers this fails (built in tests/test_pilot_striping.py): double
 yellow from PVC to PVT (121+50 to 125+50) both ways; the right zone with the
 solid line on the wrong side; zones from stopping-sight-distance heights
 (3.5-ft eye, 2.0-ft object).
+
+Four more instances (2026-11), each on another stretch or profile, so no
+answer is a copy of the D.6/D.7 crest:
+
+* ``p13-striping-wfl17`` -- D.8, 130+00 to 137+50, 65 mph (1,100 ft): the only
+  curve on the sheet is the 131+00 sag; the down-station zone of the 123+50
+  crest runs on onto the sheet, 130+00 to 132+15.
+* ``p13-striping-wfl19`` -- D.10, 145+00 to 152+50, 60 mph (1,000 ft): the
+  146+40 sag restricts nothing; the up-station zone toward the 158+60 crest
+  bend (+6.00% to +1.30%) begins at 149+37, 623 ft before its PVC (155+60).
+* ``p13-striping-wfl20`` -- D.11, 152+50 to 160+00, 55 mph (900 ft): both
+  directions on one sheet (up-station to 158+23, down-station from 159+39),
+  with a broken centerline between.
+* ``p13-striping-cflpnp`` -- CFL Plan 1, CL1 10+00 to 17+50, 55 mph: the 11+50
+  crest has a summit (+0.50% to -1.67%), but its approach is so flat that
+  only the down-station traffic is restricted, 13+90 to 16+80, across the
+  16+00 sag.
+
+These use MAIN01_PVIS_EXT (the existing road beyond END PROJECT carried on at
++0.97% to 172+00, which the D.11 sweep needs) and CFL_PVIS_EXT, and say so in
+the prompt. None of the profiles here gives zones of the two directions that
+overlap: MAIN 01 has no summit at all (every crest bend is on a grade that
+keeps its sign), and the CFL summit restricts one direction only.
 """
 from __future__ import annotations
 
@@ -136,6 +159,8 @@ class Job:
     alignment: str = "MAIN 01"
     profile: str = "MAIN 01 PGL"
     pvis: Tuple[Tuple[float, ...], ...] = MAIN01_PVIS
+    #: what the prompt says the design profile covers beyond the project
+    extent: str = "the profile includes the existing road behind the begin of project"
 
     def folder(self) -> Path:
         return common.REDRAFT_ROOT / self.redraft
@@ -151,7 +176,42 @@ D6 = Job(id="p13-striping-wfl15", start="p13-wfl15",
 D7 = Job(id="p13-striping-wfl16", start="p13-wfl16",
          redraft="WFL/WFL-Plan-Profile-Sheets/WFL-Plan-Profile-Sheets-p16",
          sheet_file="SamplePlan_pln_pp3.rdraft", sheet="D.7", ra=12250.0, rb=13000.0, mph=50)
-JOBS = [D6, D7]
+
+#: MAIN 01 with the existing road beyond END PROJECT 166+00 carried on at the
+#: +0.97% the last design grade ends on (D.12 draws the existing ground running
+#: on at that grade past 166+00), to 172+00: the sweeps on D.11 look past 166+00
+MAIN01_PVIS_EXT = MAIN01_PVIS + ((17200.0, 6279.54),)
+#: CFL CL1 PGL (sample Plan 1, 10+00 to 24+00, see profile.CFL) with the
+#: existing road behind BEGIN PROJECT 10+00 on the +0.50% the design begins on,
+#: back to 0+00, and the -0.50% it leaves the sheet on carried to 30+00
+CFL_PVIS_EXT = ((0.0, 8184.84), (1000.0, 8189.84), (1150.0, 8190.59, 150.0),
+                (1600.0, 8183.06, 200.0), (2200.0, 8187.90, 200.0), (2400.0, 8186.90),
+                (3000.0, 8183.90))
+_BEYOND = ("the profile includes the existing road behind the begin of project and beyond "
+           "the end of project")
+
+D8 = Job(id="p13-striping-wfl17", start="p13-wfl17",
+         redraft="WFL/WFL-Plan-Profile-Sheets/WFL-Plan-Profile-Sheets-p17",
+         sheet_file="SamplePlan_pln_pp4.rdraft", sheet="D.8", ra=13000.0, rb=13750.0, mph=65,
+         pvis=MAIN01_PVIS_EXT, extent=_BEYOND)
+D10 = Job(id="p13-striping-wfl19", start="p13-wfl19",
+          redraft="WFL/WFL-Plan-Profile-Sheets/WFL-Plan-Profile-Sheets-p19",
+          sheet_file="SamplePlan_pln_pp6.rdraft", sheet="D.10", ra=14500.0, rb=15250.0, mph=60,
+          pvis=MAIN01_PVIS_EXT, extent=_BEYOND)
+D11 = Job(id="p13-striping-wfl20", start="p13-wfl20",
+          redraft="WFL/WFL-Plan-Profile-Sheets/WFL-Plan-Profile-Sheets-p20",
+          sheet_file="SamplePlan_pln_pp7.rdraft", sheet="D.11", ra=15250.0, rb=16000.0, mph=55,
+          pvis=MAIN01_PVIS_EXT, extent=_BEYOND)
+CFLPNP = Job(id="p13-striping-cflpnp", start="p13-cflpnp",
+             redraft="CFL/CFL-D-Plan-and-Profile", sheet_file="PNP(Sample).rdraft",
+             sheet="Plan 1", ra=1000.0, rb=1750.0, mph=55,
+             ali_file="ALI(MAIN)Sample.rdraft",
+             refs=(("COR", "COR(MAIN)Sample.rdraft"), ("TER", "TERSample.rdraft")),
+             alignment="CL1", profile="CL1 PGL", pvis=CFL_PVIS_EXT,
+             extent=("the profile includes the existing road behind the begin of project and "
+                     "runs on past this sheet"))
+NEW_JOBS = [D8, D10, D11, CFLPNP]
+JOBS = [D6, D7] + NEW_JOBS
 
 Interval = Tuple[float, float]
 
@@ -573,7 +633,7 @@ def _prompt(job: Job) -> str:
         f"design profile {job.profile} for an 85th-percentile speed of {job.mph} mph (Table "
         f"3B-1). The clearing "
         f"on the horizontal curves keeps the horizontal sight lines open, so the profile "
-        f"governs, and the profile includes the existing road behind the begin of project. "
+        f"governs, and {job.extent}. "
         f"Mark each zone exactly where the sight distance falls short (no stretching to a "
         f"minimum length; join zones less than 400 ft apart).")
 
@@ -604,7 +664,39 @@ PROBES: List[Probe] = [
     _probe(D7, "WFL sheet D.7, 50 mph, MUTCD PSD 800 ft, the same crest seen from its far side. "
                "Expected: down-station no-passing zone 125+75 to 129+21 (solid left of "
                "centerline, broken right), none up-station (its zone ends at 121+21 on D.6)."),
+    _probe(D8, "WFL sheet D.8, 65 mph, MUTCD PSD 1,100 ft. The sheet's only vertical curve is "
+               "the 131+00 sag (-3.90% to -1.70%, 500' VC), which restricts nothing; the zone "
+               "comes from the 123+50 crest on D.7, whose down-station zone runs on past "
+               "130+00 at this speed. Expected: down-station no-passing zone 130+00 (the range "
+               "end) to 132+15 (solid left of centerline, broken right), none up-station; "
+               "broken centerline from 132+15 on. Naive answers that fail: no zones (\"only a "
+               "sag here\"), the solid on the wrong side, SSD object height (zone to 132+83)."),
+    _probe(D10, "WFL sheet D.10, 60 mph, MUTCD PSD 1,000 ft, over the 146+40 sag (-1.70% to "
+                "+6.00%, 800' VC) and up the +6.00% grade toward the 158+60 crest bend (+6.00% "
+                "to +1.30%, 600' VC, PVC 155+60, off this sheet). Expected: up-station "
+                "no-passing zone 149+37 to 152+50 (the range end; solid right of centerline, "
+                "broken left), none down-station, broken centerline 145+00 to 149+37. The sag "
+                "restricts nothing. Naive answers that fail: no zones, a zone over the sag "
+                "(PVC 142+40 to PVT 150+40), SSD object height (zone from 148+72)."),
+    _probe(D11, "WFL sheet D.11, 55 mph, MUTCD PSD 900 ft, over the 158+60 crest bend (+6.00% "
+                "to +1.30%, 600' VC; no high point). Both directions on one sheet: up-station "
+                "no-passing zone 152+50 (the range end) to 158+23 (solid right), down-station "
+                "159+39 to 160+00 (the range end; solid left), a broken centerline between. "
+                "The up-station sweep looks past END PROJECT 166+00, so the start's profile "
+                "carries the existing road on at +0.97% to 172+00. Naive answers that fail: "
+                "double yellow PVC 155+60 to the range end, the solids swapped, SSD object "
+                "height (158+59 and 159+05), one direction only."),
+    _probe(CFLPNP, "CFL sample Plan 1, CL1 10+00 to 17+50, 55 mph, MUTCD PSD 900 ft. The 11+50 "
+                   "crest (+0.50% to -1.67%, 150' VC, K 69, high point 11+09.51) restricts only "
+                   "the down-station traffic, and only once it is past the crest: expected "
+                   "down-station no-passing zone 13+90 to 16+80 (solid left of centerline, "
+                   "broken right; it runs across the 16+00 sag), none up-station, broken "
+                   "centerline elsewhere. The start's CL1 PGL is the published profile with the "
+                   "existing road behind BEGIN PROJECT carried back on +0.50% to 0+00 and the "
+                   "-0.50% carried on to 30+00. Naive answers that fail: double yellow over the "
+                   "crest (PVC 10+75 to PVT 12+25), the zone on the up-station side, SSD object "
+                   "height (13+50 to 17+50)."),
 ]
 
-__all__ = ["PROBES", "JOBS", "Job", "zones", "truth", "read_marks", "make_check", "solve_job",
-           "MUTCD_PSD"]
+__all__ = ["PROBES", "JOBS", "NEW_JOBS", "Job", "zones", "truth", "read_marks", "make_check",
+           "solve_job", "MUTCD_PSD"]

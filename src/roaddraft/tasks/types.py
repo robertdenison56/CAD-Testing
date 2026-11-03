@@ -180,6 +180,26 @@ TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
           "create the alignment from the PIs, radii and stationing the prompt gives, then draw it"),
 )}
 
+#: the harder seeded types (decided 2026-11-03, Robert: "build out harder versions of real
+#: and tests"): whole-sheet jobs only, which ``d1-test-hard`` draws at three to five curves
+#: on two or three sheets with a station equation.  They are kept out of ``TASK_TYPES`` so
+#: the seeded sets' type cycle (``eval.taskset.SEEDED_TYPES``) and so their task ids stay as
+#: they are; ``task_type`` finds them all the same.
+HARD_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
+    _type("plan-sheet-pavement", list(LAYOUT_GROUPS) + ["edges", "widths"], [],
+          "draft the whole plan sheet from the design, with the pavement edges and a width "
+          "dimension across each tangent"),
+    _type("create-plan-sheet", ["design"] + list(LAYOUT_GROUPS), [],
+          "create the alignment from the geometry the prompt states, then draft the whole plan "
+          "sheet"),
+    # the office route from nothing: the sheet file references the base drawing that holds
+    # the design and its linework, and has no sheet yet
+    _type("base-plan-sheet", [g for g in LAYOUT_GROUPS if g != "linework"],
+          ["layers", "reference"],
+          "lay out and letter plan sheets in a sheet file whose design lives in the attached base "
+          "drawing", basefile=["linework", "edges"], owns_design=False),
+)}
+
 DEFAULT_TYPE = "plan-sheet"
 
 #: phases a real plan sheet supplies (its base files, sheet, north arrow and title block)
@@ -247,6 +267,25 @@ REAL_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
 )}
 
 
+#: the whole job on a real sheet (decided 2026-11-03, Robert: "build out harder versions of
+#: real and tests"): the sheet drafted or annotated from scratch with its construction
+#: callouts too, every group of a sheet's work in one task.  The ``job`` question group; the
+#: ``d1-real-hard`` set draws them (eval/taskset.py).  Kept out of ``REAL_TASK_TYPES`` so the
+#: real catalogue, ``d1-real`` and ``d1-real-dev`` stay as they are; ``task_type`` finds them.
+REAL_JOB_TYPES: Dict[str, TaskType] = {t.name: t for t in (
+    _type("real-sheet-job", ["sheet", "ticks", "stations", "curve_points", "bearings",
+                             "callouts", "table", "north", "title", "notes"],
+          ["layers", "linework", "reference"],
+          "draft a real plan sheet from its base files, its construction callouts included",
+          owns_design=False),
+    _type("real-annotate-job", ["ticks", "stations", "curve_points", "bearings", "callouts",
+                                "table", "north", "title", "notes"],
+          ["layers", "linework", "reference", "sheet"],
+          "annotate a blank real sheet from scratch, its construction callouts included",
+          owns_design=False),
+)}
+
+
 #: the real-sheet types by question type (decided 2026-10-24, Robert: "make sure real
 #: sheets are separated similar to the probes for question type"), the way the probe
 #: board's TIERS split the probes (runners/leaderboard.py): a key, a name, the types.
@@ -267,10 +306,12 @@ REAL_GROUPS: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
     # edge-break station-and-offset callouts and their width dimensions were scrapped
     # by Robert on 2026-10-27)
     ("notes", "notes and dimensions", ("real-construction-callouts",)),
-    # a composite "complete this layout" task across the groups, on its own small set
-    # and board like hard-pilots; none built yet
-    ("job", "the whole job", ()),
+    # a composite "complete this layout" task across the groups (REAL_JOB_TYPES, built
+    # 2026-11-03), on its own set and board, d1-real-hard; d1-real draws no job
+    ("job", "the whole job", tuple(REAL_JOB_TYPES)),
 )
+#: the groups ``d1-real`` draws its quota from: every one but the whole job
+D1_REAL_GROUPS: Tuple[str, ...] = ("draft", "letter", "sheet", "notes")
 REAL_GROUP_OF: Dict[str, str] = {ty: key for key, _, types in REAL_GROUPS for ty in types}
 REAL_GROUP_NAMES: Dict[str, str] = {key: name for key, name, _ in REAL_GROUPS}
 REAL_GROUP_ORDER: Tuple[str, ...] = tuple(key for key, _, _ in REAL_GROUPS)
@@ -295,8 +336,12 @@ def task_type(name: str) -> TaskType:
     try:
         return REAL_TASK_TYPES[name]
     except KeyError:
-        raise ValueError(f"unknown task type {name!r}; types: "
-                         f"{', '.join(list(TASK_TYPES) + list(REAL_TASK_TYPES))}") from None
+        pass
+    for extra in (HARD_TASK_TYPES, REAL_JOB_TYPES):
+        if name in extra:
+            return extra[name]
+    raise ValueError(f"unknown task type {name!r}; types: "
+                     f"{', '.join(list(TASK_TYPES) + list(REAL_TASK_TYPES) + list(HARD_TASK_TYPES) + list(REAL_JOB_TYPES))}")
 
 
 def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str, ...]]] = None
@@ -313,6 +358,8 @@ def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str
 __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "LAYOUT_GROUPS",
            "DESIGN_GROUPS",
            "MODEL_PHASES", "LABEL_GROUPS", "CHECK_GROUPS", "GROUP_LAYER_ROLE", "TaskType",
-           "TASK_TYPES", "REAL_TASK_TYPES", "REAL_SHEET_PHASES", "DEFAULT_TYPE", "task_type",
-           "REAL_GROUPS", "REAL_GROUP_OF", "REAL_GROUP_NAMES", "REAL_GROUP_ORDER", "real_group",
+           "TASK_TYPES", "REAL_TASK_TYPES", "HARD_TASK_TYPES", "REAL_JOB_TYPES", "REAL_SHEET_PHASES",
+           "DEFAULT_TYPE", "task_type",
+           "REAL_GROUPS", "D1_REAL_GROUPS", "REAL_GROUP_OF", "REAL_GROUP_NAMES", "REAL_GROUP_ORDER",
+           "real_group",
            "checks_in_scope"]

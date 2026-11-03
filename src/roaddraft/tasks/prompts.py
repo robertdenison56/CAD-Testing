@@ -80,6 +80,9 @@ class _Words:
         self.has_eq = "equation" in self.D["required_label_kinds"]
         self.matches = [m for sh in self.sheets for m in sh.get("matches", [])]
         self.match = self.matches[0] if self.matches else None
+        # every break of the layout, once, in station order (three sheets have two)
+        self.match_texts = [m["station_text"] for m in sorted(
+            {m["station"]: m for m in self.matches}.values(), key=lambda m: m["station"])]
         self.section = self.P.get("typical_section") or {}
         self.pave = self.D.get("pavement") or {}
         self.width_dims = self.D.get("width_dimensions") or []
@@ -175,7 +178,7 @@ class _Words:
         if len(common) != len(fields[0]) - 1:  # the sheets differ in more than their numbers
             return "; ".join(f"on {sh['name']}, " + self._title_of(sh["title_block_fields"])
                              for sh in self.sheets)
-        numbers = " and ".join(f["sheet_number"] for f in fields)
+        numbers = _and([f["sheet_number"] for f in fields])
         return self._title_of({**fields[0], "sheet_number": numbers},
                               plural=len(fields) > 1)
 
@@ -197,13 +200,26 @@ class _Words:
     def match_line(self) -> str:
         m = self.match
         on = self.layer("match") if "match" in self.layers else self.layer("ticks")
+        if len(self.match_texts) > 1:
+            return (f"Draw a match line square across the centerline at each break "
+                    f"({_and(self.match_texts)}), {m['half_width_ft']:g} ft each side, and label "
+                    f"each at its end on both sheets it joins MATCH LINE STA <its station> SEE "
+                    f"SHEET <the other sheet> in {self.label_h} text, all on {on}")
         return (f"Draw a match line square across the centerline at {m['station_text']}, "
                 f"{m['half_width_ft']:g} ft each side, and label it at its end on each sheet "
                 f"MATCH LINE STA {m['station_text']} SEE SHEET <the other sheet> in "
                 f"{self.label_h} text, both on {on}")
 
     def breaking(self) -> str:
+        if len(self.match_texts) > 1:
+            return f", breaking at stations {_and(self.match_texts)}"
         return f", breaking at station {self.match['station_text']}" if self.match else ""
+
+    def match_words(self) -> str:
+        """The match lines a set-up layout already has, for the annotate prompts."""
+        if len(self.match_texts) > 1:
+            return f" and match lines at {_and(self.match_texts)}"
+        return f" and a match line at {self.match['station_text']}" if self.match else ""
 
     # -- plan prep
     def section_words(self) -> str:
@@ -278,6 +294,11 @@ class _Words:
         items = [words[p] for p in given]
         text = items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
         return f" {text[0].upper()}{text[1:]} {'are' if len(items) > 1 else 'is'} already done."
+
+
+def _and(items: List[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
 
 
 def _bullets(items: List[str]) -> str:
@@ -356,7 +377,7 @@ def _annotate_sheet(w: _Words, explicit: bool) -> str:
     is_are = "are" if w.many else "is"
     if not explicit:
         return f"{w.Sheet_list} {is_are} blank. Annotate {'them' if w.many else 'it'}."
-    match = f" and a match line at {w.match['station_text']}" if w.match else ""
+    match = w.match_words()
     them = "them" if w.many else "it"
     views = "viewports" if w.many else "a viewport"
     return (f"{w.Sheet_list} {is_are} set up with {views} on {w.A} at {w.scale}{match}, and the "
@@ -373,6 +394,53 @@ def _plan_sheet(w: _Words, explicit: bool) -> str:
     return (f"Draft plan {w.sheet_list} for {w.A} on the {w.P['name']} project ({w.P['agency']}, "
             f"{w.P['county']}): {w.size} at {w.scale}{w.breaking()}. {w.A} is already in the "
             f"design.\n{_bullets(items)}")
+
+
+# -- the harder whole-sheet jobs (types.HARD_TASK_TYPES, the d1-test-hard set)
+
+
+def _plan_sheet_items(w: _Words, alignment: List[str], extra: List[str] = ()) -> List[str]:
+    """The bullets of a whole plan sheet: the viewports (and match lines), then
+    ``alignment`` (the linework and pavement, as the job has them), the
+    alignment data, the north arrow and the title block."""
+    setup = f"Set up {w.viewports()}" + (f". {w.match_line()}" if w.match else "")
+    return ([setup] + list(alignment) + _alignment_data(w, "it") + list(extra)
+            + [w.north(), "Fill in the title block" + ("s" if w.many else "") + ": " + w.title()])
+
+
+def _plan_sheet_pavement(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return (f"{w.section_words()}. Draft plan {w.sheet_list} for {w.A}{w.breaking()}, with "
+                f"the pavement edges and a width dimension across each tangent.")
+    items = _plan_sheet_items(w, [w.linework(), w.edges(), w.widths()])
+    return (f"Draft plan {w.sheet_list} for {w.A} on the {w.P['name']} project ({w.P['agency']}, "
+            f"{w.P['county']}): {w.size} at {w.scale}{w.breaking()}. {w.A} is already in the "
+            f"design and {w.section_words()[len(w.A) + 1:]}.\n{_bullets(items)}")
+
+
+def _create_plan_sheet(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return (f"{w.A} {w.geometry()}. Create it, then draft plan {w.sheet_list} for it"
+                f"{w.breaking()}.")
+    items = _plan_sheet_items(w, [w.linework()])
+    return (f"{w.A} is not in the design yet: it {w.geometry()}. Coordinates are northing and "
+            f"easting in US survey feet. Create it in the design from the PIs and the curve "
+            f"radius at each, then draft plan {w.sheet_list} for it on the {w.P['name']} project "
+            f"({w.P['agency']}, {w.P['county']}): {w.size} at {w.scale}{w.breaking()}.\n"
+            f"{_bullets(items)}")
+
+
+def _base_plan_sheet(w: _Words, explicit: bool) -> str:
+    ref = w.ref_name
+    if not explicit:
+        return (f"The base drawing is attached as {ref}. Draft plan {w.sheet_list} for {w.A} in "
+                f"this file{w.breaking()}.")
+    items = _plan_sheet_items(w, [])
+    return (f"This sheet file has no sheets yet. The base drawing {w.basefile} is attached as "
+            f"{ref} and carries {w.A}'s design, centerline and pavement edges; {w.A} lives in the "
+            f"base, not in this file, so reach it as {ref}:{w.A}. Draft plan {w.sheet_list} for it "
+            f"on the {w.P['name']} project ({w.P['agency']}, {w.P['county']}): {w.size} at "
+            f"{w.scale}{w.breaking()}.\n{_bullets(items)}")
 
 
 # -- plan prep
@@ -715,6 +783,34 @@ def _real_construction_callouts(w: _Words, explicit: bool) -> str:
             f"lettering and linework. The notes:\n{_note_list(w)}")
 
 
+# -- real plan sheets: the whole job (types.REAL_JOB_TYPES, the d1-real-hard set)
+
+
+def _job_notes(w: _Words, explicit: bool) -> str:
+    """The construction callouts a whole job places after the rest of the sheet."""
+    if not explicit:
+        return (f"Add its construction notes as callouts, each pointing at the place given:\n"
+                f"{_note_list(w)}")
+    notes = w.D["callouts"]
+    h = sorted((c["height"] for c in notes),
+               key=lambda h: (-[c["height"] for c in notes].count(h), h))[0]
+    return (f"Then place the sheet's construction callouts on sheet {w.names[0]}, in sheet space: "
+            f"each note in {h:.2f} in text with a leader whose tip lands on the point given as a "
+            f"station and offset on the line named (right is to the right looking up-station). "
+            f"{_note_lines(w)}. Aim each leader at its station and offset through the line "
+            f"(place_callout with target_anchor and the line's name), not at a point worked out "
+            f"by hand, and keep every note clear of the lettering and linework. The notes:\n"
+            f"{_note_list(w)}")
+
+
+def _real_sheet_job(w: _Words, explicit: bool) -> str:
+    return f"{_real_plan_sheet(w, explicit)}\n{_job_notes(w, explicit)}"
+
+
+def _real_annotate_job(w: _Words, explicit: bool) -> str:
+    return f"{_real_annotate_sheet(w, explicit)}\n{_job_notes(w, explicit)}"
+
+
 PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "draw-alignment": _draw_alignment,
     "stationing": _stationing,
@@ -732,6 +828,9 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "attach-reference": _attach_reference,
     "create-alignment": _create_alignment,
     "annotate-base": _annotate_base,
+    "plan-sheet-pavement": _plan_sheet_pavement,
+    "create-plan-sheet": _create_plan_sheet,
+    "base-plan-sheet": _base_plan_sheet,
     "real-stationing": _real_stationing,
     "real-bearings": _real_bearings,
     "real-callouts": _real_callouts,
@@ -744,6 +843,8 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "real-annotate-sheet": _real_annotate_sheet,
     "real-plan-sheet": _real_plan_sheet,
     "real-construction-callouts": _real_construction_callouts,
+    "real-sheet-job": _real_sheet_job,
+    "real-annotate-job": _real_annotate_job,
 }
 
 

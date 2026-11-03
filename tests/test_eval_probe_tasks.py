@@ -29,10 +29,11 @@ def _ids(probes):
 def test_the_set_is_every_pilot_once_with_current_ids():
     rows = tasksets.load(P.PILOT_SET)["tasks"]
     assert sorted(r["probe"] for r in rows) == sorted(p.id for p in PILOT_PROBES)
-    assert len(rows) == 33 and len({r["task_id"] for r in rows}) == 33
+    # 33 pilots until 2026-11-03, 112 since (Robert: "expand the hard pilots to a set of at least 100")
+    assert len(rows) == 112 and len({r["task_id"] for r in rows}) == 112
     assert all(r["task_id"].startswith(P.ID_PREFIX + r["probe"]) for r in rows)
     assert {r["task_type"] for r in rows} == {"pilot-" + n for n in P.FAMILIES.values()}
-    assert sum(r["attachments"] for r in rows) == 9   # the scanned-sheet and marked-up-page pilots
+    assert sum(r["attachments"] for r in rows) == 23   # the scanned-sheet and marked-up-page pilots
     assert tasksets.load(P.PILOT_SET)["generator_version"] == P.generator_version()
     assert not tasksets.check(P.PILOT_SET)
     task = tasksets.task_from_entry(rows[0])
@@ -65,17 +66,18 @@ def test_oracle_passes_and_null_fails_through_the_loop_and_reverify_agrees(tmp_p
     # the episodes are stamped with the pilot checks' version, and the run is held to it
     assert s["versions"]["verifier_version"] == [P.check_version()]
     assert s["current_versions"]["verifier_version"] == P.check_version()
-    # three pilots of 33: a partial run, published and listed but not ranked
-    assert s["partial"] and s["coverage"] == {"tasks_run": len(FAST), "tasks_in_set": 33,
+    # three pilots of the set: a partial run, published and listed but not ranked
+    n = len(P.current_ids())
+    assert s["partial"] and s["coverage"] == {"tasks_run": len(FAST), "tasks_in_set": n,
                                               "missing": sorted(P.current_ids() - set(_ids(FAST))),
                                               "foreign": []}
     b = R.board([{k: v for k, v in s.items() if k != "_episodes"}])
     assert not b["boards"][P.PILOT_SET]["ranked"] and b["others"][0]["run_id"] == "hp"
     assert b["others"][0]["partial"]["tasks_run"] == len(FAST)
-    assert b["others"][0]["reasons"] == [f"partial: covers {len(FAST)} of the set's 33 tasks; "
+    assert b["others"][0]["reasons"] == [f"partial: covers {len(FAST)} of the set's {n} tasks; "
                                          "a row ranks once the run holds every task of the current set"]
-    assert f"**partial: {len(FAST)} of 33 tasks**" in R.render_board(b)
-    assert f"> **Partial:** covers {len(FAST)} of the set's 33 tasks" in R.render_markdown(s)
+    assert f"**partial: {len(FAST)} of {n} tasks**" in R.render_board(b)
+    assert f"> **Partial:** covers {len(FAST)} of the set's {n} tasks" in R.render_markdown(s)
     # the run is held to its task ids, not the set's hash: a grown set leaves it current
     monkeypatch.setattr(P, "generator_version", lambda probes=None: "probe-000000000000")
     grown = R.build(run_dir, check_delta=False)
@@ -182,12 +184,13 @@ def test_the_check_version_follows_the_pilot_sources(tmp_path):
 
 def test_a_probe_run_is_held_to_its_task_ids_not_the_sets_hash():
     ids = sorted(P.current_ids())
-    assert len(ids) == 33 and set(ids) == {r["task_id"] for r in tasksets.load(P.PILOT_SET)["tasks"]}
+    n = len(ids)
+    assert n == 112 and set(ids) == {r["task_id"] for r in tasksets.load(P.PILOT_SET)["tasks"]}
     cov = R.coverage(P.PILOT_SET, ids[:24])
-    assert cov == {"tasks_run": 24, "tasks_in_set": 33, "missing": ids[24:], "foreign": []}
+    assert cov == {"tasks_run": 24, "tasks_in_set": n, "missing": ids[24:], "foreign": []}
     gone = "PR-p99-gone-0123456789"
     cov2 = R.coverage(P.PILOT_SET, ids + [gone])
-    assert cov2["foreign"] == [gone] and not cov2["missing"] and cov2["tasks_run"] == 34
+    assert cov2["foreign"] == [gone] and not cov2["missing"] and cov2["tasks_run"] == n + 1
     assert R.coverage("d1-test", ids) is None and R.coverage(None, ids) is None
     base = {"taskset": P.PILOT_SET, "stale": [], "incomplete": [],
             "versions": {"spec_version": ["v1"], "spec_hash": ["x"],
@@ -195,9 +198,9 @@ def test_a_probe_run_is_held_to_its_task_ids_not_the_sets_hash():
     # a run on part of the set is not a publish problem; an id the set no longer has is
     assert R.publish_problems({**base, "coverage": cov}) == []
     probs = R.publish_problems({**base, "coverage": cov2})
-    assert len(probs) == 1 and probs[0].startswith("1 of the run's 34 task ids are not in the current set")
+    assert len(probs) == 1 and probs[0].startswith(f"1 of the run's {n + 1} task ids are not in the current set")
     assert gone in probs[0]
-    assert R.partial_reason(cov) == ("partial: covers 24 of the set's 33 tasks; a row ranks once the "
+    assert R.partial_reason(cov) == (f"partial: covers 24 of the set's {n} tasks; a row ranks once the "
                                      "run holds every task of the current set")
 
 

@@ -1,12 +1,16 @@
 """Build the catalogue of D1 tasks on the redrafted example plan sheets.
 
     PYTHONPATH=src .venv/bin/python scripts/real_tasks.py [--out benchmarks/real_tasks/catalog.json]
+    PYTHONPATH=src .venv/bin/python scripts/real_tasks.py --jobs   # catalog-jobs.json
 
 Every (sheet, alignment, task type) pairing ``roaddraft.tasks.real.candidates``
 finds is built and validated (reference solution 100, starting document 0, at
 both prompt levels); the catalogue lists the tasks that pass, with their ids,
 and every pairing left out with the reason.  Rebuild it whenever the redrafts,
-the spec, the generator or the verifier change.
+the spec, the generator or the verifier change.  ``--jobs`` builds the
+whole-job types (``tasks.types.REAL_JOB_TYPES``, the ``d1-real-hard`` set's
+own) into their own catalogue, so the main one and ``d1-real`` stay as they
+are.
 """
 from __future__ import annotations
 
@@ -18,11 +22,14 @@ import time
 from pathlib import Path
 
 from roaddraft.tasks.real import catalog
+from roaddraft.tasks.types import REAL_JOB_TYPES
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--out", default="benchmarks/real_tasks/catalog.json")
+    ap.add_argument("--out")
+    ap.add_argument("--jobs", action="store_true",
+                    help="the whole-job types, into benchmarks/real_tasks/catalog-jobs.json")
     ap.add_argument("--quiet", action="store_true")
     ns = ap.parse_args(argv)
     t0 = time.time()
@@ -33,8 +40,9 @@ def main(argv=None) -> int:
             print(mark, row["sheet_id"], row["alignment"], row["type"], row.get("why", ""),
                   flush=True)
 
-    cat = catalog(progress)
-    out = Path(ns.out)
+    cat = catalog(progress, REAL_JOB_TYPES if ns.jobs else None)
+    out = Path(ns.out or ("benchmarks/real_tasks/catalog-jobs.json" if ns.jobs
+                          else "benchmarks/real_tasks/catalog.json"))
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(cat, indent=1, ensure_ascii=False) + "\n")
     tasks = cat["tasks"]

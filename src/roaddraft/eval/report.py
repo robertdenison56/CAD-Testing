@@ -96,10 +96,12 @@ RUNS_DIR = REPO / "benchmarks" / "runs"
 LEADERBOARD_SET = "d1-test"
 #: every set a board ranks on, each its own ranking: the seeded sheets and the
 #: redrafted sample plan sheets (eval/taskset.py)
-LEADERBOARD_SETS = ("d1-test", "d1-real", "hard-pilots")
+LEADERBOARD_SETS = ("d1-test", "d1-real", "hard-pilots", "d1-test-hard", "d1-real-hard")
 #: what each board is, in a heading
 SET_TITLES = {"d1-test": "seeded sheets", "d1-real": "the sample plan sheets",
-              "hard-pilots": "the harder tasks (pass or fail)"}
+              "hard-pilots": "the harder tasks (pass or fail)",
+              "d1-test-hard": "seeded sheets, the whole job (3-5 curves, 2-3 sheets)",
+              "d1-real-hard": "the sample plan sheets, the whole job"}
 NEVER_REPORTED = ("d1-dev", "d1-real-dev")
 #: the CI half-width the v0.1 acceptance asks for, in points
 TARGET_HALF_WIDTH = 5.0
@@ -1116,6 +1118,15 @@ def _not_a_board(taskset: Optional[str]) -> str:
             f"({', '.join(LEADERBOARD_SETS)})")
 
 
+def _pilot_count() -> str:
+    """How many pilots ``hard-pilots`` holds, from its manifest ("the" when unread)."""
+    try:
+        from roaddraft.eval.taskset import load
+        return f"the {len(load('hard-pilots')['tasks'])}"
+    except (OSError, ValueError, KeyError):
+        return "the"
+
+
 def board(summaries: Sequence[dict]) -> dict:
     """Ranked rows across published runs, one ranking per leaderboard set
     (``boards``): model rows from rankable runs on that set; harness agents
@@ -1243,8 +1254,11 @@ def render_board(b: dict, readme: bool = False) -> str:
                   "every task of the current set (a run on part of it is published as partial and "
                   "listed among the runs not ranked); each task scores 100 on a pass and 0 on a fail "
                   "by its own check, "
-                  "whose source hash is the row's verifier version. The nine pilots that come with "
-                  "a page need a model that takes images."]
+                  "whose source hash is the row's verifier version. The pilots that come with a "
+                  "page (23 of 112) need a model that takes images."]
+        elif name == "d1-test-hard":
+            L += ["No ranked run yet. A row needs a published run on `d1-test-hard` under a "
+                  "frozen spec (a one-task smoke run first, `--limit 1`)."]
         else:
             L += [f"No ranked run yet. A row needs a published run on `{name}` under a frozen "
                   "spec, with the catalogue it was drawn from validated under the verifier "
@@ -1273,10 +1287,17 @@ def render_board(b: dict, readme: bool = False) -> str:
               "generator (one synthetic centerline per task); `d1-real` is 100 held-out tasks on "
               "the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), 25 in each of four "
               "question groups (draft linework, letter alignment data, produce the sheet, notes and "
-              "dimensions), each group a column beside the blended score; `hard-pilots` is the 33 "
-              "harder-task pilots on the sample sheets, "
+              "dimensions), each group a column beside the blended score; `hard-pilots` is "
+              f"{_pilot_count()} harder-task pilots on the sample sheets, "
               "each graded pass (100) or fail (0) by its own check, with the share of its items "
-              "done as the rubric column. A model's rows on different sets are not averaged.",
+              "done as the rubric column; `d1-test-hard` is 100 held-out seeded whole-sheet jobs "
+              "(three to five curves on two or three sheets, a station equation on every one: the "
+              "plan sheet with its pavement, the alignment created from stated geometry and then "
+              "drafted, the sheet file lettered through its base drawing); `d1-real-hard` is 100 "
+              "tasks on the redrafted sheets, every whole job (a sheet drafted from its base files "
+              "or annotated from blank, construction callouts included) and the heaviest "
+              "whole-line tasks `d1-real` did not draw. A model's rows on different sets are not "
+              "averaged.",
               "", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
               "samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank "
               "on the effective mean, then hard-fail rate, invalid-call rate and cost. Effort is the "

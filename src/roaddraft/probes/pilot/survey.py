@@ -52,6 +52,21 @@ careful model can see the naive one does not.
   points 201-204, 1001 and 1002 each within 0.05 ft (intl x 0.999998, metres
   x 3937/1200).
 
+Four more (2026-11):
+
+* ``p03-misclosure-ppm049`` -- Caltrans L-5: a 10-course deed (two R/W
+  courses, seven along an old fence), misclosure 0.354 ft, 1:4,840.
+* ``p03-misclosure-fdot915`` -- FDOT sheet 12: a 6-course deed with a tangent
+  curve along SR 61's R/W (R 810.91), misclosure 0.282 ft, 1:4,259. The
+  balance moves the curve's ends and the curve keeps its radius; the check
+  adds an item for the curve drawn on its balanced arc.
+* ``p03-grid-ground-cflpnp`` -- CFL Plan 1 the other way round: the drawing is
+  project ground (scaled about CP-1), the GPS locates are state plane grid, so
+  the combined factor 0.999562 is divided out.
+* ``p03-intl-feet-wfl15`` -- WFL D.6 moved onto Montana State Plane, which is
+  defined in international feet: the drawing is international feet, the data
+  US survey feet and metres (x 1.000002 and / 0.3048).
+
 Every check reads only the submitted document: the points, the V-PROP
 linework and its label, and the set_meta answers.
 """
@@ -59,13 +74,14 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.design import cogo
 from roaddraft.document.document import Document
-from roaddraft.document.entities import Line, Point, Polyline, Text
+from roaddraft.document.entities import Arc, Line, Point, Polyline, Text, entity_distance
 from roaddraft.document.fileformat import read_document, write_document
 from roaddraft.probes.base import Probe, Result, Tally
 from roaddraft.probes.pilot import common
@@ -556,11 +572,486 @@ IF_PROMPT = (
     "metres): " + _intl_list("m") + ".")
 
 
+# ================================================ 4. more deeds (2026-11)
+
+#: a corner or a point on a curve course within this of the balance passes
+DEED_CORNER_FT = 0.02
+
+
+@dataclass(frozen=True)
+class Deed:
+    """A deed to plot, check and balance: the point of beginning and the courses
+    as written (``cogo`` legs: ``{bearing, distance}`` or a tangent curve
+    ``{radius, turn, delta}``), on the design file ``file`` of ``sheet_id``."""
+    id: str
+    sheet_id: str
+    file: str
+    pob: Tuple[float, float]
+    legs: Tuple[dict, ...]
+    layer: str = "V-PROP"
+
+
+def _arc_frame(a, b, radius: float, turn: int):
+    """``(center, azimuth from the center to a, sweep in degrees)`` of the arc
+    of ``radius`` from ``a`` to ``b`` that turns ``turn`` (+1 right, -1 left);
+    a positive sweep runs clockwise."""
+    chord = math.dist(a, b)
+    half = math.asin(min(1.0, chord / (2.0 * radius)))
+    az, _ = cogo.inverse(a, b)
+    az_in = az - turn * math.degrees(half)
+    center = cogo.forward(a, az_in + turn * 90.0, radius)
+    a0, _ = cogo.inverse(center, a)
+    return center, a0, 2.0 * math.degrees(half) * turn
+
+
+def _arc_points(a, b, radius: float, turn: int, step_ft: float = 1.0) -> List[List[float]]:
+    """Points along the arc of ``radius`` from ``a`` to ``b`` (both included),
+    bowing the way a curve that turns ``turn`` (+1 right, -1 left) does."""
+    center, a0, sweep = _arc_frame(a, b, radius, turn)
+    n = max(2, int(math.ceil(radius * math.radians(abs(sweep)) / step_ft)))
+    return [cogo.forward(center, a0 + sweep * k / n, radius) for k in range(n + 1)]
+
+
+def deed_truth(deed: Deed) -> dict:
+    """The deed plotted from its POB (``cogo.run_traverse``, curves on their own
+    arcs), its misclosure, and the compass-rule balance holding the POB: each
+    corner moves by the misclosure times its share of the perimeter run to it
+    (course lengths as ``traverse`` reports them: a curve by its arc). A balanced
+    curve keeps its radius between its balanced ends."""
+    t = cogo.run_traverse(deed.pob, [dict(leg) for leg in deed.legs], close=True)
+    raw = [list(deed.pob)] + [list(c.end) for c in t.courses]
+    m = t.misclosure()
+    corners, run = [list(deed.pob)], 0.0
+    for i, course in enumerate(t.courses[:-1]):
+        run += course.length
+        corners.append([raw[i + 1][0] + m["dx"] * run / m["perimeter"],
+                        raw[i + 1][1] + m["dy"] * run / m["perimeter"]])
+    arcs = []
+    boundary: List[List[float]] = []
+    for i, course in enumerate(t.courses):
+        a, b = corners[i], corners[(i + 1) % len(corners)]
+        if course.kind == "curve":
+            arcs.append((i, course.radius, course.turn))
+            boundary.extend(_arc_points(a, b, course.radius, course.turn)[:-1])
+        else:
+            boundary.append(a)
+    return {"raw": raw, "corners": corners, "arcs": arcs, "boundary": boundary,
+            "misclosure": m["distance"], "perimeter": m["perimeter"],
+            "precision": m["perimeter"] / m["distance"], "area": _shoelace(boundary)}
+
+
+def _deed_vertices(entities) -> List[List[float]]:
+    """Line and polyline vertices, and the two ends of each arc."""
+    pts = _vertices(entities)
+    for e in entities:
+        if isinstance(e, Arc):
+            for ang in (e.start_angle_deg, e.end_angle_deg):
+                pts.append([e.center[0] + e.radius * math.cos(math.radians(ang)),
+                            e.center[1] + e.radius * math.sin(math.radians(ang))])
+    return pts
+
+
+def _on_arcs(v, truth: dict, tol: float) -> bool:
+    """Whether ``v`` lies on one of the balanced curves (within ``tol`` of the
+    circle, inside the curve's sweep)."""
+    corners = truth["corners"]
+    for i, radius, turn in truth["arcs"]:
+        a, b = corners[i], corners[(i + 1) % len(corners)]
+        center, a0, sweep = _arc_frame(a, b, radius, turn)
+        az, d = cogo.inverse(center, v)
+        along = ((az - a0) * (1 if sweep > 0 else -1)) % 360.0
+        if abs(d - radius) <= tol and along <= abs(sweep) + 1e-6:
+            return True
+    return False
+
+
+def check_deed(deed: Deed, baseline: Session, submitted: Session) -> Result:
+    """``check_misclosure`` for any deed: the balanced boundary closed on the
+    layer, every corner within 0.02 ft, no other vertex off a corner (or off a
+    balanced curve, for a curve drawn as short chords), the area labelled
+    inside, misclosure, precision and area recorded."""
+    truth = deed_truth(deed)
+    corners = truth["corners"]
+    tally = Tally()
+    drawn = [e for e in added_model(baseline, submitted)
+             if e.layer == deed.layer and isinstance(e, (Line, Polyline, Arc))]
+    own_area = None
+    if not drawn:
+        tally.add(f"balanced parcel drawn closed on {deed.layer}",
+                  f"nothing was drawn on {deed.layer}")
+        tally.add("corners on the compass-rule balance (0.02 ft)", "no corners to check")
+        tally.add(f"no unbalanced or extra corners on {deed.layer}", "no corners to check")
+    else:
+        closed = submitted.query("area", {"ids": [e.id for e in drawn]})
+        loops = closed.get("loops") or []
+        if not closed.get("ok"):
+            tally.add(f"balanced parcel drawn closed on {deed.layer}",
+                      f"the {deed.layer} linework is not a closed boundary: "
+                      f"{closed['error']['message']}")
+        elif len(loops) != 1:
+            tally.add(f"balanced parcel drawn closed on {deed.layer}",
+                      f"the {deed.layer} linework makes {len(loops)} loops, not one parcel")
+        else:
+            tally.add(f"balanced parcel drawn closed on {deed.layer}", None)
+        vertices = _deed_vertices(drawn)
+        misses = [(i, min(math.dist(v, c) for v in vertices)) for i, c in enumerate(corners)]
+        worst = max(misses, key=lambda m: m[1])
+        tally.add("corners on the compass-rule balance (0.02 ft)",
+                  None if worst[1] <= DEED_CORNER_FT else
+                  f"corner {worst[0] + 1} of the balanced parcel is {worst[1]:.3f} ft from the "
+                  f"nearest {deed.layer} vertex (compass rule puts it at "
+                  f"[{corners[worst[0]][0]:.3f}, {corners[worst[0]][1]:.3f}])")
+        stray = [v for v in vertices
+                 if min(math.dist(v, c) for c in corners) > DEED_CORNER_FT
+                 and not _on_arcs(v, truth, DEED_CORNER_FT)]
+        tally.add(f"no unbalanced or extra corners on {deed.layer}",
+                  None if not stray else
+                  f"{len(stray)} {deed.layer} vertices are not corners of the balanced parcel, "
+                  f"e.g. [{stray[0][0]:.3f}, {stray[0][1]:.3f}]")
+        for i, radius, turn in truth["arcs"]:
+            a, b = corners[i], corners[(i + 1) % len(corners)]
+            center, a0, sweep = _arc_frame(a, b, radius, turn)
+            mid = cogo.forward(center, a0 + sweep / 2.0, radius)
+            d = min(entity_distance(submitted.doc, e, mid) for e in drawn)
+            tally.add(f"curve course {i + 1} drawn on its balanced arc (0.05 ft)",
+                      None if d <= 0.05 else
+                      f"the {deed.layer} linework passes {d:.2f} ft from the middle of the "
+                      f"balanced curve of course {i + 1} (radius {radius:.2f}, at "
+                      f"[{mid[0]:.3f}, {mid[1]:.3f}])")
+        if tally.clean:
+            own_area = float(closed["area"])
+
+    def area_ok(value: float) -> bool:
+        return (abs(value - truth["area"]) <= MIS_AREA_SQFT
+                or (own_area is not None and abs(value - own_area) <= MIS_AREA_SQFT))
+
+    labels = [e for e in added_model(baseline, submitted) if isinstance(e, Text)
+              and any(area_ok(n) for n in numbers(e.content))]
+    inside = [e for e in labels if _inside(e.position, truth["boundary"])]
+    tally.add("area label inside the parcel (1 sq ft)",
+              None if inside else
+              ("the area label is not inside the parcel" if labels else
+               f"no text gives the parcel's area ({truth['area']:,.0f} sq ft balanced)"))
+    value = meta_value(submitted, "misclosure_ft")
+    found = numbers(value) if value is not None else []
+    tally.add("misclosure_ft recorded (0.01 ft)",
+              "set_meta has no misclosure_ft" if not found else
+              None if abs(found[0] - truth["misclosure"]) <= MIS_CLOSE_FT else
+              f"misclosure_ft is {value}; the deed misses its start by {truth['misclosure']:.3f} ft")
+    value = meta_value(submitted, "precision")
+    n = _parse_precision(value)
+    tally.add("precision recorded as 1:N (3 %)",
+              "set_meta has no precision" if n is None else
+              None if abs(n - truth["precision"]) <= MIS_PRECISION * truth["precision"] else
+              f"precision is {value}; the deed closes 1:{truth['precision']:,.0f}")
+    value = meta_value(submitted, "area_sqft")
+    found = numbers(value) if value is not None else []
+    tally.add("area_sqft recorded (1 sq ft)",
+              "set_meta has no area_sqft" if not found else
+              None if area_ok(found[0]) else
+              f"area_sqft is {value}; the balanced parcel is {truth['area']:,.1f} sq ft")
+    return tally.result(f"balanced parcel on {deed.layer}, misclosure "
+                        f"{truth['misclosure']:.3f} ft, 1:{truth['precision']:,.0f}, "
+                        f"{truth['area']:,.0f} sq ft")
+
+
+def solve_deed(deed: Deed, session: Session, balance: bool = True) -> None:
+    """Plot the deed with ``traverse`` (close=true for the misclosure), balance
+    it by the compass rule and draw it as one closed polyline, the curve as a
+    bulge on its balanced chord. ``balance=False`` draws the deed as written,
+    closed with a closing course (the naive answer the tests check fails)."""
+    r = common.ok(session.query("traverse", {
+        "start": list(deed.pob), "close": True, "legs": [dict(leg) for leg in deed.legs]}))
+    raw, closure, perimeter = r["points"], r["closure"], r["length"]
+    corners, run = [raw[0]], 0.0
+    for i, course in enumerate(r["courses"][:-1]):
+        run += course.get("distance", course.get("length"))
+        k = run / perimeter if balance else 0.0
+        corners.append([raw[i + 1][0] + closure["dx"] * k, raw[i + 1][1] + closure["dy"] * k])
+    if not balance:
+        corners.append(raw[-1])
+    bulges = [0.0] * len(corners)
+    for i, course in enumerate(r["courses"]):
+        if course["kind"] == "curve" and i + 1 < len(corners):
+            chord = math.dist(corners[i], corners[i + 1])
+            half = math.asin(min(1.0, chord / (2.0 * course["radius"])))
+            sign = -1.0 if course["turn"] == "right" else 1.0
+            bulges[i] = sign * math.tan(half / 2.0)
+    session.execute("create_layer", {"name": deed.layer, "color": "magenta",
+                                     "linetype": "phantom", "lineweight_mm": 0.35,
+                                     "description": "property lines"})
+    params = {"space": "model", "layer": deed.layer, "vertices": corners, "closed": True}
+    if any(bulges):
+        params["bulges"] = bulges
+    pl = common.ok(session.execute("draw_polyline", params))["created"][0]
+    area = common.ok(session.query("area", {"ids": [pl]}))
+    common.ok(session.execute("place_text", {
+        "space": "model", "layer": deed.layer, "position": area["centroid"],
+        "content": f"REMAINDER PARCEL\n{area['area']:,.0f} SQ FT", "height": 5.0,
+        "halign": "center", "valign": "middle"}))
+    common.ok(session.execute("set_meta", {"updates": {
+        "misclosure_ft": round(closure["distance"], 3),
+        "precision": closure["precision_text"],
+        "area_sqft": round(area["area"])}}))
+
+
+def _course_text(leg: dict) -> str:
+    if "radius" in leg:
+        arc = leg["radius"] * math.radians(cogo.parse_dms(leg["delta"]))
+        return (f"along a tangent curve to the {leg['turn']}, having a radius of "
+                f"{leg['radius']:.2f} feet, through a central angle of {leg['delta']}, an arc "
+                f"distance of {arc:.2f} feet")
+    return f"{leg['bearing']} {leg['distance']:.2f} feet"
+
+
+def _deed_prompt(intro: str, deed_text: str, sheet: str) -> str:
+    return (intro + " The deed reads: " + deed_text + " Check the closure: work out the "
+            "misclosure and the precision, balance the traverse by the compass (Bowditch) rule "
+            "holding the point of beginning, and draw the balanced parcel as one closed boundary "
+            f"on layer V-PROP. Label its area in square feet inside the parcel. Record the "
+            f"results with set_meta: misclosure_ft, precision (as 1:N) and area_sqft.")
+
+
+#: Caltrans L-5 (Route 65): the easterly R/W line of AA01 runs from the angle
+#: point LN-433 starts at, through the angle point at its end, on along LN-432;
+#: the parcel east of it leaves the R/W at LN-432's end and follows an old fence
+#: back in seven courses. Written with course 5 0.38 ft long (true 143.07) and
+#: course 8 48" off (true S 13°35'05" W): misclosure 0.354 ft, 1:4,840.
+DEED_PPM049 = Deed(
+    id="p03-misclosure-ppm049", sheet_id="PPM-049", file="0000000000aa01.rdraft",
+    pob=(10521.57, 9993.77),
+    legs=({"bearing": "N 45°42'45\" W", "distance": 399.34},
+          {"bearing": "N 40°00'00\" W", "distance": 167.75},
+          {"bearing": "N 41°29'47\" E", "distance": 212.37},
+          {"bearing": "S 61°47'07\" E", "distance": 96.18},
+          {"bearing": "N 66°23'28\" E", "distance": 143.45},
+          {"bearing": "S 28°12'40\" E", "distance": 188.52},
+          {"bearing": "S 52°41'26\" E", "distance": 124.93},
+          {"bearing": "S 13°35'53\" W", "distance": 151.66},
+          {"bearing": "S 51°05'53\" W", "distance": 87.20},
+          {"bearing": "S 19°37'40\" W", "distance": 142.49}))
+
+
+def _deed_text_ppm049() -> str:
+    c = [_course_text(leg) for leg in DEED_PPM049.legs]
+    n, e = DEED_PPM049.pob[1], DEED_PPM049.pob[0]
+    return (f"BEGINNING at an angle point in the easterly right of way line of State Highway "
+            f"03-PLA-65 at N {n:,.2f}, E {e:,.2f}; thence along said right of way line "
+            f"{c[0]}; thence {c[1]}; thence leaving said right of way line along an existing "
+            f"fence the following seven courses: {c[2]}; {c[3]}; {c[4]}; {c[5]}; {c[6]}; "
+            f"{c[7]}; {c[8]}; thence leaving said fence {c[9]} to the POINT OF BEGINNING.")
+
+
+#: FDOT sheet 12 (SR 61): the parcel north-east of the road, on the right of
+#: way 67.95 ft right of CL1 from 702+50 through the PC (705+70.34) and around
+#: the R/W curve (CL1's 878.86-ft curve, 810.91 ft at the R/W) to 706+95, then
+#: a radial line and three new courses back. Written with course 4 0.29 ft
+#: long (true 238.71) and course 5 41" off (true S 71°17'11" E): misclosure
+#: 0.282 ft, 1:4,259.
+DEED_FDOT915 = Deed(
+    id="p03-misclosure-fdot915", sheet_id="FDOT-915-1-Roadway-Plan-Profile",
+    file="DSGNRD01.rdraft", pob=(10118.17, 10004.71),
+    legs=({"bearing": "N 59°59'25\" W", "distance": 320.34},
+          {"radius": 810.91, "turn": "right", "delta": "8°07'38\""},
+          {"bearing": "N 38°08'13\" E", "distance": 152.43},
+          {"bearing": "S 55°22'39\" E", "distance": 239.00},
+          {"bearing": "S 71°17'52\" E", "distance": 196.18},
+          {"bearing": "S 35°25'14\" W", "distance": 179.07}))
+
+
+def _deed_text_fdot915() -> str:
+    c = [_course_text(leg) for leg in DEED_FDOT915.legs]
+    n, e = DEED_FDOT915.pob[1], DEED_FDOT915.pob[0]
+    return (f"COMMENCE at a point on the northeasterly right of way line of State Road 61 at "
+            f"N {n:,.2f}, E {e:,.2f}, said point being the POINT OF BEGINNING; thence along "
+            f"said right of way line {c[0]}; thence continue along said right of way line "
+            f"{c[1]}; thence leaving said right of way line {c[2]}; thence {c[3]}; thence "
+            f"{c[4]}; thence {c[5]} to the POINT OF BEGINNING.")
+
+
+DEED_PPM049_PROMPT = _deed_prompt(
+    "Right of Way sent the grant deed for the remainder parcel east of Route 65 on layout "
+    "sheet L-5. Plot it in this design file (the L-5 base, on the project's local "
+    "coordinates).", _deed_text_ppm049(), "L-5")
+DEED_FDOT915_PROMPT = _deed_prompt(
+    "The right of way agent sent the legal description of the parcel north-east of SR 61 on "
+    "plan-profile sheet 12. Plot it in this design file (the sheet's design base, on the "
+    "project's local coordinates).", _deed_text_fdot915(), "12")
+
+
+def _deed_builder(deed: Deed):
+    def build(out: Path) -> Path:
+        common.stage(out, deed.sheet_id)
+        return out / deed.file
+    return build
+
+
+# ======================================= 5. ground drawing, grid data (CFL)
+
+GG2_ID = "p03-grid-ground-cflpnp"
+GG2_SHEET = "CFL-D-Plan-and-Profile"
+GG2_FILE = "TERSample.rdraft"
+#: the file set moved by translation so CL1 10+00 sits on the coordinates the
+#: sheet letters at BEGIN PROJECT (N 1,214,356.6315 E 2,453,409.7460), taken as
+#: project (ground) coordinates
+GG2_DELTA = (2443915.8235, 1204944.6501)
+GG2_FACTOR = 0.999562
+#: project control, set in the survey file: CL1 10+20 45' Rt, 17+80 60' Lt,
+#: 24+60 50' Rt (project coordinates, N, E)
+GG2_CONTROL = [
+    (1, 1214365.513, 2453458.183, "CP-1 5/8 IN REBAR W/ CFLHD CAP"),
+    (2, 1215135.115, 2453543.488, "CP-2 5/8 IN REBAR W/ CFLHD CAP"),
+    (3, 1215706.778, 2453937.321, "CP-3 5/8 IN REBAR W/ CFLHD CAP"),
+]
+#: the consultant's GPS locates, NAD83 Colorado Central grid (N, E): the ends
+#: of the three 24-inch CMPs the profile notes, at CL1 12+54 23' Lt/Rt, 16+90
+#: 21' Lt/Rt and 21+98 18' Lt/Rt, reduced from project coordinates about CP-1
+#: (grid = CP-1 + (ground - CP-1) x 0.999562) and rounded to the thousandth
+GG2_LOCATES = [
+    (801, "CMP 24 INL", 1214608.830, 2453446.998),
+    (802, "CMP 24 OUT", 1214598.040, 2453491.694),
+    (803, "CMP 24 INL", 1215032.160, 2453551.268),
+    (804, "CMP 24 OUT", 1215021.980, 2453591.997),
+    (805, "CMP 24 INL", 1215475.929, 2453797.334),
+    (806, "CMP 24 OUT", 1215462.573, 2453830.748),
+]
+
+
+def grid_to_ground_truth() -> List[Tuple[int, str, List[float]]]:
+    """Grid to project: scaled up about CP-1, which holds its coordinates
+    (ground = CP-1 + (grid - CP-1) / 0.999562)."""
+    _n, cn, ce, _d = GG2_CONTROL[0]
+    return [(n, desc, [ce + (east - ce) / GG2_FACTOR, cn + (north - cn) / GG2_FACTOR])
+            for n, desc, north, east in GG2_LOCATES]
+
+
+def _build_grid_to_ground(out: Path) -> Path:
+    files = georeference(out, GG2_SHEET, GG2_DELTA)
+    session = common.load(files[GG2_FILE])
+    common.ok(session.execute("create_layer", {"name": "E_SURVEY_CONTROL", "color": "black",
+                                               "description": "project control"}))
+    common.ok(session.execute("create_points", {
+        "space": "model", "layer": "E_SURVEY_CONTROL", "marker": "circle_x",
+        "points": [{"number": n, "northing": north, "easting": east, "description": desc}
+                   for n, north, east, desc in GG2_CONTROL]}))
+    common.save(session, files[GG2_FILE])
+    return files[GG2_FILE]
+
+
+def check_grid_to_ground(baseline: Session, submitted: Session) -> Result:
+    return check_points(baseline, submitted, grid_to_ground_truth(), GG_TOL_FT,
+                        "the grid coordinate scaled to project ground about CP-1",
+                        "all six locates on project ground within 0.05 ft")
+
+
+def solve_grid_to_ground(session: Session) -> None:
+    found = common.ok(session.query("find_entities", {"type": "point", "limit": 50,
+                                                      "detail": "full"}))["entities"]
+    cp1 = next(row["entity"]["position"] for row in found if row["entity"]["number"] == 1)
+    points = [{"number": n, "description": desc,
+               "point": [cp1[0] + (east - cp1[0]) / GG2_FACTOR,
+                         cp1[1] + (north - cp1[1]) / GG2_FACTOR]}
+              for n, desc, north, east in GG2_LOCATES]
+    session.execute("create_layer", {"name": "E_SURVEY_LOCATES", "color": "black"})
+    common.ok(session.execute("create_points", {"space": "model", "layer": "E_SURVEY_LOCATES",
+                                                "points": points}))
+
+
+GG2_PROMPT = (
+    "The utility consultant's GPS locates of the existing culverts on CFL Plan 1 need to go "
+    "into this survey file. Our base files are on the project's ground coordinates: NAD83 "
+    "Colorado Central zone state plane grid coordinates in US survey feet, scaled about "
+    "control point CP-1 (point 1 in this file, which has the same coordinates on both) with "
+    "the project combined scale factor 0.999562; the project control CP-1 to CP-3 is in this "
+    "file. The consultant's list (NAD83 Colorado Central grid, US survey feet; N, E): "
+    + "; ".join(f"{n} N {north:,.3f} E {east:,.3f} {desc}" for n, desc, north, east in GG2_LOCATES)
+    + ". Set them as COGO points with those numbers and descriptions.")
+
+
+# ================================= 6. a drawing in international feet (WFL)
+
+IF2_ID = "p03-intl-feet-wfl15"
+IF2_SHEET = "WFL-Plan-Profile-Sheets-p15"
+IF2_FILE = "SamplePlan_sur.rdraft"
+#: WFL D.6's file set moved by translation onto NAD83 Montana State Plane
+#: (zone 2500, which Montana defines in international feet): the sheet centre
+#: (local E 10,000 N 10,000) to E 928,412.37 N 1,585,236.18, and every file of
+#: the set declares model_units international feet
+IF2_DELTA = (918412.37, 1575236.18)
+#: international feet per US survey foot, and per metre
+US_TO_INTL = (1200.0 / 3937.0) / 0.3048
+M_TO_INTL = 1.0 / 0.3048
+#: the record of survey's R/W monuments, 40 ft left of MAIN 01 at 115+50,
+#: 117+00, 118+50 and 120+00 (US survey feet: N, E), and the GPS control
+#: (metres), each rounded as delivered
+IF2_POINTS = [
+    (301, "RW MON 3-1/4 IN AL CAP", "usft", 1585137.08, 928037.42),
+    (302, "RW MON 3-1/4 IN AL CAP", "usft", 1585262.02, 928129.08),
+    (303, "RW MON 3-1/4 IN AL CAP", "usft", 1585373.80, 928235.29),
+    (304, "RW MON 3-1/4 IN AL CAP", "usft", 1585472.17, 928353.56),
+    (1101, "GPS CP", "m", 483149.363, 282905.966),
+    (1102, "GPS CP", "m", 483295.195, 282999.251),
+]
+
+
+def intl_drawing_truth() -> List[Tuple[int, str, List[float]]]:
+    out = []
+    for number, desc, unit, north, east in IF2_POINTS:
+        k = US_TO_INTL if unit == "usft" else M_TO_INTL
+        out.append((number, desc, [east * k, north * k]))
+    return out
+
+
+def _build_intl_drawing(out: Path) -> Path:
+    files = georeference(out, IF2_SHEET, IF2_DELTA)
+    for path in files.values():
+        data = read_document(path)
+        data.setdefault("meta", {})["model_units"] = "ft"
+        write_document(path, data)
+    return files[IF2_FILE]
+
+
+def check_intl_drawing(baseline: Session, submitted: Session) -> Result:
+    return check_points(baseline, submitted, intl_drawing_truth(), IF_TOL_FT,
+                        "the coordinate converted to international feet",
+                        "all six points in international feet within 0.05 ft")
+
+
+def solve_intl_drawing(session: Session) -> None:
+    points = [{"number": n, "northing": round(north * k, 4), "easting": round(east * k, 4),
+               "description": desc}
+              for n, desc, unit, north, east in IF2_POINTS
+              for k in [US_TO_INTL if unit == "usft" else M_TO_INTL]]
+    session.execute("create_layer", {"name": "V_SURV_MONU", "color": "black"})
+    common.ok(session.execute("create_points", {"space": "model", "layer": "V_SURV_MONU",
+                                                "points": points}))
+
+
+def _if2_list(unit: str) -> str:
+    fmt = "{:,.2f}" if unit == "usft" else "{:,.3f}"
+    return "; ".join(f"{n} N {fmt.format(north)} E {fmt.format(east)} {desc}"
+                     for n, desc, u, north, east in IF2_POINTS if u == unit)
+
+
+IF2_PROMPT = (
+    "The county's record of survey and our GPS control for sheet D.6 need to go into this "
+    "survey file as COGO points, with the numbers and descriptions given. This project is on "
+    "NAD83 Montana State Plane (zone 2500), which Montana law defines in international feet, "
+    "and the base files are in those units. The record of survey's right of way monuments "
+    "(NAD83 Montana State Plane; header: US survey feet): " + _if2_list("usft") + ". The GPS "
+    "control report (NAD83 Montana State Plane, metres): " + _if2_list("m") + ".")
+
+
 # ------------------------------------------------------------------- registry
 
 MIS_START = common.register(MIS_ID, MIS_FILE, _build_misclosure)
 GG_START = common.register(GG_ID, GG_FILE, _build_grid_ground)
 IF_START = common.register(IF_ID, IF_FILE, _build_intl_feet)
+DEED_PPM049_START = common.register(DEED_PPM049.id, DEED_PPM049.file, _deed_builder(DEED_PPM049))
+DEED_FDOT915_START = common.register(DEED_FDOT915.id, DEED_FDOT915.file,
+                                     _deed_builder(DEED_FDOT915))
+GG2_START = common.register(GG2_ID, GG2_FILE, _build_grid_to_ground)
+IF2_START = common.register(IF2_ID, IF2_FILE, _build_intl_drawing)
 
 PROBES: List[Probe] = [
     Probe(id=MIS_ID, prompt=MIS_PROMPT, check=check_misclosure, solve=solve_misclosure,
@@ -583,4 +1074,46 @@ PROBES: List[Probe] = [
                "converted (x 0.999998) fall on the easterly R/W line LN-229; plotted as given "
                "they sit 13.53 ft E and 4.16 ft N of it. GPS points in metres need 3937/1200; "
                "3.28084 is off by the same 13.5 ft, 3.2808333 by about 0.07 ft."),
+    Probe(id=DEED_PPM049.id, prompt=DEED_PPM049_PROMPT,
+          check=lambda b, s: check_deed(DEED_PPM049, b, s),
+          solve=lambda s: solve_deed(DEED_PPM049, s), start=DEED_PPM049_START,
+          tags=["survey", "cogo", "caltrans"],
+          note="Deed of 10 courses on the L-5 easterly R/W (AA01 LN-433, LN-432) and an old "
+               "fence, perimeter 1,713.89 ft; written with course 5 0.38 ft long and course 8 "
+               "48\" off, it misses by 0.354 ft (S 62°52'18\" W), 1:4,840. Compass corrections "
+               "grow from 0.08 ft at corner 2 to 0.33 ft at corner 10; balanced area "
+               "167,644.9 sq ft. Naive answers that fail: the deed drawn as written with a "
+               "closing course, the last corner moved onto the POB, the two scrivener's errors "
+               "found and corrected (it then closes, but that is not the balance asked for)."),
+    Probe(id=DEED_FDOT915.id, prompt=DEED_FDOT915_PROMPT,
+          check=lambda b, s: check_deed(DEED_FDOT915, b, s),
+          solve=lambda s: solve_deed(DEED_FDOT915, s), start=DEED_FDOT915_START,
+          tags=["survey", "cogo", "fdot"],
+          note="Deed of 6 courses with a tangent curve, on SR 61's north-east R/W 67.95 ft "
+               "right of CL1 (702+50 to 706+95, the R/W curve R 810.91 = CL1's 878.86 less "
+               "67.95), perimeter 1,202.04 ft; written with course 4 0.29 ft long and course "
+               "5 41\" off, it misses by 0.282 ft (N 63°20'38\" W), 1:4,259. The balance "
+               "moves the curve's ends; the curve keeps its radius between them (a curve "
+               "drawn as short chords on the balanced arc is accepted); balanced area "
+               "66,156.3 sq ft. Naive answers that fail: the deed as written closed with a "
+               "closing course, the last corner moved onto the POB, the curve drawn as its "
+               "chord (2.0 ft inside the arc at its middle, 156 sq ft short), the curve "
+               "turned the wrong way."),
+    Probe(id=GG2_ID, prompt=GG2_PROMPT, check=check_grid_to_ground, solve=solve_grid_to_ground,
+          start=GG2_START, tags=["survey", "grid-ground", "cfl"],
+          note="The other way round from p03-grid-ground-wfl20: the drawing is project ground "
+               "(CFL Plan 1's set moved so 10+00 is on the lettered BEGIN PROJECT "
+               "coordinates) and the data is state plane grid, so the factor is divided out, "
+               "about CP-1. The locates land on the CMP ends at CL1 12+54, 16+90 and 21+98. "
+               "Plotted as given they are 0.10-0.51 ft short of the ends (toward CP-1); "
+               "multiplied by the factor 0.21-1.02 ft; scaled about N 0, E 0 over 1,000 ft "
+               "off. All fail the 0.05 ft tolerance."),
+    Probe(id=IF2_ID, prompt=IF2_PROMPT, check=check_intl_drawing, solve=solve_intl_drawing,
+          start=IF2_START, tags=["survey", "units", "wfl"],
+          note="The mirror of p03-intl-feet-ppm047: the drawing is international feet (WFL "
+               "D.6's set moved onto Montana State Plane magnitudes, sheet centre E 928,412 "
+               "N 1,585,236, model_units ft), the data US survey feet and metres. US feet "
+               "x 1.000002 put monuments 301-304 on a line 40 ft left of MAIN 01; typed as "
+               "given they are 3.67 ft off, x 0.999998 (the conversion the wrong way) 7.3 ft. "
+               "Metres need / 0.3048 exactly; 3937/1200 is 3.67 ft off."),
 ]

@@ -80,6 +80,25 @@ of 76 samples, D.5 at the two samples past 114+80), the same sheet with the
 profile at 1" = 10' vertical (fails the grid and the grade line), the plan
 turned 3 deg off level (fails the line-up), and a high point lettered on D.5
 (fails the no-high-point item).
+
+Three more instances (2026-11), on the MAIN 01 profile pieced from D.5 to D.12
+(``MAIN01_D5_D12``) and on FDOT's SR 61:
+
+* ``p06-plan-profile-wfl18`` -- D.9, 137+50 to 145+00: no PVI on the sheet,
+  but the 146+40 sag begins at 142+40 and bottoms out on it (low point
+  144+16.62 el 6197.60), so a low point is lettered with no PVI to hang it on.
+* ``p06-plan-profile-wfl21`` -- D.12, 160+00 to 167+50, at the 1" = 10'
+  vertical scale the WFL sheets print (``Job.v_scale``; the grade tolerance
+  stays 0.10 ft, 0.01 in): the tail of the 158+60 curve, two 100' curves 130
+  ft apart with no high or low point, the grade ending at 166+00 mid-grid.
+* ``p06-plan-profile-fdot915`` -- FDOT sheet 12, 700+00 to 707+00: the grade
+  begins at 700+23.62, a PVI with no vertical curve at 702+73.62, and the sag
+  at 706+89.35 whose low point (707+18.83) is just past the sheet.
+
+D.10 and D.11 were not used: MAIN 01 turns 62 deg and 33 deg through them, and
+no level plan lines its stations up with a straight profile axis (2.5 ft).
+The CFL 22+00 crest, the only other high point in the sample profiles, sits on
+CL1's reverse curves for the same reason.
 """
 from __future__ import annotations
 
@@ -88,7 +107,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.core.units import format_station
@@ -103,6 +122,7 @@ V_SCALE = 5.0            # feet of elevation per inch
 GRID_POS_TOL = 0.01      # in: a grid line at its datum position
 GRID_COVER = 0.95        # share of the grid a grid line must span
 GRADE_TOL_IN = 0.02      # in: 0.10 ft of elevation at 1" = 5'
+GRADE_TOL_FT = 0.10      # ft: the same tolerance on a sheet at another vertical scale
 GRADE_STEP = 10.0        # ft between grade-line samples
 X_ALIGN_TOL = 0.05       # in: plan station vs profile station (2.5 ft)
 LEVEL_TOL_DEG = 0.5
@@ -132,6 +152,10 @@ class Job:
     e1: float
     x0: float = 1.0                 # paper inches of the lower-left corner
     y0: float = 1.6
+    v_scale: float = V_SCALE        # feet of elevation per inch on this sheet
+    plan_y: float = 8.2             # the scripted solution's plan viewport: centre y
+    plan_h: float = 4.6             # and height, paper inches
+    level_at: Optional[float] = None    # the station whose direction it levels (default: centre)
 
     def folder(self) -> Path:
         return common.REDRAFT_ROOT / self.redraft
@@ -140,7 +164,12 @@ class Job:
         return self.x0 + (station - self.s0) / H_SCALE
 
     def y(self, elevation: float) -> float:
-        return self.y0 + (elevation - self.e0) / V_SCALE
+        return self.y0 + (elevation - self.e0) / self.v_scale
+
+    @property
+    def grade_tol_in(self) -> float:
+        """The grade-line tolerance on the paper: 0.10 ft of elevation."""
+        return GRADE_TOL_IN if self.v_scale == V_SCALE else GRADE_TOL_FT / self.v_scale
 
     @property
     def x1(self) -> float:
@@ -178,7 +207,49 @@ WFL = Job(
     sheet="D.5", s0=10750.0, e0=6255.0, s1=11500.0, e1=6275.0,
 )
 
+#: the whole MAIN 01 profile, pieced from WFL sheets D.5 to D.12: BEGIN PROJECT
+#: 110+05 to END PROJECT 166+00 (the same PVIs as the striping pilot's)
+MAIN01_D5_D12 = ((11005.0, 6268.77), (11100.0, 6266.87, 150.0), (11610.0, 6255.14, 400.0),
+                 (12350.0, 6247.73, 400.0), (13100.0, 6218.48, 500.0),
+                 (14640.0, 6192.30, 800.0), (15860.0, 6265.50, 600.0),
+                 (16410.0, 6272.65, 100.0), (16540.0, 6273.16, 100.0), (16600.0, 6273.74))
+
+WFL18 = Job(
+    id="p06-plan-profile-wfl18", start="p06-wfl18",
+    redraft="WFL/WFL-Plan-Profile-Sheets/WFL-Plan-Profile-Sheets-p18",
+    sheet_file="SamplePlan_pln_pp5.rdraft", ali_file="SamplePlan_ali.rdraft",
+    refs=(("COR", "SamplePlan_cor.rdraft"), ("SUR", "SamplePlan_sur.rdraft")),
+    alignment="MAIN 01", profile="MAIN 01 PGL", pvis=MAIN01_D5_D12,
+    sheet="D.9", s0=13750.0, e0=6195.0, s1=14500.0, e1=6215.0,
+)
+
+WFL21 = Job(
+    id="p06-plan-profile-wfl21", start="p06-wfl21",
+    redraft="WFL/WFL-Plan-Profile-Sheets/WFL-Plan-Profile-Sheets-p21",
+    sheet_file="SamplePlan_pln_pp8.rdraft", ali_file="SamplePlan_ali.rdraft",
+    refs=(("COR", "SamplePlan_cor.rdraft"), ("SUR", "SamplePlan_sur.rdraft")),
+    alignment="MAIN 01", profile="MAIN 01 PGL", pvis=MAIN01_D5_D12,
+    sheet="D.12", s0=16000.0, e0=6250.0, s1=16750.0, e1=6290.0, v_scale=10.0,
+    level_at=16100.0,
+)
+
+#: FDOT sample sheet 12 (SR 61): BEGIN PROJECT 700+23.62 el 34.85, a grade break
+#: with no vertical curve at 702+73.62 el 34.09 (-0.302% to -0.810%), the 128'
+#: sag at 706+89.35 el 30.72 (K = 115), leaving the sheet on +0.30% (from the
+#: lettered L and K: A = 128 / 115 = 1.11%), carried to 710+00
+FDOT = Job(
+    id="p06-plan-profile-fdot915", start="p06-fdot915",
+    redraft="FDOT-NexGen/FDOT-915-1-Roadway-Plan-Profile",
+    sheet_file="PLPRRD02.rdraft", ali_file="ALGNRD01.rdraft",
+    refs=(("DSGN", "DSGNRD01.rdraft"),),
+    alignment="CL1", profile="CL1 PGL",
+    pvis=((70023.62, 34.85), (70273.62, 34.09), (70689.35, 30.72, 128.0), (71000.0, 31.65)),
+    sheet="12", s0=70000.0, e0=25.0, s1=70700.0, e1=40.0,
+)
+
 JOBS = [CFL, WFL]
+#: the instances added in November 2026
+NEW_JOBS = [WFL18, WFL21, FDOT]
 
 
 # ------------------------------------------------------- the start document
@@ -428,7 +499,7 @@ def _grid_items(job: Job, t: Tally, view: pl.Plot) -> None:
     t.add("profile grid", None if not missing else
           f"no grid line across the profile grid at {', '.join(missing[:6])}"
           f"{' ...' if len(missing) > 6 else ''} (datum: {format_station(job.s0)} el "
-          f"{job.e0:.0f} at paper ({job.x0:.2f}, {job.y0:.2f}), 1\"=50' by 1\"=5')")
+          f"{job.e0:.0f} at paper ({job.x0:.2f}, {job.y0:.2f}), 1\"=50' by 1\"={job.v_scale:g}')")
 
     missing = []
     for st in _full_stations(job.s0, job.s1):
@@ -485,19 +556,19 @@ def _grade_item(job: Job, t: Tally, view: pl.Plot, prof: Profile) -> None:
     for st in samples:
         want = job.y(prof.elevation_at(st))
         ys = _crossings(cands, job.x(st))
-        if not any(abs(y - want) <= GRADE_TOL_IN for y in ys):
+        if not any(abs(y - want) <= job.grade_tol_in for y in ys):
             near = min(ys, key=lambda y: abs(y - want)) if ys else None
             misses.append((st, near))
     if not misses:
         t.add("profile grade line", None)
         return
     st, near = misses[0]
-    drawn = (f"the nearest line there is at el {job.e0 + (near - job.y0) * V_SCALE:.2f}"
+    drawn = (f"the nearest line there is at el {job.e0 + (near - job.y0) * job.v_scale:.2f}"
              if near is not None else "nothing is drawn there")
     t.add("profile grade line",
           f"the grade line misses the design profile at {len(misses)} of {len(samples)} "
           f"stations sampled every {GRADE_STEP:.0f} ft, first at {format_station(st)}: design "
-          f"el {prof.elevation_at(st):.2f}, {drawn} (tolerance {GRADE_TOL_IN * V_SCALE:.2f} ft)")
+          f"el {prof.elevation_at(st):.2f}, {drawn} (tolerance {job.grade_tol_in * job.v_scale:.2f} ft)")
 
 
 def _label_items(job: Job, t: Tally, view: pl.Plot, prof: Profile) -> None:
@@ -572,7 +643,7 @@ def make_check(job: Job):
         _grade_item(job, t, view, prof)
         _label_items(job, t, view, prof)
         return t.result(f"{job.sheet}: plan over profile, grade line within "
-                        f"{GRADE_TOL_IN * V_SCALE:.2f} ft, stations lined up, curves lettered")
+                        f"{job.grade_tol_in * job.v_scale:.2f} ft, stations lined up, curves lettered")
     return check
 
 
@@ -601,10 +672,11 @@ def _text(session: Session, sheet: str, layer: str, at, content: str, rot: float
                                              "valign": valign}))
 
 
-def solve_job(job: Job, session: Session, vertical: float = V_SCALE, curves: bool = True) -> None:
+def solve_job(job: Job, session: Session, vertical: float = None, curves: bool = True) -> None:
     """Lay the sheet out through the command bus. ``vertical`` and ``curves``
     exist to build the naive answers the tests check fail (a 1" = 10' vertical
     scale; the grade drawn PVI to PVI with no vertical curves)."""
+    vertical = job.v_scale if vertical is None else vertical
     sh = job.sheet
     grid = _layer(session, "PROF_GRID", "gray", 0.18)
     grade = _layer(session, "PROF_GRADE", "black", 0.5)
@@ -623,14 +695,19 @@ def solve_job(job: Job, session: Session, vertical: float = V_SCALE, curves: boo
     centre_x = 8.5
     s_c = job.s0 + (centre_x - job.x0) * H_SCALE
     at = common.ok(session.query("station_to_xy", {"alignment": job.alignment, "station": s_c}))
+    twist = -at["direction_deg"]
+    if job.level_at is not None:     # level the first tangent, not the centre's direction
+        twist = -common.ok(session.query("station_to_xy", {"alignment": job.alignment,
+                                                           "station": job.level_at}))["direction_deg"]
     common.ok(session.execute("create_viewport", {
-        "sheet": sh, "center_paper": [centre_x, 8.2], "width_in": 15.4, "height_in": 4.6,
+        "sheet": sh, "center_paper": [centre_x, job.plan_y], "width_in": 15.4,
+        "height_in": job.plan_h,
         "model_center": at["point"], "feet_per_inch": 50.0,
-        "rotation_deg": -at["direction_deg"]}))
+        "rotation_deg": twist}))
     lo, hi = max(job.s0, a.begin_station), min(job.s1, a.end_station)
     common.ok(session.execute("annotate_stationing", {
         "space": "model", "alignment": job.alignment, "station_range": [lo, hi],
-        "interval": 100, "lettering": "full", "view_rotation": -at["direction_deg"],
+        "interval": 100, "lettering": "full", "view_rotation": twist,
         "layer": sta_layer}))
 
     # the grid: one line of each kind, arrayed
@@ -685,19 +762,21 @@ def solve_job(job: Job, session: Session, vertical: float = V_SCALE, curves: boo
         verts = [[X(s), Y(chord(s))] for s in pts]
     common.ok(session.execute("draw_polyline", {"space": sh, "layer": grade, "vertices": verts}))
 
-    # each curve with its PVI on the sheet, and its high or low point
+    # each curve with its PVI on the sheet, and each high or low point on the
+    # sheet (a curve whose PVI is off the sheet can still bottom out on it)
     for vc in prof.curves():
-        if vc["length"] <= 0 or not (job.s0 <= vc["pvi_station"] <= job.s1):
+        if vc["length"] <= 0:
             continue
-        x, y = X(vc["pvi_station"]), Y(vc["pvi_elevation"])
-        common.ok(session.execute("draw_circle", {"space": sh, "layer": note, "center": [x, y],
-                                                  "radius": 0.04}))
-        common.ok(session.execute("draw_line", {"space": sh, "layer": note,
-                                                "start": [x, y + 0.04], "end": [x, y + 0.45]}))
-        _text(session, sh, note, [x - 0.03, y + 0.5],
-              f"PVI {vc['pvi_station_text']}\nEL {vc['pvi_elevation']:.2f}", rot=90.0)
-        _text(session, sh, note, [x, y - 0.35],
-              f"{vc['length']:.0f}' VC\nK = {vc['K']:.0f}", halign="center", valign="top")
+        if job.s0 <= vc["pvi_station"] <= job.s1:
+            x, y = X(vc["pvi_station"]), Y(vc["pvi_elevation"])
+            common.ok(session.execute("draw_circle", {"space": sh, "layer": note,
+                                                      "center": [x, y], "radius": 0.04}))
+            common.ok(session.execute("draw_line", {"space": sh, "layer": note,
+                                                    "start": [x, y + 0.04], "end": [x, y + 0.45]}))
+            _text(session, sh, note, [x - 0.03, y + 0.5],
+                  f"PVI {vc['pvi_station_text']}\nEL {vc['pvi_elevation']:.2f}", rot=90.0)
+            _text(session, sh, note, [x, y - 0.35],
+                  f"{vc['length']:.0f}' VC\nK = {vc['K']:.0f}", halign="center", valign="top")
         hl = vc["high_low"]
         if hl and job.s0 <= hl["station"] <= job.s1:
             hx, hy = X(hl["station"]), Y(hl["elevation"])
@@ -728,7 +807,7 @@ def _prompt(job: Job) -> str:
         f"{sta(job.s0)} to {sta(job.s1)}, using the design profile "
         f"{job.profile}. Plan view on top at 1\"=50', turned so the centerline runs level "
         f"left to right, with the centerline stationed (every full station lettered). Profile "
-        f"view below it at 1\"=50' horizontal and 1\"=5' vertical: put the profile grid's "
+        f"view below it at 1\"=50' horizontal and 1\"={job.v_scale:g}' vertical: put the profile grid's "
         f"lower-left corner at paper ({job.x0:.2f}, {job.y0:.2f}) in, which is station "
         f"{sta(job.s0)}, elevation {job.e0:.2f}; the grid runs to station "
         f"{sta(job.s1)} and elevation {job.e1:.2f}, with a line at every full station "
@@ -747,7 +826,7 @@ def _probe(job: Job, note: str) -> Probe:
         note=note, tags=["pilot-06", "plan-profile", "layout"], start=job.start)
 
 
-for _job in JOBS:
+for _job in JOBS + NEW_JOBS:
     _register(_job)
 
 PROBES: List[Probe] = [
@@ -761,6 +840,35 @@ PROBES: List[Probe] = [
                 "(111+00, 150' VC, K 500) is a crest between -2.00% and -2.30%, so there is no "
                 "high point to letter (lettering one fails); the 116+10 sag begins at 114+10, "
                 "on the sheet, so the grade must bend before 115+00."),
+    _probe(WFL18, "WFL sheet D.9 (MAIN 01, 137+50 to 145+00) at 1\"=50' over 1\"=5'. Planted: "
+                  "no PVI is on the sheet (131+00 is on D.8, 146+40 on D.10), yet the 146+40 "
+                  "sag (-1.70% to +6.00%, 800' VC, K 104) begins at its PVC 142+40 on this sheet "
+                  "and bottoms out here: low point 144+16.62 el 6197.60, which must be lettered "
+                  "with no PVI label to hang it on; the grade line is the -1.70% tangent from "
+                  "137+50 and the curve from 142+40. Naive answers that fail: the grade drawn "
+                  "PVI to PVI (3.25 ft off at 145+00), the low point left unlettered or lettered "
+                  "at the PVI."),
+    _probe(WFL21, "WFL sheet D.12 (MAIN 01, 160+00 to 167+50) at the vertical scale the WFL "
+                  "sheets print, 1\"=10' (5:1), on the published 6,250-6,290 grid. Planted: the "
+                  "sheet opens on the tail of the 158+60 curve (+6.00% to +1.30%, 600' VC, PVI "
+                  "and PVC on D.11, PVT 161+60 here); two short curves 130 ft apart, 164+10 "
+                  "(+1.30% to +0.39%, 100' VC, K 110.2) and 165+40 (+0.39% to +0.97%, 100' VC, "
+                  "K 174.1), both PVIs on the sheet, neither with a high or low point (lettering "
+                  "one fails); the grade ends mid-grid at END PROJECT 166+00. The grade tolerance "
+                  "stays 0.10 ft (0.01 in at 1\"=10'). Naive answers that fail: the profile at "
+                  "1\"=5' (grid and grade line), the grade drawn PVI to PVI (1.0 ft off at "
+                  "160+00, where the 158+60 curve opens the sheet), a high point lettered at "
+                  "164+10."),
+    _probe(FDOT, "FDOT sample sheet 12 (SR 61, CL1, 700+00 to 707+00) at 1\"=50' over "
+                 "1\"=5'. Planted: the grade begins mid-grid at BEGIN PROJECT 700+23.62; the "
+                 "PVI at 702+73.62 is a grade break with no vertical curve (not a curve to "
+                 "letter); the 128' sag at 706+89.35 (K 115.3, A 1.11%) has its PVI on the sheet "
+                 "but its low point at 707+18.83 el 30.86 is past the sheet's end, so no low "
+                 "point is lettered (lettering it fails). CL1 runs onto its 879' curve at "
+                 "705+70.32, so the plan is levelled on the first tangent. Naive answers that "
+                 "fail: the grade drawn PVI to PVI (0.18 ft off at the PVI), the low point "
+                 "lettered."),
 ]
 
-__all__ = ["PROBES", "JOBS", "Job", "build_host", "make_check", "solve_job"]
+__all__ = ["PROBES", "JOBS", "NEW_JOBS", "Job", "build_host", "make_check", "solve_job",
+           "MAIN01_D5_D12"]

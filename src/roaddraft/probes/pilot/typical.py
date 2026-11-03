@@ -48,6 +48,11 @@ Graded (all in model feet, from the submitted document only):
   * a viewport on the sheet at 1" = 10', untwisted, that shows the section
     from catch point to catch point, inside the border above the title strip
     and clear of the sheet's remaining notes and details.
+
+Three more sections (2026-11, FDOT 913-2 divided, WFL JEFF sidehill with slope
+tables, WFL ADA superelevated) are described where they are defined, at the
+end of this module; their specs carry ``v2`` and may set their own dims, cross
+slopes, viewport scale and paper area.
 """
 from __future__ import annotations
 
@@ -260,6 +265,15 @@ def _ratio_pattern(ratio: str):
 CROSS_SLOPE = re.compile(r"(?<![\d.])2(?:\.0+)?\s*%|(?<![\d.])0?\.020*\s*(?:ft/ft|'/')", re.I)
 
 
+def _percent_pattern(pct: float):
+    """A cross slope as written: '6%', '6.0 %', '0.06', '.060 ft/ft' (FDOT
+    letters its cross slopes as bare decimals)."""
+    whole = f"{pct:g}"
+    dec = f"{pct / 100.0:.2f}".lstrip("0")          # 6 -> .06
+    return re.compile(rf"(?<![\d.]){re.escape(whole)}(?:\.0+)?\s*%|"
+                      rf"(?<![\d.])0?{re.escape(dec)}0*(?![\d])", re.I)
+
+
 def _dimension_reads(dim: Dimension, width: float) -> bool:
     if dim.text_override:
         return any(abs(float(n) - width) <= WIDTH_FT
@@ -299,33 +313,41 @@ def check_section(spec: dict, baseline: Session, submitted: Session) -> Result:
             d = min((entity_distance(submitted.doc, e, p) for e in linework), default=math.inf)
             if d > LAYER_FT:
                 misses.append((x, d))
-        tally.add(f"bottom of the {layer} ({depth * 12:.0f} in down)",
+        inches = f"{depth * 12:g}" if spec.get("v2") else f"{depth * 12:.0f}"
+        tally.add(f"bottom of the {layer} ({inches} in down)",
                   None if not misses else
                   f"the bottom of the {layer}, {depth:.3f} ft below finished grade, has no "
                   f"linework within {LAYER_FT} ft at offset {misses[0][0]:+.0f} ft "
                   f"(nearest {misses[0][1]:.2f} ft)")
 
     dims = [e for _space, e in added if isinstance(e, Dimension)]
-    for what, width in (("lane", spec["lane"]), ("shoulder", spec["shoulder"])):
+    for what, width in spec.get("dims") or (("lane", spec["lane"]), ("shoulder", spec["shoulder"])):
         tally.add(f"{what} width dimensioned ({width:g}')",
                   None if any(_dimension_reads(d, width) for d in dims) else
                   f"no dimension reads the {width:g}' {what} width"
                   + ("" if dims else " (no dimensions were added)"))
 
     texts = [e.content for _space, e in added if isinstance(e, Text)]
-    tally.add("cross slope labelled (2%)",
-              None if any(CROSS_SLOPE.search(t) for t in texts) else "no text gives the 2% cross slope")
+    if spec.get("cross_slopes"):
+        for pct in spec["cross_slopes"]:
+            pattern = _percent_pattern(pct)
+            tally.add(f"cross slope labelled ({pct:g}%)",
+                      None if any(pattern.search(t) for t in texts) else
+                      f"no text gives the {pct:g}% cross slope")
+    else:
+        tally.add("cross slope labelled (2%)",
+                  None if any(CROSS_SLOPE.search(t) for t in texts) else "no text gives the 2% cross slope")
     for ratio in spec["slopes"]:
         pattern = _ratio_pattern(ratio)
         tally.add(f"side slope labelled ({ratio})",
                   None if any(pattern.search(t) for t in texts) else
                   f"no text gives the {ratio} slope (V:H)")
 
-    tally.add("viewport at 1\" = 10' showing the section, clear of the sheet's notes",
-              _viewport_problem(spec, baseline, submitted, truth))
+    tally.add(f"viewport at 1\" = {spec.get('scale', SCALE_FT_PER_IN):g}' showing the section, "
+              f"clear of the sheet's notes", _viewport_problem(spec, baseline, submitted, truth))
     return tally.result(f"section drawn to the description: catch points "
                         f"{truth['catches'][0][1][0]:.2f} and {truth['catches'][1][1][0]:.2f} ft, "
-                        f"shown at 1\" = 10'")
+                        f"shown at 1\" = {spec.get('scale', SCALE_FT_PER_IN):g}'")
 
 
 def _viewport_problem(spec, baseline, submitted, truth) -> Optional[str]:
@@ -341,7 +363,7 @@ def _viewport_problem(spec, baseline, submitted, truth) -> Optional[str]:
     must_show = [truth["catches"][0][1], truth["catches"][1][1], [0.0, truth["pg"]]]
     problems = []
     for vp in ports:
-        if abs(vp.feet_per_inch - SCALE_FT_PER_IN) > 1e-6:
+        if abs(vp.feet_per_inch - spec.get("scale", SCALE_FT_PER_IN)) > 1e-6:
             problems.append(f"viewport {vp.id} is at 1\" = {vp.feet_per_inch:g}'")
             continue
         if abs(((vp.rotation_deg + 180.0) % 360.0) - 180.0) > 0.01:
@@ -359,7 +381,7 @@ def _viewport_problem(spec, baseline, submitted, truth) -> Optional[str]:
         px, py = vp.center_paper
         rect = (px - vp.width_in / 2, py - vp.height_in / 2, px + vp.width_in / 2,
                 py + vp.height_in / 2)
-        if not _inside(rect, PAPER_AREA):
+        if not _inside(rect, spec.get("paper_area", PAPER_AREA)):
             problems.append(f"viewport {vp.id} runs outside the border or into the title strip")
             continue
         hit = [bb for bb in notes if bb and not (bb[2] <= rect[0] or bb[0] >= rect[2]
@@ -516,4 +538,367 @@ PROBES: List[Probe] = [
                           "2% finished grade (19.17 ft out, not 19.0 = 15 + 2 x 2.0). Naive answers "
                           "that fail: the hinge at 19.00, the subgrade drawn level, layer depths "
                           "in inches as feet, the catch points left short of the ground line.")),
+]
+
+
+# ================================================ the sections added 2026-11
+#
+# Three more sections, each with its own geometry and the same check items
+# (the ``v2`` specs: their own dims, cross slopes, scale and paper area):
+#
+# * ``p10-typical-fdot9132`` -- FDOT sheet 5 (SR 22), a four-lane divided rural
+#   section: two roadways sloping 0.02 away from a 40-ft depressed median,
+#   profile grade points at the inside edges of the travel lanes, 0.06
+#   shoulders, 1:6 median slopes to a ditch at the centreline, a flat-bottom
+#   roadside ditch in cut on the left and a 1:6 fill on the right; four
+#   travel-lane layers (3/4-inch friction course to 12-inch stabilization).
+#   Too wide for 1" = 10' on a B sheet, so the viewport is 1" = 20'.
+# * ``p10-typical-wfl04`` -- WFL sheet C.1 (WA FLAP JEFF 1(23)), the sidehill
+#   mirror of the existing two: fill on the LEFT and cut on the RIGHT, and the
+#   fill and cut slopes are not given -- they come from slope tables by height,
+#   so the catch point decides the slope that decides the catch point (1:3 fill
+#   at 10.94 ft, 1:2 cut at 5.83 ft; the table's first rows, 1:6 and 1:3, catch
+#   25 ft and 8.75 ft away from the right answer).
+# * ``p10-typical-wfl05`` -- WFL sheet C.1 (ID FLAP ADA 60(5)), the MAIN 01
+#   section through full superelevation: 6% down to the right rotated about
+#   the centreline, the inside (right) lane widened 2 ft, the high-side
+#   shoulder breaking over to 2% down away from the lanes; no crown.
+
+
+def _seg_mid(a, b, rise: float = 1.0) -> List[float]:
+    return [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 + rise]
+
+
+def fdot_truth() -> dict:
+    """FDOT 913-2: offsets from the construction centreline (the median's
+    centre); the profile grade points 20 ft out at PG."""
+    pg = FDOT["pg"]
+    ground = [[x, pg + dy] for x, dy in FDOT["ground"]]
+    lane_out = pg - 0.02 * 24.0                       # 44 ft out
+    sh_out = lane_out - 0.06 * 10.0                   # 54 ft out
+    sh_in = pg - 0.06 * 8.0                           # 12 ft out
+    median = [0.0, sh_in - 12.0 / 6.0]
+    toe = [-54.0 - 3.5 * 6.0, sh_out - 3.5]           # the front slope's foot
+    back = [toe[0] - 5.0, toe[1]]                     # the flat bottom's far edge
+    left_catch = _catch(back, -1, 1.0 / 4.0, ground)
+    right_catch = _catch([54.0, sh_out], +1, -1.0 / 6.0, ground)
+    breaks = [("left ditch bottom, back edge", back), ("left ditch bottom, front slope foot", toe),
+              ("left outside shoulder edge", [-54.0, sh_out]), ("left travel lane edge", [-44.0, lane_out]),
+              ("left profile grade point", [-20.0, pg]), ("left inside shoulder edge", [-12.0, sh_in]),
+              ("median ditch", median), ("right inside shoulder edge", [12.0, sh_in]),
+              ("right profile grade point", [20.0, pg]), ("right travel lane edge", [44.0, lane_out]),
+              ("right outside shoulder edge", [54.0, sh_out])]
+    fg = [left_catch] + [p for _n, p in breaks] + [right_catch]
+
+    def lane_line(depth, side):
+        return [[side * 20.0, pg - depth], [side * 44.0, lane_out - depth]]
+    layer_lines = [line for _n, d in FDOT["layers"] for line in (lane_line(d, -1), lane_line(d, 1))]
+    y = pg + 4.0
+    dims = [(-54.0, -44.0, y + 2.0), (-44.0, -32.0, y), (-32.0, -20.0, y), (-20.0, -12.0, y + 2.0),
+            (12.0, 20.0, y + 2.0), (20.0, 32.0, y), (32.0, 44.0, y), (44.0, 54.0, y + 2.0)]
+    labels = [("0.02", [-32.0, pg + 1.0]), ("0.02", [32.0, pg + 1.0]),
+              ("0.06", [-49.0, sh_out + 1.4]), ("0.06", [49.0, sh_out + 1.4]),
+              ("0.06", [-16.0, pg + 1.0]), ("0.06", [16.0, pg + 1.0]),
+              ("1:6", _seg_mid([-12.0, sh_in], median, -2.0)),
+              ("1:6", _seg_mid([54.0, sh_out], right_catch, 1.5)),
+              ("1:6", _seg_mid([-54.0, sh_out], toe, 1.5)),
+              ("1:4", _seg_mid(back, left_catch, 1.5))]
+    return {"pg": pg, "ground": ground, "breaks": breaks,
+            "catches": [("left catch point (cut)", left_catch), ("right catch point (fill)", right_catch)],
+            "fg": fg, "layer_lines": layer_lines, "dims": dims, "labels": labels, "dim_y": y + 2.0}
+
+
+def _slope_by_height(start, dx_sign, rising: bool, table, ground):
+    """The slope a height table picks: for each ratio (V:H run) the catch
+    point it makes, kept when the height it makes falls in that ratio's band.
+    ``table`` is ``[(upper height or None, run)]`` in order."""
+    hits = []
+    lower = 0.0
+    for upper, run in table:
+        slope = (1.0 if rising else -1.0) / run
+        try:
+            catch = _catch(start, dx_sign, slope, ground)
+        except ValueError:
+            lower = upper if upper is not None else lower
+            continue
+        height = abs(catch[1] - start[1])
+        if height > lower and (upper is None or height <= upper):
+            hits.append((run, catch, height))
+        lower = upper if upper is not None else lower
+    if len(hits) != 1:
+        raise ValueError(f"the slope table picks {len(hits)} slopes")
+    return hits[0]
+
+
+def jeff_truth() -> dict:
+    """WFL C.1 (JEFF 1(23)): 12-ft lanes, 2-ft shoulders, 2% crown; a 1:4
+    slope from each shoulder edge: on the left to the hinge 4 ft out, then the
+    fill slope from the table; on the right on down to a ditch bottom 2 ft
+    below the shoulder edge, then the cut slope from the table."""
+    pg = JEFF["pg"]
+    ground = [[x, pg + dy] for x, dy in JEFF["ground"]]
+    es = pg - 0.02 * 14.0
+    hinge = [-18.0, es - 1.0]
+    ditch = [22.0, es - 2.0]
+    fill_run, left_catch, _h = _slope_by_height(hinge, -1, False, JEFF["fill_table"], ground)
+    cut_run, right_catch, _h = _slope_by_height(ditch, +1, True, JEFF["cut_table"], ground)
+    breaks = [("left hinge", hinge), ("left shoulder edge", [-14.0, es]), ("centreline crown", [0.0, pg]),
+              ("right shoulder edge", [14.0, es]), ("right ditch bottom", ditch)]
+    fg = [left_catch] + [p for _n, p in breaks] + [right_catch]
+
+    def layer(depth):
+        return [[-14.0, es - depth], [0.0, pg - depth], [14.0, es - depth]]
+    y = pg + 3.0
+    return {"pg": pg, "ground": ground, "breaks": breaks,
+            "catches": [("left catch point (fill)", left_catch), ("right catch point (cut)", right_catch)],
+            "fg": fg, "fill_run": fill_run, "cut_run": cut_run,
+            "layer_lines": [layer(d) for _n, d in JEFF["layers"]],
+            "dims": [(-14.0, -12.0, y + 1.5), (-12.0, 0.0, y), (0.0, 12.0, y), (12.0, 14.0, y + 1.5)],
+            "labels": [("2%", [-6.0, pg + 0.6]), ("2%", [6.0, pg + 0.6]),
+                       ("1:4", _seg_mid([-14.0, es], hinge)), ("1:4", _seg_mid([14.0, es], ditch)),
+                       (f"1:{fill_run:g}", _seg_mid(hinge, left_catch)),
+                       (f"1:{cut_run:g}", _seg_mid(ditch, right_catch))],
+            "dim_y": y + 1.5}
+
+
+def ada_truth() -> dict:
+    """WFL C.1 (ADA 60(5)) in full superelevation: 6% down to the right about
+    the centreline; left lane 12 ft, right (inside) lane 12 + 2 ft widening;
+    the right shoulder on the 6%, the left (high-side) shoulder breaking over
+    to 2% down away from the lanes; a 1:4 foreslope from the left shoulder
+    edge to a ditch 1.5 ft below it, then a 1:2 backslope; on the right a 1:4
+    fill slope from the shoulder edge to the ground."""
+    pg = ADA["pg"]
+    ground = [[x, pg + dy] for x, dy in ADA["ground"]]
+    e = 0.06
+    left_lane = [-12.0, pg + e * 12.0]
+    left_sh = [-14.0, left_lane[1] - 0.02 * 2.0]
+    right_sh = [16.0, pg - e * 16.0]
+    ditch = [-14.0 - 1.5 * 4.0, left_sh[1] - 1.5]
+    left_catch = _catch(ditch, -1, 1.0 / 2.0, ground)
+    right_catch = _catch(right_sh, +1, -1.0 / 4.0, ground)
+    breaks = [("left ditch bottom", ditch), ("left shoulder edge", left_sh),
+              ("left lane edge (high side)", left_lane), ("right shoulder edge (low side)", right_sh)]
+    fg = [left_catch] + [p for _n, p in breaks] + [right_catch]
+
+    def layer(depth):
+        return [[-12.0, left_lane[1] - depth], [16.0, right_sh[1] - depth]]
+    y = left_lane[1] + 3.0
+    return {"pg": pg, "ground": ground, "breaks": breaks,
+            "catches": [("left catch point (cut)", left_catch), ("right catch point (fill)", right_catch)],
+            "fg": fg, "layer_lines": [layer(d) for _n, d in ADA["layers"]],
+            "dims": [(-14.0, -12.0, y + 1.5), (-12.0, 0.0, y), (0.0, 14.0, y), (14.0, 16.0, y + 1.5)],
+            "labels": [("6%", [-6.0, pg + 1.2]), ("6%", [7.0, pg + 0.2]), ("2%", [-13.0, left_sh[1] + 1.2]),
+                       ("1:4", _seg_mid(left_sh, ditch)), ("1:2", _seg_mid(ditch, left_catch)),
+                       ("1:4", _seg_mid(right_sh, right_catch))],
+            "dim_y": y + 1.5}
+
+
+FDOT = {
+    "id": "p10-typical-fdot9132", "sheet_id": "FDOT-913-2-4-Lane-Flush-Shoulder",
+    "sheet": "5", "pg": 38.65, "station": "120+00", "v2": True, "scale": 20.0,
+    "ground": [(-150.0, 2.70), (-120.0, 1.40), (-95.0, 0.30), (-70.0, -0.70), (-40.0, -1.40),
+               (-10.0, -2.00), (15.0, -2.50), (45.0, -3.10), (75.0, -4.20), (110.0, -4.90),
+               (150.0, -5.30)],
+    "lane": 12.0, "shoulder": 10.0,
+    "dims": (("lane", 12.0), ("outside shoulder", 10.0), ("inside shoulder", 8.0)),
+    "cross_slopes": (2.0, 6.0),
+    "layers": [("3/4-inch friction course FC-7", 0.75 / 12.0),
+               ("Type SP structural course (two lifts, 3-1/2 inches)", 4.25 / 12.0),
+               ("10-inch Optional Base Group 9", 14.25 / 12.0),
+               ("12-inch Type B stabilization", 26.25 / 12.0)],
+    "layer_offsets": [-41.0, -23.0, 23.0, 41.0],
+    "slopes": ["1:6", "1:4"],
+    #: the main section (with its R/W and clearing dimensions above it), not
+    #: the traffic data, the details or the section's titles below
+    "strip": [(0.9, 6.15, 15.95, 10.65)],
+    "keep": [],
+    "clip": [],
+    "keep_text": set(),
+    #: inside the FDOT border, above its title block
+    "paper_area": (0.8, 1.15, 16.2, 10.7),
+    "paper_center": (8.4, 8.2),
+    "truth": fdot_truth,
+}
+
+JEFF = {
+    "id": "p10-typical-wfl04", "sheet_id": "WFL-Typical-Sections-p04",
+    "sheet": "C.1", "pg": 412.86, "station": "86+50", "v2": True,
+    "ground": [(-200.0, -30.12), (-150.0, -24.12), (-100.0, -18.12), (-60.0, -13.32),
+               (-40.0, -10.92), (-18.0, -8.28), (-5.0, -5.60), (5.0, -2.60), (14.0, 0.20),
+               (22.0, 1.22), (40.0, 4.82), (60.0, 8.82), (90.0, 14.82), (120.0, 20.82)],
+    "lane": 12.0, "shoulder": 2.0,
+    "cross_slopes": (2.0,),
+    "fill_table": [(5.0, 6.0), (10.0, 4.0), (None, 3.0)],
+    "cut_table": [(5.0, 3.0), (15.0, 2.0), (None, 1.5)],
+    "layers": [("4-inch asphalt concrete pavement", 4.0 / 12.0),
+               ("5-inch emulsified asphalt treated aggregate base grading C", 9.0 / 12.0),
+               ("8-inch aggregate base grading D", 17.0 / 12.0)],
+    "layer_offsets": [-10.0, -3.0, 3.0, 10.0],
+    "slopes": ["1:4", "1:3", "1:2"],
+    #: the section, above its title (the project box at the top right stays)
+    "strip": [(0.7, 6.55, 16.3, 10.28)],
+    "keep": [],
+    "clip": [],
+    "keep_text": {'"MAIN 01"', "78+00 to 96+00"},
+    "paper_center": (8.4, 8.3),
+    "truth": jeff_truth,
+}
+
+ADA = {
+    "id": "p10-typical-wfl05", "sheet_id": "WFL-Typical-Sections-p05",
+    "sheet": "C.1", "pg": 3247.15, "station": "417+40", "v2": True,
+    "ground": [(-80.0, 11.40), (-60.0, 8.40), (-40.0, 5.40), (-20.0, 2.40), (-8.0, 0.90),
+               (4.0, -0.80), (16.0, -2.20), (30.0, -3.60), (50.0, -5.60), (80.0, -8.60)],
+    "lane": 12.0, "shoulder": 2.0,
+    "dims": (("left lane", 12.0), ("right lane, widened", 14.0), ("shoulder", 2.0)),
+    "cross_slopes": (6.0, 2.0),
+    "layers": [("4-inch asphalt concrete pavement", 4.0 / 12.0),
+               ("5-inch emulsified asphalt treated aggregate base grading C", 9.0 / 12.0),
+               ("8-inch aggregate base grading D", 17.0 / 12.0)],
+    "layer_offsets": [-9.0, -3.0, 3.0, 11.0],
+    "slopes": ["1:4", "1:2"],
+    #: the normal section and its curb-and-sidewalk variants, above the title
+    #: (the variants' dimensions run up to the border); the project box stays
+    "strip": [(0.7, 4.55, 16.3, 10.69)],
+    "keep": [(14.25, 10.25, 16.35, 10.75)],
+    "clip": [],
+    "keep_text": {'"MAIN 01"', "388+50 to 443+00"},
+    "paper_center": (8.4, 7.4),
+    "truth": ada_truth,
+}
+
+NEW_SPECS = [FDOT, JEFF, ADA]
+
+
+def solve_drawn(spec: dict, session: Session) -> None:
+    """Draft a ``v2`` spec through the command bus from its truth: the
+    finished grade catch to catch, each layer bottom, the dimensions and the
+    slope labels in model space, then the viewport."""
+    truth = spec["truth"]()
+    scale = spec.get("scale", SCALE_FT_PER_IN)
+    text_h = 0.1 * scale
+    run = lambda name, params: common.ok(session.execute(name, params))
+    for name in ("XS_FINISHED_GRADE", "XS_PAVEMENT", "XS_ANNO"):
+        session.execute("create_layer", {"name": name, "color": "black"})
+    run("draw_polyline", {"space": "model", "layer": "XS_FINISHED_GRADE", "vertices": truth["fg"]})
+    for line in truth["layer_lines"]:
+        run("draw_polyline", {"space": "model", "layer": "XS_PAVEMENT", "vertices": line})
+    for x0, x1, y in truth["dims"]:
+        run("place_dimension", {"space": "model", "layer": "XS_ANNO", "kind": "linear",
+                                "p1": [x0, _fg_at(truth["fg"], x0)],
+                                "p2": [x1, _fg_at(truth["fg"], x1)],
+                                "line_point": [(x0 + x1) / 2.0, y], "text_height": text_h})
+    for content, at in truth["labels"]:
+        run("place_text", {"space": "model", "layer": "XS_ANNO", "position": at,
+                           "content": content, "height": text_h, "halign": "center"})
+    left, right = truth["catches"][0][1], truth["catches"][1][1]
+    x_lo, x_hi = left[0] - 0.4 * scale, right[0] + 0.4 * scale
+    y_lo = min(p[1] for p in truth["fg"]) - 0.3 * scale
+    y_hi = truth["dim_y"] + 0.35 * scale
+    run("create_viewport", {"sheet": spec["sheet"], "feet_per_inch": scale,
+                            "center_paper": list(spec["paper_center"]),
+                            "width_in": round((x_hi - x_lo) / scale, 2),
+                            "height_in": round((y_hi - y_lo) / scale, 2),
+                            "model_center": [(x_lo + x_hi) / 2.0, (y_lo + y_hi) / 2.0]})
+
+
+FDOT_PROMPT = (
+    "Sheet 5 has lost its typical section for SR 22, STA. 63+65.42 to STA. 328+65.14; its "
+    "titles, the traffic data, the pavement notes and the two details are left. Redraw it from "
+    "this description as a true-scale section in this file's model space: x is the offset from "
+    "the construction centreline in feet (right positive) and y is the elevation. The natural "
+    "ground at station 120+00 is already drawn there on layer XS_EXISTING_GROUND, and the "
+    "profile grade at both profile grade points is 38.65. It is a four-lane divided section "
+    "with a 40-ft depressed median, the construction centreline at the centre of the median. "
+    "Each roadway has two 12-ft travel lanes sloping 0.02 down away from the median, with its "
+    "profile grade point at the inside edge of its travel lanes. Inside shoulders are 8 ft, "
+    "sloping 0.06 down toward the median; outside shoulders are 10 ft, sloping 0.06 down away "
+    "from the travel lanes. From each inside shoulder edge a 1:6 slope runs down to the median "
+    "ditch at the centreline. Left side: a 1:6 front slope from the outside shoulder edge down "
+    "to a roadside ditch 3.5 ft below the shoulder edge, a 5-ft flat ditch bottom, then a 1:4 "
+    "back slope up to natural ground. Right side, in fill: a 1:6 slope from the outside "
+    "shoulder edge down to natural ground. Travel lane pavement, parallel to the finished "
+    "grade, top down: 3/4-inch friction course FC-7, Type SP structural course in two lifts "
+    "(1-1/2 inches over 2 inches), 10-inch Optional Base Group 9, on 12-inch Type B "
+    "stabilization. Slopes are V:H, as on our sheets. Draw the finished grade from catch point "
+    "to catch point and the bottom of each travel-lane pavement layer, dimension the lane, "
+    "inside shoulder and outside shoulder widths, and label the cross slopes and each side "
+    "slope. Then show it on sheet 5 in a viewport at 1\" = 20' (horizontal and vertical), "
+    "above the section's titles and clear of the traffic data, the notes and the details.")
+
+JEFF_PROMPT = (
+    "Sheet C.1 (TYPICAL SECTION) has lost its MAIN 01 section, 78+00 to 96+00; only its title "
+    "is left. Redraw it from this description, as the section at station 86+50, as a "
+    "true-scale section in this file's model space: x is the offset from the centreline in "
+    "feet (right positive) and y is the elevation. The existing ground at station 86+50 is "
+    "already drawn there on layer XS_EXISTING_GROUND, and the profile grade at the centreline "
+    "is 412.86. Two 12-ft traveled lanes and 2-ft shoulders with a 2% crown both ways (the "
+    "shoulders on the lane slope). Surfacing, parallel to the finished grade under the lanes "
+    "and shoulders, top down: 4-inch asphalt concrete pavement in two equal lifts, 5-inch "
+    "emulsified asphalt treated aggregate base grading C, 8-inch aggregate base grading D. From "
+    "each shoulder edge a 1:4 slope runs down and out. Left side, in fill: the 1:4 runs 4 ft "
+    "out to the hinge, then the fill slope runs down to existing ground. Right side, in cut: "
+    "the 1:4 runs on down to a ditch bottom 2 ft below the shoulder edge, then the cut slope "
+    "rises to existing ground. The fill and cut slopes come from our slope tables. Fill slope, "
+    "by the fill height from the hinge down to the catch point: up to 5 ft, 1:6; over 5 ft to "
+    "10 ft, 1:4; over 10 ft, 1:3. Cut slope, by the cut height from the ditch bottom up to the "
+    "catch point: up to 5 ft, 1:3; over 5 ft to 15 ft, 1:2; over 15 ft, 1:1.5. Slopes are V:H, "
+    "as on our sheets. Draw the finished grade from catch point to catch point and the bottom "
+    "of each surfacing layer, dimension the lane and shoulder widths, and label the cross "
+    "slope and each side slope. Then show it on sheet C.1 in a viewport at 1\" = 10' "
+    "(horizontal and vertical), above its title and clear of the details and notes.")
+
+ADA_PROMPT = (
+    "Sheet C.1 (TYPICAL SECTION) has lost its MAIN 01 sections, 388+50 to 443+00; only their "
+    "title is left. Redraw the superelevated section from this description: the section at "
+    "station 417+40, in the full superelevation of the curve to the right there, as a "
+    "true-scale section in this file's model space: x is the offset from the centreline in "
+    "feet (right positive) and y is the elevation. The existing ground at station 417+40 is "
+    "already drawn there on layer XS_EXISTING_GROUND, and the profile grade at the centreline "
+    "is 3,247.15. Two traveled lanes and 2-ft shoulders: the left lane 12 ft, the right lane "
+    "12 ft plus 2 ft of curve widening on the inside of the curve. The traveled way is rotated "
+    "about the centreline to a 6% superelevation sloping down to the right; the right (low "
+    "side) shoulder continues on the 6%; the left (high side) shoulder breaks over and slopes "
+    "2% down away from the traveled way. Surfacing, parallel to the finished grade under the "
+    "lanes and shoulders, top down: 4-inch asphalt concrete pavement in two equal lifts, "
+    "5-inch emulsified asphalt treated aggregate base grading C, 8-inch aggregate base grading "
+    "D. Left side, in cut: a 1:4 foreslope from the shoulder edge down to a ditch bottom 1.5 ft "
+    "below the shoulder edge, then a 1:2 backslope up to existing ground. Right side, in fill: "
+    "a 1:4 fill slope from the shoulder edge down to existing ground. Slopes are V:H, as on our "
+    "sheets. Draw the finished grade from catch point to catch point and the bottom of each "
+    "surfacing layer, dimension the lane and shoulder widths, and label the cross slopes and "
+    "each side slope. Then show it on sheet C.1 in a viewport at 1\" = 10' (horizontal and "
+    "vertical), above its title and clear of the details and notes.")
+
+for _spec, _prompt in ((FDOT, FDOT_PROMPT), (JEFF, JEFF_PROMPT), (ADA, ADA_PROMPT)):
+    _spec["prompt"] = _prompt
+    _spec["start"] = common.register(_spec["id"], common.sheet_file(_spec["sheet_id"]),
+                                     lambda out, spec=_spec: _build(spec, out))
+
+PROBES += [
+    Probe(id=FDOT["id"], prompt=FDOT_PROMPT, start=FDOT["start"], tags=["typical-section", "fdot"],
+          check=lambda b, s: check_section(FDOT, b, s), solve=lambda s: solve_drawn(FDOT, s),
+          note=_note(FDOT, "Eleven grade breaks on two roadways that slope away from the median, "
+                           "profile grade at the inside lane edges (not the centreline). Naive "
+                           "answers that fail: the profile grade put on the construction "
+                           "centreline (every break 2.48 ft off), the roadways crowned, the ditch "
+                           "without its flat bottom (the 1:4 from the front slope's foot), the "
+                           "viewport at 1\" = 10' (off the sheet).")),
+    Probe(id=JEFF["id"], prompt=JEFF_PROMPT, start=JEFF["start"], tags=["typical-section", "wfl"],
+          check=lambda b, s: check_section(JEFF, b, s), solve=lambda s: solve_drawn(JEFF, s),
+          note=_note(JEFF, "Fill left and cut right on a sidehill; the slopes come from the "
+                           "tables: 1:3 fill (10.94 ft high; 1:4 would be 13.46, 1:6 25.0) and "
+                           "1:2 cut (5.83 ft; 1:3 would be 8.75, 1:1.5 exactly 5.0). Naive "
+                           "answers that fail: each table's first row (1:6 fill, 1:3 cut), the "
+                           "heights read off the ground at the hinge (7.0 ft, so 1:4) and over "
+                           "the ditch (3.5 ft, so 1:3) instead of at the catch points, the "
+                           "section mirrored (cut left).")),
+    Probe(id=ADA["id"], prompt=ADA_PROMPT, start=ADA["start"], tags=["typical-section", "wfl"],
+          check=lambda b, s: check_section(ADA, b, s), solve=lambda s: solve_drawn(ADA, s),
+          note=_note(ADA, "Full superelevation 6% rotated about the centreline, the right lane "
+                          "widened to 14 ft, the high-side shoulder breaking over to 2%. Naive "
+                          "answers that fail: the normal 2% crown, rotation about the inside "
+                          "(right) edge of the traveled way, no widening (the low-side shoulder "
+                          "2 ft short), the high-side shoulder left on the 6%.")),
 ]

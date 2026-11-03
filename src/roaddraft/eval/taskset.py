@@ -22,7 +22,20 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
 - ``d1-real-dev``: 24 tasks, two of each real type, on a few Caltrans sheets
   that ``d1-real`` never uses.  For smoke runs and iteration, so it covers
   every type rather than balancing the groups; never reported.
-- ``hard-pilots``: the 33 harder-task pilots (``probes/pilot``, all of them),
+- ``d1-test-hard`` (2026-11-03): 100 held-out seeds 2000-2099, whole-sheet
+  jobs only (``plan-sheet``, ``annotate-base`` and the three
+  ``tasks.types.HARD_TASK_TYPES``: the plan sheet with its pavement edges and
+  width dimensions, the alignment created from the stated geometry and then
+  the sheet, and the sheet file laid out and lettered through its base
+  drawing), at three to five curves on two or three sheets, every one with a
+  station equation.  Its own board.
+- ``d1-real-hard`` (2026-11-03): every whole job on the redrafted sheets
+  (``tasks.types.REAL_JOB_TYPES``: a sheet drafted from its base files, or a
+  blank sheet annotated, with its construction callouts as well) off the dev
+  sheets, from ``benchmarks/real_tasks/catalog-jobs.json``, then the heaviest
+  tasks of the three types that letter a whole line that ``d1-real`` did not
+  draw, to 100.  Its own board.
+- ``hard-pilots``: the harder-task pilots (33 until 2026-11-03, 112 since) (``probes/pilot``, all of them),
   run as probe tasks (``eval/probe_tasks.py``): each its own start project on a
   sample sheet, the MCP server's tools, graded pass or fail by its own check.
   Ranked on its own board.  Too few instances per family to spare a dev split.
@@ -46,7 +59,8 @@ from typing import Dict, Iterable, List, Optional, Sequence
 from roaddraft.tasks.brief import GENERATOR_VERSION, Task
 from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
-from roaddraft.tasks.types import REAL_GROUPS, REAL_TASK_TYPES, TASK_TYPES, real_group
+from roaddraft.tasks.types import (D1_REAL_GROUPS, HARD_TASK_TYPES, REAL_GROUPS, REAL_JOB_TYPES,
+                                   REAL_TASK_TYPES, TASK_TYPES, real_group)
 
 REPO = Path(__file__).resolve().parents[3]
 TASKSETS_DIR = REPO / "benchmarks" / "tasksets"
@@ -56,9 +70,20 @@ SEEDED_NAMES = ("d1-dev", "d1-test", "d1-variance")
 REAL_NAMES = ("d1-real", "d1-real-dev")
 #: the sets of probe tasks, each graded by its probe's own check (eval/probe_tasks.py)
 PROBE_NAMES = ("hard-pilots",)
-NAMES = SEEDED_NAMES + REAL_NAMES + PROBE_NAMES
+#: the harder sets (2026-11-03): whole-sheet jobs on the seeded generator, and the whole job
+#: plus the heaviest whole-line tasks on the redrafted sheets; each ranked on its own board
+HARD_NAMES = ("d1-test-hard", "d1-real-hard")
+NAMES = SEEDED_NAMES + REAL_NAMES + PROBE_NAMES + HARD_NAMES
 #: the validated real-sheet tasks the real sets are drawn from
 REAL_CATALOG = REPO / "benchmarks" / "real_tasks" / "catalog.json"
+#: the validated whole-job tasks (tasks.types.REAL_JOB_TYPES), ``d1-real-hard``'s own
+#: (``scripts/real_tasks.py --jobs`` writes it)
+JOB_CATALOG = REPO / "benchmarks" / "real_tasks" / "catalog-jobs.json"
+#: ``d1-real-hard`` (2026-11-03): every whole job the catalogue holds off the dev sheets,
+#: then the heaviest tasks of the three types that letter a whole line, as evenly as the
+#: types allow, to this many
+REAL_HARD_SIZE = 100
+REAL_HARD_FILL = ("real-plan-sheet", "real-annotate-sheet", "real-alignment-data")
 #: tasks of each question group (tasks.types.REAL_GROUPS) in d1-real, and of each
 #: real type in d1-real-dev
 REAL_PER_GROUP = 25
@@ -69,6 +94,11 @@ REAL_DEV_AGENCY = "Caltrans-PPM"
 SEEDED_TYPES = tuple(sorted(TASK_TYPES))
 CURVES = (1, 2, 3)
 VARIANCE_SIZE = 20
+#: ``d1-test-hard`` (2026-11-03): whole-sheet jobs only, on seeds no other set draws
+HARD_SEEDS = range(2000, 2100)
+HARD_SEEDED_TYPES = tuple(sorted(("plan-sheet", "annotate-base") + tuple(HARD_TASK_TYPES)))
+HARD_CURVES = (3, 4, 5)
+HARD_SHEETS = (2, 3)
 
 
 def dials(index: int) -> dict:
@@ -110,9 +140,41 @@ def _entry(seed: int, index: int) -> dict:
     raise RuntimeError(f"seed {seed}: no task type generates")
 
 
+def hard_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-test-hard``: curves cycle 3, 4,
+    5; two sheets or three, flipping every three; a station equation always;
+    the type cycles through ``HARD_SEEDED_TYPES``, every one a whole sheet."""
+    return {"curves": HARD_CURVES[index % len(HARD_CURVES)], "equations": True,
+            "sheets": HARD_SHEETS[(index // len(HARD_CURVES)) % len(HARD_SHEETS)],
+            "task_type": HARD_SEEDED_TYPES[index % len(HARD_SEEDED_TYPES)]}
+
+
+def _hard_entry(seed: int, index: int) -> dict:
+    d = hard_dials(index)
+    start = HARD_SEEDED_TYPES.index(d["task_type"])
+    # a seed the generator cannot lay out on two sheets (five curves often cannot keep a
+    # match line clear of them) takes three; a type the seed cannot make (no tangent to
+    # dimension) takes the next type; the entry records the fallback
+    for sheets in ((d["sheets"], 3) if d["sheets"] != 3 else (3,)):
+        for k in range(len(HARD_SEEDED_TYPES)):
+            ttype = HARD_SEEDED_TYPES[(start + k) % len(HARD_SEEDED_TYPES)]
+            try:
+                task = make_task(seed, d["curves"], True, ttype, sheets)
+            except ValueError:
+                continue
+            except AssertionError:
+                break
+            entry = {"seed": seed, "curves": d["curves"], "equations": True,
+                     "task_type": ttype, "sheets": sheets, "task_id": task.task_id}
+            if ttype != d["task_type"] or sheets != d["sheets"]:
+                entry["dialed"] = {"task_type": d["task_type"], "sheets": d["sheets"]}
+            return entry
+    raise RuntimeError(f"seed {seed}: no hard task type generates")
+
+
 def is_real(name: str) -> bool:
     """Whether ``name`` is a set on the redrafted sample sheets."""
-    return name in REAL_NAMES
+    return name in REAL_NAMES or name == "d1-real-hard"
 
 
 def is_probe(name: str) -> bool:
@@ -211,8 +273,8 @@ def real_quotas(per_group: int = REAL_PER_GROUP) -> Dict[str, int]:
     whatever the number of types each holds, and a type added to a group
     shares the group's quota rather than growing the set."""
     quotas: Dict[str, int] = {}
-    for _, _, types in REAL_GROUPS:
-        if not types:
+    for key, _, types in REAL_GROUPS:
+        if not types or key not in D1_REAL_GROUPS:  # the whole job is d1-real-hard's
             continue
         base, extra = divmod(per_group, len(types))
         for i, ty in enumerate(types):
@@ -258,6 +320,60 @@ def _real_entry(t: dict) -> dict:
             "task_id": t["task_id"]}
 
 
+def _pick_heavy(pool: Sequence[dict], quotas: Dict[str, int]) -> List[dict]:
+    """``quotas[type]`` tasks of each type from ``pool``, round by round over
+    the types, each pick from an agency the type has not drawn yet, then the
+    sheet the set has used least, then the heaviest task (most labels, then
+    curves), then the hashed id."""
+    by_type = {ty: [t for t in pool if t["type"] == ty] for ty in quotas}
+    for ty, rows in by_type.items():
+        if len(rows) < quotas[ty]:
+            raise RuntimeError(f"{ty}: {len(rows)} tasks to draw from, {quotas[ty]} wanted")
+    used_sheet: Counter = Counter()
+    used_agency = {ty: Counter() for ty in quotas}
+    taken = set()
+    out: List[dict] = []
+    for round_ in range(max(quotas.values(), default=0)):
+        for ty in quotas:
+            if round_ >= quotas[ty]:
+                continue
+            best = min((t for t in by_type[ty] if t["task_id"] not in taken),
+                       key=lambda t: (min(used_agency[ty][t["agency"]], 1),
+                                      used_sheet[t["sheet_id"]], -t.get("labels", 0),
+                                      -t.get("curves", 0), _h(t["task_id"])))
+            taken.add(best["task_id"])
+            used_sheet[best["sheet_id"]] += 1
+            used_agency[ty][best["agency"]] += 1
+            out.append(best)
+    return out
+
+
+def build_real_hard(catalog_path=None, jobs_path=None) -> dict:
+    """``d1-real-hard``: every whole job (``REAL_JOB_TYPES``) off the dev sheets,
+    then the heaviest whole-line tasks ``d1-real`` did not draw, to
+    ``REAL_HARD_SIZE``."""
+    from roaddraft.tasks.real import REAL_GENERATOR_VERSION
+    cat = load_catalog(catalog_path)
+    jobs = load_catalog(jobs_path or JOB_CATALOG)
+    dev = set(real_dev_sheets(cat["tasks"]))
+    taken = {t["task_id"] for t in build_real("d1-real", catalog_path)["tasks"]}
+    whole = sorted((t for t in jobs["tasks"] if t["sheet_id"] not in dev),
+                   key=lambda t: (t["type"], t["sheet_id"], t["alignment"]))
+    left = REAL_HARD_SIZE - len(whole)
+    base, extra = divmod(max(left, 0), len(REAL_HARD_FILL))
+    quotas = {ty: base + (1 if i < extra else 0) for i, ty in enumerate(REAL_HARD_FILL)}
+    pool = [t for t in cat["tasks"] if t["sheet_id"] not in dev and t["task_id"] not in taken]
+    entries = [_real_entry(t) for t in whole + _pick_heavy(pool, quotas)]
+    groups = Counter(e["group"] for e in entries)
+    return {"taskset": "d1-real-hard", "generator_version": REAL_GENERATOR_VERSION,
+            "spec_version": DRAFTING_SPEC_V1["version"], "spec_hash": spec_hash(DRAFTING_SPEC_V1),
+            "source": "benchmarks/real_tasks/catalog-jobs.json + catalog.json",
+            "catalog_verifier": cat.get("verifier_version"),
+            "jobs_verifier": jobs.get("verifier_version"),
+            "groups": {key: groups[key] for key, _, _ in REAL_GROUPS if groups[key]},
+            "tasks": entries}
+
+
 def build_real(name: str, catalog_path=None) -> dict:
     """A real set's manifest, drawn from the catalogue."""
     from roaddraft.tasks.real import REAL_GENERATOR_VERSION
@@ -266,11 +382,14 @@ def build_real(name: str, catalog_path=None) -> dict:
     dev = set(real_dev_sheets(tasks))
     if name == "d1-real":
         chosen = _pick([t for t in tasks if t["sheet_id"] not in dev], real_quotas())
+    elif name == "d1-real-hard":
+        return build_real_hard(catalog_path)
     elif name == "d1-real-dev":
         chosen = _pick([t for t in tasks if t["sheet_id"] in dev],
                        {ty: REAL_DEV_PER_TYPE for ty in REAL_TASK_TYPES})
     else:
-        raise ValueError(f"unknown real task set {name!r}; sets: {', '.join(REAL_NAMES)}")
+        raise ValueError(f"unknown real task set {name!r}; sets: "
+                         f"{', '.join(REAL_NAMES + ('d1-real-hard',))}")
     entries = [_real_entry(t) for t in chosen]
     groups = Counter(e["group"] for e in entries)
     return {"taskset": name, "generator_version": REAL_GENERATOR_VERSION,
@@ -295,6 +414,11 @@ def build(name: str) -> dict:
         manifest = build("d1-test")
         return {**manifest, "taskset": name, "parent": "d1-test",
                 "tasks": manifest["tasks"][:VARIANCE_SIZE]}
+    elif name == "d1-test-hard":
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1),
+                "tasks": [_hard_entry(seed, i) for i, seed in enumerate(HARD_SEEDS)]}
     else:
         raise ValueError(f"unknown task set {name!r}; sets: {', '.join(NAMES)}")
     tasks = [_entry(seed, i) for i, seed in enumerate(seeds)]
@@ -327,7 +451,8 @@ def check(name: str, root=None) -> List[str]:
     when the spec and generator are the ones the manifest was written on."""
     saved, fresh = load(name, root), build(name)
     problems: List[str] = []
-    keys = ("generator_version", "spec_hash") + (("catalog_verifier",) if is_real(name) else ())
+    keys = ("generator_version", "spec_hash") + (("catalog_verifier",) if is_real(name) else ()) \
+        + (("jobs_verifier",) if name == "d1-real-hard" else ())
     for key in keys:
         if saved.get(key) != fresh.get(key):
             problems.append(f"{key}: manifest {saved.get(key)} != current {fresh.get(key)}")
@@ -347,14 +472,17 @@ def _check_real(saved: dict) -> List[str]:
     task still builds to its id from the redrafted sheets."""
     from roaddraft.tasks.real import REAL_GENERATOR_VERSION
     from roaddraft.verify import VERIFIER_VERSION
-    cat = load_catalog()
     problems: List[str] = []
-    for key, now in (("generator_version", REAL_GENERATOR_VERSION),
-                     ("spec_hash", spec_hash(DRAFTING_SPEC_V1)),
-                     ("verifier_version", VERIFIER_VERSION)):
-        if cat.get(key) != now:
-            problems.append(f"the catalogue's {key} is {cat.get(key)}, current {now}: rebuild it "
-                            "(python scripts/real_tasks.py), then write the manifests")
+    catalogues = [(load_catalog(), "python scripts/real_tasks.py")]
+    if saved.get("taskset") == "d1-real-hard":
+        catalogues.append((load_catalog(JOB_CATALOG), "python scripts/real_tasks.py --jobs"))
+    for cat, how in catalogues:
+        for key, now in (("generator_version", REAL_GENERATOR_VERSION),
+                         ("spec_hash", spec_hash(DRAFTING_SPEC_V1)),
+                         ("verifier_version", VERIFIER_VERSION)):
+            if cat.get(key) != now:
+                problems.append(f"the catalogue's {key} is {cat.get(key)}, current {now}: rebuild "
+                                f"it ({how}), then write the manifests")
     broken = []
     for entry in saved["tasks"]:
         try:
@@ -411,4 +539,6 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "REAL_DEV_PER_TYPE", "SEEDED_TYPES", "TASKSETS_DIR", "VARIANCE_SIZE", "dials",
            "make_task", "is_real", "is_probe", "current_generator", "current_verifier", "default_budgets",
            "build_probes", "PROBE_NAMES", "load_catalog", "real_dev_sheets", "real_quotas", "build_real", "build",
-           "manifest_path", "write", "load", "check", "task_from_entry", "entries"]
+           "manifest_path", "write", "load", "check", "task_from_entry", "entries", "HARD_NAMES",
+           "HARD_SEEDS", "HARD_SEEDED_TYPES", "hard_dials", "JOB_CATALOG", "REAL_HARD_SIZE",
+           "REAL_HARD_FILL", "build_real_hard"]
