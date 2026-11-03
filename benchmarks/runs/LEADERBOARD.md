@@ -29,9 +29,10 @@ The benchmark board: every published run on the eval sets, scored by the verifie
 | 17 | qwen/qwen3.5-9b · self_correct · explicit | default | **67.0** | 62.0–71.8 | 70.5 | 6% | 31% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-self_correct` |
 | 18 | google/gemma-4-12b · self_correct · explicit | thinking on | **66.2** | 61.0–71.6 | 72.7 | 10% | 40% | 18% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-self_correct` |
 | 19 | qwen/qwen3.5-9b · single · explicit | default | **62.5** | 57.2–67.8 | 69.6 | 15% | 30% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single` |
-| 20 | google/gemma-4-12b · single · explicit | thinking on | **56.6** | 52.4–61.1 | 66.4 | 15% | 33% | 28% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single` |
-| 21 | zai-org/glm-4.6v-flash · self_correct · explicit | default | **28.9** | 25.1–32.7 | 32.0 | 7% | 17% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-self_correct` |
-| 22 | zai-org/glm-4.6v-flash · single · explicit | default | **28.5** | 23.4–33.7 | 30.6 | 9% | 13% | 1% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single` |
+| 20 | qwen/qwen3.5-9b · single · vague | default | **57.1** | 52.5–61.9 | 60.5 | 10% | 23% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague` |
+| 21 | google/gemma-4-12b · single · explicit | thinking on | **56.6** | 52.4–61.1 | 66.4 | 15% | 33% | 28% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single` |
+| 22 | zai-org/glm-4.6v-flash · self_correct · explicit | default | **28.9** | 25.1–32.7 | 32.0 | 7% | 17% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-self_correct` |
+| 23 | zai-org/glm-4.6v-flash · single · explicit | default | **28.5** | 23.4–33.7 | 30.6 | 9% | 13% | 1% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single` |
 
 ## `d1-real`: the sample plan sheets
 
@@ -51,6 +52,7 @@ The benchmark board: every published run on the eval sets, scored by the verifie
 | 10 | qwen/qwen3.5-9b · single · explicit | default | **64.0** | 59.4–68.2 | 100.0 ± 0.0 (n 9) | 56.4 ± 7.5 (n 45) | 64.3 ± 6.5 (n 45) | – | 66.8 | 4% | 31% | 0% | – | 99 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single` |
 | 11 | gpt-6-luna (medium) via codex · single · vague | medium | **60.4** | 54.9–65.5 | 73.0 ± 12.5 (n 25) | 57.2 ± 4.6 (n 25) | 64.0 ± 6.7 (n 25) | 47.3 ± 14.4 (n 25) | 65.7 | 9% | 17% | 1% | – | 100 × 1 | `e3-d1-real-gpt-6-luna-codex-medium-single-vague` |
 | 12 | google/gemma-4-12b · single · explicit | thinking on | **55.0** | 50.9–59.6 | 100.0 ± 0.0 (n 25) | 41.9 ± 9.1 (n 25) | 54.8 ± 9.1 (n 25) | 23.4 ± 12.4 (n 25) | 61.6 | 16% | 34% | 21% | – | 100 × 1 | `e3-d1-real-gemma-4-12b-q8-lms-single` |
+| 13 | zai-org/glm-4.6v-flash · single · explicit | default | **19.1** | 13.9–24.4 | 32.0 ± 18.0 (n 25) | 3.4 ± 4.2 (n 25) | 39.2 ± 9.5 (n 25) | 1.8 ± 2.6 (n 25) | 20.2 | 2% | 13% | 1% | – | 100 × 1 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single` |
 
 Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Draft = draft linework (`real-draw-alignment`); Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`); Notes = notes and dimensions (`real-construction-callouts`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
 
@@ -69,6 +71,9 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 7 | gpt-6-luna (medium) via codex · vision · explicit | medium | **12.1** | 6.1–18.2 | 47.6 | 88% | 12% | 1% | – | 33 × 1 | `e3-hard-pilots-gpt-6-luna-codex-medium-vision` |
 | 8 | gpt-6-luna (medium) via codex · single · explicit | medium | **12.1** | 5.0–20.2 | 47.0 | 88% | 12% | 2% | – | 33 × 3 | `e3-hard-pilots-gpt-6-luna-codex-medium-single` |
 | 9 | gpt-6-luna (medium) via codex · self_correct · explicit | medium | **9.1** | 4.0–14.1 | 45.4 | 91% | 9% | 1% | – | 33 × 3 | `e3-hard-pilots-gpt-6-luna-codex-medium-self_correct` |
+| 10 | qwen/qwen3.5-9b · single · explicit | default | **6.1** | 0.0–12.1 | 31.3 | 94% | 6% | 0% | – | 33 × 1 | `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-main` |
+| 11 | google/gemma-4-12b · single · explicit | thinking on | **3.0** | 0.0–9.1 | 31.9 | 97% | 3% | 16% | – | 33 × 1 | `e3-hard-pilots-gemma-4-12b-q8-lms-single` |
+| 12 | zai-org/glm-4.6v-flash · single · explicit | default | **0.0** | 0.0–0.0 | 18.9 | 100% | 0% | 1% | – | 32 × 1 | `e3-hard-pilots-glm-4.6v-flash-q4km-lms-single` |
 
 ## Published runs that are not ranked
 
