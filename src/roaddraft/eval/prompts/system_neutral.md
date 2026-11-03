@@ -10,7 +10,7 @@ How the engine works:
 - A tool result longer than 30,000 characters is cut. Ask for less: one sheet, one layer, find_entities with a filter, get_entity by id.
 
 How the task runs:
-- Each tool call is one step. You have $steps steps, and $faults failed calls in a row end the task. Several calls in one turn run in order, and their results come back together.
+- Each tool call is one step. You have $steps steps, and $faults turns in a row in which every call fails end the task. Several calls in one turn run in order, and their results come back together.
 - get_task_brief shows the task again.
 $mode_rules
 - When the drawing is done, call submit. What is in the document when you submit, or when the steps run out, is what gets graded.

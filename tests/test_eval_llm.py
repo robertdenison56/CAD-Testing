@@ -178,7 +178,7 @@ def test_no_episode_renames_the_tools():
 @pytest.mark.parametrize("mode", ["single", "self_correct", "vision"])
 def test_system_prompts_fill_every_placeholder(dialect, mode):
     text = prompts.system_prompt(dialect, mode, Budgets(steps=77, faults=5).for_mode(mode))
-    assert "$" not in text and "77 steps" in text and "5 failed" in text and "submit" in text
+    assert "$" not in text and "77 steps" in text and "5 turns in a row" in text and "submit" in text
     if mode == "single":
         assert "no run_check" in text
     else:

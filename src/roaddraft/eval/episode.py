@@ -47,7 +47,7 @@ from roaddraft.eval.agents import Agent, AgentRefusal, Submit, ToolCall
 from roaddraft.eval.budget import Budgets, BudgetState
 from roaddraft.eval.providers.base import LimitReached
 from roaddraft.eval.tools import (
-    DIALECTS, HARNESS_TOOLS, MODES, RENDER_QUERIES, allowed_names, shape_params,
+    DIALECTS, HARNESS_TOOLS, MODES, RENDER_QUERIES, allowed_names, repair_params, shape_params,
     tool_definitions,
 )
 from roaddraft.eval.trajectory import TrajectoryWriter, episode_path
@@ -58,7 +58,8 @@ from roaddraft.verify import VERIFIER_VERSION, verify
 from roaddraft.verify.audit import audit_journal
 from roaddraft.verify.report import VerifyReport
 
-HARNESS_VERSION = "e3-v2"  # (2026-10-18) + file access held to the episode folder
+HARNESS_VERSION = "e3-v3"  # (2026-11-03) + faults counted by turn, a one-item list read as its value, 45-min clock
+#                  e3-v2     (2026-10-18) + file access held to the episode folder
 #                  e3-v1     (2026-10-14) + LLM agents, dialect skins, vision images, cost
 #: bus error types that count as invalid calls (a fault of the call, not of the drawing)
 INVALID = ("invalid_params", "unknown_command")
@@ -109,6 +110,7 @@ class EpisodeResult:
     invalid_calls: int = 0
     cost_usd: Optional[float] = None
     implicit_submit: bool = False
+    repaired_calls: int = 0          # calls whose one-item list was read as its value
 
     @property
     def effective_score(self) -> float:
@@ -119,7 +121,8 @@ class EpisodeResult:
                 "budget_tripped": self.budget_tripped, "effective_score": self.effective_score,
                 "rubric_score": self.report.rubric_score, "hard_failed": self.report.hard_failed,
                 "steps": self.steps, "turns": self.turns, "faults": self.faults,
-                "invalid_calls": self.invalid_calls, "run_check_uses": self.run_check_uses,
+                "invalid_calls": self.invalid_calls, "repaired_calls": self.repaired_calls,
+                "run_check_uses": self.run_check_uses,
                 "usage_total": self.usage_total, "cost_usd": self.cost_usd,
                 "implicit_submit": self.implicit_submit, "elapsed_ms": self.elapsed_ms,
                 "path": self.path, "error": self.error}
@@ -182,6 +185,7 @@ class Episode:
         self.submit_note: str = ""
         self.implicit_submit = False
         self.invalid_calls = 0
+        self.repaired_calls = 0
         self.cost_usd: Optional[float] = None
         self._turn_images: List[Optional[list]] = []
 
@@ -197,6 +201,7 @@ class Episode:
     def reset(self) -> dict:
         self.session = self._open_session()
         self.tools = tool_definitions(self.session.manifest(), self.config.mode, self.scope)
+        self._schemas = {d["name"]: d["input_schema"] for d in self.tools}
         self.state = BudgetState()
         self.agent.reset(self.task, self.config.level, self.config.mode)
         self.agent.begin({"mode": self.config.mode, "level": self.config.level,
@@ -286,6 +291,7 @@ class Episode:
             result = self._shown(self._harness_tool(name, params))
         else:
             shaped, notes = shape_params(name, params)
+            shaped, repairs = repair_params(shaped, self._schemas.get(name))
             if name in RENDER_QUERIES and self.config.mode == "vision":
                 shaped = dict(shaped, include_base64=True)
             with confine.held(self.root):
@@ -294,10 +300,13 @@ class Episode:
                 else:
                     result = self.session.execute(name, shaped)
             result = self._shown(result)
-            if notes and isinstance(result, dict):
+            if (notes or repairs) and isinstance(result, dict):
                 result = dict(result)
-                result["warnings"] = list(result.get("warnings") or []) + notes
+                result["warnings"] = list(result.get("warnings") or []) + notes + repairs
             result, images = self._shape_result(name, result)
+            if repairs:   # on the record whole, past the result cap: the report counts it
+                result = dict(result, repaired=repairs)
+                self.repaired_calls += 1
         ok = bool(result.get("ok"))
         if not ok and (result.get("error") or {}).get("type") in INVALID:
             self.invalid_calls += 1
@@ -436,6 +445,7 @@ class Episode:
                     results.append(self.execute(call))
                     if self.harness_error:
                         break
+                self.state.note_turn(bool(r.get("ok")) for r in results)
                 assistant = {"text": "", "tool_calls": [c.to_dict() for c in calls],
                              "submit": submitted, **self.agent.turn_record()}
                 if submitted and self.submit_note and not assistant.get("text"):
@@ -471,6 +481,7 @@ class Episode:
                           "budget_tripped": self.budget_tripped, "error": self.error,
                           "steps": self.state.steps, "turns": n, "tool_calls": self.state.steps,
                           "invalid_calls": self.invalid_calls,
+                          "repaired_calls": self.repaired_calls,
                           "run_check_uses": self.state.run_check_uses,
                           "faults": self.state.faults, "usage_total": usage_total,
                           "cost_usd": self.cost_usd,
@@ -486,7 +497,8 @@ class Episode:
                              faults=self.state.faults, usage_total=usage_total,
                              elapsed_ms=elapsed_ms, path=str(self.path) if self.path else None,
                              budget_tripped=self.budget_tripped, error=self.error, turns=n,
-                             invalid_calls=self.invalid_calls, cost_usd=self.cost_usd,
+                             invalid_calls=self.invalid_calls, repaired_calls=self.repaired_calls,
+                             cost_usd=self.cost_usd,
                              implicit_submit=self.implicit_submit)
 
     def finish(self) -> Tuple[Any, List[dict]]:

@@ -107,6 +107,38 @@ def test_consecutive_faults_end_the_episode():
     assert r.termination == "budget" and r.budget_tripped == "faults" and r.faults == 4
 
 
+def test_a_turn_of_blind_faults_is_one_fault_in_a_row():
+    # e3-v3: sixteen copies of one failing call in a turn trip no faults budget of 8 on their
+    # own; the turns do, once the model has failed that many times with the errors in front of it
+    class Spray(Agent):
+        name = "spray"
+        def act(self, obs):
+            return [ToolCall("place_label", {"nonsense": 1})] * 6
+    r = run_episode(_task(0), Spray(), EpisodeConfig(budgets=Budgets(faults=2)))
+    assert r.termination == "budget" and r.budget_tripped == "faults"
+    assert r.turns == 2 and r.faults == 12 and r.steps == 12 and r.invalid_calls == 12
+
+
+def test_a_one_item_list_is_read_as_the_value_and_counted_as_repaired(tmp_path):
+    # e3-v3: the serving stack's list round a single value (LM Studio's Gemma 4 template)
+    class Wrapped(Agent):
+        name = "wrapped"
+        def act(self, obs):
+            if obs["turn"] == 0:
+                return [ToolCall("list_alignments", {"include_references": [True]}),
+                        ToolCall("list_alignments", {"include_references": True})]
+            return Submit()
+    r = run_episode(_task(0), Wrapped(), EpisodeConfig(), out_root=tmp_path)
+    assert r.termination == "submit" and r.faults == 0 and r.invalid_calls == 0
+    assert r.repaired_calls == 1 and r.summary()["repaired_calls"] == 1
+    rec = read_episode(Path(r.path))
+    first, second = rec["turns"][0]["results"]
+    assert first["ok"] and first["repaired"] == [
+        'include_references: [true] was read as true (a one-item list where the schema takes one value)']
+    assert first["warnings"] == first["repaired"] and "repaired" not in second
+    assert rec["end"]["repaired_calls"] == 1 and rec["header"]["harness_version"] == "e3-v3"
+
+
 def test_refusal_and_agent_error_are_outcomes():
     class Refuses(Agent):
         name = "refuses"

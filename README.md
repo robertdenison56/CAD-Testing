@@ -1002,9 +1002,10 @@ The probes above say whether an agent *can* do a thing; the harness scores
 how well it drafts a whole task. An episode opens a task's starting document
 in a `Session`, hands the agent the task text and the tool definitions (the
 D1 whitelist, from the manifest), executes its tool calls on the session —
-every call a step against the budgets (150 steps, 8 consecutive faults, 20
-minutes; `run_check` 3 uses in the self-correct mode, none in single; for a
-model, the context window it is served at, `--context-tokens`) — and
+every call a step against the budgets (150 steps, 8 turns in a row in which
+every call fails, 45 minutes; `run_check` 3 uses in the self-correct mode,
+none in single; for a model, the context window it is served at,
+`--context-tokens`) — and
 when it submits, or a budget trips, verifies the document against the ground
 truth at the prompt level and writes one trajectory file: header, turns, the
 replayable journal, the verify report, the audit, the end record. Each
@@ -1074,6 +1075,18 @@ ends as a budget (`output_limit`), like a conversation past its context
 (`context`). Usage is recorded per turn and priced from the dated
 `eval/prices.json` into the end record; `--cost-cap` lets no new episode
 start once the run has spent it.
+Two rules keep the serving stack out of the score (harness e3-v3,
+2026-11-03). A one-item list where a tool's schema takes one value is read
+as the value: LM Studio's Gemma 4 template sent `kind: ["curves"]` in a
+quarter of the Q8_0 file's calls, the same weights under vLLM never did;
+the note reaches the model in the result's warnings and the call counts as
+repaired, not invalid (the run report says how many). The faults budget
+counts turns rather than calls: a model that sends sixteen copies of one
+failing call in a turn has seen none of their errors, so that turn is one
+failure in a row, and any call that succeeds resets the count. The 45-minute
+clock (120 on a pilot set, behind its 200,000 tokens) is a backstop behind
+the 60,000 output tokens, sized so the slowest stack in use reaches the token
+budget first; no hosted or CLI row ever reached the 20 or 30 minutes before it.
 
 `--provider claude-code` and `--provider codex` are the frontier's route
 on a subscription, with no API key: the Track P backends' headless CLIs

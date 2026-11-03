@@ -5,6 +5,23 @@ episode with ``termination = "budget"`` and the budget's name, which is an
 outcome, not an error.  The per-run cost cap belongs to the runner, not the
 episode.
 
+The faults budget counts turns, not calls (e3-v3, 2026-11-03): a turn in
+which every call failed is one fault in a row, and any call that succeeds
+resets the count.  The calls of one turn run blind -- the model sees none
+of their results until the turn is over -- so eight copies of one failing
+call in a turn (GLM-4.6V-Flash sent sixteen calls a turn, mostly repeats,
+in 113 of its 172 d1-test turns) are one failure the model has seen, not
+eight.  A model that fails one call a turn trips after the same eight
+turns as before; every published row ran one call a turn through its
+fault stops, so none of them changes under the rule.
+
+The wall clock is a backstop behind the step and token budgets, not a
+measure of the serving stack: 45 minutes (2,700 s) lets the slowest stack
+in use (the PC's Qwen3.5-9B at about 33 output tokens a second) reach the
+60,000-token budget before the clock.  At the 20 minutes of e3-v2 the 9B
+lost 6 to 24 episodes in 100 to the clock; no hosted or CLI row ever
+reached it, so those rows are the same under 45.
+
 ``context_tokens`` is the prompt size an episode may send, normally the
 context window the row is served at.  A server that refuses an oversize
 request (vLLM) ends the episode as ``context`` by itself; one that
@@ -19,16 +36,16 @@ from __future__ import annotations
 
 import time
 from dataclasses import asdict, dataclass, field, replace
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 
 
 @dataclass(frozen=True)
 class Budgets:
     steps: int = 150               # tool calls, harness tools included
     run_checks: int = 3            # 0 in single mode
-    faults: int = 8                # consecutive failed calls
+    faults: int = 8                # consecutive turns in which every call failed
     output_tokens: int = 60000     # per episode, LLM agents only
-    wall_clock_s: float = 1200.0   # 20 minutes
+    wall_clock_s: float = 2700.0   # 45 minutes, a backstop (20 before e3-v3)
     context_tokens: Optional[int] = None  # prompt tokens a request may hold; None: the server's limit
 
     def for_mode(self, mode: str) -> "Budgets":
@@ -50,11 +67,17 @@ class BudgetState:
 
     def note_call(self, ok: bool) -> None:
         self.steps += 1
-        if ok:
-            self.consecutive_faults = 0
-        else:
+        if not ok:
             self.faults += 1
-            self.consecutive_faults += 1
+
+    def note_turn(self, oks: Iterable[bool]) -> None:
+        """A turn's results, once all of them are in: a turn in which every
+        call failed is one more fault in a row; one with any success resets
+        the run; one with no calls changes nothing."""
+        oks = list(oks)
+        if not oks:
+            return
+        self.consecutive_faults = 0 if any(oks) else self.consecutive_faults + 1
 
     def note_check(self) -> None:
         self.run_check_uses += 1
@@ -81,7 +104,7 @@ class BudgetState:
     def remaining(self, budgets: Budgets) -> dict:
         return {"steps": max(0, budgets.steps - self.steps),
                 "run_checks": max(0, budgets.run_checks - self.run_check_uses),
-                "faults_before_stop": max(0, budgets.faults - self.consecutive_faults),
+                "faults_before_stop": max(0, budgets.faults - self.consecutive_faults),  # turns
                 "seconds": max(0.0, round(budgets.wall_clock_s - self.elapsed_s(), 1))}
 
     def to_dict(self) -> dict:

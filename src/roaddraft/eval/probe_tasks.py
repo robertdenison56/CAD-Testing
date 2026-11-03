@@ -46,7 +46,7 @@ from roaddraft.eval.agents.basic import _QueueAgent
 from roaddraft.eval.budget import Budgets, BudgetState
 from roaddraft.eval.episode import (HARNESS_VERSION, INVALID, STATE_KEYS, Episode,
                                     EpisodeConfig, _error, _hash)
-from roaddraft.eval.tools import HARNESS_DEFINITIONS, RENDER_QUERIES, shape_params
+from roaddraft.eval.tools import HARNESS_DEFINITIONS, RENDER_QUERIES, repair_params, shape_params
 from roaddraft.mcp.server import INSTRUCTIONS, RoadDraftMCP
 from roaddraft.probes import fixture, prompting
 from roaddraft.probes.base import Probe, Result
@@ -65,9 +65,13 @@ FAMILIES = {
     "p18": "redline-understanding",
 }
 #: the budgets a probe task runs under when the run sets none: Track P's
-#: (120 turns of several calls each, 30 minutes), not D1's 150 steps -- one
-#: scripted solution alone makes about a thousand calls
-BUDGETS = Budgets(steps=600, faults=12, output_tokens=200000, wall_clock_s=1800.0)
+#: (120 turns of several calls each), not D1's 150 steps -- one scripted
+#: solution alone makes about a thousand calls. The clock is a backstop behind
+#: the 200,000 output tokens, sized the way the D1 clock is (e3-v3, 2026-11-03):
+#: the slowest stack in use, the PC's 9B at ~33 tokens a second, needs ~100
+#: minutes for them. At Track P's 30 minutes the 9B lost 8 of its 33 pilots to
+#: the clock; no hosted, codex or claude-code pilot run ever reached it.
+BUDGETS = Budgets(steps=600, faults=12, output_tokens=200000, wall_clock_s=7200.0)
 #: the id of the one check a probe task's report carries
 CHECK_ID = "PROBE"
 #: what the agent is told about the harness, after the server's instructions
@@ -396,6 +400,8 @@ class ProbeEpisode(Episode):
         self.submit_note = ""
         self.implicit_submit = False
         self.invalid_calls = 0
+        self.repaired_calls = 0
+        self._schemas: Dict[str, dict] = {}
         self.cost_usd = None
         self._turn_images: List[Optional[list]] = []
         self._workdir = None
@@ -422,6 +428,7 @@ class ProbeEpisode(Episode):
             if name in self.allowed:
                 defs.append({"name": name, "kind": "harness", **HARNESS_DEFINITIONS[name]})
         self.tools = sorted(defs, key=lambda d: d["name"])
+        self._schemas = {d["name"]: d["input_schema"] for d in self.tools}
         self.state = BudgetState()
         self.agent.reset(self.task, self.config.level, self.config.mode)
         system = system_prompt(self.config.mode, self.budgets)
@@ -473,10 +480,11 @@ class ProbeEpisode(Episode):
                 params, notes = shape_params(name, params)
             else:
                 notes = []
+            params, repairs = repair_params(params, self._schemas.get(name))
             result, shown = _reply(self.mcp.call_tool(name, params))
             self.engine_calls += 1
-            if notes:
-                result["warnings"] = list(result.get("warnings") or []) + notes
+            if notes or repairs:
+                result["warnings"] = list(result.get("warnings") or []) + notes + repairs
             if name == "view_attachment" or (name in RENDER_QUERIES
                                               and self.config.mode == "vision"):
                 images = shown or None
@@ -484,6 +492,9 @@ class ProbeEpisode(Episode):
                 result["note"] = ("the image is on disk at 'path'; it is not returned "
                                   "inline in this mode")
             result, _ = self._shape_result(name, result)
+            if repairs:   # on the record whole, past the result cap: the report counts it
+                result = dict(result, repaired=repairs)
+                self.repaired_calls += 1
         ok = bool(result.get("ok"))
         if not ok and (result.get("error") or {}).get("type") in INVALID:
             self.invalid_calls += 1

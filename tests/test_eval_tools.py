@@ -66,6 +66,33 @@ def test_tool_definitions_come_from_the_manifest_sorted_with_closed_schemas():
     assert by_name["run_check"]["kind"] == "harness"
 
 
+def test_repair_params_reads_a_one_item_list_as_the_value_where_the_schema_takes_one():
+    # e3-v3 (2026-11-03): LM Studio's Gemma 4 template sent kind: ["curves"] in a quarter of
+    # its calls; the same weights under vLLM never did
+    schema = {"type": "object", "properties": {
+        "kind": {"enum": ["alignments", "curves"]}, "side": {"enum": ["left", "right"]},
+        "limit": {"type": "integer"}, "flag": {"type": "boolean"},
+        "offsets": {"type": "array", "items": {"type": "number"}},
+        "station": {"type": ["number", "string"]}, "changes": {"type": "object"}},
+        "required": [], "additionalProperties": False}
+    params, repairs = tools.repair_params(
+        {"kind": ["curves"], "limit": [50], "flag": [True], "station": ["84+00"],
+         "offsets": [15], "side": ["left", "right"], "changes": [{"a": 1}]}, schema)
+    assert params["kind"] == "curves" and params["limit"] == 50 and params["flag"] is True
+    assert params["station"] == "84+00"
+    assert params["offsets"] == [15]                 # the schema takes a list
+    assert params["side"] == ["left", "right"]       # two items: nothing to read
+    assert params["changes"] == [{"a": 1}]           # not a scalar inside
+    assert len(repairs) == 4 and repairs[0].startswith('kind: ["curves"] was read as "curves"')
+    # a value the enum does not hold is still read, and validation then says so
+    read, notes = tools.repair_params({"kind": ["profiles"]}, schema)
+    assert read["kind"] == "profiles" and len(notes) == 1
+    # no schema, an unknown key, or a plain value: nothing changes
+    assert tools.repair_params({"kind": ["curves"]}, None) == ({"kind": ["curves"]}, [])
+    assert tools.repair_params({"other": ["x"]}, schema) == ({"other": ["x"]}, [])
+    assert tools.repair_params({"kind": "curves"}, schema) == ({"kind": "curves"}, [])
+
+
 def test_shape_params_strips_a_forged_anchor_from_modify_entity():
     params, notes = tools.shape_params("modify_entity", {"id": "TX-1", "changes": {
         "content": "x", "anchor": {"kind": "pc"}}})

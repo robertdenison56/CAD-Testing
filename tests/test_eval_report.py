@@ -85,6 +85,10 @@ def test_tool_use_counts_invalid_faults_recovery_and_check_prefix():
     u = R.tool_use(turns)
     assert u["tool_calls"] == 9
     assert u["invalid_calls"] == 2 and u["failed_calls"] == 1 and u["faults"] == 3
+    assert u["repaired_calls"] == 0
+    # a repaired call (e3-v3: a one-item list read as its value) is counted apart, not as invalid
+    fixed = dict(ok(4), repaired=['kind: ["curves"] was read as "curves"'])
+    assert R.tool_use([_turn([("get_design_data", fixed)])])["repaired_calls"] == 1
     # place_label and draw_line came back within three calls; the unknown tool never did
     assert u["recovered"] == 2
     assert u["coordinate_calls"] == 2 and u["semantic_calls"] == 1

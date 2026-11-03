@@ -78,8 +78,12 @@ def test_label_kinds_literal_13_values():
     assert isinstance(ds.LABEL_KINDS, list)
     assert ds.LABEL_KINDS == LABEL_KINDS_13
     assert len(set(ds.LABEL_KINDS)) == 13
-    assert ds.KIND == {"enum": LABEL_KINDS_13}
+    assert ds.KIND["enum"] == LABEL_KINDS_13
     assert ds.KIND["enum"] is not ds.LABEL_KINDS  # a copy, not the same list
+    # the help says what each kind letters, and that mc alone draws the curve bubble
+    # (2026-11-03: every local model and Opus 5.5 lettered the curve number as custom)
+    assert "mc = the curve number in a bubble with a leader" in ds.KIND["description"]
+    assert "custom = the content as given, plain text with no bubble" in ds.KIND["description"]
 
 
 # --- fragment shapes pinned by the spec preamble ----------------------------

@@ -207,6 +207,20 @@ def test_place_label_duplicate_warning():
     assert r3["warnings"] == []
 
 
+def test_place_label_custom_at_the_middle_of_a_curve_names_kind_mc():
+    # the curve number lettered as plain text at MC-1 draws no bubble and no leader: the
+    # result says the plan's callout is kind mc (2026-11-03: every local model and Opus 5.5
+    # placed kind custom there, and D1-04 credits only mc)
+    s = session_A()
+    r = s.execute("place_label", {"space": "model", "anchor": "MC-1", "kind": "custom", "content": "1"})
+    assert r["ok"] and len(r["warnings"]) == 1 and "kind mc" in r["warnings"][0]
+    assert "omit kind at an MC-n anchor" in r["warnings"][0]
+    # custom elsewhere, and mc itself, say nothing
+    assert s.execute("place_label", {"space": "model", "anchor": "PC-1", "kind": "custom",
+                                     "content": "SEE DETAIL"})["warnings"] == []
+    assert s.execute("place_label", {"space": "model", "anchor": "MC-1", "kind": "mc"})["warnings"] == []
+
+
 def test_place_label_default_alignment_when_single_else_fault():
     s = session_A()
     assert s.execute("place_label", {"space": "model", "anchor": "PC-1"})["ok"]

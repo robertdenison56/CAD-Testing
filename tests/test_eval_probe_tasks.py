@@ -114,6 +114,23 @@ def test_the_episode_serves_the_probe_runners_tools_inside_the_project():
     ep._workdir.cleanup()
 
 
+def test_a_one_item_list_is_read_as_the_value_on_the_pilots_route_too():
+    # e3-v3 (2026-11-03): the serving stack's list round a single value is read on the
+    # pilots' route as on the D1 one, noted to the model and counted as repaired
+    probe = P.by_id("p02-sources-wfl19b")
+    task = P.task_from_entry(P.entry(probe))
+    ep = P.ProbeEpisode(task, NullAgent(), EpisodeConfig())
+    ep.reset()
+    base = next(f.name for f in ep.project.iterdir() if f.name.endswith("_ali.rdraft"))
+    opened = ep.execute(ToolCall("open_document", {"path": [base]}))
+    assert opened["ok"] and ep.repaired_calls == 1 and ep.invalid_calls == 0
+    assert opened["repaired"] == [f'path: ["{base}"] was read as "{base}" '
+                                 "(a one-item list where the schema takes one value)"]
+    assert opened["warnings"][-1] == opened["repaired"][0]
+    assert ep.execute(ToolCall("open_document", {"path": base}))["ok"] and ep.repaired_calls == 1
+    ep._workdir.cleanup()
+
+
 def test_a_scanned_pilot_shows_its_scan_and_run_check_hides_the_checks_words():
     probe = P.by_id("p15-plan-reading-ppm046")
     task = P.task_from_entry(P.entry(probe))

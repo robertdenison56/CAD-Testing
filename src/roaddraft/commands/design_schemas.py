@@ -77,7 +77,17 @@ ANCHOR = {"type": ["string", "number", "object"],
                          "'PC-2@18', '86+50@25L'); or {ref|station, offset, region}. "
                          "BC-n and EC-n, as a Caltrans plan letters them, are PC-n and "
                          "PT-n"}
-KIND = {"enum": list(LABEL_KINDS)}
+KIND = {"enum": list(LABEL_KINDS),
+        "description": "what the label letters: station = the station number at a tick; "
+                       "pc / pt / pcc / prc = the curve point's station and name (BC, EC); "
+                       "pi = the PI; mc = the curve number in a bubble with a leader to the "
+                       "middle of the curve, the plan's curve callout (the one kind that draws "
+                       "the bubble); bearing = the tangent's bearing and length; begin / end = "
+                       "BEGIN / END STA; equation = a station equation; curve_data = the "
+                       "curve's C-n, delta, R, T, L block as plain text; custom = the content "
+                       "as given, plain text with no bubble or leader. Default: the anchor's "
+                       "own kind (PC-n -> pc, MC-n -> mc, T-n -> bearing, EQ-n -> equation), "
+                       "so omit it unless the text should be something else"}
 ROTATION = {"enum": ["along", "perpendicular", "horizontal"]}
 SIDE = {"enum": ["left", "right", "above", "below"],
         "description": "left/right of the stationing direction, or above/below on the paper "

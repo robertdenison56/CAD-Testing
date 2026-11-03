@@ -239,6 +239,34 @@ it in its one test episode. Two ways to run the local rows:
 Recommendation: option 2 for the ranked runs, recorded in the run id (`...-wc45`), and the 9B test episode
 repeated under it first to see whether the 122 steps were the model flailing or the clock.
 
+**Outcome (2026-11-03, Robert: "fix these issues").** Neither option as written: the harness default moved to
+45 minutes for every D1 row (`Budgets.wall_clock_s` 2,700 s, harness e3-v3) and 120 for a pilot (Track P's
+`probe_tasks.BUDGETS`, 7,200 s, was 30), so the board keeps one budget a set and no run id carries a suffix.
+The clock is a backstop behind the output-token budget (60,000 on D1, 200,000 on the pilots), sized so the
+slowest stack in use (the 9B at ~33 tok/s on the PC) reaches the token budget first. The ranked local rows
+lost episodes to the old clocks (9B d1-test single 6, self_correct 14, vague 4, d1-real 10, hard-pilots 8 of
+33; Gemma 2 to 5; GLM 2 a set); no hosted, codex or claude-code row ever reached a clock, so those rows are
+the same under the new ones. Two more stack effects went with it, both measured on the queue-9 rows:
+
+- *The Gemma template.* The Q8_0 file through LM Studio sent 465 of its 1,800 d1-test calls with a one-item
+  list round an enum value (`get_design_data {kind: ["curves"]}`, place_label `kind`/`side`/`rotation`,
+  annotate_stationing `lettering`/`point_side`); the same weights under vLLM (d1-variance, 1,312 calls) sent
+  none. The harness now reads such a list as its value where the schema takes one (`eval/tools.repair_params`),
+  tells the model so in the result's warnings, and counts the call as *repaired* (the run report's line under
+  the rows table), not invalid. Invalid-call rate 28.2% / 20.8% on Gemma's d1-test / d1-real rows; 12 and 11
+  of its episodes ended on the faults budget, every one an eight-turn loop of the same wrapped call.
+- *GLM's turns.* GLM-4.6V-Flash sent 16 calls a turn in 113 of its 172 d1-test turns, mostly copies of one call,
+  and 15 of its 19 fault stops (24 of 26 on d1-real) fell inside a single turn: the model never saw an error
+  before the budget ended it. The faults budget now counts turns in which every call failed, reset by any
+  success (`BudgetState.note_turn`). The nine frontier fault stops on the board all ran one call a turn for
+  eight turns, so they are unchanged.
+
+What a rerun needs: a worktree at main past this change (the tool surface moved with the `mc` label-kind help,
+see the board's pins), `e3 NAME ...` as before with no extra flag; the run id scheme is unchanged, so an old
+row's id must not be resumed under the new harness (a new run id, the old row delisted when the new one lands).
+Rows most worth rerunning, in order: Gemma 4 12B d1-test single and self_correct (template + faults), GLM-4.6V-Flash
+d1-test single (faults), the 9B d1-test self_correct and d1-real (clock).
+
 ## Order of work
 
 Each line is one model-night (10 to 20 hours) unless marked. `d1-test` x 1 (100 episodes) gives a ranked row

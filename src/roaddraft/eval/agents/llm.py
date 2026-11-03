@@ -138,7 +138,7 @@ class LLMAgent(Agent):
             notes.append(f"{steps} steps left; call submit before they run out")
         faults = budget.get("faults_before_stop")
         if faults is not None and faults <= LOW_FAULTS:
-            notes.append(f"{faults} more failed calls in a row end the task")
+            notes.append(f"{faults} more turns in a row with every call failing end the task")
         return ("[harness] " + "; ".join(notes) + ".") if notes else None
 
     def _results(self, observation: dict) -> dict:

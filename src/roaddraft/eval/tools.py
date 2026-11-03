@@ -133,5 +133,45 @@ def shape_params(name: str, params: Optional[dict]) -> Tuple[dict, List[str]]:
     return params, notes
 
 
+SCALAR_TYPES = ("string", "number", "integer", "boolean")
+
+
+def _takes_one_value(prop) -> bool:
+    """Whether a property's schema takes a single value and never a list."""
+    if not isinstance(prop, dict):
+        return False
+    t = prop.get("type")
+    types = [t] if isinstance(t, str) else list(t or [])
+    if any(x not in SCALAR_TYPES for x in types):
+        return False
+    if types:
+        return True
+    enum = prop.get("enum")
+    return bool(enum) and all(not isinstance(v, (list, dict)) for v in enum)
+
+
+def repair_params(params: Optional[dict], schema: Optional[dict]) -> Tuple[dict, List[str]]:
+    """The parameters with a one-item list read as its one value wherever the
+    tool's schema takes a single value, and a note for each (e3-v3,
+    2026-11-03).  LM Studio's Gemma 4 template sent enum values that way --
+    ``kind: ["curves"]`` -- in 465 of the 1,800 calls of the Q8_0 file's
+    d1-test run, and the same weights under vLLM in none of 1,312, so the
+    list is the serving stack's and not the model's.  The value still goes
+    through validation as sent; a list of two, a list where the schema takes
+    one, and a nested list are left alone.  The note reaches the model in the
+    result's warnings, and the call counts as repaired, not invalid."""
+    params = dict(params or {})
+    repairs: List[str] = []
+    props = (schema or {}).get("properties") or {}
+    for key, value in list(params.items()):
+        if (isinstance(value, list) and len(value) == 1 and _takes_one_value(props.get(key))
+                and isinstance(value[0], (str, int, float, bool))):
+            params[key] = value[0]
+            repairs.append(f"{key}: {json.dumps(value)} was read as {json.dumps(value[0])} "
+                           "(a one-item list where the schema takes one value)")
+    return params, repairs
+
+
 __all__ = ["MODES", "DIALECTS", "COMMANDS", "DESIGN_COMMANDS", "QUERIES", "RENDER_QUERIES",
-           "HARNESS_TOOLS", "allowed_names", "is_allowed", "tool_definitions", "shape_params"]
+           "HARNESS_TOOLS", "allowed_names", "is_allowed", "tool_definitions", "shape_params",
+           "repair_params"]

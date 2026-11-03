@@ -620,6 +620,12 @@ def place_label(doc: Document, p: dict):
         "halign": spec.halign, "valign": spec.valign, "anchor": plan["anchor"],
         "annotative": plan["annotative"]})
     warnings = _annotation_warnings(doc, space_key, e)
+    if spec.kind == "custom" and getattr(plan["anchor_point"], "kind_hint", None) == "mc":
+        # the curve number lettered as plain text at the middle of the curve: the
+        # plan's callout is kind mc, which draws the bubble and the leader
+        warnings.append("kind custom letters the content as plain text; the plan's curve "
+                        "callout is kind mc, the curve number in a bubble with a leader to "
+                        "the curve (omit kind at an MC-n anchor to get it)")
     created = [e.id]
     if spec.kind == "mc":
         created += _add_bubble(doc, p["space"], space_key, plan, e)

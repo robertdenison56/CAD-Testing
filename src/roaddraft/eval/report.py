@@ -203,7 +203,8 @@ def _flat_calls(turns: Sequence[dict]) -> List[dict]:
             err = res.get("error") or {}
             out.append({"name": call.get("name"), "ok": bool(res.get("ok")),
                         "error": err.get("type") if not res.get("ok") else None,
-                        "command_id": res.get("command_id")})
+                        "command_id": res.get("command_id"),
+                        "repaired": bool(res.get("repaired"))})
     return out
 
 
@@ -227,6 +228,7 @@ def tool_use(turns: Sequence[dict]) -> dict:
         if c["ok"] and c["name"] == "run_check":
             checks.append(journal_len)
     return {"tool_calls": len(calls), "invalid_calls": invalid,
+            "repaired_calls": sum(1 for c in calls if c["repaired"]),
             "failed_calls": len(faults) - invalid, "faults": len(faults),
             "recovered": recovered, "errors": dict(errors),
             "coordinate_calls": sum(n in COORDINATE_TOOLS for n in ok_names),
@@ -342,6 +344,7 @@ def load_episode(path, reverify: bool = False, check_delta: bool = True) -> Opti
         "run_check_uses": int(end.get("run_check_uses") or 0),
         "effective_at_last_check": None if at_check is None else round(at_check, 4),
         "tool_calls": use["tool_calls"], "invalid_calls": use["invalid_calls"],
+        "repaired_calls": use["repaired_calls"],
         "failed_calls": use["failed_calls"], "faults": use["faults"],
         "recovered": use["recovered"], "coordinate_calls": use["coordinate_calls"],
         "semantic_calls": use["semantic_calls"],
@@ -465,6 +468,8 @@ def summarize_group(dims: dict, eps: Sequence[dict]) -> dict:
         "steps_p90": _r(_pctl([r["steps"] for r in rows], 0.9), 1),
         "tool_calls": calls,
         "invalid_call_rate": _r(sum(r["invalid_calls"] for r in rows) / calls, 4) if calls else None,
+        "repaired_call_rate": (_r(sum(r.get("repaired_calls", 0) for r in rows) / calls, 4)
+                               if calls else None),
         "fault_rate": _r(sum(r["failed_calls"] for r in rows) / calls, 4) if calls else None,
         "recovery_rate": _r(sum(r["recovered"] for r in rows) / faults, 4) if faults else None,
         "coordinate_share": _r(coord / (coord + sem), 4) if coord + sem else None,
@@ -789,6 +794,13 @@ def render_markdown(s: dict) -> str:
                  f"{_p(g['invalid_call_rate'])} | {_p(g['recovery_rate'])} | "
                  f"{_f(g['run_check_mean'])} | {_usd(g['cost_per_sheet'])} | {g['n_tasks']} × {k}"
                  + (f" ({g['errors']} errored)" if g["errors"] else "") + " |")
+    repaired = [g for g in rows if g.get("repaired_call_rate")]
+    if repaired:
+        L += ["", "Repaired calls (harness e3-v3): a one-item list where the schema takes one value "
+              "was read as the value, noted to the model in the result's warnings, and is counted "
+              "here and not as an invalid call: "
+              + "; ".join(f"{g['label']} {_p(g['repaired_call_rate'])} of its calls" for g in repaired)
+              + "."]
     seps = [(g, g["vs_next"]) for g in rows if g.get("vs_next")]
     if seps:
         L += ["", "Each row against the next, paired by task: "
