@@ -366,6 +366,8 @@ d1-test, the 9B's silent-turn reruns) are through and published:
    and Opus 5.5, each through all eight runs (Opus's d1-test vague the last, Oct 31 evening); GPT-6.1-Sol is not run
    (Robert, Oct 31 21:00: "dont run sol").*
 
+*2026-11-03, the retirement (Robert: wipe the board rows the harness fixes no longer apply to).* All ten local rows on `d1-test` and `d1-real` and the three local `hard-pilots` rows left the board (`benchmarks/runs/RETIRED.md`; the folders sit in `results/_retired-e3-v2/published/`, the episodes stay under `results/e3-lms/`): the e3-v3 rules were measured on them (the 20-minute clock stopped 4 to 14 of the 9B's episodes a set, Gemma's template wrapped 28% of its calls, GLM's fault stops fell inside one 16-call turn) and every one lettered the curve number as `custom` under the old kind help (curve-callouts 0 to 17). The reruns are this push again under `e3-v3` on surface `0334fd4aaade`, from a worktree at main bb9cd7ef or later, with the two hard sets added: about 120-160 PC-hours of episode time for the 9B, 80-105 for Gemma 4 12B and 60-75 for GLM-4.6V-Flash in single mode alone, before the stall retries that have stretched a 6-hour night to 24 or 45 hours (`benchmarks/RERUN_PLAN.md`). Queue 9 is paused (SIGSTOP on process group 96382, Nov 3 13:33) inside the 9B's k = 5 run at 132 of 400 on the old pin 97469b45; under e3-v3 that run feeds no board row, so whether it is killed or finished as a record is Robert's call.
+
 About 22 model-nights, five to six weeks at one run a night. What stays out of reach locally: the open rungs above 12B
 (Qwen3.6-35B-A3B at Q4 with its experts in PC RAM is the one maybe, a weekend and likely cap-bound), GLM-5.3, and GRPO.
 Those are the Runpod spread's Stage 0 onward, after this.
