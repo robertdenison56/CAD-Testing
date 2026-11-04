@@ -59,6 +59,8 @@ from roaddraft.verify.audit import audit_journal
 from roaddraft.verify.report import VerifyReport
 
 HARNESS_VERSION = "e3-v3"  # (2026-11-03) + faults counted by turn, a one-item list read as its value, 45-min clock
+# 2026-11-04: the openai-compatible runner gives a silent socket read up at READ_TIMEOUT (300 s) and treats it as a
+# stall (reload once, ask again); a robustness fix of the stream, no rule of the harness changed, so e3-v3 stands.
 #                  e3-v2     (2026-10-18) + file access held to the episode folder
 #                  e3-v1     (2026-10-14) + LLM agents, dialect skins, vision images, cost
 #: bus error types that count as invalid calls (a fault of the call, not of the drawing)

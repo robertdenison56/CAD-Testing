@@ -475,3 +475,8 @@ def test_a_stalled_turn_is_a_turn_time_limit_with_the_stall_in_its_message():
     stalled["stalled"]["reloaded"] = False
     with pytest.raises(LimitReached, match=r"1200 empty chunks\)$"):
         parse_openai(stalled)
+    # 2026-11-04: a stream that sent no chunk at all (the read timed out) names that, not a chunk count
+    silent = dict(plain, stalled={"seconds": 300.0, "chunks": 0, "reloaded": True, "silent": True})
+    with pytest.raises(LimitReached, match=r"sent no chunk for 300 s, before and after a reload") as info:
+        parse_openai(silent)
+    assert info.value.limit == "turn_time"

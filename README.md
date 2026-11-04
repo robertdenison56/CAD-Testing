@@ -1059,6 +1059,11 @@ failure in a row, and any call that succeeds resets the count. The 45-minute
 clock (120 on a pilot set, behind its 200,000 tokens) is a backstop behind
 the 60,000 output tokens, sized so the slowest stack in use reaches the token
 budget first; no hosted or CLI row ever reached the 20 or 30 minutes before it.
+The serving stack's own stalls are the runner's business, not a rule: a
+stream that sends no chunk at all is given up after 300 seconds of silence
+and the engine reloaded and asked once more (2026-11-04), as a flood of
+empty chunks has been since Oct 28; neither changes what a turn may do, so
+e3-v3 stands.
 
 `--provider claude-code` and `--provider codex` are the frontier's route
 on a subscription, with no API key: the Track P backends' headless CLIs

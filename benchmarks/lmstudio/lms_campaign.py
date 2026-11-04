@@ -13,7 +13,7 @@
                                                 [--level explicit] [--limit N] [--run-id ID]
                                                 [--pilots text|images|all] [--worktree PATH] [--dry-run] [--print]
     python benchmarks/lmstudio/lms_campaign.py clear-errors RUN_ID [--apply] [--stalled] [--turn-time]  # errored (stalled, silent) episodes aside
-    python benchmarks/lmstudio/lms_campaign.py watch RUN_ID [--interval 60] [--idle 20]   # stop + set aside a stalled run's episode
+    python benchmarks/lmstudio/lms_campaign.py watch RUN_ID [--interval 60] [--idle 20]   # stop + set aside a stalled run's episode (0 steps, or a silent last turn)
     python benchmarks/lmstudio/lms_campaign.py score NAME [--print]
 
 NAME is a key of ``models`` in ``benchmarks/lmstudio/models.json`` (``qwen3.5-9b``, ``qwen3.5-4b``, ``gemma-4-12b``).
@@ -61,7 +61,9 @@ Stalls (2026-10-28): Gemma 4 12B Q8_0 at 98,304 on d1-test answered the harness'
 episode and then streamed empty chunks for the whole 30-minute turn limit, nine episodes in a row over five
 hours, each scored 0 with 0 steps while LM Studio listed the model GENERATING; stopping the client and reloading
 cleared it. An episode whose end record says ``turn_time`` with 0 steps is a *stall* (``stalled``), the engine's
-outcome rather than the model's -- once. ``watch RUN_ID`` polls a run for one, stops the run's eval process (a
+outcome rather than the model's -- once; so is one that ended ``turn_time`` after steps when its last turn record
+carried no tokens at all (2026-11-04: the 9B sat 1,800 s in one request the engine never answered, five times in
+ten episodes, after 1 to 10 steps; the model's own over-long turn carries tokens). ``watch RUN_ID`` polls a run for one, stops the run's eval process (a
 queue script's ``run_e3`` retry loop then reloads the model and resumes the run), moves the episode into
 ``<run>/errored-<date>/`` so the resume runs it again, and records it in ``<run>/watch.json``; a stall of the
 same episode after that stays as the model's result. ``clear-errors --stalled`` does the move by hand.
@@ -676,14 +678,14 @@ def cmd_clear_errors(args) -> int:
         if end is None:
             print(f"no end record (left to resume): {f.name}")
             continue
-        if end.get("termination") == "error" or (getattr(args, "stalled", False) and stalled(end)) \
+        if end.get("termination") == "error" or (getattr(args, "stalled", False) and stalled(end, last_turn(f))) \
                 or (getattr(args, "turn_time", False) and silent_turn(end)):
             errored.append((f, end))
         else:
             kept += 1
     for f, end in errored:
         first = (end.get("error") or "").splitlines()[0][:100] if end.get("error") else ""
-        kind = "stalled" if stalled(end) else "silent " if silent_turn(end) else "error  "
+        kind = "stalled" if stalled(end, last_turn(f)) else "silent " if silent_turn(end) else "error  "
         print(f"{f.name.split('.')[0]}  {kind}  {end.get('steps', 0):3d} steps  {first}")
     print(f"{len(errored)} errored/stalled episode(s) of {len(errored) + kept} with an end record in {run_dir}")
     if not errored or not args.apply:
@@ -711,17 +713,43 @@ def end_record(path: Path) -> Optional[dict]:
     return None
 
 
+def last_turn(path: Path) -> Optional[dict]:
+    """The episode file's last turn record, or None before the first turn."""
+    for line in path.read_text(encoding="utf-8").splitlines()[::-1]:
+        if line.strip():
+            rec = json.loads(line)
+            if rec.get("type") == "turn":
+                return rec
+    return None
+
+
+def silent_record(turn: dict) -> bool:
+    """A turn record the engine answered with nothing: a usage with no output tokens and an assistant with no text
+    and no call (the request sat until the read timed out). A record without a usage key (older files, test stubs)
+    is not judged."""
+    if "usage" not in turn:
+        return False
+    usage = turn.get("usage") or {}
+    tokens = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+    said = turn.get("assistant") or {}
+    return not tokens and not said.get("text") and not said.get("tool_calls")
+
+
 def silent_turn(end: dict) -> bool:
     """An episode that ended on the provider's turn limit: a turn that carried nothing for 30 minutes, the shape of
     the Oct 28 stall, on the first turn or after steps (the 9B's four "over-long turns" on d1-test, 2026-10-27)."""
     return end.get("budget_tripped") == STALL_TRIP
 
 
-def stalled(end: dict) -> bool:
-    """An episode the model never acted in: a silent turn as its first, 0 steps (see "Stalls" above). A silent
-    turn after steps, or a wall-clock trip, ``watch`` leaves as the model's outcome; ``clear-errors --turn-time``
-    sets the silent ones aside by hand (Robert, 2026-10-28: the 9B's five rerun)."""
-    return silent_turn(end) and not end.get("steps")
+def stalled(end: dict, last: Optional[dict] = None) -> bool:
+    """An episode the engine, not the model, ended: a silent turn as its first (0 steps; see "Stalls" above), or,
+    given the file's last turn record, a ``turn_time`` end after steps whose last turn carried no tokens at all
+    (2026-11-04). A turn-limit end whose last turn carried tokens (the model talked and ran long), or a wall-clock
+    trip, ``watch`` leaves as the model's outcome; ``clear-errors --turn-time`` sets every turn-limit end aside by
+    hand (Robert, 2026-10-28: the 9B's five rerun)."""
+    if not silent_turn(end):
+        return False
+    return not end.get("steps") or (last is not None and silent_record(last))
 
 
 def stalled_episodes(run_dir: Path, reruns: Dict[str, int], max_reruns: int = 1) -> List[Path]:
@@ -733,7 +761,7 @@ def stalled_episodes(run_dir: Path, reruns: Dict[str, int], max_reruns: int = 1)
         return out
     for f in sorted(episodes.glob("*.jsonl")):
         end = end_record(f)
-        if end is not None and stalled(end) and reruns.get(f.name, 0) < max_reruns:
+        if end is not None and stalled(end, last_turn(f)) and reruns.get(f.name, 0) < max_reruns:
             out.append(f)
     return out
 
@@ -771,8 +799,9 @@ def cmd_watch(args) -> int:
             fh.write(line + "\n")
 
     state = json.loads(state_path.read_text()) if state_path.exists() else {"reruns": {}, "events": []}
-    note(f"watching {args.run_id} every {args.interval} s (stall = {STALL_TRIP} with 0 steps; "
-         f"{args.max_reruns} rerun(s) each); ends after {args.idle} min without an eval process")
+    note(f"watching {args.run_id} every {args.interval} s (stall = {STALL_TRIP} with 0 steps, or after steps when "
+         f"the last turn carried no tokens; {args.max_reruns} rerun(s) each); ends after {args.idle} min without an "
+         f"eval process")
     idle_since: Optional[float] = None
     while True:
         pids = run_processes(args.run_id)
@@ -850,7 +879,8 @@ def main(argv=None) -> int:
     e3.add_argument("--print", action="store_true"); e3.set_defaults(fn=cmd_e3)
     ce = sub.add_parser("clear-errors"); ce.add_argument("run_id", help="a run id under results/e3-lms, or a path")
     ce.add_argument("--apply", action="store_true", help="move them; without it, list only")
-    ce.add_argument("--stalled", action="store_true", help="also the stalled ones (turn_time with 0 steps)")
+    ce.add_argument("--stalled", action="store_true",
+                    help="also the stalled ones (turn_time with 0 steps, or after steps with a last turn that carried no tokens)")
     ce.add_argument("--turn-time", action="store_true",
                     help="also every turn_time trip, after steps too (a silent turn; the 9B's rerun of 2026-10-28)")
     ce.set_defaults(fn=cmd_clear_errors)

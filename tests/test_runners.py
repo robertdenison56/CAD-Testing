@@ -789,7 +789,7 @@ def test_post_chat_streams_and_retries_a_stalled_stream(monkeypatch):
 
     def urlopen(req, timeout):
         bodies.append(json.loads(req.data))
-        assert timeout == openai_compat.TURN_LIMIT
+        assert timeout == openai_compat.READ_TIMEOUT
         if len(bodies) == 1:
             return Stalled([])
         return Stream(sse(chunk(content="whole"), chunk(finish="stop"), USAGE))
@@ -807,6 +807,45 @@ def test_post_chat_streams_and_retries_a_stalled_stream(monkeypatch):
     monkeypatch.setattr(openai_compat.urllib.request, "urlopen", lambda req, timeout: next(streams))
     with pytest.raises(RuntimeError, match="stream error: .*terminated"):
         openai_compat.post_chat("http://x/v1/chat/completions", {"model": "m"}, {}, sleep=slept.append)
+
+
+def test_a_silent_stream_is_a_stall_reloaded_once_and_then_on_record(monkeypatch):
+    """2026-11-04: a request the engine never answers -- no chunk at all -- is given up at READ_TIMEOUT and
+    handled like a flood of empty chunks: reload and ask again once, then the turn ends with the stall on record.
+    Before, the read waited the whole TURN_LIMIT: five of the 9B's first ten d1-test episodes lost 30 minutes each."""
+    import socket
+    from roaddraft.runners import openai_compat
+    timeouts = []
+
+    class Silent(Stream):
+        def __iter__(self):
+            raise socket.timeout("timed out")     # the socket read gave up: no chunk ever came
+
+    streams = iter([Silent([]), Stream(sse(chunk(content="back"), chunk(finish="stop"), USAGE))])
+
+    def urlopen(req, timeout):
+        timeouts.append(timeout)
+        return next(streams)
+
+    monkeypatch.setattr(openai_compat.urllib.request, "urlopen", urlopen)
+    guard = openai_compat.LmStudioGuard("http://localhost:1234/v1", "qwen/qwen3.5-9b", 131072)
+    reloads = []
+    monkeypatch.setattr(guard, "reload", lambda: reloads.append(1))
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {}, guard=guard,
+                                    attempts=1, sleep=lambda s: None)
+    assert reply["choices"][0]["message"]["content"] == "back" and reloads == [1] and "stalled" not in reply
+    assert timeouts == [openai_compat.READ_TIMEOUT] * 2 and openai_compat.READ_TIMEOUT == 300 < openai_compat.TURN_LIMIT
+    # silent again after the reload: the turn ends as turn_limit with the silent stall on record
+    streams = iter([Silent([]), Silent([])])
+    reply = openai_compat.post_chat("http://localhost:1234/v1/chat/completions", {"model": "m"}, {}, guard=guard,
+                                    sleep=lambda s: None)
+    assert reply["choices"][0]["finish_reason"] == "turn_limit" and reply["choices"][0]["message"]["content"] == ""
+    assert reply["stalled"] == {"seconds": 300.0, "chunks": 0, "reloaded": True, "silent": True} and reloads == [1, 1]
+    assert reply["usage"] == {"completion_tokens": 0, "estimated": True}
+    # without the guard a silent read is retried as before: a hosted endpoint has no engine to reload
+    streams, slept = iter([Silent([]), Stream(sse(chunk(content="whole"), chunk(finish="stop"), USAGE))]), []
+    reply = openai_compat.post_chat("http://x/v1/chat/completions", {"model": "m"}, {}, sleep=slept.append)
+    assert reply["choices"][0]["message"]["content"] == "whole" and slept == [15]
 
 
 def test_an_engine_that_dies_mid_stream_is_reloaded_when_it_took_the_model(monkeypatch):

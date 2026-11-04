@@ -80,11 +80,14 @@ def test_a_rung_the_server_loads_at_another_size_does_not_count(monkeypatch):
 
 # ------------------------------------------------------------------ stalls (2026-10-28)
 
-def _episode(folder, name, end=None, body=1):
-    """An episode file: a header, ``body`` turn records and, unless ``end`` is None, an end record."""
+def _episode(folder, name, end=None, body=1, last_turn=None):
+    """An episode file: a header, ``body`` turn records (then ``last_turn``, a full turn record, when given) and,
+    unless ``end`` is None, an end record."""
     import json
     lines = [json.dumps({"type": "header", "run_id": "r"})]
     lines += [json.dumps({"type": "turn", "n": i}) for i in range(body)]
+    if last_turn is not None:
+        lines.append(json.dumps(dict({"type": "turn", "n": body}, **last_turn)))
     if end is not None:
         lines.append(json.dumps(dict({"type": "end", "termination": "budget", "steps": 0}, **end)))
     f = folder / f"{name}.model.neutral.single.explicit.0.jsonl"
@@ -176,6 +179,30 @@ def test_a_silent_turn_is_any_turn_time_trip_and_clear_errors_takes_them_with_tu
     assert c.cmd_clear_errors(argparse.Namespace(stalled=False, turn_time=True, **ns)) == 0
     out = capsys.readouterr().out
     assert "silent" in out and not silent.exists() and keep.exists()
+
+
+def test_a_silent_last_turn_after_steps_is_a_stall_too(tmp_path):
+    """2026-11-04: the 9B's D1-001003 to 001009 ended turn_time after 1 to 10 steps with a last turn the engine never
+    answered (no tokens, nothing said); the 0-step rule missed them and each cost 30 minutes. A turn-limit end whose
+    last turn carried tokens is still the model's own over-long turn."""
+    import argparse
+    c = load_script()
+    eps = tmp_path / "episodes"
+    eps.mkdir()
+    silent = {"assistant": {"text": "", "tool_calls": [], "submit": False}, "results": [], "usage": {}, "elapsed_ms": 1800009}
+    spoke = {"assistant": {"text": "", "tool_calls": [{"name": "draw_line"}]}, "usage": {"output_tokens": 812},
+             "elapsed_ms": 1800012}
+    a = _episode(eps, "D1-001003-aaaa", end={"budget_tripped": "turn_time", "steps": 4}, last_turn=silent)
+    b = _episode(eps, "D1-001014-bbbb", end={"budget_tripped": "turn_time", "steps": 17}, last_turn=spoke)
+    first = _episode(eps, "D1-001004-cccc", end={"budget_tripped": "turn_time", "steps": 0})
+    keep = _episode(eps, "D1-001007-dddd", end={"termination": "submit", "steps": 2, "budget_tripped": None})
+    assert c.last_turn(a)["usage"] == {} and c.silent_record(c.last_turn(a)) and not c.silent_record(c.last_turn(b))
+    assert not c.silent_record({"n": 0})                       # a record without a usage key is not judged
+    assert c.stalled(c.end_record(a), c.last_turn(a)) and not c.stalled(c.end_record(b), c.last_turn(b))
+    assert not c.stalled({"budget_tripped": "turn_time", "steps": 4})    # without the turn record: the old rule
+    assert c.stalled_episodes(tmp_path, {}) == [a, first]
+    assert c.cmd_clear_errors(argparse.Namespace(run_id=str(tmp_path), apply=True, stalled=True, turn_time=False)) == 0
+    assert not a.exists() and not first.exists() and b.exists() and keep.exists()
 
 
 def test_e3_leaves_the_context_budget_out_for_a_harness_pin_without_the_flag(tmp_path, monkeypatch, capsys):

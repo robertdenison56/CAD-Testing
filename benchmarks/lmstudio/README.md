@@ -125,6 +125,18 @@ for the zero-step kind. The reports are written (d1-real's with `--reverify`,
 as its published row was), not published: the two rows change after a look at the numbers, with
 `report --publish` and `scripts/make_leaderboard.py`.
 
+
+**Silent streams (2026-11-04).** The 9B's first v3 night (queue 10, `e3-d1-test-qwen3.5-9b-q4km-lms-single-v3`)
+showed the stall in a shape neither guard could see: after healthy turns of 3-35 s, one request sat for exactly the
+1,800-s turn limit with no chunk at all (`usage {}`, the Mac relay logging "Streaming response..." and nothing after, the
+model idle), five of the first ten episodes, after 1 to 10 steps, each ending `turn_time` with whatever its steps had
+earned (0, 0, 100, 0, 53.8). The harness's chunk counter never saw a chunk, and `watch` wanted 0 steps. Two fixes: the
+runner now gives a silent socket read up at `READ_TIMEOUT` (300 s, = `STALL_LIMIT`) and treats it as a stall (reload
+and ask again once; then `turn_limit` with `stalled` `silent: true` on record; without the guard the read is retried as
+before), and `stalled()` in `lms_campaign.py` also counts a `turn_time` end after steps whose last turn record carried
+no tokens (`last_turn`, `silent_record`), so `watch` stops the run for a reload and `clear-errors --stalled` takes them.
+Robert, 14:3x Nov 4: "Yes, build both". The five were set aside by hand with `clear-errors --turn-time` and the run
+resumed from the re-pinned worktree.
 ## Harness failures (2026-10-28)
 
 An exception the harness itself raises inside a tool call used to escape the episode loop (only the agent's own

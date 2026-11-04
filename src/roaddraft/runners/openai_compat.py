@@ -52,6 +52,13 @@ run_models.py) are here too:
   Oct 27-28 had the same shape. With the guard the model is reloaded and the
   request sent again, once; a second stall, or one without the guard, ends
   the turn as ``turn_limit`` with ``stalled`` in the reply for the records.
+- A stream that sends no chunk at all is the same stall in another shape
+  (2026-11-04: Qwen3.5-9B on the PC sat 1,800 s in one request in five of ten
+  episodes, the relay logging "Streaming response..." and nothing after, the
+  model idle; the chunk counter never saw a chunk to count). The socket read
+  is given up at ``READ_TIMEOUT`` seconds and, with the guard, handled as a
+  stall: reload and ask again once, then ``turn_limit`` with ``stalled``
+  (``silent``) on record. Without the guard a silent read is retried as before.
 - A 400 for a request over the context, with the model already loaded at the
   guard's context, stops the probe with ``stop: "context"``: the conversation
   has outgrown the context and a reload cannot fit it. (Before, the guard
@@ -116,11 +123,15 @@ PROBE_TIMEOUT = 90.0
 #: and the pause between its tries
 ENGINE_WAIT, ENGINE_RETRY = 30 * 60, 30
 CALL_CAP = 4            # tool calls run from one turn; the start of another ends the turn
-TURN_LIMIT = 1800.0     # seconds one turn may take, and the socket's read timeout
+TURN_LIMIT = 1800.0     # seconds one turn may take (the socket's read timeout is READ_TIMEOUT)
 #: a stream whose chunks carry nothing for this long is a stall of the engine (the docstring's last bullet)
 STALL_LIMIT = 300.0
 #: and at least this many empty chunks in that time: one empty chunk after a long prompt's processing is not one
 STALL_CHUNKS = 50
+#: seconds the socket may stay silent -- no bytes at all -- before the read is given up: a stream that sends no
+#: chunk is the stall the chunk counter cannot see (2026-11-04: five of the 9B's first ten d1-test episodes sat
+#: 1,800 s in one request with the model idle). The same limit as a flood of empty chunks.
+READ_TIMEOUT = STALL_LIMIT
 
 
 class ContextFull(Exception):
@@ -136,11 +147,13 @@ class StreamError(RuntimeError):
 
 
 class Stalled(Exception):
-    """The stream carried chunks with nothing in them for ``STALL_LIMIT`` seconds."""
+    """The stream carried chunks with nothing in them for ``STALL_LIMIT`` seconds, or (``silent``) no chunk at
+    all for ``READ_TIMEOUT`` seconds."""
 
-    def __init__(self, seconds: float, chunks: int):
-        super().__init__(f"the stream carried nothing for {seconds:.0f} s ({chunks} empty chunks)")
-        self.seconds, self.chunks = seconds, chunks
+    def __init__(self, seconds: float, chunks: int, silent: bool = False):
+        super().__init__(f"the stream sent no chunk for {seconds:.0f} s" if silent else
+                         f"the stream carried nothing for {seconds:.0f} s ({chunks} empty chunks)")
+        self.seconds, self.chunks, self.silent = seconds, chunks, silent
 
 
 def carries(delta: dict) -> bool:
@@ -361,18 +374,21 @@ def stalled_reply(ex: Stalled, reloaded: bool) -> dict:
     said, and ``stalled`` saying why, for the backends' records."""
     return {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "turn_limit"}],
             "usage": {"completion_tokens": 0, "estimated": True},
-            "stalled": {"seconds": round(ex.seconds, 1), "chunks": ex.chunks, "reloaded": reloaded}}
+            "stalled": {"seconds": round(ex.seconds, 1), "chunks": ex.chunks, "reloaded": reloaded,
+                        "silent": ex.silent}}
 
 
 def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmStudioGuard] = None,
               attempts: int = 4, sleep: Callable[[float], None] = time.sleep,
               call_cap: int = CALL_CAP, turn_limit: float = TURN_LIMIT,
-              clock: Callable[[], float] = time.time) -> dict:
+              clock: Callable[[], float] = time.time, read_timeout: float = READ_TIMEOUT) -> dict:
     """One streamed chat completion, read by ``read_stream``, with the retries
     and the guard. Raises ``ToolsRefused`` and ``ContextFull`` for the backend
     to act on. A stall (``Stalled``) reloads the model once, with the guard,
     and asks again; a second one, or one without the guard, ends the turn as
-    ``turn_limit`` with ``stalled`` in the reply."""
+    ``turn_limit`` with ``stalled`` in the reply. A socket silent for
+    ``read_timeout`` seconds is, with the guard, that same stall (``silent``:
+    no chunk came at all); without one it is retried as any dropped read."""
     data = json.dumps(dict(body, stream=True, stream_options={"include_usage": True})).encode()
     asked_again = False   # a reload marker met once with the model still listed
     stalled_once = False  # a stall met once: the model reloaded and the request sent again
@@ -383,10 +399,14 @@ def post_chat(url: str, body: dict, headers: Dict[str, str], guard: Optional[LmS
         try:
             req = urllib.request.Request(url, data, {"Content-Type": "application/json", **headers})
             t0 = clock()
-            with urllib.request.urlopen(req, timeout=turn_limit) as resp:
+            with urllib.request.urlopen(req, timeout=min(read_timeout, turn_limit)) as resp:
                 try:
                     return read_stream(resp, t0, call_cap, turn_limit, clock)
-                except Stalled as ex:
+                except (Stalled, socket.timeout, TimeoutError) as ex:
+                    if not isinstance(ex, Stalled):
+                        if guard is None:
+                            raise   # a hosted endpoint: no engine to reload; the retry below, as before
+                        ex = Stalled(min(read_timeout, turn_limit), 0, silent=True)
                     if guard is not None and not stalled_once:
                         print(f"stall: {ex}; reloading the model and asking again", flush=True)
                         guard.reload()

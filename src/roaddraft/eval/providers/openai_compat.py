@@ -98,8 +98,9 @@ def parse_reply(reply: dict) -> Turn:
     if finish == "turn_limit":
         stall = reply.get("stalled")
         if stall:   # the backend's stall guard gave the turn up: the engine streamed nothing (runners.openai_compat)
-            raise LimitReached("turn_time", f"the model's stream carried nothing for {stall['seconds']:.0f} s "
-                               f"({stall['chunks']} empty chunks)"
+            what = (f"the model's stream sent no chunk for {stall['seconds']:.0f} s" if stall.get("silent") else
+                    f"the model's stream carried nothing for {stall['seconds']:.0f} s ({stall['chunks']} empty chunks)")
+            raise LimitReached("turn_time", what
                                + (", before and after a reload of the engine" if stall.get("reloaded") else ""))
         raise LimitReached("turn_time", "the model's turn ran past the provider's turn limit")
     raw_calls = msg.get("tool_calls") or []
