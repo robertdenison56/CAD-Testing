@@ -67,8 +67,10 @@ NO_SHEET = "the deliverable sheet does not exist"
 #: Checks the verifier adds beside the spec's frozen list (d1-verify-v7): the
 #: construction callouts of a real plan sheet (``tasks.real_callouts``), judged
 #: like labels -- credit only for a note ``place_callout`` placed, with its text as
-#: given and its leader tip on the point called out; a callout at one of those
-#: points reading another note is wrong work on the sheet (hard fail).  They enter
+#: given and its leader tip on the point called out, as the sheet's own viewport
+#: shows it (d1-verify-v8: the drafter's viewport, not the sample sheet's); a
+#: callout at one of those points reading another note is wrong work on the sheet
+#: (hard fail).  They enter
 #: a task's rubric only through their groups (``tasks.types.CHECK_GROUPS``), so a
 #: task that does not ask for the group never sees them and the spec's hash and
 #: every task id stand.  Folded into the spec's own list at its next version.
@@ -323,6 +325,7 @@ class CalloutCandidate:
 class CalloutMatch:
     """One truth callout against the document."""
     truth: dict
+    expected: Optional[List[float]] = None  # where the tip belongs on the paper (expected_callout_tip)
     chosen: Optional[CalloutCandidate] = None
     distance: Optional[float] = None    # tip to the point called out, paper inches
     wrong: Optional[CalloutCandidate] = None  # a callout at the point reading another note
@@ -424,12 +427,26 @@ def callout_tip(entities: Dict[str, Entity], text: Text) -> Optional[List[float]
     return [float(far[0]), float(far[1])]
 
 
+def expected_callout_tip(ctx: Context, truth: dict) -> List[float]:
+    """Where a note's leader tip belongs on the paper: the station and offset
+    called out (``tip_model``) seen through the viewport the deliverable sheet
+    is drawn through (``SheetView.used``), so a sheet the drafter laid out on
+    their own centre is judged as drawn (d1-verify-v8).  The task's own
+    projection (``tip_paper``, through the sample sheet's viewport) only when
+    the sheet has no viewport to see through yet."""
+    sv = next((v for v in ctx.sheets if v.name == truth.get("sheet")), None) or ctx.first
+    if sv is not None and sv.used is not None and truth.get("tip_model") is not None:
+        p = sv.used.transform.to_paper(truth["tip_model"])
+        return [float(p[0]), float(p[1])]
+    return [float(v) for v in truth["tip_paper"]]
+
+
 def analyze_callouts(ctx: Context) -> List[CalloutMatch]:
     """Each truth callout against the document's callouts (texts carrying a
     ``callout`` record): the nearest one reading the note is its match, one
     callout to a note; a callout reading none of the notes with its tip on a
-    note's point is that note's ``wrong``; a note typed as plain text is
-    noted as ``by_hand``."""
+    note's point (``expected_callout_tip``) is that note's ``wrong``; a note
+    typed as plain text is noted as ``by_hand``."""
     cands: List[CalloutCandidate] = []
     for sv in ctx.sheets:
         if sv.sheet is None:
@@ -445,15 +462,15 @@ def analyze_callouts(ctx: Context) -> List[CalloutMatch]:
             paper = view.transform.to_paper(tip) if (view is not None and tip is not None) else None
             cands.append(CalloutCandidate(e, [float(paper[0]), float(paper[1])] if paper else None,
                                           view is not None))
-    matches = [CalloutMatch(truth=c) for c in ctx.truth.callouts]
+    matches = [CalloutMatch(truth=c, expected=expected_callout_tip(ctx, c))
+               for c in ctx.truth.callouts]
     pairs = []
     for i, m in enumerate(matches):
         want = normalize(m.truth["content"])
         for j, cand in enumerate(cands):
             if normalize(cand.text.content) != want:
                 continue
-            d = (geo.distance(cand.tip, m.truth["tip_paper"]) if cand.tip is not None
-                 else float("inf"))
+            d = geo.distance(cand.tip, m.expected) if cand.tip is not None else float("inf")
             pairs.append((d, i, j))
     taken: set = set()
     for d, i, j in sorted(pairs):
@@ -468,7 +485,7 @@ def analyze_callouts(ctx: Context) -> List[CalloutMatch]:
         if j in taken or cand.tip is None or normalize(cand.text.content) in notes:
             continue
         for m in matches:
-            if m.chosen is None and geo.distance(cand.tip, m.truth["tip_paper"]) <= tol:
+            if m.chosen is None and geo.distance(cand.tip, m.expected) <= tol:
                 m.wrong = cand
                 break
     plain = [t for t, _why in ctx_texts_without_callout_record(ctx)]
@@ -1197,8 +1214,9 @@ def check_alignment_created(a: Analysis) -> Result:  # D1-15
 def check_callouts(a: Analysis) -> Result:  # D1-16 (EXTRA_CHECKS)
     """Each construction callout the task asks for: placed by ``place_callout``
     (its record), reading the note as given, visible on the sheet, its leader
-    tip within the paper tolerance of the station and offset called out.  A
-    callout at one of those points that reads none of the notes is wrong work
+    tip within the paper tolerance of the station and offset called out, seen
+    through the viewport the sheet is drawn through (``expected_callout_tip``).
+    A callout at one of those points that reads none of the notes is wrong work
     on the sheet (``wrong_value``); a missing or misplaced one costs credit."""
     ctx = a.ctx
     if not ctx.truth.callouts:
@@ -1236,7 +1254,7 @@ def check_callouts(a: Analysis) -> Result:  # D1-16 (EXTRA_CHECKS)
             continue
         if m.distance is None or m.distance > tol:
             findings.append(Finding("misplaced", anchor=m.anchor, entity_ids=[c.text.id],
-                                    expected=[round(v, 3) for v in m.truth["tip_paper"]],
+                                    expected=[round(v, 3) for v in m.expected],
                                     actual=[round(v, 3) for v in c.tip],
                                     note=f"the leader tip is {m.distance:.2f} in from the point "
                                          f"called out"))

@@ -129,7 +129,13 @@ writes (kind, what it was aimed at, where the tip landed), reading the note as g
 (whitespace and quotes folded), visible on the sheet, its leader tip read from the drawn
 lines within 0.05 in of the station and offset. A note typed as text is `unanchored`; a
 tip off its point or a note dragged off its leader is `misplaced`; a callout on one of
-the points that reads none of the notes is `wrong_value`, a hard fail.
+the points that reads none of the notes is `wrong_value`, a hard fail. The point called
+out is seen through the viewport the drafter's sheet is drawn through
+(`checks.expected_callout_tip`, d1-verify-v8 of 2026-11-03), so a whole-job sheet
+(`real-sheet-job`, where the prompt leaves the viewport's centre to the drafter) is
+judged as drawn; under v7 the sample sheet's own viewport was the frame, and a job
+centred elsewhere lost every note (Terra's CFL job, 130 ft off, 82.7 instead of 96.2).
+On a sheet handed over with its viewport (this type) the two frames are the same.
 
 ## The eval sets drawn from it
 

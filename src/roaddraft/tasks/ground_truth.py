@@ -165,7 +165,10 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                               float(align.begin_station + t.end_dist)],
             "layer": D.get("dims_layer", layers.get("dims"))})
     # a real sheet's construction callouts: each note's tip from its station and offset on
-    # its line, in the model and on the paper through the sheet's viewport (tasks.real)
+    # its line, in the model and on the paper through the sample sheet's viewport
+    # (tasks.real).  The verifier judges the tip through the viewport the drafter's sheet
+    # is drawn through (d1-verify-v8, checks.expected_callout_tip); tip_paper is the
+    # task's own projection, for a reader of the truth and for a sheet with no viewport yet
     callouts: List[dict] = []
     for c in D.get("callouts") or []:
         on = Alignment.from_dict(brief.design["alignments"][c["alignment"]])

@@ -398,6 +398,60 @@ def test_a_callout_off_its_point_is_misplaced_and_a_moved_note_loses_its_leader(
     assert finding.code == "misplaced" and "leader" in finding.note
 
 
+def test_callouts_are_judged_through_the_viewport_the_drafter_laid_out():
+    """d1-verify-v8: a whole-job sheet is centred wherever the drafter puts it
+    (the prompt asks for the scale, the twist and all of the line, not the
+    sample sheet's centre), so D1-16 projects each note's point through that
+    viewport, not the sample's.  Terra's CFL job (D1-000000-44e2d25218ed) sat
+    130 ft off the sample's centre and lost all four notes under v7."""
+    from roaddraft.core import geometry as geo
+    from roaddraft.tasks.reference import solution_commands
+    from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
+    from roaddraft.verify.checks import expected_callout_tip
+    from roaddraft.verify.context import Context
+    task = build_real_task("CFL-D-Plan-and-Plan", "CL1", "real-sheet-job")
+    truth = task.truth
+    assert "notes" in truth.scope and len(truth.callouts) == 4
+    tol = DRAFTING_SPEC_V1["tolerances"]["position_paper_in"]
+
+    def drafted(shift_ft, aim_off_in=0.0):
+        """The reference drawn with its viewport centred ``shift_ft`` from the
+        sample's; the first note aimed ``aim_off_in`` east of its point."""
+        session = session_for_task(task)
+        first = True
+        for name, params in solution_commands(task):
+            if name == "create_viewport":
+                cx, cy = params["model_center"]
+                params = dict(params, model_center=[cx + shift_ft[0], cy + shift_ft[1]])
+            if name == "place_callout" and first:
+                first = False
+                if aim_off_in:
+                    ctx = Context.build(session.doc, truth, DRAFTING_SPEC_V1)
+                    tip = expected_callout_tip(ctx, truth.callouts[0])
+                    params = {k: v for k, v in params.items() if k not in ("target_anchor", "alignment")}
+                    params["target"] = [tip[0] + aim_off_in, tip[1]]
+            assert session.execute(name, params)["ok"], (name, params)
+        return session.doc
+
+    # the sheet drawn 60 ft north of the sample's centre: every note's leader lands 1.2 in
+    # from where the sample sheet would put it, and every one earns its credit
+    doc = drafted((0.0, 60.0))
+    report = verify(doc, truth)
+    assert report.check("D1-16").credit == 1.0, [f.to_dict() for f in report.check("D1-16").findings]
+    ctx = Context.build(doc, truth, DRAFTING_SPEC_V1)
+    for c in truth.callouts:
+        moved = geo.distance(expected_callout_tip(ctx, c), c["tip_paper"])
+        assert moved == pytest.approx(1.2, abs=0.01) and moved > tol
+    # and a note aimed off its point on that sheet is still misplaced by what it missed by
+    report = verify(drafted((0.0, 60.0), aim_off_in=0.3), truth)
+    d16 = report.check("D1-16")
+    assert d16.credit == pytest.approx(0.75)
+    finding = next(f for f in d16.findings if f.anchor["ref"] == truth.callouts[0]["ref"])
+    assert finding.code == "misplaced" and "0.30 in" in finding.note
+    # the sample's own centre still scores as before
+    assert verify(drafted((0.0, 0.0)), truth).check("D1-16").credit == 1.0
+
+
 def test_an_old_truth_reads_back_without_the_callouts_field(notes_task):
     from roaddraft.tasks.brief import GroundTruth
     d = notes_task.truth.to_dict()
