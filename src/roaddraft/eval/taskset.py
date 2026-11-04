@@ -27,8 +27,10 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   ``tasks.types.HARD_TASK_TYPES``: the plan sheet with its pavement edges and
   width dimensions, the alignment created from the stated geometry and then
   the sheet, and the sheet file laid out and lettered through its base
-  drawing), at three to five curves on two or three sheets, every one with a
-  station equation.  Its own board.
+  drawing), at three to five curves on two or three sheets, one task in five
+  with a station equation (``hard_equation``; every one had one until
+  2026-11-03, when Robert found equations too uncommon in practice to be the
+  set's focus).  Its own board.
 - ``d1-real-hard`` (2026-11-03): every whole job on the redrafted sheets
   (``tasks.types.REAL_JOB_TYPES``: a sheet drafted from its base files, or a
   blank sheet annotated, with its construction callouts as well) off the dev
@@ -140,11 +142,27 @@ def _entry(seed: int, index: int) -> dict:
     raise RuntimeError(f"seed {seed}: no task type generates")
 
 
+#: One task in each block of five carries a station equation, the slot stepping
+#: on by two a block (indices 0, 7, 14, 16, 23, 25, ...): the twenty equation
+#: tasks of ``d1-test-hard`` then fall on every type four times, on the curve
+#: counts 6/7/7 and the sheet counts 11/9, where a fixed slot would be one type
+#: (the type cycle is five long too).  Every task had one until 2026-11-03
+#: (Robert: station equations are not that common, so not the set's focus).
+HARD_EQUATION_EVERY = 5
+
+
+def hard_equation(index: int) -> bool:
+    """Whether the ``index``-th task of ``d1-test-hard`` has a station equation."""
+    block, slot = divmod(index, HARD_EQUATION_EVERY)
+    return slot == (2 * block) % HARD_EQUATION_EVERY
+
+
 def hard_dials(index: int) -> dict:
     """The dials of the ``index``-th task of ``d1-test-hard``: curves cycle 3, 4,
-    5; two sheets or three, flipping every three; a station equation always;
-    the type cycles through ``HARD_SEEDED_TYPES``, every one a whole sheet."""
-    return {"curves": HARD_CURVES[index % len(HARD_CURVES)], "equations": True,
+    5; two sheets or three, flipping every three; a station equation on one
+    task in five (``hard_equation``); the type cycles through
+    ``HARD_SEEDED_TYPES``, every one a whole sheet."""
+    return {"curves": HARD_CURVES[index % len(HARD_CURVES)], "equations": hard_equation(index),
             "sheets": HARD_SHEETS[(index // len(HARD_CURVES)) % len(HARD_SHEETS)],
             "task_type": HARD_SEEDED_TYPES[index % len(HARD_SEEDED_TYPES)]}
 
@@ -159,12 +177,12 @@ def _hard_entry(seed: int, index: int) -> dict:
         for k in range(len(HARD_SEEDED_TYPES)):
             ttype = HARD_SEEDED_TYPES[(start + k) % len(HARD_SEEDED_TYPES)]
             try:
-                task = make_task(seed, d["curves"], True, ttype, sheets)
+                task = make_task(seed, d["curves"], d["equations"], ttype, sheets)
             except ValueError:
                 continue
             except AssertionError:
                 break
-            entry = {"seed": seed, "curves": d["curves"], "equations": True,
+            entry = {"seed": seed, "curves": d["curves"], "equations": d["equations"],
                      "task_type": ttype, "sheets": sheets, "task_id": task.task_id}
             if ttype != d["task_type"] or sheets != d["sheets"]:
                 entry["dialed"] = {"task_type": d["task_type"], "sheets": d["sheets"]}

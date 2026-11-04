@@ -1291,7 +1291,7 @@ def render_board(b: dict, readme: bool = False) -> str:
               f"{_pilot_count()} harder-task pilots on the sample sheets, "
               "each graded pass (100) or fail (0) by its own check, with the share of its items "
               "done as the rubric column; `d1-test-hard` is 100 held-out seeded whole-sheet jobs "
-              "(three to five curves on two or three sheets, a station equation on every one: the "
+              "(three to five curves on two or three sheets, a station equation on one in five: the "
               "plan sheet with its pavement, the alignment created from stated geometry and then "
               "drafted, the sheet file lettered through its base drawing); `d1-real-hard` is 100 "
               "tasks on the redrafted sheets, every whole job (a sheet drafted from its base files "

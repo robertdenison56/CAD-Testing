@@ -141,7 +141,14 @@ def test_d1_test_hard_is_whole_sheet_jobs_on_its_own_seeds():
     types = Counter(t["task_type"] for t in hard)
     assert set(types) == set(tasksets.HARD_SEEDED_TYPES) and max(types.values()) - min(types.values()) <= 2
     assert {t["curves"] for t in hard} == {3, 4, 5} and {t["sheets"] for t in hard} == {2, 3}
-    assert all(t["equations"] for t in hard)
+    # one task in five carries a station equation (hard_equation), spread over the
+    # types and the other dials; the dialed type where a seed fell back to the next
+    assert [t["equations"] for t in hard] == [tasksets.hard_equation(i) for i in range(100)]
+    eq = [t for t in hard if t["equations"]]
+    assert len(eq) == 20
+    dialed = Counter(t.get("dialed", {}).get("task_type", t["task_type"]) for t in eq)
+    assert dialed == {ttype: 4 for ttype in tasksets.HARD_SEEDED_TYPES}
+    assert sorted(Counter(t["curves"] for t in eq).values()) == [6, 7, 7]
     # the hard types stay out of the seeded sets' type cycle, so their ids do not move
     from roaddraft.tasks.types import HARD_TASK_TYPES
     assert not set(HARD_TASK_TYPES) & set(tasksets.SEEDED_TYPES)
@@ -152,6 +159,10 @@ def test_hard_dials_cycle():
     assert [x["curves"] for x in d] == [3, 4, 5] * 4
     assert [x["sheets"] for x in d] == [2] * 3 + [3] * 3 + [2] * 3 + [3] * 3
     assert [x["task_type"] for x in d[:5]] == list(tasksets.HARD_SEEDED_TYPES)
+    assert [x["equations"] for x in d] == [i in (0, 7) for i in range(12)]
+    on = [i for i in range(100) if tasksets.hard_equation(i)]
+    assert on == [5 * b + (2 * b) % 5 for b in range(20)]
+    assert sorted(Counter(tasksets.hard_dials(i)["sheets"] for i in on).values()) == [9, 11]
 
 
 @pytest.mark.parametrize("ttype", ["plan-sheet-pavement", "create-plan-sheet", "base-plan-sheet"])
