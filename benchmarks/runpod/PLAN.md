@@ -1,5 +1,86 @@
 # Plan: Track D on Runpod, the model tree (drafted 2026-10-28 evening)
 
+## The $100 plan (2026-11-04, supersedes set A below)
+
+Robert, Nov 4: "begin setting up the containers for runpod runs, select appropriate models and keep budget to $100
+for finishing track D". The Nov 3 retirement (`../runs/RETIRED.md`) left every open-weight row to be rerun under
+harness e3-v3, and the board now has five sets, so $100 buys depth on the strongest open model and breadth on the
+two core sets, not set A's seven d1-test rows. Set up, nothing run: `queue-trackd-v3.sh` beside this file.
+
+Robert, later on Nov 4: "the llms suggested are very similar, should i try others?" -> "Yes, swap them" (Gemma 4
+26B-A4B and Qwen3.6's d1-test-hard / d1-real-hard out; GLM-5.3 and gpt-oss-120b in), then, asked whether to drop
+d1-test as saturated, "Yes, keep d1-test" (its 100.0 rows are all self-correct or vision; in single mode it still
+spreads: Terra 96.2, Sonnet 88.3).
+
+Then: "for the runpod evals i want to limit the amount of episodes to save cost but still get at least 5 tasks from
+each category" and "let the board rank these runpod runs and explicitly state the runs are partial to save costs.
+only these runs would be allowed on the board with this tag and runs that end early or fail would be marked partial
+and unscorable". So every set but d1-test runs as its **cost subset `cost5`**: 5 tasks of each task type (every task
+of a smaller type), a fixed seeded draw committed in `benchmarks/tasksets/cost-subsets.json` (d1-real 60 of 100,
+hard-pilots 66 of 112, d1-test-hard 25 of 100, d1-real-hard 25 of 100; `roaddraft.eval.subsets`). d1-test runs whole:
+its types hold 6-7 tasks, so a subset would save a fifth, and its 10 ranked rows are the comparison.
+
+| order | model | endpoint, pool, $/h | runs | est. $ (mid, high) |
+|---|---|---|---|---|
+| A | Qwen3.6-35B-A3B, bf16 (Track P 67.7%, d1-variance 86.7) | `wn6oehzs020wpc`, BLACKWELL_96, $3.49 | smoke d1-dev[:5]; 1 image pilot; d1-test; d1-real cost5 | 11, 17 |
+| B | Gemma 4 31B, bf16 (Track P 74.7%) | `kgu6d0ogfm0oyu`, BLACKWELL_96, $3.49 | smoke; d1-test; d1-real cost5 | 25, 34 |
+| C | GLM-5.3 (Runpod public endpoint) | `b1dd8hy2hqo1nb`, per token: $0.77 in, $0.143 cached, $2.42 out per M | smoke under a $5 cap; d1-test under `--cost-cap 30` if the smoke projects 100 episodes at $33 or less | 27, 36 |
+| D | gpt-oss-120b, mxfp4 (`--send-reasoning`) | `ioe4cjrhf39vp3`, AMPERE_80, $2.72 | smoke; d1-test and d1-real cost5 if the smoke calls tools | 11, 16 |
+| E | Qwen3.6-35B-A3B on the hard sets | as A | hard-pilots cost5 (only if it read the image pilot); d1-test-hard cost5; d1-real-hard cost5 | 17, 24 |
+
+About $91 mid with the smokes and warm-ups, under the guard's $97. How the board takes these (report `e4-v2`):
+- a run that declares `--subset cost5` ranks only when it holds every task of the subset with no episode in error or
+  unfinished, and only from a Runpod route (`api.runpod.ai`); it goes in a table of its own under the set, headed
+  "Cost subset `cost5`: partial runs, to save cost", beside every full run of the set re-scored on the same tasks
+  (from the per-task means each published row now carries), since a subset's mean weights its task types alike;
+- every other run on a board set that misses a task, has an episode in error, or has one unfinished is
+  **partial, not scored**: listed with no score (before Nov 4 only hard-pilots was held to coverage). The 15
+  ranked rows are complete, error-free and unchanged; their summaries gained `task_means` / `task_types` from
+  their own episodes (each row's mean of them equals its published score);
+- a GLM-5.3 d1-test cut short by its $30 cap would be partial and not scored, which is why the smoke's projection
+  gates it.
+
+
+Left out: Gemma 4 26B-A4B (a third Gemma, 49.5%; its endpoint stays at 131k, parked), Qwen3.8-27B ($14-18 a row;
+thinks past the 570 s cut), GLM-4.7-Flash (38.4%), gpt-oss-20b (no tool call in 76% of its probes), Qwen3.5-122B-A10B
+(H200 at $6.99/h now), Kimi (K2.6 $0.95 in / $4.00 out per M with no cache rate listed: $57-95 a row), Granite 4.0
+H Small and Qwen3 32B AWQ (a generation old, no listed price). Self-correct, vision and vague stay with the local
+three and the frontier rows.
+
+**Done on Nov 4 (no cost; endpoints parked at max 0 workers, read back after each write):**
+- Qwen3.6's, Gemma 31B's and Gemma 26B's `MAX_MODEL_LEN` 65536 -> 131072 (the local rows' ceiling; the full-attention KV at 131k is
+  about 2.6 GB for Qwen3.6 and Gemma 26B and 10.5 GB for Gemma 31B, against 20-23 GB free on their cards, from the
+  models' config.json), the env otherwise unchanged; `context` 131072 in `models.json`, passed as `--context-tokens`;
+- their `allowedCudaVersions ["13.0"]` (an exact set; most hosts now report 13.2) cleared for a `minCudaVersion` 13.0
+  floor;
+- Gemma 26B's pools AMPERE_80 + ADA_80_PRO -> AMPERE_80 + BLACKWELL_96: ADA_80_PRO (H100) bills $5.39/h serverless
+  now (list-gpu-types, Nov 4), not the $2.72 of Oct 16;
+- stock on Nov 4 (list-gpu-types, serverless): RTX PRO 6000 (BLACKWELL_96) MEDIUM, A100 80 GB LOW;
+- gpt-oss-120b REDEPLOYED from the Hub as `ioe4cjrhf39vp3` (deploy-hub-repo; only the listed release v2.30.1 deploys,
+  so its image was set back to v2.29.0's `b7212acc6`, the rest of the ladder's), AMPERE_80 only, `MAX_MODEL_LEN`
+  131072, CUDA floor 13.0, parked; the REST-created `7maayov2g1xjoi` never ran and is left parked for Robert to
+  delete; the Hub listing names the endpoint's template `yzft33ihtn`;
+- the harness: Runpod's 570 s proxy cut (`stream did not complete within 570 seconds`, 10 of Gemma 4 12B's 100
+  d1-variance episodes on Oct 20, all left out of its score as errors) and vLLM's HTTP 400 for a prompt past its
+  window now end the episode as the `turn_time` and `context` stops (`eval/providers/openai_compat.py`
+  `hosted_limit`, tested); no other provider's path changes; and `--send-reasoning` (off by default) hands a tool
+  turn's reasoning back as the probe runner's flag did for gpt-oss-20b (7.1% -> 13.1% on Track P), tested;
+- `runpod_campaign.py`: `e3` / `e3-smoke` run from their own worktree `runpod-trackd` at `TRACKD_PIN` (preflight
+  refuses until it is set), `--pilots all|text|images`, `--cost-cap` (and on `e3-smoke`), `--send-reasoning` from
+  a spec's `send_reasoning`, run ids end `-v3`; `warm` needs only the key;
+- `queue-trackd-v3.sh`: A-E above, the balance guard, GLM-5.3's projection from its smoke (cost an episode x 100,
+  and the cached share, in the log), endpoints parked after each model and on any exit.
+
+**Before the go:**
+1. DONE Nov 4: the harness change committed on main (463a9707) and cherry-picked onto the v3 reruns' 3b7e7fe9 as
+   9f7c02bb on the local branch `runpod-trackd-v3`, checked out at `.claude/worktrees/runpod-trackd` (pins read
+   there: tools 0334fd4aaade, instructions 4dff2849, harness e3-v3, clean; 110 eval tests pass), `TRACKD_PIN`
+   9f7c02bb. Not main's surface: the stationing help (4d135e7d) moves it to 9db020d9af1e and edits the prompt.
+2. Balance: $11.85 on Nov 4 (runpodctl user); about $90 more puts $100 behind the queue. The balance is the hard
+   stop as well as the guard.
+3. Launch: `nohup caffeinate -i zsh benchmarks/runpod/queue-trackd-v3.sh > results/e3-runpod/queue-trackd-v3.out 2>&1 &`
+   (about 15-25 h, one endpoint at a time). Publish each row after a look, as the local ones.
+
 Robert's decisions of Oct 28 evening: "i can budget about $110 for the spread" and "build out the model tree for the
 runpod runs, do not duplicate any that are being run locally". This file is that tree: every model Track D can reach
 through Runpod, what each row costs, the order, and what has to happen before a go. The rig itself is `README.md`,

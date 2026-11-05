@@ -10,7 +10,8 @@
     python benchmarks/runpod/runpod_campaign.py k3 NAME [PROBE...] [--force] [--print]
     python benchmarks/runpod/runpod_campaign.py e3-smoke NAME [--limit 5] [--dry-run] [--print]
     python benchmarks/runpod/runpod_campaign.py e3 NAME [--taskset d1-variance] [--samples 5] [--mode single]
-                                                [--concurrency 4] [--limit N] [--dry-run] [--print]
+                                                [--concurrency 4] [--limit N] [--pilots all|text|images]
+                                                [--run-id ID] [--dry-run] [--print]
     python benchmarks/runpod/runpod_campaign.py rerun NAME [--print]      # infrastructure-error episodes, again
     python benchmarks/runpod/runpod_campaign.py score NAME [--print]
     python benchmarks/runpod/runpod_campaign.py bill
@@ -40,6 +41,11 @@ The Track D spread (2026-10-28, ``PLAN.md`` beside this file): a spec with ``pub
 endpoint, served and billed per token by Runpod on the same /openai/v1 route, so ``create``, ``warm``, ``status``,
 ``workers`` and ``delete`` refuse it; a spec with ``trackd_local`` already has its Track D row on RobertsPC, so
 ``e3`` refuses it without ``--force`` (Robert: do not duplicate a model that runs locally).
+
+Track D under harness e3-v3 (2026-11-04, ``PLAN.md`` "The $100 plan"): ``e3`` and ``e3-smoke`` run from their
+own worktree ``TRACKD_WORKTREE`` at ``TRACKD_PIN`` (the probe commands keep ``runpod-k3`` at ``PIN``), and a spec's
+``context`` goes to the harness as ``--context-tokens`` (the endpoint's ``MAX_MODEL_LEN``), so a transcript that
+outgrows the window ends as the context stop rather than an HTTP 400.
 """
 from __future__ import annotations
 
@@ -62,6 +68,14 @@ WORKTREE = REPO / ".claude" / "worktrees" / "runpod-k3"
 PIN = "2658fa0"                      # 2026-10-19: main a1c0038 + 89f7a13 (eval file access held to the episode folder, e3-v2), for d1-variance; before it 3daef52 (2026-10-18): the engine refuses stationing out of its linework's
                                      # space, d1-verify-v5; tool surface unchanged since e7178a2 (60eeeb21). The
                                      # 2026-10-17-k3 rows ran at e7178a2, the gpt-oss rerun at 727fb7f
+# Track D (e3, e3-smoke): the v3 reruns' surface (main 3b7e7fe9: harness e3-v3, tools 0334fd4aaade, the stall
+# fix) plus the eval provider's reading of Runpod's 570 s proxy cut and vLLM's context refusal as the turn_time and
+# context stops: 9f7c02bb (2026-11-04) = 3b7e7fe9 + main's 463a9707 cherry-picked (the cost subsets, the board's
+# partial rule, the provider changes), on the local branch runpod-trackd-v3; tools 0334fd4aaade, instructions
+# 4dff2849, harness e3-v3, as queue 10 and the codex queue.
+TRACKD_WORKTREE = REPO / ".claude" / "worktrees" / "runpod-trackd"
+TRACKD_PIN: Optional[str] = "9f7c02bb"
+PILOT_SET = REPO / "benchmarks" / "tasksets" / "hard-pilots.json"
 PYTHON = REPO / ".venv" / "bin" / "python"
 CAMPAIGN = REPO / "benchmarks" / "probe_runs" / "2026-10-17-k3"
 E3_OUT = REPO / "results" / "e3-runpod"
@@ -169,15 +183,17 @@ def git(*args: str, cwd: Path = WORKTREE) -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
 
 
-def preflight(need_key: bool = True) -> None:
+def preflight(need_key: bool = True, worktree: Path = WORKTREE, pin: Optional[str] = PIN) -> None:
     problems = []
-    if not WORKTREE.is_dir():
-        problems.append(f"worktree missing: git worktree add --detach {WORKTREE} {PIN}")
+    if not pin:
+        problems.append(f"no pin set for {worktree.name} (TRACKD_PIN in {Path(__file__).name})")
+    elif not worktree.is_dir():
+        problems.append(f"worktree missing: git worktree add --detach {worktree} {pin}")
     else:
-        head = git("rev-parse", "--short", "HEAD")
-        if not head.startswith(PIN) and not PIN.startswith(head):
-            problems.append(f"worktree at {head}, not {PIN}")
-        dirty = git("status", "--porcelain", "--", "src", "tests")
+        head = git("rev-parse", "--short", "HEAD", cwd=worktree)
+        if not head.startswith(pin) and not pin.startswith(head):
+            problems.append(f"worktree at {head}, not {pin}")
+        dirty = git("status", "--porcelain", "--", "src", "tests", cwd=worktree)
         if dirty:
             problems.append(f"worktree src/tests dirty:\n{dirty}")
     if not PYTHON.is_file():
@@ -201,9 +217,9 @@ def arm(m: dict) -> None:
     time.sleep(30)
 
 
-def child_env() -> Dict[str, str]:
+def child_env(worktree: Path = WORKTREE) -> Dict[str, str]:
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(WORKTREE / "src")
+    env["PYTHONPATH"] = str(worktree / "src")
     env["RUNPOD_API_KEY"] = api_key()
     return env
 
@@ -221,15 +237,15 @@ def run_command(m: dict, label: str, probes: List[str], force: bool = False) -> 
     return cmd + list(probes)
 
 
-def show(cmd: List[str], log: Optional[Path] = None) -> None:
-    line = "PYTHONPATH=" + shlex.quote(str(WORKTREE / "src")) + " " + shlex.join(cmd)
+def show(cmd: List[str], log: Optional[Path] = None, worktree: Path = WORKTREE) -> None:
+    line = "PYTHONPATH=" + shlex.quote(str(worktree / "src")) + " " + shlex.join(cmd)
     print(line + (f" > {log} 2>&1 &" if log else ""))
 
 
-def stream(cmd: List[str], log: Path) -> int:
+def stream(cmd: List[str], log: Path, worktree: Path = WORKTREE) -> int:
     """Run in the foreground, every line to the terminal and the log."""
     log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as fh, subprocess.Popen(cmd, cwd=REPO, env=child_env(), stdout=subprocess.PIPE,
+    with log.open("a") as fh, subprocess.Popen(cmd, cwd=REPO, env=child_env(worktree), stdout=subprocess.PIPE,
                                                stderr=subprocess.STDOUT, text=True) as proc:
         for line in proc.stdout:
             sys.stdout.write(line)
@@ -364,7 +380,7 @@ def cmd_warm(args) -> int:
     data = load()
     m = spec(data, args.name)
     not_public(m, args.name, "warm")
-    preflight(need_key=True)
+    api_key()   # warm runs no harness code: the key is all it needs (the probe worktree runpod-k3 is gone)
     arm(m)
     base = f"https://api.runpod.ai/v2/{m['endpoint']}"
     body = {"input": {"openai_route": "/v1/chat/completions",
@@ -459,40 +475,64 @@ def cmd_e3(args) -> int:
     if local_row(m) and not getattr(args, "force", False):
         sys.exit(f"{args.name}: its Track D row runs on RobertsPC ({local_row(m)}); the Runpod spread does not "
                  f"duplicate it (Robert, 2026-10-28). --force runs a Runpod row of it anyway.")
-    run_id = args.run_id or f"e3-{args.taskset}-{args.name}-{args.mode}"
+    subset = getattr(args, "subset", None)
+    run_id = args.run_id or (f"e3-{args.taskset}-{args.name}-{args.mode}" + ("-vague" if args.level == "vague" else "")
+                             + (f"-{subset}" if subset else "") + "-v3")
     cmd = [str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", args.taskset,
            "--model", m["model"], "--provider", "openai", "--base-url", route(m), "--api-key-env", "RUNPOD_API_KEY",
            "--out", str(E3_OUT), "--run-id", run_id, "--mode", args.mode, "--level", args.level,
            "--samples", str(args.samples), "--concurrency", str(args.concurrency)]
     if args.limit:
         cmd += ["--limit", str(args.limit)]
+    pilots = getattr(args, "pilots", "all")
+    if subset:   # a cost subset (eval/subsets.py): the board ranks it, tagged partial to save cost
+        if args.limit or pilots != "all":
+            sys.exit("--subset takes the subset's tasks; it does not combine with --limit or --pilots")
+        cmd += ["--subset", subset]
+    if args.taskset == "hard-pilots" and pilots != "all":
+        cmd += [x for i in pilot_ids(pilots) for x in ("--task", i)]
     if m.get("extra_body"):
         cmd += ["--extra-body", json.dumps(m["extra_body"])]
+    if m.get("send_reasoning"):   # gpt-oss: harmony wants a tool turn's reasoning back (the probe runner's flag)
+        cmd.append("--send-reasoning")
+    if getattr(args, "cost_cap", None) is not None:   # a per-token endpoint: no new episode past it
+        cmd += ["--cost-cap", str(args.cost_cap)]
     if m.get("context"):   # the harness's own context budget (291ae711): a public endpoint's window, no MAX_MODEL_LEN of ours
         cmd += ["--context-tokens", str(m["context"])]
     if args.dry_run:
         cmd.append("--dry-run")
     log = E3_OUT / f"{run_id}.log"
     if args.print:
-        show(cmd, log)
+        show(cmd, log, TRACKD_WORKTREE)
         return 0
-    preflight(need_key=not args.dry_run)
+    preflight(need_key=not args.dry_run, worktree=TRACKD_WORKTREE, pin=TRACKD_PIN)
     if args.dry_run:
-        env = dict(os.environ, PYTHONPATH=str(WORKTREE / "src"))
+        env = dict(os.environ, PYTHONPATH=str(TRACKD_WORKTREE / "src"))
         return subprocess.run(cmd, cwd=REPO, env=env).returncode
     arm(m)
     what = f"{args.taskset}" + (f"[:{args.limit}]" if args.limit else "")
     print(f"E3 {args.name}: {what} x {args.samples} sample(s) x {args.mode} x {args.level} -> {E3_OUT / run_id}; "
           f"log {log}")
-    rc = stream(cmd, log)
-    print(f"exit {rc}; report with: {PYTHON} -m roaddraft.eval report {E3_OUT / run_id}")
+    rc = stream(cmd, log, TRACKD_WORKTREE)
+    print(f"exit {rc}; report with: PYTHONPATH={TRACKD_WORKTREE / 'src'} {PYTHON} -m roaddraft.eval report "
+          f"{E3_OUT / run_id}")
     return rc
+
+
+def pilot_ids(kind: str) -> List[str]:
+    """The hard-pilots task ids of one kind: ``images`` (the pilots that come with a page), ``text``, ``all``
+    (as ``lms_campaign.py``)."""
+    rows = json.loads(PILOT_SET.read_text())
+    rows = rows["tasks"] if isinstance(rows, dict) else rows
+    want = {"images": lambda r: bool(r.get("attachments")), "text": lambda r: not r.get("attachments"),
+            "all": lambda r: True}[kind]
+    return [r["task_id"] for r in rows if want(r)]
 
 
 def cmd_e3_smoke(args) -> int:
     """The E3 smoke run: d1-dev[:5] x single x explicit (2026-10-18 on Qwen3.6-35B-A3B)."""
     args.taskset, args.samples, args.mode, args.level = "d1-dev", 1, "single", "explicit"
-    args.run_id = f"e3-smoke-{args.name}"
+    args.run_id = f"e3-smoke-v3-{args.name}"     # -v3: the Oct 18 smoke of the same name stays on disk
     return cmd_e3(args)
 
 
@@ -614,7 +654,7 @@ def main(argv=None) -> int:
     k.add_argument("--force", action="store_true"); k.add_argument("--print", action="store_true"); k.set_defaults(fn=cmd_k3)
     e = sub.add_parser("e3-smoke"); e.add_argument("name"); e.add_argument("--limit", type=int, default=5)
     e.add_argument("--concurrency", type=int, default=3); e.add_argument("--dry-run", action="store_true")
-    e.add_argument("--print", action="store_true")
+    e.add_argument("--print", action="store_true"); e.add_argument("--cost-cap", type=float)
     e.add_argument("--force", action="store_true", help="run a model whose Track D row is local (trackd_local)")
     e.set_defaults(fn=cmd_e3_smoke)
     e3 = sub.add_parser("e3"); e3.add_argument("name"); e3.add_argument("--taskset", default="d1-variance")
@@ -622,6 +662,11 @@ def main(argv=None) -> int:
     e3.add_argument("--mode", default="single", choices=["single", "self_correct", "vision"])
     e3.add_argument("--level", default="explicit", choices=["explicit", "vague"])
     e3.add_argument("--concurrency", type=int, default=4); e3.add_argument("--run-id")
+    e3.add_argument("--subset", help="a cost subset (benchmarks/tasksets/cost-subsets.json, e.g. cost5): ranked on "
+                                    "the board as partial to save cost")
+    e3.add_argument("--cost-cap", type=float, help="dollars (a public endpoint's per-token bill): no new episode past it")
+    e3.add_argument("--pilots", choices=["all", "text", "images"], default="all",
+                    help="hard-pilots only: all 112, the text pilots, or the ones briefed by an image")
     e3.add_argument("--dry-run", action="store_true"); e3.add_argument("--print", action="store_true")
     e3.add_argument("--force", action="store_true", help="run a model whose Track D row is local (trackd_local)")
     e3.set_defaults(fn=cmd_e3)
