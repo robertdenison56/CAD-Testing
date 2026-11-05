@@ -86,6 +86,7 @@ class RunSpec:
     provider_options: Dict[str, Any] = field(default_factory=dict)
     dialects: Sequence[str] = ("neutral",)
     cost_cap: Optional[float] = None   # dollars; stops the runner, not an episode
+    subset: Optional[str] = None       # a cost subset's tag (eval/subsets.py): task_ids are its ids
 
     @property
     def all_agents(self) -> List[str]:

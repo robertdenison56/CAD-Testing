@@ -74,9 +74,9 @@ def test_oracle_passes_and_null_fails_through_the_loop_and_reverify_agrees(tmp_p
     b = R.board([{k: v for k, v in s.items() if k != "_episodes"}])
     assert not b["boards"][P.PILOT_SET]["ranked"] and b["others"][0]["run_id"] == "hp"
     assert b["others"][0]["partial"]["tasks_run"] == len(FAST)
-    assert b["others"][0]["reasons"] == [f"partial: covers {len(FAST)} of the set's {n} tasks; "
-                                         "a row ranks once the run holds every task of the current set"]
-    assert f"**partial: {len(FAST)} of {n} tasks**" in R.render_board(b)
+    assert b["others"][0]["reasons"] == [f"partial, not scored: covers {len(FAST)} of the set's {n} tasks; "
+                                         "a row ranks once the run holds every task with none in error or unfinished"]
+    assert f"**partial, not scored: {len(FAST)} of {n} tasks**" in R.render_board(b)
     assert f"> **Partial:** covers {len(FAST)} of the set's {n} tasks" in R.render_markdown(s)
     # the run is held to its task ids, not the set's hash: a grown set leaves it current
     monkeypatch.setattr(P, "generator_version", lambda probes=None: "probe-000000000000")
@@ -191,7 +191,10 @@ def test_a_probe_run_is_held_to_its_task_ids_not_the_sets_hash():
     gone = "PR-p99-gone-0123456789"
     cov2 = R.coverage(P.PILOT_SET, ids + [gone])
     assert cov2["foreign"] == [gone] and not cov2["missing"] and cov2["tasks_run"] == n + 1
-    assert R.coverage("d1-test", ids) is None and R.coverage(None, ids) is None
+    # every board set is held to coverage since 2026-11-04: pilot ids on d1-test are all foreign
+    on_d1 = R.coverage("d1-test", ids)
+    assert len(on_d1["foreign"]) == n and len(on_d1["missing"]) == 100
+    assert R.coverage(None, ids) is None and R.coverage("d1-variance", ids) is None
     base = {"taskset": P.PILOT_SET, "stale": [], "incomplete": [],
             "versions": {"spec_version": ["v1"], "spec_hash": ["x"],
                          "verifier_version": [P.check_version()]}}
@@ -200,8 +203,8 @@ def test_a_probe_run_is_held_to_its_task_ids_not_the_sets_hash():
     probs = R.publish_problems({**base, "coverage": cov2})
     assert len(probs) == 1 and probs[0].startswith(f"1 of the run's {n + 1} task ids are not in the current set")
     assert gone in probs[0]
-    assert R.partial_reason(cov) == (f"partial: covers 24 of the set's {n} tasks; a row ranks once the "
-                                     "run holds every task of the current set")
+    assert R.partial_reason(cov) == (f"partial, not scored: covers 24 of the set's {n} tasks; a row ranks once "
+                                     "the run holds every task with none in error or unfinished")
 
 
 def test_the_report_holds_a_pilot_run_to_its_task_ids_and_ranks_it_apart():
@@ -225,10 +228,10 @@ def test_the_report_holds_a_pilot_run_to_its_task_ids_and_ranks_it_apart():
             "rows": [{**row, "n_tasks": 24}]}
     b = R.board([part])
     assert not b["boards"][P.PILOT_SET]["ranked"]
-    assert b["others"][0]["partial"]["tasks_in_set"] == 33 and "partial: covers 24" in b["others"][0]["reasons"][0]
+    assert b["others"][0]["partial"]["tasks_in_set"] == 33 and "partial, not scored: covers 24" in b["others"][0]["reasons"][0]
     md = R.render_board(b)
     assert "No ranked run yet. A row needs a published run on `hard-pilots` that covers every task" in md
-    assert "`hp-text` (hard-pilots, 87 episodes, **partial: 24 of 33 tasks**)" in md
+    assert "`hp-text` (hard-pilots, 87 episodes, **partial, not scored: 24 of 33 tasks**)" in md
 
 
 def test_a_pilots_page_reaches_an_openai_request_as_a_data_url():

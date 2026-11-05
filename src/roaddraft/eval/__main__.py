@@ -85,15 +85,28 @@ def cmd_run(args) -> int:
     options = {"effort": args.effort, "max_tokens": args.max_tokens, "base_url": args.base_url,
                "api_key_env": args.api_key_env, "lms_context": args.lms_context,
                "extra_body": json.loads(args.extra_body) if args.extra_body else None,
+               "send_reasoning": True if args.send_reasoning else None,
                "claude_bin": args.claude_bin, "claude_args": args.claude_arg or None,
                "max_budget_usd": args.max_budget_usd,
                "codex_bin": args.codex_bin, "codex_args": args.codex_arg or None}
     if args.strict:
         options["strict"] = True
+    task_ids = args.task or None
+    if args.subset:
+        if args.task or args.limit:
+            print("run: --subset takes the subset's tasks; it does not combine with --task or --limit",
+                  file=sys.stderr)
+            return 2
+        from roaddraft.eval.subsets import subset_ids
+        try:
+            task_ids = subset_ids(args.taskset, args.subset)
+        except ValueError as ex:
+            print(f"run: {ex}", file=sys.stderr)
+            return 2
     spec = RunSpec(taskset=args.taskset,
                    agents=tuple(args.agent or ([] if models else ["oracle"])),
                    levels=tuple(args.level or ["explicit"]), modes=tuple(args.mode or ["single"]),
-                   samples=args.samples, limit=args.limit, task_ids=args.task or None,
+                   samples=args.samples, limit=args.limit, task_ids=task_ids, subset=args.subset,
                    results_root=args.out, run_id=args.run_id, concurrency=args.concurrency,
                    budgets=_budgets(args),
                    journal=args.journal, models=tuple(models), provider=args.provider,
@@ -323,6 +336,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--samples", type=int, default=1)
     p.add_argument("--limit", type=int, help="the first N tasks of the set")
     p.add_argument("--task", action="append", help="task id(s) to run")
+    p.add_argument("--subset", help="a cost subset of the set (eval/subsets.py, e.g. cost5): its tasks only, "
+                                    "recorded in run.json; the board ranks it, tagged partial, from a Runpod route")
     p.add_argument("--out", default="results", help="results root (gitignored)")
     p.add_argument("--run-id")
     p.add_argument("--concurrency", type=int, default=4)
@@ -344,6 +359,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--api-key-env", help="openai: the variable holding the key (OPENAI_API_KEY)")
     p.add_argument("--extra-body", help="openai: JSON merged into every request")
     p.add_argument("--lms-context", type=int, help="openai: LM Studio reload guard at this context")
+    p.add_argument("--send-reasoning", action="store_true",
+                   help="openai: a turn's reasoning goes back with its tool calls (gpt-oss: harmony wants it)")
     p.add_argument("--claude-bin", help="claude-code: the CLI to run (default: PATH, then the app's)")
     p.add_argument("--claude-arg", action="append", help="claude-code: an extra CLI argument")
     p.add_argument("--max-budget-usd", type=float, help="claude-code: the CLI's own spend cap per episode")

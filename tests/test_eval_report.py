@@ -273,14 +273,13 @@ def test_a_partial_probe_run_is_listed_not_ranked():
     b = R.board([whole, part])
     assert [r["run_id"] for r in b["boards"]["hard-pilots"]["ranked"]] == ["hp-all"]
     assert [o["run_id"] for o in b["others"]] == ["hp-text"]
-    assert b["others"][0]["reasons"] == ["partial: covers 24 of the set's 33 tasks; a row ranks once the "
-                                         "run holds every task of the current set"]
+    assert b["others"][0]["reasons"] == ["partial, not scored: covers 24 of the set's 33 tasks; a row ranks "
+                                         "once the run holds every task with none in error or unfinished"]
     md = R.render_board(b)
     assert "**Best model 40.0/100 on hard-pilots" in md
-    assert "- `hp-text` (hard-pilots, 10 episodes, **partial: 24 of 33 tasks**)" in md
-    # the seeded and real sets are not held to coverage (d1-real's first row is 99 of 108)
-    seeded = _fake_summary("t", [_fake_row("claude-a", "anthropic", 70.0)])
-    assert R.board([seeded])["ranked"][0]["run_id"] == "t" and "partial" not in seeded
+    # partial and unscorable (Robert, 2026-11-04): listed with no score
+    assert "- `hp-text` (hard-pilots, 10 episodes, **partial, not scored: 24 of 33 tasks**)" in md
+    assert "claude-b · single · explicit, effort default (100 tasks × 3)" in md and "60.0 ±" not in md
 
 
 def _ep(task_id, task_type, score, hard=False):
@@ -361,3 +360,84 @@ def test_cost_is_priced_turn_by_turn_at_report_time():
     # an unpriced model keeps the episode's own figure; no usage at all, nothing
     assert R._cost({"model": "no-such-model"}, end, turns) == (99.0, None)
     assert R._cost({"model": model}, {"usage_total": {}}, []) == (None, None)
+
+
+# ------------------------------------------------ cost subsets and partial runs (2026-11-04)
+
+def test_every_board_set_is_held_to_coverage_and_errors_or_unfinished_make_a_run_partial():
+    from roaddraft.eval.taskset import load
+    ids = [r["task_id"] for r in load("d1-test")["tasks"]]
+    whole = R.coverage("d1-test", ids)
+    assert whole["missing"] == [] and whole["tasks_in_set"] == 100
+    assert not R.run_partial(whole, 0, 0)
+    assert R.run_partial(whole, 1, 0) and R.run_partial(whole, 0, 1)       # an error, an unfinished episode
+    short = R.coverage("d1-test", ids[:60])
+    assert R.run_partial(short, 0, 0) and len(short["missing"]) == 40
+    assert R.coverage("d1-variance", ids) is None                          # not a board set
+    why = R.partial_reason(short, errors=2, unfinished=1)
+    assert why.startswith("partial, not scored: covers 60 of the set's 100 tasks; 2 episode(s) ended in error; "
+                          "1 episode(s) unfinished")
+
+
+def test_cost_subsets_are_five_a_type_fixed_and_cover_every_type():
+    import collections
+    from roaddraft.eval import subsets as S
+    from roaddraft.eval.taskset import load
+    drawn = S.load_subsets()
+    assert drawn == S.build(), "benchmarks/tasksets/cost-subsets.json is stale: python -c 'from roaddraft.eval import subsets; subsets.write()'"
+    assert "d1-test" not in drawn["subsets"] and drawn["tag"] == S.COST_TAG == "cost5"
+    for name, one in drawn["subsets"].items():
+        rows = load(name)["tasks"]
+        have = collections.Counter(r["task_type"] for r in rows)
+        got = collections.Counter(r["task_type"] for r in rows if r["task_id"] in set(one["task_ids"]))
+        assert set(got) == set(have)                                         # every category
+        assert all(got[t] == min(5, have[t]) for t in have)                  # five, or all of a smaller one
+    assert [drawn["subsets"][n]["tasks"] for n in S.SETS] == [60, 66, 25, 25]
+    assert S.route_allowed("https://api.runpod.ai/v2/wn6oehzs020wpc/openai/v1")
+    assert not S.route_allowed("http://localhost:1234/v1") and not S.route_allowed(None)
+
+
+def test_a_cost_subset_run_ranks_tagged_only_complete_and_from_runpod():
+    from roaddraft.eval.subsets import subset_ids
+    ids = subset_ids("d1-real", "cost5")
+    cov = R.coverage("d1-real", ids, "cost5")
+    assert cov["tasks_in_set"] == 60 and cov["set_size"] == 100 and cov["missing"] == [] and cov["subset_known"]
+    assert not R.run_partial(cov, 0, 0)
+    assert R.run_partial(R.coverage("d1-real", ids[:59], "cost5"), 0, 0)  # ended early
+    assert R.run_partial(cov, 1, 0)                                         # an episode failed
+    assert R.run_partial(R.coverage("d1-real", ids, "no-such"), 0, 0)
+    base = {"versions": {"spec_version": ["v1"], "verifier_version": ["v8"], "spec_hash": ["h"]},
+            "stale": [], "incomplete": [], "taskset": "d1-real", "coverage": cov}
+    assert R.publish_problems({**base, "route": "https://api.runpod.ai/v2/x/openai/v1"}) == []
+    assert any("Runpod route" in p for p in R.publish_problems({**base, "route": "http://localhost:1234/v1"}))
+
+
+def test_the_board_ranks_subset_runs_in_their_own_table_beside_full_runs_rescored():
+    from roaddraft.eval.subsets import subset_ids
+    from roaddraft.eval.taskset import load
+    rows = load("d1-real")["tasks"]
+    ids = subset_ids("d1-real", "cost5")
+    full_row = _fake_row("claude-a", "anthropic", 90.0)
+    full_row["task_means"] = {r["task_id"]: (100.0 if r["task_id"] in set(ids) else 0.0) for r in rows}
+    full_row["task_types"] = {r["task_id"]: r["task_type"] for r in rows}
+    full = _fake_summary("full-real", [full_row], taskset="d1-real")
+    sub_row = _fake_row("qwen-x", "openai", 70.0)
+    sub = _fake_summary("sub-real", [sub_row], taskset="d1-real")
+    sub["cost_subset"] = {"tag": "cost5", "tasks": 60, "set_size": 100}
+    broken = _fake_summary("sub-broken", [_fake_row("qwen-y", "openai", 99.0)], taskset="d1-real")
+    broken["partial"], broken["coverage"] = True, {"tasks_run": 59, "tasks_in_set": 60, "subset": "cost5",
+                                                   "missing": ["x"], "foreign": []}
+    b = R.board([full, sub, broken])
+    one = b["boards"]["d1-real"]
+    assert [r["run_id"] for r in one["ranked"]] == ["full-real"]           # the full table: full runs only
+    t = one["subsets"]["cost5"]
+    assert [(r["run_id"], r["effective_mean"], r["rank"]) for r in t["rows"]] == [
+        ("full-real", 100.0, 1), ("sub-real", 70.0, 2)]                     # re-scored on the subset's 60
+    assert t["rows"][0]["scored_as"] == "full run, re-scored on the subset's 60"
+    assert t["rows"][1]["scored_as"] == "subset run (60 of 100)"
+    assert [o["run_id"] for o in b["others"]] == ["sub-broken"]
+    md = R.render_board(b)
+    assert "**Cost subset `cost5` on `d1-real`: partial runs, to save cost.** 60 of the set's 100 tasks" in md
+    assert "| 2 | qwen-x · single · explicit | default | **70.0** |" in md
+    assert "**partial, not scored: 59 of 60 tasks**" in md
+    assert "cost subset cost5, partial to save cost (60 of 100 tasks)" in R.render_board_svg(b)
