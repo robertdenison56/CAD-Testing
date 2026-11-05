@@ -91,7 +91,7 @@ def chat_messages(system: str, transcript: List[dict]) -> List[dict]:
     return out
 
 
-def parse_reply(reply: dict) -> Turn:
+def parse_reply(reply: dict, send_reasoning: bool = False) -> Turn:
     choice = (reply.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     finish = choice.get("finish_reason") or "stop"
@@ -123,9 +123,34 @@ def parse_reply(reply: dict) -> Turn:
     if stop == "tool_use" and not calls:
         stop = "end"
     reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+    if send_reasoning and raw_calls and reasoning:
+        # gpt-oss: its harmony format wants the reasoning of a tool-calling turn back with the calls (the probe
+        # runner's --send-reasoning, 2026-10-19: gpt-oss-20b 7.1% -> 13.1% on Track P)
+        sent["reasoning"] = reasoning
     return Turn(text=(msg.get("content") or "").strip(), calls=calls, stop=stop, usage=usage,
                 thinking=reasoning if isinstance(reasoning, str) else json.dumps(reasoning),
                 raw=sent, stop_detail=finish + (" (usage estimated)" if u.get("estimated") else ""))
+
+
+#: Runpod's serverless proxy ends a streamed request after 570 s and says so inside the stream
+#: ('{"message": "stream did not complete within 570 seconds", "type": "timeout_error"}'; Gemma 4 12B lost 10 of
+#: 100 d1-variance episodes to it on 2026-10-20, all left out of its score as errors). A warm worker reaches it
+#: only by the model's own turn running that long, so it is that turn's time limit, as on the probe board.
+PROXY_CUT_MARKERS = ("did not complete within",)
+#: vLLM refuses a prompt past --max-model-len with an HTTP 400 ("This model's maximum context length is N
+#: tokens. However, you requested M tokens ..."); without the LM Studio guard nothing turned that into the
+#: context stop it is.
+CONTEXT_REFUSAL_MARKERS = ("maximum context length", "maximum model length", "max_model_len")
+
+
+def hosted_limit(text: str) -> Optional[tuple]:
+    """The budget a hosted endpoint's error stands for, as ``(limit, message)``, or None for a real error."""
+    if text.startswith("stream error") and any(m in text for m in PROXY_CUT_MARKERS):
+        return ("turn_time", "the endpoint's proxy ended the streamed turn: " + text[len("stream error: "):][:200])
+    if text.startswith("HTTP 400") and (any(m in text for m in CONTEXT_REFUSAL_MARKERS)
+                                        or ("exceed" in text and "context" in text)):
+        return ("context", "the server refused the request as longer than its context: " + text[10:][:200])
+    return None
 
 
 class OpenAICompatProvider(Provider):
@@ -134,13 +159,15 @@ class OpenAICompatProvider(Provider):
     def __init__(self, model: str, effort: Optional[str] = None, base_url: Optional[str] = None,
                  api_key_env: str = "OPENAI_API_KEY", extra_body: Optional[dict] = None,
                  max_tokens: Optional[int] = None, lms_context: Optional[int] = None,
-                 call_cap: int = CALL_CAP, post: Optional[Callable[[dict], dict]] = None):
+                 call_cap: int = CALL_CAP, post: Optional[Callable[[dict], dict]] = None,
+                 send_reasoning: bool = False):
         super().__init__(model, effort)
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
         self.api_key_env = api_key_env
         self.extra_body = dict(extra_body or {})
         self.max_tokens = max_tokens
         self.call_cap = int(call_cap)
+        self.send_reasoning = bool(send_reasoning)
         self.lms_context = lms_context
         self.rewrite_type_lists = False
         self.guard = None
@@ -173,13 +200,18 @@ class OpenAICompatProvider(Provider):
         from roaddraft.runners.openai_compat import ContextFull, ToolsRefused
         while True:
             try:
-                return parse_reply(self.post(self.request(system, transcript, tools)))
+                return parse_reply(self.post(self.request(system, transcript, tools)), self.send_reasoning)
             except ToolsRefused:
                 if self.rewrite_type_lists:
                     raise
                 self.rewrite_type_lists = True
             except ContextFull as ex:
                 raise LimitReached("context", f"the conversation outgrew the loaded context: {ex}") from ex
+            except RuntimeError as ex:
+                limit = hosted_limit(str(ex))
+                if limit is None:
+                    raise
+                raise LimitReached(*limit) from ex
 
     def describe(self) -> dict:
         d = {"base_url": self.base_url, "call_cap": self.call_cap,
@@ -190,6 +222,8 @@ class OpenAICompatProvider(Provider):
             d["max_tokens"] = self.max_tokens
         if self.lms_context:
             d["lms_context"] = self.lms_context
+        if self.send_reasoning:
+            d["send_reasoning"] = True
         return d
 
 

@@ -480,3 +480,55 @@ def test_a_stalled_turn_is_a_turn_time_limit_with_the_stall_in_its_message():
     with pytest.raises(LimitReached, match=r"sent no chunk for 300 s, before and after a reload") as info:
         parse_openai(silent)
     assert info.value.limit == "turn_time"
+
+
+def test_a_hosted_endpoints_proxy_cut_and_context_refusal_are_budget_stops_not_errors():
+    """Runpod's proxy ends a streamed turn at 570 s (Gemma 4 12B lost 10 of 100 d1-variance episodes to it as
+    errors, 2026-10-20) and vLLM refuses a prompt past its window with an HTTP 400: the provider ends the
+    episode as the turn_time and context stops they are. Any other error stays an error."""
+    from roaddraft.eval.providers.base import LimitReached
+    from roaddraft.eval.providers.openai_compat import OpenAICompatProvider, hosted_limit
+
+    cut = 'stream error: {"message": "stream did not complete within 570 seconds", "type": "timeout_error"}'
+    refused = ("HTTP 400: {\"object\":\"error\",\"message\":\"This model's maximum context length is 131072 tokens. "
+               "However, you requested 140210 tokens in the messages.\"}")
+    assert hosted_limit(cut)[0] == "turn_time"
+    assert "570 seconds" in hosted_limit(cut)[1]
+    assert hosted_limit(refused)[0] == "context"
+    assert hosted_limit('HTTP 400: {"error":"exceed_context_size_error"}')[0] == "context"
+    assert hosted_limit("HTTP 400: tool_choice is not supported") is None
+    assert hosted_limit("HTTP 500: did not complete within the deadline") is None   # not a stream error
+    assert hosted_limit("stream error: unexpected tokens remaining in message header") is None
+
+    def post_with(text):
+        def post(body):
+            raise RuntimeError(text)
+        return post
+
+    for text, limit in ((cut, "turn_time"), (refused, "context")):
+        p = OpenAICompatProvider("m", base_url="http://x/v1", post=post_with(text))
+        with pytest.raises(LimitReached) as info:
+            p.complete("sys", [{"role": "user", "text": "go"}], [])
+        assert info.value.limit == limit
+    p = OpenAICompatProvider("m", base_url="http://x/v1", post=post_with("HTTP 502: bad gateway"))
+    with pytest.raises(RuntimeError, match="502"):
+        p.complete("sys", [{"role": "user", "text": "go"}], [])
+
+
+def test_send_reasoning_hands_a_tool_turns_reasoning_back_and_only_when_asked():
+    """gpt-oss's harmony format wants the reasoning of a tool-calling turn back with its calls (the probe
+    runner's --send-reasoning); the eval provider does it only with send_reasoning, and records it."""
+    from roaddraft.eval.providers.openai_compat import OpenAICompatProvider, parse_reply
+    reply = {"choices": [{"finish_reason": "tool_calls", "message": {
+        "role": "assistant", "content": "", "reasoning_content": "first the state",
+        "tool_calls": [{"id": "c1", "type": "function",
+                        "function": {"name": "get_document_state", "arguments": "{}"}}]}}]}
+    assert "reasoning" not in parse_reply(reply).raw
+    assert parse_reply(reply, send_reasoning=True).raw["reasoning"] == "first the state"
+    plain = {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "done",
+                                                                 "reasoning_content": "all drawn"}}]}
+    assert "reasoning" not in parse_reply(plain, send_reasoning=True).raw    # no calls: nothing to hand back
+    p = OpenAICompatProvider("m", base_url="http://x/v1", post=lambda body: reply, send_reasoning=True)
+    assert p.complete("sys", [{"role": "user", "text": "go"}], []).raw["reasoning"] == "first the state"
+    assert p.describe()["send_reasoning"] is True
+    assert "send_reasoning" not in OpenAICompatProvider("m", base_url="http://x/v1", post=lambda b: reply).describe()

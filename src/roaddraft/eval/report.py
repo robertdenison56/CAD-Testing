@@ -88,7 +88,8 @@ from roaddraft.eval.trajectory import read_episode, replay_journal
 from roaddraft.tasks.types import REAL_GROUP_NAMES, REAL_GROUP_OF, REAL_GROUPS
 from roaddraft.verify.report import FINDING_CODES
 
-REPORT_VERSION = "e4-v1"  # (2026-10-14) leaderboard v0.1 report
+REPORT_VERSION = "e4-v2"  # (2026-11-04) coverage on every board set, errors -> partial, cost subsets, task means
+# e4-v1 (2026-10-14): the leaderboard v0.1 report
 BOOTSTRAP, SEED = 4000, 0
 REPO = Path(__file__).resolve().parents[3]
 RUNS_DIR = REPO / "benchmarks" / "runs"
@@ -491,6 +492,9 @@ def summarize_group(dims: dict, eps: Sequence[dict]) -> dict:
     out["by_task_type"] = split(scored, "task_type")
     out["by_sheets"] = split(scored, "sheets")
     out["by_group"] = by_group(scored)
+    # per task, for the board's cost-subset tables: a full run re-scored on a subset's tasks (2026-11-04)
+    out["task_means"] = {t: _r(tm[t], 4) for t in tasks}
+    out["task_types"] = {t: types[t] for t in tasks}
     return out
 
 
@@ -608,19 +612,36 @@ def current_versions(taskset: Optional[str] = None) -> dict:
             "verifier_version": current_verifier(taskset)}
 
 
-def coverage(taskset: Optional[str], task_ids: Iterable[str]) -> Optional[dict]:
-    """How much of the current set a probe run holds: ``tasks_run``,
-    ``tasks_in_set``, ``missing`` (current ids the run has not run) and
-    ``foreign`` (the run's ids the set no longer has: a changed or removed
-    task text).  None for the other sets, which keep ranking a draw of their
-    set."""
-    from roaddraft.eval.taskset import is_probe
-    if taskset is None or not is_probe(taskset):
+def set_ids(taskset: str) -> set:
+    """The current task ids of a board set: a probe set's from its task texts, the others' from the manifest."""
+    from roaddraft.eval.taskset import is_probe, load
+    if is_probe(taskset):
+        from roaddraft.eval.probe_tasks import current_ids
+        return set(current_ids())
+    return {r["task_id"] for r in load(taskset)["tasks"]}
+
+
+def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[str] = None) -> Optional[dict]:
+    """How much of what it ran on a run holds: ``tasks_run``, ``tasks_in_set`` (the set's tasks, or its cost
+    subset's when the run declared one), ``missing`` (those the run has not run) and ``foreign`` (the run's ids
+    the set no longer has: a changed or removed task, a redrawn set).  Every board set is held to it since
+    2026-11-04 (before, only the probe sets: the seeded and real sets ranked a draw).  None for a set that is
+    not on the board."""
+    if taskset is None or taskset not in LEADERBOARD_SETS:
         return None
-    from roaddraft.eval.probe_tasks import current_ids
-    now, run = current_ids(), set(task_ids)
-    return {"tasks_run": len(run), "tasks_in_set": len(now),
-            "missing": sorted(now - run), "foreign": sorted(run - now)}
+    now, run = set_ids(taskset), set(task_ids)
+    out = {"tasks_run": len(run), "tasks_in_set": len(now)}
+    if subset:
+        from roaddraft.eval.subsets import subset_ids
+        try:
+            target = set(subset_ids(taskset, subset))
+        except ValueError:
+            target = set()
+        out.update(subset=subset, set_size=len(now), tasks_in_set=len(target),
+                   subset_known=bool(target), subset_stale=sorted(target - now))
+        now = target
+    out.update(missing=sorted(now - run), foreign=sorted(run - now))
+    return out
 
 
 def _ids(ids: Sequence[str], limit: int = 6) -> str:
@@ -628,9 +649,24 @@ def _ids(ids: Sequence[str], limit: int = 6) -> str:
     return shown + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
 
 
-def partial_reason(cov: dict) -> str:
-    return (f"partial: covers {cov['tasks_run']} of the set's {cov['tasks_in_set']} tasks; "
-            "a row ranks once the run holds every task of the current set")
+def partial_reason(cov: dict, errors: int = 0, unfinished: int = 0) -> str:
+    """Why a run is partial and not scored: tasks it did not run, episodes that ended in error, episodes
+    with no end record (Robert, 2026-11-04: runs that end early or fail are partial and unscorable)."""
+    of = f"its cost subset's {cov['tasks_in_set']}" if cov.get("subset") else f"the set's {cov['tasks_in_set']}"
+    parts = [f"covers {cov['tasks_run']} of {of} tasks"]
+    if cov.get("foreign"):
+        parts.append(f"{len(cov['foreign'])} task(s) the set no longer has")
+    if errors:
+        parts.append(f"{errors} episode(s) ended in error")
+    if unfinished:
+        parts.append(f"{unfinished} episode(s) unfinished")
+    return ("partial, not scored: " + "; ".join(parts)
+            + "; a row ranks once the run holds every task with none in error or unfinished")
+
+
+def run_partial(cov: Optional[dict], errors: int, unfinished: int) -> bool:
+    return cov is not None and bool(cov["missing"] or cov["foreign"] or errors or unfinished
+                                    or (cov.get("subset") and not cov.get("subset_known")))
 
 
 def _run_meta(run_dir: Path) -> dict:
@@ -686,7 +722,10 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
                 for f in ("spec_version", "spec_hash", "generator_version", "verifier_version",
                           "harness_version")}
     now = current_versions(taskset)
-    cov = coverage(taskset, (e["row"]["task_id"] for e in eps))
+    subset = (meta.get("spec") or {}).get("subset")
+    cov = coverage(taskset, (e["row"]["task_id"] for e in eps), subset)
+    errors = sum(1 for e in eps if e["row"]["termination"] == "error")
+    partial = run_partial(cov, errors, len(incomplete))
     held = ["spec_hash", "generator_version", "verifier_version"]
     if cov is not None:   # a probe run is held to its task ids, not the set's hash
         held.remove("generator_version")
@@ -696,7 +735,11 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
         "report_version": REPORT_VERSION, "run_id": run_dir.name, "taskset": taskset,
         "episodes": len(eps), "incomplete": incomplete,
         "reverified": bool(reverify), "versions": versions, "current_versions": now,
-        "stale": stale, "coverage": cov, "partial": bool(cov and cov["missing"]),
+        "stale": stale, "coverage": cov, "partial": partial, "errored_episodes": errors,
+        "partial_reason": partial_reason(cov, errors, len(incomplete)) if partial else None,
+        "route": ((meta.get("spec") or {}).get("provider_options") or {}).get("base_url"),
+        "cost_subset": ({"tag": subset, "tasks": cov["tasks_in_set"], "set_size": cov["set_size"]}
+                        if subset and cov and not partial else None),
         "pins": meta.get("pins"), "harness_version": meta.get("harness_version"),
         "prices_checked": sorted({e["row"]["prices_checked"] for e in eps
                                   if e["row"]["prices_checked"]}),
@@ -730,6 +773,17 @@ def publish_problems(summary: dict) -> List[str]:
                    f"current set (a changed or removed task text): {_ids(cov['foreign'])}")
     if summary["incomplete"]:
         out.append(f"{len(summary['incomplete'])} episodes have no end record; resume the run")
+    if cov and cov.get("subset"):
+        from roaddraft.eval.subsets import route_allowed
+        if not cov.get("subset_known"):
+            out.append(f"cost subset {cov['subset']!r} is not defined for {summary.get('taskset')} "
+                       "(benchmarks/tasksets/cost-subsets.json)")
+        elif cov.get("subset_stale"):
+            out.append(f"cost subset {cov['subset']!r} names {len(cov['subset_stale'])} task(s) the set no "
+                       "longer has; the subset must be drawn again with the set")
+        if not route_allowed(summary.get("route")):
+            out.append(f"a cost-subset run ranks only from a Runpod route (Robert, 2026-11-04); this one ran "
+                       f"on {summary.get('route') or 'no recorded endpoint'}")
     return out
 
 
@@ -1133,19 +1187,21 @@ def board(summaries: Sequence[dict]) -> dict:
     (oracle, scripted, null) are kept as reference rows; every other published
     run is listed with its reasons.  The top-level ``headline``, ``ranked``
     and ``reference`` are d1-test's, as before the real-sheet board."""
-    per: Dict[str, Dict[str, list]] = {name: {"ranked": [], "reference": []}
-                                       for name in LEADERBOARD_SETS}
+    per: Dict[str, Dict[str, Any]] = {name: {"ranked": [], "reference": [], "subset": {}}
+                                      for name in LEADERBOARD_SETS}
+    full: Dict[str, List[Tuple[dict, dict]]] = {name: [] for name in LEADERBOARD_SETS}
     others = []
     for s in summaries:
         taskset = s.get("taskset")
         partial = bool(s.get("partial"))
+        sub = s.get("cost_subset")
         rankable = not s.get("publish_problems") and taskset in LEADERBOARD_SETS and not partial
         if not rankable:
             reasons = list(s.get("publish_problems") or [])
             if taskset not in LEADERBOARD_SETS and not any("development" in r for r in reasons):
                 reasons.append(_not_a_board(taskset))
             if partial:
-                reasons.append(partial_reason(s["coverage"]))
+                reasons.append(s.get("partial_reason") or partial_reason(s["coverage"]))
             others.append({"run_id": s["run_id"], "taskset": s.get("taskset"),
                            "episodes": s.get("episodes"), "reasons": reasons,
                            "partial": s.get("coverage") if partial else None,
@@ -1165,7 +1221,14 @@ def board(summaries: Sequence[dict]) -> dict:
                                                           "hard_fail_rate")}
                                 for k, c in (g.get("by_group") or {}).items()}}
             kind = "reference" if g["key"].get("provider") == "harness" else "ranked"
+            if sub:   # a cost-subset run: ranked in its own table, tagged (Robert, 2026-11-04)
+                if kind == "ranked":
+                    row["scored_as"] = f"subset run ({sub['tasks']} of {sub['set_size']})"
+                    per[taskset]["subset"].setdefault(sub["tag"], []).append(row)
+                continue
             per[taskset][kind].append(row)
+            if kind == "ranked" and g.get("task_means"):
+                full[taskset].append((row, g))
     boards = {}
     for name in LEADERBOARD_SETS:
         ranked = sorted(per[name]["ranked"], key=rank_key)
@@ -1179,13 +1242,69 @@ def board(summaries: Sequence[dict]) -> dict:
                         f"hard-fail {_p(b['hard_fail_rate'])})")
         boards[name] = {"title": SET_TITLES.get(name, name), "headline": headline,
                         "ranked": ranked, "reference": per[name]["reference"],
-                        "groups": group_columns(ranked + per[name]["reference"])}
+                        "groups": group_columns(ranked + per[name]["reference"]),
+                        "subsets": {tag: subset_table(name, tag, rows, full[name])
+                                    for tag, rows in sorted(per[name]["subset"].items())}}
     main = boards[LEADERBOARD_SET]
     return {"report_version": REPORT_VERSION, "leaderboard_set": LEADERBOARD_SET,
             "leaderboard_sets": list(LEADERBOARD_SETS),
             "headline": main["headline"], "ranked": main["ranked"],
             "reference": main["reference"], "boards": boards, "others": others,
             "groups": [{"key": k, "name": n, "types": list(ts)} for k, n, ts in REAL_GROUPS]}
+
+
+def rescore_on(g: dict, ids: Sequence[str]) -> Optional[dict]:
+    """A full run's row scored on ``ids`` alone, from its per-task means: the effective mean and its interval
+    (the board's bootstrap, within task type); None when the row lacks any of the tasks."""
+    tm, types = g.get("task_means") or {}, g.get("task_types") or {}
+    if not ids or any(i not in tm for i in ids):
+        return None
+    vals = [float(tm[i]) for i in ids]
+    lo, hi = bootstrap(vals, [types.get(i, "") for i in ids])
+    return {"effective_mean": _r(mean(vals)), "ci_low": _r(lo), "ci_high": _r(hi),
+            "half_width": _r((hi - lo) / 2), "n_tasks": len(ids)}
+
+
+def subset_table(taskset: str, tag: str, rows: Sequence[dict], full_rows: Sequence[Tuple[dict, dict]]) -> dict:
+    """One cost subset's ranking on a set: its subset runs beside every ranked full run re-scored on the same
+    tasks, so the rows compare (a subset's mean weights its task types alike, the full set's by its mix)."""
+    from roaddraft.eval.subsets import PER_TYPE, load_subsets, subset_ids
+    try:
+        ids = subset_ids(taskset, tag)
+    except ValueError:
+        ids = []
+    out = [dict(r) for r in rows]
+    for row, g in full_rows:
+        again = rescore_on(g, ids)
+        if again:
+            out.append({**row, **again, "rubric_mean": None, "hard_fail_rate": None, "clean_sheet_rate": None,
+                        "invalid_call_rate": None, "cost_per_sheet": None, "by_group": {},
+                        "scored_as": f"full run, re-scored on the subset's {len(ids)}"})
+    out.sort(key=lambda r: (-(r["effective_mean"] or 0), -(r["ci_low"] or 0), r["label"]))
+    for i, r in enumerate(out):
+        r["rank"] = i + 1
+    one = (load_subsets().get("subsets") or {}).get(taskset) or {}
+    return {"tag": tag, "tasks": len(ids), "set_size": one.get("tasks_in_set"),
+            "per_type": load_subsets().get("per_type", PER_TYPE), "rows": out}
+
+
+def _subset_table_md(sub: dict) -> List[str]:
+    L = ["| # | Model · mode · prompt | Effort | Effective | 95% CI | Tasks × k | Scored as | Run |",
+         "|---:|---|---|---:|---|---|---|---|"]
+    for r in sub["rows"]:
+        k = f"{r['k_min']}" if r["k_min"] == r["k_max"] else f"{r['k_min']}–{r['k_max']}"
+        L.append(f"| {r['rank']} | {r['label']} | {effort_cell(r)} | **{_f(r['effective_mean'])}** | {_ci(r)} "
+                 f"| {r['n_tasks']} × {k} | {r['scored_as']} | `{r['run_id']}` |")
+    return L
+
+
+def _subset_intro(name: str, sub: dict) -> str:
+    return (f"**Cost subset `{sub['tag']}` on `{name}`: partial runs, to save cost.** {sub['tasks']} of the set's "
+            f"{sub['set_size']} tasks, {sub['per_type']} of each task type (every task of a smaller type), the "
+            "fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when "
+            "they hold every task of the subset with none in error or unfinished. Each full run of the set is "
+            f"re-scored on the same {sub['tasks']} tasks so the rows compare; a subset score is not comparable "
+            "with a full-set score above.")
 
 
 def _board_table(rows: Sequence[dict], numbered: bool = True, groups: Sequence[str] = ()) -> List[str]:
@@ -1267,15 +1386,18 @@ def render_board(b: dict, readme: bool = False) -> str:
             L += ["", "Reference agents on the same tasks (the harness's own checks, not ranked):",
                   ""]
             L += _board_table(one["reference"], numbered=False, groups=groups)
+        for sub in (one.get("subsets") or {}).values():
+            L += ["", _subset_intro(name, sub), ""] + _subset_table_md(sub)
     if not readme and b["others"]:
         L += ["", "## Published runs that are not ranked", ""]
         for o in b["others"]:
+            part = o.get("partial")
             rows = "; ".join(f"{r['label']}"
                              + (f", effort {r['effort']}" if r.get("effort", "–") != "–" else "")
-                             + f" {_f(r['effective_mean'])} ± {_f(r['half_width'])} "
-                             f"({r['n_tasks']} tasks × {r['k_max']})" for r in o["rows"])
-            part = o.get("partial")
-            tag = f", **partial: {part['tasks_run']} of {part['tasks_in_set']} tasks**" if part else ""
+                             + ("" if part else f" {_f(r['effective_mean'])} ± {_f(r['half_width'])}")
+                             + f" ({r['n_tasks']} tasks × {r['k_max']})" for r in o["rows"])
+            tag = (f", **partial, not scored: {part['tasks_run']} of {part['tasks_in_set']} tasks**"
+                   if part else "")
             L.append(f"- `{o['run_id']}` ({o['taskset']}, {o['episodes']} episodes{tag}): {rows}. "
                      f"Not ranked: {'; '.join(o['reasons'])}.")
     if readme:
@@ -1298,6 +1420,12 @@ def render_board(b: dict, readme: bool = False) -> str:
               "or annotated from blank, construction callouts included) and the heaviest "
               "whole-line tasks `d1-real` did not draw. A model's rows on different sets are not "
               "averaged.",
+              "", "A run that misses a task of its set, or has an episode that ended in error or never "
+              "finished, is partial and not scored: it is listed below without a score. The one exception is "
+              "a cost-subset run (`benchmarks/tasksets/cost-subsets.json`: five tasks of each task type, "
+              "Runpod runs only, to save cost), ranked in a table of its own under its set beside the full "
+              "runs re-scored on the same tasks; it too is partial and not scored if it misses a task of the "
+              "subset or has an episode in error or unfinished.",
               "", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
               "samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank "
               "on the effective mean, then hard-fail rate, invalid-call rate and cost. Effort is the "
@@ -1332,11 +1460,16 @@ def render_board_svg(b: dict) -> str:
     width = bar_x + bar_w + right_w
     y = 56
     body: List[str] = []
+    panels = []
     for name, one in boards.items():
+        panels.append((f"{name}: {one['title']}", one.get("ranked") or []))
+        for sub in (one.get("subsets") or {}).values():
+            panels.append((f"{name}: cost subset {sub['tag']}, partial to save cost ({sub['tasks']} of "
+                           f"{sub['set_size']} tasks)", sub["rows"]))
+    for title, rows in panels:
         body.append(f'<text class="ink" x="{left}" y="{y}" font-size="13" font-weight="600">'
-                    f'{_esc(name)}: {_esc(one["title"])}</text>')
+                    f'{_esc(title)}</text>')
         y += 10
-        rows = one.get("ranked") or []
         if not rows:
             y += 18
             body.append(f'<text class="ink2" x="{left}" y="{y}" font-size="12">no ranked run yet</text>')
