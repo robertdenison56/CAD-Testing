@@ -307,11 +307,16 @@ REGISTRY: List[CommandSpec] = [
     CommandSpec("annotate_stationing",
                 "The roadway stationing engine. Entity-chain mode (path_ids + "
                 "begin_station): walk connected line/polyline/arc entities. "
-                "Design mode (alignment=NAME): use the alignment's true stations "
-                "and equations and anchor every tick and label. Either way it "
-                "draws perpendicular ticks at the interval, '84+27.93' labels "
-                "rotated along the path, and BC/EC/PCC/PRC labels at the curve "
-                "points.",
+                "Design mode (alignment=NAME; a referenced alignment as "
+                "'BASE:ALIGN-1'): use the alignment's true stations and equations "
+                "and anchor every tick and label. Either way it draws perpendicular "
+                "ticks at the interval, '84+27.93' labels rotated along the path, "
+                "and BC/EC/PCC/PRC labels at the curve points. Stationing is drawn "
+                "in model space (space 'model'), never on a sheet: every sheet shows "
+                "it through its viewport, scale and twist included. The annotation "
+                "scale sizes it for the sheet's scale and view_rotation (the "
+                "viewport's twist) letters it upright there; place_label letters "
+                "single labels and has no tick kind.",
                 h.annotate_stationing,
                 {"c3d": ["ADDALIGNMENTLABELS"], "ord": ["annotate stationing"]}),
     CommandSpec("place_along",

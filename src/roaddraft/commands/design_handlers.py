@@ -790,8 +790,18 @@ def annotate_stationing_alignment(doc: Document, p: dict):
             f"omit begin_station", hint="modify_alignment changes begin_station")
     space_key, container = _space(doc, p["space"])
     if space_key != "model":
-        raise CommandFault("alignment-mode stationing draws in model space; use place_label "
-                           "for sheet labels")
+        # stationing is drawn in the model file, never on a sheet (Robert, 2026-11-03):
+        # every sheet shows it through its viewport. The hint names the route that is
+        # credited; the old one sent drafters to place_label, which has no tick kind
+        raise CommandFault(
+            f"stationing is drawn in model space, never on a sheet: {align.name}'s own "
+            f"stations are ticked and lettered in the model, and every sheet shows them "
+            f"through its viewport, scale and twist included",
+            hint=f"pass space: \"model\" with alignment: {align.name!r} (a referenced "
+                 f"alignment by its qualified name, 'BASE:ALIGN-1'); the annotation scale "
+                 f"sizes the ticks and lettering for the sheet's scale, and view_rotation "
+                 f"(the viewport's twist) letters them upright on it; place_label letters "
+                 f"single labels and has no tick kind")
     tick_layer = _layer(doc, p)
     label_layer = p.get("label_layer", tick_layer)
     if label_layer not in doc.layers:

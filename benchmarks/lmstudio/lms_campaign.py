@@ -116,8 +116,9 @@ LOAD_TIMEOUT_S = 300  # lms load over LM Link: 6-10 s when it works, hung for go
 
 BUDGET_MIN, MAX_TURNS = 30, 120     # the hosted open-weight setting of the Runpod rows
 #: the tool surfaces with the scrubbed help text (fe26ce2): 60eeeb21 to the engine merge of 2026-10-31,
-#: 379e02f1 from it, 0334fd4a from the label-kind help of 2026-11-03 (what each kind letters; mc draws the bubble)
-CLEAN_TOOLS = ("sha256:60eeeb2195be", "sha256:379e02f1995f", "sha256:0334fd4aaade")
+#: 379e02f1 from it, 0334fd4a from the label-kind help of 2026-11-03 (what each kind letters; mc draws the bubble),
+#: 9db020d9 from the stationing help of the same day (drawn in model space, never on a sheet; the sheet refusal's hint)
+CLEAN_TOOLS = ("sha256:60eeeb2195be", "sha256:379e02f1995f", "sha256:0334fd4aaade", "sha256:9db020d9af1e")
 CLEAN_INSTRUCTIONS = "sha256:4dff2849f3c5"
 SPEED_TEXT = REPO / "benchmarks" / "runpod" / "README.md"   # the 2026-10-20 timing prompt (80,000 chars)
 

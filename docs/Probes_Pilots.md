@@ -168,6 +168,7 @@ pilots passed. The three QA-review fails were all the harness's: Astra found eve
   the sheet-space attempt ("alignment-mode stationing draws in model space; use place_label for
   sheet labels") points at a command with no tick kind; a hint naming the model-space route with
   `view_rotation` would serve better. Not changed during the run (it would move the tool digest).
+  *Changed 2026-11-03: issue 10 below.*
 
 Left as the sample has it: blank title-block fields, the match line with no sheet number, FLH's
 leaders without arrowheads, a plan with no scale note (D.10). Astra's marks on these count against
@@ -288,6 +289,18 @@ does a probe run.
    table or delete TB1's ring, which the strip now does. *Done 2026-10-31 with the merge of the
    three engine branches into main (Robert: "merge all engine branches"): `_strip_rings` removed,
    `_restore_tb2` keeps the renumbering alone; the catalogue was rebuilt and `d1-real` redrawn.*
+10. `annotate_stationing` refused a sheet as `space` with "use place_label for sheet labels", and
+   `place_label` has no tick kind: Astra (p04, 2026-10-26) and Terra (p04 and p17, 2026-11-03,
+   0 of 2 each) followed the hint and hand-drew ticks on the sheet with `draw_line` +
+   `station_to_xy`, which D1-02 does not credit. *Fixed 2026-11-03 under Robert's rule that
+   stationing is always drawn in the model file, never on a sheet (the sheet-space mode built that
+   day was dropped): the refusal stays, and its message and hint, the tool's description, its
+   served example and the neutral system prompt now say that stationing is drawn in model space
+   with the alignment's own stations (`space: "model"` with the alignment's name,
+   `'BASE:ALIGN-1'` for a referenced one) and shows on every sheet through its viewport, scale
+   and twist included; the annotation scale sizes it and `view_rotation` letters it upright on a
+   twisted sheet. The tool surface moves 0334fd4aaade -> 9db020d9af1e; every board row ran on the
+   old one.*
 
 ## The first full pass (GPT-6-Astra, medium, 2026-10-26 to 27)
 

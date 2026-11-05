@@ -426,7 +426,10 @@ SCHEMAS = {
                     "description": TITLE_BLOCK_KEYS}},
         ["sheet", "fields"]),
     "annotate_stationing": obj(
-        {"space": SPACE,
+        {"space": {**SPACE, "description": "'model': stationing is drawn in model space, "
+                                           "never on a sheet, and every sheet shows it "
+                                           "through its viewport; design mode refuses a "
+                                           "sheet name"},
          "path_ids": {**IDS, "description": "line/polyline/arc entity ids forming "
                                             "the centerline, in order along it "
                                             "(entity-chain mode); with chain=true, "
@@ -640,8 +643,8 @@ EXAMPLES = {
     "fill_title_block": {"sheet": "P-201", "fields": {
         "project": "RTE 7 RESURFACING", "sheet_title": "ROADWAY PLAN",
         "sheet_number": "P-201", "scale": "1\" = 50'"}},
-    "annotate_stationing": {"space": "model", "path_ids": ["LN-001", "AR-001"],
-                            "begin_station": 8000.0, "interval": 100},
+    "annotate_stationing": {"space": "model", "alignment": "BASE:ALIGN-1", "interval": 100,
+                            "lettering": "caltrans", "view_rotation": 0},
     "attach_reference": {"name": "SURVEY", "path": "survey_base.rdraft",
                          "space": "model"},
     "detach_reference": {"name": "SURVEY"},

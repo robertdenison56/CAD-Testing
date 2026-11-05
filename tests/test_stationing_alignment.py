@@ -136,15 +136,58 @@ def test_begin_station_with_alignment_fault():
     assert r["error"]["hint"] == "modify_alignment changes begin_station"
 
 
+SHEET_REFUSAL = ("stationing is drawn in model space, never on a sheet: {name}'s own stations "
+                 "are ticked and lettered in the model, and every sheet shows them through its "
+                 "viewport, scale and twist included")
+SHEET_HINT = ("pass space: \"model\" with alignment: {name!r} (a referenced alignment by its "
+              "qualified name, 'BASE:ALIGN-1'); the annotation scale sizes the ticks and "
+              "lettering for the sheet's scale, and view_rotation (the viewport's twist) "
+              "letters them upright on it; place_label letters single labels and has no "
+              "tick kind")
+
+
 def test_alignment_mode_on_sheet_faults():
+    """Stationing is drawn in the model file, never on a sheet (Robert, 2026-11-03):
+    a sheet as space is refused, and the refusal names the model-space route with
+    the alignment's name rather than place_label, which has no tick kind."""
     s = alignment_session()
     s.execute("create_sheet", {"name": "C-101"})
     r = s.execute("annotate_stationing", {"space": "C-101", "alignment": "ALIGN-1"})
     assert not r["ok"]
-    assert r["error"]["message"] == ("alignment-mode stationing draws in model space; use "
-                                     "place_label for sheet labels")
+    assert r["error"]["message"] == SHEET_REFUSAL.format(name="ALIGN-1")
+    assert r["error"]["hint"] == SHEET_HINT.format(name="ALIGN-1")
+    assert "place_label for sheet labels" not in r["error"]["hint"]
+    assert r["error"]["example"]["space"] == "model" and "alignment" in r["error"]["example"]
+    assert not s.doc.model_entities and not any(sh.entities for sh in s.doc.sheets.values())
     r = s.execute("annotate_stationing", {"space": "model", "alignment": "NOPE"})
     assert not r["ok"] and "no alignment named 'NOPE'" in r["error"]["message"]
+
+
+def test_referenced_alignment_on_sheet_refused_then_drawn_in_model_space(tmp_path):
+    """The sheet-file case the pilots failed on: the alignment lives in an attached
+    base, the drafter asks for stationing on the sheet, and the refusal's route --
+    space 'model' with the qualified name -- draws the anchored set."""
+    base = Session(project_name="design", out_dir=tmp_path)
+    assert base.execute("create_alignment", {"name": "ALIGN-1", "begin_station": "10+00",
+                                             "pis": A_PIS})["ok"]
+    base.query("save_document", {"path": str(tmp_path / "design.rdraft")})
+    host = Session(project_name="plans", out_dir=tmp_path)
+    host.query("save_document", {"path": str(tmp_path / "plans.rdraft")})
+    assert host.execute("attach_reference", {"name": "DESIGN", "space": "model",
+                                             "path": "design.rdraft"})["ok"]
+    assert host.execute("create_sheet", {"name": "C-101"})["ok"]
+    r = host.execute("annotate_stationing", {"space": "C-101", "alignment": "DESIGN:ALIGN-1"})
+    assert not r["ok"]
+    assert r["error"]["message"] == SHEET_REFUSAL.format(name="DESIGN:ALIGN-1")
+    assert r["error"]["hint"] == SHEET_HINT.format(name="DESIGN:ALIGN-1")
+    assert host.doc.sheets and not any(sh.entities for sh in host.doc.sheets.values())
+    r = host.execute("annotate_stationing", {"space": "model", "alignment": "DESIGN:ALIGN-1"})
+    assert r["ok"], r
+    assert r["message"].startswith("stationing annotated in model space from DESIGN:ALIGN-1: "
+                                   "16 ticks @ 100 ft")
+    ticks = [e for e in host.doc.model_entities.values()
+             if isinstance(e, Line) and e.anchor and e.anchor["kind"] == "tick"]
+    assert len(ticks) == 16 and all(t.anchor["alignment"] == "DESIGN:ALIGN-1" for t in ticks)
 
 
 def test_entity_mode_golden_unchanged_34_ids():
