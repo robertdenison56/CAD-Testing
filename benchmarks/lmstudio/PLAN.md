@@ -6,6 +6,12 @@ one episode at a time, so every set is a night or more per model. This file is t
 itself (specs, commands, guards) is `README.md` and `models.json` next door, and nothing starts without
 Robert's go (`lms_campaign.py e3 NAME --taskset ... --samples ...`).
 
+**2026-11-08: the board's focus is the vague prompt** (Robert: "focus on the vague prompts only"; `../RERUN_PLAN.md`,
+top). Each set ranks vague rows first and explicit rows in a table of their own. Queue 10 (`results/e3-lms/
+queue-2026-11-04-v3-local.sh`, at Gemma's hard-pilots on Nov 8) runs explicit prompts on every step but 22-24, the
+three models' d1-test vague nights, so its rows land in the explicit tables. Moving the vague nights forward, or
+adding vague nights on d1-real and the hard sets, is Robert's call.
+
 ## What is running right now
 
 **Nothing since 04:06 PDT on 2026-10-28: the Track D queue of Oct 27 is through** (`results/e3-lms/queue-2026-10-27.sh`,

@@ -5,6 +5,46 @@ on the PC against Runpod and the models to go through. The wipe is `runs/RETIRED
 This file is the time and the list. Nothing here starts a run: the Oct 24 local-only rule, the Oct 28 order
 (the PC first, Runpod after Stage 0) and "frontier rows on Robert's word" all stand.
 
+## Nov 8: the vague prompt is the board's focus
+
+Robert, Nov 8: the explicit D1 prompts read too detailed (a natural-language rewrite was still "too long, give me
+the vague version"), then "make sure the vague runs are seperated from explicit runs for all test sets" and "i think
+we need to focus on the vague prompts only". The board now ranks each prompted set once per prompt level, vague
+first: the vague ranking is the set's headline (and d1-test's is the board's top line), the explicit rows follow
+as a table of their own with their own ranks (`report.BOARD_LEVELS`, `LEVEL_NOTES`). A vague score and an explicit
+score are not compared row against row; the paired prompt gap of the eval plan (§5) stays the comparison.
+`hard-pilots` keeps one ranking, since a pilot's brief is the same at either level (`report.ONE_PROMPT_SETS`). A
+cost subset is ranked per level too. No score moved and no row left the board; the explicit tables were kept, not
+dropped.
+
+The board at the split:
+
+| set | vague rows | explicit rows |
+|---|---|---|
+| d1-test | 3: GPT-6.1 Terra 91.3, GPT-6 Luna 76.1, Sonnet 5.5 70.9 | 13 |
+| d1-real | 1: GPT-6 Luna 71.8 | 11 |
+| d1-test-hard | none | 4 |
+| d1-real-hard | none | 4 |
+| hard-pilots | one ranking, 8 rows | |
+
+The vague rows the headlines wait on (single mode, k = 1; none of them is queued except the local d1-test three):
+
+| model | d1-test | d1-real | d1-test-hard | d1-real-hard |
+|---|---|---|---|---|
+| GPT-6.1 Terra (codex, medium) | ranked | to run | to run | to run |
+| GPT-6 Luna (codex, medium) | ranked | ranked | to run | to run |
+| Claude Sonnet 5.5 (claude-code, medium) | ranked | to run | to run | to run |
+| Claude Opus 5.5 (claude-code, medium) | to run (its 88.4 row was retired Nov 3) | to run | to run | to run |
+| Qwen3.5-9B, Gemma 4 12B, GLM-4.6V-Flash (local) | queue 10 steps 22-24, behind about 15 explicit nights | to run | to run | to run |
+| the Runpod $100 queue (`runpod/PLAN.md`) | explicit as set up | explicit (cost5) | explicit (cost5) | explicit (cost5) |
+
+A frontier vague row is the same run with `--level vague` (run id `...-single-vague-v3`) through the CLI route at
+the same caps: 0.5-1.6 hours of wall time a d1 set on the subscriptions, the hard sets 2-4x that. Queue 10 (local,
+at Gemma's hard-pilots on Nov 8, 31 of 112) and the Runpod queue run explicit prompts as set up, and their rows land
+in the explicit tables. Moving the vague nights ahead, or setting `--level vague` on the Runpod queue, is Robert's
+call; nothing here starts a run. A queue that publishes from a worktree older than this change rebuilds the board
+in the old one-table layout, so regenerate it from main afterwards (`scripts/make_leaderboard.py`).
+
 ## What changed under the rows
 
 | change | commit | what it moves |

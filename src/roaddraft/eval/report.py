@@ -52,7 +52,13 @@ marked with why.  ``scripts/make_leaderboard.py`` builds the README board from
 the published summaries: one ranking per leaderboard set, ``d1-test`` (the
 seeded sheets), ``d1-real`` (the redrafted sample plan sheets) and
 ``hard-pilots`` (the harder tasks, each graded pass or fail by its own check:
-``eval/probe_tasks.py``).  A run is held to its own set's generator version
+``eval/probe_tasks.py``), with ``d1-test-hard`` and ``d1-real-hard`` beside
+them.  Within a set the prompt levels rank apart (``BOARD_LEVELS``, Robert,
+2026-11-08): the vague-prompt rows are the set's board and its headline, the
+explicit-prompt rows a ranking of their own below it, since a score at one
+level is not comparable with one at the other; ``hard-pilots`` has one
+ranking (``ONE_PROMPT_SETS``: each pilot carries its own brief).  A run is
+held to its own set's generator version
 (``taskset.current_generator``): the seeded generator or the real-sheet
 builder.  A probe run is held to its task ids instead: each id carries the
 hash of its task text, so the set may grow without unranking earlier rows,
@@ -104,6 +110,18 @@ SET_TITLES = {"d1-test": "seeded sheets", "d1-real": "the sample plan sheets",
               "d1-test-hard": "seeded sheets, the whole job (3-5 curves, 2-3 sheets)",
               "d1-real-hard": "the sample plan sheets, the whole job"}
 NEVER_REPORTED = ("d1-dev", "d1-real-dev")
+#: the prompt levels a set's board ranks apart, the focus first (Robert, 2026-11-08: the
+#: vague prompt is the board's focus; an explicit-prompt score is not comparable with it)
+BOARD_LEVELS = ("vague", "explicit")
+#: the sets whose tasks each carry one prompt of their own (a pilot's brief, the same at
+#: either level), so their board has no prompt split
+ONE_PROMPT_SETS = ("hard-pilots",)
+#: what each prompt level is, under its table's heading
+LEVEL_NOTES = {"vague": "the request in a sentence, the way a PE would ask for it; what belongs "
+                        "on the sheet is the drafter's to know. The board's focus.",
+               "explicit": "the full brief, stating every standard the task is graded on. Ranked "
+                           "on its own: an explicit-prompt score is not comparable with a "
+                           "vague-prompt score."}
 #: the CI half-width the v0.1 acceptance asks for, in points
 TARGET_HALF_WIDTH = 5.0
 
@@ -1181,15 +1199,28 @@ def _pilot_count() -> str:
         return "the"
 
 
+def row_level(taskset: Optional[str], key: dict) -> Optional[str]:
+    """The prompt level a row ranks under on ``taskset``'s board: None on a set whose
+    tasks each have one prompt (``ONE_PROMPT_SETS``)."""
+    return None if taskset in ONE_PROMPT_SETS else key.get("level", "explicit")
+
+
 def board(summaries: Sequence[dict]) -> dict:
-    """Ranked rows across published runs, one ranking per leaderboard set
+    """Ranked rows across published runs, one board per leaderboard set
     (``boards``): model rows from rankable runs on that set; harness agents
     (oracle, scripted, null) are kept as reference rows; every other published
-    run is listed with its reasons.  The top-level ``headline``, ``ranked``
-    and ``reference`` are d1-test's, as before the real-sheet board."""
-    per: Dict[str, Dict[str, Any]] = {name: {"ranked": [], "reference": [], "subset": {}}
-                                      for name in LEADERBOARD_SETS}
-    full: Dict[str, List[Tuple[dict, dict]]] = {name: [] for name in LEADERBOARD_SETS}
+    run is listed with its reasons.  A set's prompt levels rank apart: its
+    ``ranked``, ``headline`` and ``subsets`` are the vague-prompt rows (the
+    board's focus, ``BOARD_LEVELS[0]``) and ``other_prompts`` holds the same
+    for each other level, ``explicit``; a set in ``ONE_PROMPT_SETS`` has one
+    ranking and ``prompt`` None.  The top-level ``headline``, ``ranked`` and
+    ``reference`` are d1-test's vague-prompt board."""
+    levels = (None,) + BOARD_LEVELS
+    per: Dict[str, Dict[str, Any]] = {
+        name: {"ranked": {lv: [] for lv in levels}, "reference": [],
+               "subset": {lv: {} for lv in levels}} for name in LEADERBOARD_SETS}
+    full: Dict[str, Dict[Optional[str], List[Tuple[dict, dict]]]] = {
+        name: {lv: [] for lv in levels} for name in LEADERBOARD_SETS}
     others = []
     for s in summaries:
         taskset = s.get("taskset")
@@ -1221,30 +1252,50 @@ def board(summaries: Sequence[dict]) -> dict:
                                                           "hard_fail_rate")}
                                 for k, c in (g.get("by_group") or {}).items()}}
             kind = "reference" if g["key"].get("provider") == "harness" else "ranked"
+            level = row_level(taskset, g["key"])
             if sub:   # a cost-subset run: ranked in its own table, tagged (Robert, 2026-11-04)
                 if kind == "ranked":
                     row["scored_as"] = f"subset run ({sub['tasks']} of {sub['set_size']})"
-                    per[taskset]["subset"].setdefault(sub["tag"], []).append(row)
+                    per[taskset]["subset"].setdefault(level, {}).setdefault(sub["tag"], []).append(row)
                 continue
-            per[taskset][kind].append(row)
-            if kind == "ranked" and g.get("task_means"):
-                full[taskset].append((row, g))
-    boards = {}
-    for name in LEADERBOARD_SETS:
-        ranked = sorted(per[name]["ranked"], key=rank_key)
+            if kind == "reference":   # the harness's own agents: one list, whatever the level
+                per[taskset]["reference"].append(row)
+                continue
+            per[taskset]["ranked"].setdefault(level, []).append(row)
+            if g.get("task_means"):
+                full[taskset].setdefault(level, []).append((row, g))
+
+    def one_ranking(name: str, level: Optional[str]) -> dict:
+        ranked = sorted(per[name]["ranked"].get(level, []), key=rank_key)
         for i, r in enumerate(ranked):
             r["rank"] = i + 1
         headline = None
         if ranked:
             b = ranked[0]
-            headline = (f"best model {b['effective_mean']:.1f}/100 on {name} "
+            prompt = f" with the {level} prompt" if level else ""
+            headline = (f"best model {b['effective_mean']:.1f}/100 on {name}{prompt} "
                         f"({b['label']}, 95% CI {b['ci_low']:.1f}–{b['ci_high']:.1f}, "
                         f"hard-fail {_p(b['hard_fail_rate'])})")
-        boards[name] = {"title": SET_TITLES.get(name, name), "headline": headline,
-                        "ranked": ranked, "reference": per[name]["reference"],
-                        "groups": group_columns(ranked + per[name]["reference"]),
-                        "subsets": {tag: subset_table(name, tag, rows, full[name])
-                                    for tag, rows in sorted(per[name]["subset"].items())}}
+        return {"headline": headline, "ranked": ranked,
+                "subsets": {tag: subset_table(name, tag, rows, full[name].get(level, []))
+                            for tag, rows in sorted(per[name]["subset"].get(level, {}).items())}}
+
+    boards = {}
+    for name in LEADERBOARD_SETS:
+        ref = per[name]["reference"]
+        if name in ONE_PROMPT_SETS:
+            focus, rest = None, ()
+        else:
+            focus = BOARD_LEVELS[0]
+            seen = [lv for lv in per[name]["ranked"] if lv and lv != focus and per[name]["ranked"][lv]]
+            rest = list(BOARD_LEVELS[1:]) + [lv for lv in seen if lv not in BOARD_LEVELS]
+        main_one = one_ranking(name, focus)
+        other = {lv: one_ranking(name, lv) for lv in rest}
+        for lv, o in other.items():
+            o["groups"] = group_columns(o["ranked"] + ref)
+        boards[name] = {"title": SET_TITLES.get(name, name), "prompt": focus, **main_one,
+                        "reference": ref, "groups": group_columns(main_one["ranked"] + ref),
+                        "other_prompts": other}
     main = boards[LEADERBOARD_SET]
     return {"report_version": REPORT_VERSION, "leaderboard_set": LEADERBOARD_SET,
             "leaderboard_sets": list(LEADERBOARD_SETS),
@@ -1298,8 +1349,9 @@ def _subset_table_md(sub: dict) -> List[str]:
     return L
 
 
-def _subset_intro(name: str, sub: dict) -> str:
-    return (f"**Cost subset `{sub['tag']}` on `{name}`: partial runs, to save cost.** {sub['tasks']} of the set's "
+def _subset_intro(name: str, sub: dict, level: Optional[str] = None) -> str:
+    prompt = f", {level} prompt" if level else ""
+    return (f"**Cost subset `{sub['tag']}` on `{name}`{prompt}: partial runs, to save cost.** {sub['tasks']} of the set's "
             f"{sub['set_size']} tasks, {sub['per_type']} of each task type (every task of a smaller type), the "
             "fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when "
             "they hold every task of the subset with none in error or unfinished. Each full run of the set is "
@@ -1336,6 +1388,43 @@ def group_legend(groups: Sequence[str]) -> str:
             "half-width, with the number of tasks it rests on.")
 
 
+def _level_heading(level: str, readme: bool) -> List[str]:
+    """The heading of one prompt level's ranking within a set, and what that level is."""
+    note = LEVEL_NOTES.get(level, f"the {level} prompt, ranked on its own.")
+    return [f"{'####' if readme else '###'} {level.capitalize()} prompt", "",
+            f"_{note[0].upper()}{note[1:]}_", ""]
+
+
+def _ranking_md(one: dict, groups: Sequence[str], legend: bool = True) -> List[str]:
+    """One ranking's headline, table and (once a set, ``legend``) group legend."""
+    L = [f"**{one['headline'][0].upper()}{one['headline'][1:]}.**", ""]
+    L += _board_table(one["ranked"], groups=groups)
+    if groups and legend:
+        L += ["", group_legend(groups)]
+    return L
+
+
+def _no_run(name: str) -> str:
+    """What a set with no ranked row at either prompt level needs for its first one."""
+    if name == LEADERBOARD_SET:
+        return (f"No ranked run yet. A row needs a published run on `{name}` under a "
+                "frozen spec (v0.1: spec v1, then `d1-variance` × 5 samples to size the "
+                f"interval, then `{name}` × at least three models).")
+    if name == "hard-pilots":
+        return ("No ranked run yet. A row needs a published run on `hard-pilots` that covers "
+                "every task of the current set (a run on part of it is published as partial and "
+                "listed among the runs not ranked); each task scores 100 on a pass and 0 on a fail "
+                "by its own check, "
+                "whose source hash is the row's verifier version. The pilots that come with a "
+                "page (23 of 112) need a model that takes images.")
+    if name == "d1-test-hard":
+        return ("No ranked run yet. A row needs a published run on `d1-test-hard` under a "
+                "frozen spec (a one-task smoke run first, `--limit 1`).")
+    return (f"No ranked run yet. A row needs a published run on `{name}` under a frozen "
+            "spec, with the catalogue it was drawn from validated under the verifier "
+            "that scores it (`d1-real-dev` first, for a smoke run).")
+
+
 def eval_board_note(probe_board: str) -> str:
     """The line that says which board this is; ``probe_board`` is the probe board's path from here."""
     return ("The benchmark board: every published run on the eval sets, scored by the verifier "
@@ -1358,36 +1447,36 @@ def render_board(b: dict, readme: bool = False) -> str:
         if n:
             L.append("")
         L += [f"{'###' if readme else '##'} `{name}`: {one['title']}", ""]
+        level = one.get("prompt")
+        others = {lv: o for lv, o in (one.get("other_prompts") or {}).items()
+                  if o["ranked"] or o.get("subsets")}
         groups = one.get("groups") or group_columns(one["ranked"] + one["reference"])
+        if level:
+            L += _level_heading(level, readme)
+        legend_shown = bool(one["headline"] and groups)
         if one["headline"]:
-            L += [f"**{one['headline'][0].upper()}{one['headline'][1:]}.**", ""]
-            L += _board_table(one["ranked"], groups=groups)
-            if groups:
-                L += ["", group_legend(groups)]
-        elif name == LEADERBOARD_SET:
-            L += [f"No ranked run yet. A row needs a published run on `{name}` under a "
-                  "frozen spec (v0.1: spec v1, then `d1-variance` × 5 samples to size the "
-                  f"interval, then `{name}` × at least three models)."]
-        elif name == "hard-pilots":
-            L += ["No ranked run yet. A row needs a published run on `hard-pilots` that covers "
-                  "every task of the current set (a run on part of it is published as partial and "
-                  "listed among the runs not ranked); each task scores 100 on a pass and 0 on a fail "
-                  "by its own check, "
-                  "whose source hash is the row's verifier version. The pilots that come with a "
-                  "page (23 of 112) need a model that takes images."]
-        elif name == "d1-test-hard":
-            L += ["No ranked run yet. A row needs a published run on `d1-test-hard` under a "
-                  "frozen spec (a one-task smoke run first, `--limit 1`)."]
+            L += _ranking_md(one, groups)
+        elif level and others:
+            L += [f"No {level}-prompt run on `{name}` yet."]
         else:
-            L += [f"No ranked run yet. A row needs a published run on `{name}` under a frozen "
-                  "spec, with the catalogue it was drawn from validated under the verifier "
-                  "that scores it (`d1-real-dev` first, for a smoke run)."]
+            L += [_no_run(name)]
+        if not level and name in ONE_PROMPT_SETS:
+            L += ["", "Each pilot carries its own brief, the same at either prompt level, so this "
+                  "set has one ranking."]
         if one["reference"]:
             L += ["", "Reference agents on the same tasks (the harness's own checks, not ranked):",
                   ""]
             L += _board_table(one["reference"], numbered=False, groups=groups)
         for sub in (one.get("subsets") or {}).values():
-            L += ["", _subset_intro(name, sub), ""] + _subset_table_md(sub)
+            L += ["", _subset_intro(name, sub, level), ""] + _subset_table_md(sub)
+        for lv, o in others.items():
+            L += [""] + _level_heading(lv, readme)
+            og = o.get("groups") or group_columns(o["ranked"])
+            L += _ranking_md(o, og, legend=not legend_shown) if o["headline"] \
+                else [f"No {lv}-prompt run on `{name}` yet."]
+            legend_shown = legend_shown or bool(o["headline"] and og)
+            for sub in (o.get("subsets") or {}).values():
+                L += ["", _subset_intro(name, sub, lv), ""] + _subset_table_md(sub)
     if not readme and b["others"]:
         L += ["", "## Published runs that are not ranked", ""]
         for o in b["others"]:
@@ -1420,6 +1509,10 @@ def render_board(b: dict, readme: bool = False) -> str:
               "or annotated from blank, construction callouts included) and the heaviest "
               "whole-line tasks `d1-real` did not draw. A model's rows on different sets are not "
               "averaged.",
+              "", "Within a set, the vague-prompt runs (the request in a sentence; the board's focus) "
+              "and the explicit-prompt runs (the full brief) are ranked apart, each in its own table: "
+              "a score at one prompt level is not comparable with a score at the other. `hard-pilots` "
+              "has one ranking, since each pilot carries its own brief.",
               "", "A run that misses a task of its set, or has an episode that ended in error or never "
               "finished, is partial and not scored: it is listed below without a score. The one exception is "
               "a cost-subset run (`benchmarks/tasksets/cost-subsets.json`: five tasks of each task type, "
@@ -1462,10 +1555,15 @@ def render_board_svg(b: dict) -> str:
     body: List[str] = []
     panels = []
     for name, one in boards.items():
-        panels.append((f"{name}: {one['title']}", one.get("ranked") or []))
-        for sub in (one.get("subsets") or {}).values():
-            panels.append((f"{name}: cost subset {sub['tag']}, partial to save cost ({sub['tasks']} of "
-                           f"{sub['set_size']} tasks)", sub["rows"]))
+        level = one.get("prompt")
+        rankings = [(level, one)] + [(lv, o) for lv, o in (one.get("other_prompts") or {}).items()
+                                     if o["ranked"] or o.get("subsets")]
+        for lv, r in rankings:
+            prompt = f", {lv} prompt" if lv else ""
+            panels.append((f"{name}{prompt}: {one['title']}", r.get("ranked") or []))
+            for sub in (r.get("subsets") or {}).values():
+                panels.append((f"{name}{prompt}: cost subset {sub['tag']}, partial to save cost "
+                               f"({sub['tasks']} of {sub['set_size']} tasks)", sub["rows"]))
     for title, rows in panels:
         body.append(f'<text class="ink" x="{left}" y="{y}" font-size="13" font-weight="600">'
                     f'{_esc(title)}</text>')
@@ -1504,7 +1602,7 @@ def render_board_svg(b: dict) -> str:
            f'<rect class="bg" width="{width}" height="{height}"/>',
            f'<text class="ink" x="{left}" y="24" font-size="17" font-weight="600">RoadDraft eval leaderboard</text>',
            f'<text class="ink2" x="{left}" y="40" font-size="11">effective score, 0 to 100, with its 95% interval; '
-           'one ranking per eval set</text>', *axis, *body, "</svg>"]
+           'one ranking per eval set and prompt level, vague first</text>', *axis, *body, "</svg>"]
     return "\n".join(out) + "\n"
 
 
@@ -1517,6 +1615,7 @@ def replace_block(text: str, block: str) -> str:
 
 
 __all__ = ["REPORT_VERSION", "LEADERBOARD_SETS", "SET_TITLES", "NEVER_REPORTED",
+           "BOARD_LEVELS", "ONE_PROMPT_SETS", "LEVEL_NOTES", "row_level",
            "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
            "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
            "effort_label", "effort_cell", "summarize_group", "by_group", "group_columns",

@@ -7,6 +7,12 @@ for finishing track D". The Nov 3 retirement (`../runs/RETIRED.md`) left every o
 harness e3-v3, and the board now has five sets, so $100 buys depth on the strongest open model and breadth on the
 two core sets, not set A's seven d1-test rows. Set up, nothing run: `queue-trackd-v3.sh` beside this file.
 
+*2026-11-08: the board's focus is the vague prompt* (Robert: "focus on the vague prompts only"; `../RERUN_PLAN.md`,
+top). Every run in this queue is set up with explicit prompts (`runpod_campaign.py e3 --level explicit`, the
+default), so its rows would rank in each set's explicit table, cost subsets included. Setting `--level vague` on
+the queue's steps is Robert's call, made before a go; the costs below do not change with the level beyond the
+shorter prompt.
+
 Robert, later on Nov 4: "the llms suggested are very similar, should i try others?" -> "Yes, swap them" (Gemma 4
 26B-A4B and Qwen3.6's d1-test-hard / d1-real-hard out; GLM-5.3 and gpt-oss-120b in), then, asked whether to drop
 d1-test as saturated, "Yes, keep d1-test" (its 100.0 rows are all self-correct or vision; in single mode it still

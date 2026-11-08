@@ -185,10 +185,10 @@ def _fake_summary(run_id, rows, taskset="d1-test", problems=()):
             "rows": rows}
 
 
-def _fake_row(model, provider, eff, hf=0.1):
-    return {"label": f"{model} · single · explicit",
+def _fake_row(model, provider, eff, hf=0.1, level="vague"):
+    return {"label": f"{model} · single · {level}",
             "key": {"model": model, "provider": provider, "effort": None, "dialect": "neutral",
-                    "mode": "single", "level": "explicit"},
+                    "mode": "single", "level": level},
             "effective_mean": eff, "ci_low": eff - 3, "ci_high": eff + 3, "half_width": 3.0,
             "rubric_mean": eff + 5, "hard_fail_rate": hf, "clean_sheet_rate": 0.2,
             "invalid_call_rate": 0.01, "cost_per_sheet": 0.5, "n_tasks": 100, "k_min": 3,
@@ -200,7 +200,7 @@ def test_a_row_says_the_effort_it_ran_at():
     high["key"]["effort"] = "high"
     b = R.board([_fake_summary("2026-11-01-d1-test", [high])])
     assert b["ranked"][0]["effort"] == "high"
-    assert "| claude-a · single · explicit | high |" in R.render_board(b)
+    assert "| claude-a · single · vague | high |" in R.render_board(b)
     assert R.effort_cell({"provider": "anthropic", "effort": None}) == "default"
     assert R.effort_cell({"provider": "harness", "effort": None}) == "–"
     # a model left at its default shows it, from its chat template
@@ -230,8 +230,8 @@ def test_board_ranks_only_rankable_model_rows():
     md = R.render_board(b)
     assert "**Best model 72.5/100" in md and "Published runs that are not ranked" in md
     assert "| Model · mode · prompt | Effort |" in md
-    assert "| claude-b · single · explicit | default |" in md and "| oracle · single · explicit | – |" in md
-    assert "claude-c · single · explicit, effort default" in md
+    assert "| claude-b · single · vague | default |" in md and "| oracle · single · vague | – |" in md
+    assert "claude-c · single · vague, effort default" in md
     block = R.render_board(b, readme=True)
     text = f"intro\n{R.README_BEGIN}\nold\n{R.README_END}\nafter\n"
     new = R.replace_block(text, block)
@@ -263,11 +263,55 @@ def test_d1_real_is_ranked_on_its_own_board():
     assert "### `d1-real`" in R.render_board(b, readme=True)
 
 
+def test_each_set_ranks_its_prompt_levels_apart():
+    # Robert, 2026-11-08: the vague runs are the board's focus, the explicit runs a ranking of their own
+    test = _fake_summary("t", [_fake_row("claude-a", "anthropic", 70.0),
+                               _fake_row("claude-b", "anthropic", 60.0),
+                               _fake_row("claude-a", "anthropic", 95.0, level="explicit"),
+                               _fake_row("claude-c", "anthropic", 99.0, level="explicit"),
+                               _fake_row("oracle", "harness", 100.0, level="explicit")])
+    hard = _fake_summary("th", [_fake_row("claude-a", "anthropic", 80.0, level="explicit")],
+                         taskset="d1-test-hard")
+    pilots = _fake_summary("hp", [_fake_row("claude-a", "anthropic", 40.0, level="explicit")],
+                           taskset="hard-pilots")
+    pilots["coverage"] = {"tasks_run": 112, "tasks_in_set": 112, "missing": [], "foreign": []}
+    b = R.board([test, hard, pilots])
+    one = b["boards"]["d1-test"]
+    assert one["prompt"] == "vague" and list(one["other_prompts"]) == ["explicit"]
+    assert [(r["label"], r["rank"]) for r in one["ranked"]] == [
+        ("claude-a · single · vague", 1), ("claude-b · single · vague", 2)]
+    explicit = one["other_prompts"]["explicit"]
+    assert [(r["label"], r["rank"]) for r in explicit["ranked"]] == [
+        ("claude-c · single · explicit", 1), ("claude-a · single · explicit", 2)]
+    assert b["headline"].startswith("best model 70.0/100 on d1-test with the vague prompt")
+    assert explicit["headline"].startswith("best model 99.0/100 on d1-test with the explicit prompt")
+    assert [r["label"] for r in one["reference"]] == ["oracle · single · explicit"]   # the harness: one list
+    # a set with explicit runs only has no vague ranking yet
+    th = b["boards"]["d1-test-hard"]
+    assert th["ranked"] == [] and th["headline"] is None
+    assert [r["run_id"] for r in th["other_prompts"]["explicit"]["ranked"]] == ["th"]
+    # each pilot carries its own brief: one ranking, whatever level the run set
+    hp = b["boards"]["hard-pilots"]
+    assert hp["prompt"] is None and hp["other_prompts"] == {} and [r["run_id"] for r in hp["ranked"]] == ["hp"]
+    md = R.render_board(b)
+    section = md.split("## `d1-test`: seeded sheets")[1].split("## `d1-real`")[0]
+    assert section.index("### Vague prompt") < section.index("**Best model 70.0/100") \
+        < section.index("### Explicit prompt") < section.index("**Best model 99.0/100")
+    assert "No vague-prompt run on `d1-test-hard` yet." in md
+    hp_md = md.split("## `hard-pilots`")[1].split("## `d1-test-hard`")[0]
+    assert "Vague prompt" not in hp_md and "one ranking" in hp_md
+    assert "#### Explicit prompt" in R.render_board(b, readme=True)
+    svg = R.render_board_svg(b)
+    assert "d1-test, vague prompt: seeded sheets" in svg and "d1-test, explicit prompt: seeded sheets" in svg
+
+
 def test_a_partial_probe_run_is_listed_not_ranked():
-    whole = _fake_summary("hp-all", [_fake_row("claude-a", "anthropic", 40.0)], taskset="hard-pilots")
+    whole = _fake_summary("hp-all", [_fake_row("claude-a", "anthropic", 40.0, level="explicit")],
+                          taskset="hard-pilots")
     whole["partial"], whole["coverage"] = False, {"tasks_run": 33, "tasks_in_set": 33,
                                                   "missing": [], "foreign": []}
-    part = _fake_summary("hp-text", [_fake_row("claude-b", "anthropic", 60.0)], taskset="hard-pilots")
+    part = _fake_summary("hp-text", [_fake_row("claude-b", "anthropic", 60.0, level="explicit")],
+                         taskset="hard-pilots")
     part["partial"], part["coverage"] = True, {"tasks_run": 24, "tasks_in_set": 33,
                                                "missing": ["PR-x"] * 9, "foreign": []}
     b = R.board([whole, part])
@@ -427,9 +471,15 @@ def test_the_board_ranks_subset_runs_in_their_own_table_beside_full_runs_rescore
     broken = _fake_summary("sub-broken", [_fake_row("qwen-y", "openai", 99.0)], taskset="d1-real")
     broken["partial"], broken["coverage"] = True, {"tasks_run": 59, "tasks_in_set": 60, "subset": "cost5",
                                                    "missing": ["x"], "foreign": []}
-    b = R.board([full, sub, broken])
+    # a full run at the other prompt level is not re-scored into the vague subset's table
+    other_row = _fake_row("claude-z", "anthropic", 95.0, level="explicit")
+    other_row["task_means"], other_row["task_types"] = dict(full_row["task_means"]), full_row["task_types"]
+    other = _fake_summary("full-real-explicit", [other_row], taskset="d1-real")
+    b = R.board([full, sub, broken, other])
     one = b["boards"]["d1-real"]
     assert [r["run_id"] for r in one["ranked"]] == ["full-real"]           # the full table: full runs only
+    assert [r["run_id"] for r in one["other_prompts"]["explicit"]["ranked"]] == ["full-real-explicit"]
+    assert one["other_prompts"]["explicit"]["subsets"] == {}
     t = one["subsets"]["cost5"]
     assert [(r["run_id"], r["effective_mean"], r["rank"]) for r in t["rows"]] == [
         ("full-real", 100.0, 1), ("sub-real", 70.0, 2)]                     # re-scored on the subset's 60
@@ -437,7 +487,8 @@ def test_the_board_ranks_subset_runs_in_their_own_table_beside_full_runs_rescore
     assert t["rows"][1]["scored_as"] == "subset run (60 of 100)"
     assert [o["run_id"] for o in b["others"]] == ["sub-broken"]
     md = R.render_board(b)
-    assert "**Cost subset `cost5` on `d1-real`: partial runs, to save cost.** 60 of the set's 100 tasks" in md
-    assert "| 2 | qwen-x · single · explicit | default | **70.0** |" in md
+    assert ("**Cost subset `cost5` on `d1-real`, vague prompt: partial runs, to save cost.** 60 of the set's "
+            "100 tasks") in md
+    assert "| 2 | qwen-x · single · vague | default | **70.0** |" in md
     assert "**partial, not scored: 59 of 60 tasks**" in md
     assert "cost subset cost5, partial to save cost (60 of 100 tasks)" in R.render_board_svg(b)

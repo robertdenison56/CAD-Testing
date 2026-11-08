@@ -9,9 +9,10 @@ logs beside it), and writes
 
     OUT_DIR/eval_board.json   one row per published run: rank on its set, the board's
                               columns as LEADERBOARD.md prints them, why a row is not ranked
-    OUT_DIR/eval_grid.json    one cell per ranked row and task type (d1-test, d1-real) or
+    OUT_DIR/eval_grid.json    one cell per ranked row and task type (the d1 sets) or
                               pilot (hard-pilots): the effective mean, its tasks, and what
-                              the verifier marked down, in the checks' own words
+                              the verifier marked down, in the checks' own words; ``order``
+                              is the row's place on the board (vague ranking first)
     OUT_DIR/eval_checks.json  the verifier's checks, id and full name
 
 Errored episodes are left out, as the report leaves them out.  Each cell's mean
@@ -32,11 +33,11 @@ from statistics import mean
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from roaddraft.eval.report import _usd  # noqa: E402
+from roaddraft.eval.report import _usd, row_level  # noqa: E402
 from roaddraft.runners.leaderboard import NAMES  # noqa: E402
 from roaddraft.tasks.types import REAL_GROUP_NAMES, REAL_GROUP_OF, REAL_GROUP_ORDER  # noqa: E402
 
-SETS = ("d1-test", "d1-real", "hard-pilots")
+SETS = ("d1-test", "d1-real", "hard-pilots", "d1-test-hard", "d1-real-hard")
 RUNNERS = {"claude-code": "Claude Code CLI", "codex": "Codex CLI"}
 QUANT = {"q4km": "Q4_K_M", "q8": "Q8_0"}
 # model ids the probe board never ran
@@ -53,8 +54,10 @@ SEEDED_GROUP = {
     "layer-setup": "sheet", "attach-reference": "sheet", "title-block": "sheet",
     "sheet-setup": "sheet", "annotate-sheet": "sheet", "plan-sheet": "sheet",
     "pavement-widths": "notes", "pavement": "notes",
+    # d1-test-hard's three whole-sheet types sit with d1-real-hard's whole jobs
+    "plan-sheet-pavement": "job", "create-plan-sheet": "job", "base-plan-sheet": "job",
 }
-GROUP_KEY = {"draft": "Draft", "letter": "Letter", "sheet": "Sheet", "notes": "Notes"}
+GROUP_KEY = {"draft": "Draft", "letter": "Letter", "sheet": "Sheet", "notes": "Notes", "job": "Job"}
 
 # the checks' names cut to a few words for a tooltip line; the full names go out in eval_checks
 CHECK_SHORT = {
@@ -189,7 +192,7 @@ def weak_checks(tasks):
 def type_cell(run_id, who, rank, set_id, ty, tasks, n_err):
     eff = mean(t["effective"] for t in tasks)
     label = round(eff)
-    grp = REAL_GROUP_OF[ty] if set_id == "d1-real" else SEEDED_GROUP[ty]
+    grp = REAL_GROUP_OF[ty] if set_id.startswith("d1-real") else SEEDED_GROUP[ty]
     hard = [t for t in tasks if t["hard"]]
     clean = sum(1 for t in tasks if t["clean"])
     bits = [f"hard-fail {len(hard)} of {len(tasks)}"
@@ -247,7 +250,7 @@ def board_row(r, set_id, status, as_of, summary=None):
     groups = r.get("by_group") or {}
     row = {
         "key": r["run_id"], "set": set_id, "status": status, "rank": str(r["rank"]) if status == "ranked" else "",
-        "name": model_name(key, r["run_id"]), "mode": mode_text(key), "prompt": key["level"],
+        "name": model_name(key, r["run_id"]), "mode": mode_text(key), "prompt": row_level(set_id, key) or "–",
         "label": row_label(key), "effort": r["effort"], "runner": runner_name(key, r["run_id"]),
         "row": model_name(key, r["run_id"]) + (f" · {row_label(key)}" if row_label(key) else ""),
         "effective": f1(r["effective_mean"]), "ci": f"{r['ci_low']:.1f}–{r['ci_high']:.1f}",
@@ -255,7 +258,7 @@ def board_row(r, set_id, status, as_of, summary=None):
         "invalid": pct(r["invalid_call_rate"]), "cost": _usd(r["cost_per_sheet"]), "tasks": k, "run": r["run_id"],
         "why": "", "as_of": as_of,
     }
-    for g in ("draft", "letter", "sheet", "notes"):
+    for g in ("draft", "letter", "sheet", "notes", "job"):
         row[g] = f1(groups[g]["effective_mean"]) if g in groups else "–"
     row["passed"] = ""
     if set_id == "hard-pilots" and summary is not None:
@@ -277,7 +280,11 @@ def main(argv=None) -> int:
 
     for set_id in SETS:
         cells = []
-        for r in lb["boards"].get(set_id, {}).get("ranked", []):
+        one = lb["boards"].get(set_id, {})
+        # the vague-prompt ranking first, then each other level's (the board ranks them apart)
+        rankings = [one.get("ranked", [])] + [o.get("ranked", [])
+                                              for o in (one.get("other_prompts") or {}).values()]
+        for order, r in enumerate(r for rows in rankings for r in rows):
             run_id = r["run_id"]
             summary = json.loads((args.runs / run_id / "summary.json").read_text())["rows"][0]
             board.append(board_row(r, set_id, "ranked", as_of, summary))
@@ -286,7 +293,8 @@ def main(argv=None) -> int:
             name = model_name(r["key"], run_id)
             mode = row_label(r["key"])
             who = {"name": name, "mode": mode, "effort": effort_text(r["effort"]),
-                   "row": name + (f" · {mode}" if mode else "")}
+                   "row": name + (f" · {mode}" if mode else ""),
+                   "prompt": row_level(set_id, r["key"]) or "–", "order": order}
             csv_path = find_report(args.results, run_id)
             eps = read_episodes(csv_path)
             n_err = errored(csv_path)
@@ -311,7 +319,7 @@ def main(argv=None) -> int:
             mine = [c for c in cells if c["model"] == run_id]
             have = {c["column"] for c in mine}
             cells.extend(empty_cell(proto, mine[0]) for col, proto in columns.items() if col not in have)
-        cells.sort(key=lambda c: (c["rank"], c["group_order"], c["column"]))
+        cells.sort(key=lambda c: (c["order"], c["group_order"], c["column"]))
         grid.extend(cells)
 
     for o in lb.get("others", []):
@@ -324,7 +332,7 @@ def main(argv=None) -> int:
                 "ci": f"± {r['half_width']:.1f}", "rubric": "–", "hard_fail": "–", "clean": "–", "invalid": "–",
                 "cost": "–", "tasks": f"{r['n_tasks']} × {r['k_max']}", "run": o["run_id"],
                 "why": "; ".join(o["reasons"]), "as_of": as_of,
-                "draft": "–", "letter": "–", "sheet": "–", "notes": "–", "passed": "",
+                "draft": "–", "letter": "–", "sheet": "–", "notes": "–", "job": "–", "passed": "",
             })
 
     args.out.mkdir(parents=True, exist_ok=True)
