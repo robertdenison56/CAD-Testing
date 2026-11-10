@@ -1384,13 +1384,30 @@ PROMPT = ("Sheet {sheet} is back from drafting and needs checking before it goes
           "note saying what is wrong. Do not fix anything, and change nothing else on the sheet or "
           "in the base files. If you find nothing wrong, place the single text NO ERRORS FOUND on "
           "QA-REVIEW instead.")
+#: the vague brief (2026-11-08): the review as a PE asks for it. It keeps what the check finds
+#: the review by (callouts on QA-REVIEW, NO ERRORS FOUND on a clean sheet), what is out of
+#: scope, and that nothing is fixed or changed; it leaves out the list of what to check the
+#: plan against and how a callout is made. The check grades nothing the brief stops stating
+#: (a mark's text, height and space are not graded), so it serves both levels.
+VAGUE = ("Sheet {sheet} is back from drafting. Before it goes out, check it against the design "
+         "and check its drafting. {scope}Mark each error with a callout on layer QA-REVIEW. "
+         "Do not fix anything, and change nothing else on the sheet or in the base files. If you "
+         "find nothing wrong, letter NO ERRORS FOUND on QA-REVIEW instead.")
+
+
+def _briefs(sheet: str, scope: str) -> dict:
+    """The probe's two briefs, ``prompt`` and ``vague``, from the same words."""
+    return {"prompt": PROMPT.format(sheet=sheet, scope=scope),
+            "vague": VAGUE.format(sheet=sheet, scope=scope)}
+
+
 PPM_SCOPE = ("The construction notes and their callouts (fence, guardrail, ESA) and the lane "
              "and shoulder widths were checked separately; leave them out. ")
 WFL_SCOPE = "Check the plan view only; the profile is checked separately. "
 
 PROBES: List[Probe] = [
     Probe(id="p14-qa-review-ppm045a", start=START_PPM_A, tags=["pilot", "qa", "caltrans", "twist"],
-          prompt=PROMPT.format(sheet="L-1", scope=PPM_SCOPE),
+          **_briefs("L-1", PPM_SCOPE),
           check=_check(START_PPM_A, []), solve=_solve([]),
           note="The CONTROL: Caltrans L-1 with its alignment data made to agree with the rebuilt "
                "design and nothing planted. Passes only with NO ERRORS FOUND on QA-REVIEW and no "
@@ -1398,14 +1415,14 @@ PROBES: List[Probe] = [
                "sheet number, the curve table's R lettered to the hundredth -- or calling the "
                "bearings wrong by reading them in the model instead of through the -89.94° twist."),
     Probe(id="p14-qa-review-ppm045b", start=START_PPM_B, tags=["pilot", "qa", "caltrans", "twist"],
-          prompt=PROMPT.format(sheet="L-1", scope=PPM_SCOPE),
+          **_briefs("L-1", PPM_SCOPE),
           check=_check(START_PPM_B, PPM_PLANTS), solve=_solve(PPM_PLANTS),
           note="Six planted: " + "; ".join(p["what"] for p in PPM_PLANTS) + ". Each is found by a "
                "QA leader tip within 0.5 in; one false alarm allowed. Naive wrong: fixing the "
                "errors instead of marking them, or marking only the lettered numbers and missing "
                "the arrow and the upside-down label."),
     Probe(id="p14-qa-review-wfl19", start=START_WFL, tags=["pilot", "qa", "wfl"],
-          prompt=PROMPT.format(sheet="D.10", scope=WFL_SCOPE),
+          **_briefs("D.10", WFL_SCOPE),
           check=_check(START_WFL, WFL_PLANTS), solve=_solve(WFL_PLANTS),
           note="Three planted: " + "; ".join(p["what"] for p in WFL_PLANTS) + ". The rest of the "
                "curve data (PI 149+35.83, R 643.00', T 554.92', L 915.64') and the stationing "
@@ -1423,7 +1440,7 @@ CFL_SCOPE = ("The construction notes and their callouts (aprons, pullout, boulde
 
 PROBES += [
     Probe(id="p14-qa-review-fdot916a", start=START_FDOT916A, tags=["pilot", "qa", "fdot", "twist"],
-          prompt=PROMPT.format(sheet="1", scope=FDOT916_SCOPE),
+          **_briefs("1", FDOT916_SCOPE),
           check=_check(START_FDOT916A, [], model=True), solve=_solve([]),
           note="A second CONTROL, on FDOT sheet 1 (drainage plan, SR 22, twist -148.34°, north "
                "down the paper): the PC lettered from the design and the structure and pipe tags "
@@ -1432,7 +1449,7 @@ PROBES += [
                "line drawn between the inlet symbols (87 LF against about 80 ft drawn; the LF "
                "runs structure to structure), or calling the down-pointing north arrow wrong."),
     Probe(id="p14-qa-review-fdot916b", start=START_FDOT916B, tags=["pilot", "qa", "fdot", "twist"],
-          prompt=PROMPT.format(sheet="1", scope=FDOT916_SCOPE),
+          **_briefs("1", FDOT916_SCOPE),
           check=_check(START_FDOT916B, FDOT916_PLANTS, model=True), solve=_solve(FDOT916_PLANTS),
           note="Six planted on FDOT sheet 1: " + "; ".join(p["what"] for p in FDOT916_PLANTS)
                + ". Two are visual only (the arrow, the tick); two are in the structure notes, "
@@ -1441,7 +1458,7 @@ PROBES += [
                "because it now points up the paper, or marking the planted errors plus two "
                "queries."),
     Probe(id="p14-qa-review-ppm048a", start=START_PPM048A, tags=["pilot", "qa", "caltrans", "twist"],
-          prompt=PROMPT.format(sheet="L-4", scope=PPM048_SCOPE),
+          **_briefs("L-4", PPM048_SCOPE),
           check=_check(START_PPM048A, [], model=True), solve=_solve([]),
           note="A third CONTROL, on Caltrans L-4 (three lines, a two-row curve table, POT and "
                "POC callouts tying the lines, twist -72.31°): curve 36's R lettered 328.08' (the "
@@ -1451,7 +1468,7 @@ PROBES += [
                "\"+59.6\" of lines the base file does not carry, or calling curve 3's 5000' "
                "wrong against the design's 4999.98."),
     Probe(id="p14-qa-review-ppm048b", start=START_PPM048B, tags=["pilot", "qa", "caltrans", "twist"],
-          prompt=PROMPT.format(sheet="L-4", scope=PPM048_SCOPE),
+          **_briefs("L-4", PPM048_SCOPE),
           check=_check(START_PPM048B, PPM048_PLANTS, model=True), solve=_solve(PPM048_PLANTS),
           note="Six planted on Caltrans L-4 (Route 65 over Industrial Avenue, three lines, twist "
                "-72.31°): " + "; ".join(p["what"] for p in PPM048_PLANTS) + ". Before planting, "
@@ -1461,7 +1478,7 @@ PROBES += [
                "trusting the POT/POC callouts, or marking the arrow as right because the block is "
                "unrotated."),
     Probe(id="p14-qa-review-wfl19b", start=START_WFL19B, tags=["pilot", "qa", "wfl"],
-          prompt=PROMPT.format(sheet="D.10", scope=WFL_SCOPE),
+          **_briefs("D.10", WFL_SCOPE),
           check=_check(START_WFL19B, WFL19B_PLANTS, model=True), solve=_solve(WFL19B_PLANTS),
           note="Five planted on WFL D.10, none of p14-qa-review-wfl19's: "
                + "; ".join(p["what"] for p in WFL19B_PLANTS) + ". Here the north arrow is right "
@@ -1470,7 +1487,7 @@ PROBES += [
                "Naive wrong (tests): checking the curve data and the PT alone (finds two of five), "
                "or marking the turned-looking but correct arrow."),
     Probe(id="p14-qa-review-cflpla", start=START_CFL, tags=["pilot", "qa", "cfl"],
-          prompt=PROMPT.format(sheet="PLA(SAMPLE)", scope=CFL_SCOPE),
+          **_briefs("PLA(SAMPLE)", CFL_SCOPE),
           check=_check(START_CFL, CFL_PLANTS, model=True), solve=_solve(CFL_PLANTS),
           note="Six planted on the CFL Davis Dam Road plan-and-plan sheet, whose two plans are "
                "seen through one viewport and whose upper plan has no design in the files: "

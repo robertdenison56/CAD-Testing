@@ -43,11 +43,28 @@ def is_draft(probe: Probe) -> bool:
     return "draft" in probe.tags
 
 
-def task_text(probe: Probe) -> str:
-    """The user message: rules, the probe's prompt, and the report asked for."""
+#: the prompt levels a probe can be posed at (as ``tasks.prompts.LEVELS``): its own brief
+#: (``Probe.prompt``, which states the standards it is graded on) and the vague one
+LEVELS = ("explicit", "vague")
+
+
+def prompt_at(probe: Probe, level: str = "explicit") -> str:
+    """The probe's task at prompt ``level``: ``prompt``, or ``vague`` at the vague level."""
+    if level not in LEVELS:
+        raise ValueError(f"unknown prompt level {level!r}; levels: {', '.join(LEVELS)}")
+    if level == "vague":
+        if not probe.vague:
+            raise ValueError(f"probe {probe.id} has no vague prompt")
+        return probe.vague
+    return probe.prompt
+
+
+def task_text(probe: Probe, level: str = "explicit") -> str:
+    """The user message: rules, the probe's prompt at ``level``, and the report asked for."""
     draft = is_draft(probe)
-    return RULES.format(extra=NO_CALCULATOR if draft else "", task=probe.prompt,
+    return RULES.format(extra=NO_CALCULATOR if draft else "", task=prompt_at(probe, level),
                         report=T1_REPORT if draft else T2_REPORT)
 
 
-__all__ = ["RULES", "NO_CALCULATOR", "T1_REPORT", "T2_REPORT", "is_draft", "task_text"]
+__all__ = ["RULES", "NO_CALCULATOR", "T1_REPORT", "T2_REPORT", "LEVELS", "is_draft", "prompt_at",
+           "task_text"]

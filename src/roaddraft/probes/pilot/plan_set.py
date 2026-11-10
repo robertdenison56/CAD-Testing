@@ -72,6 +72,19 @@ and that fails item 3. One letters the match lines with a station 20 ft from
 where they are drawn, which fails items 6 and 7. One measures the fence
 along every V-ROW line instead of 640+00 to 672+00 (2,871 LF against
 2,761), which fails item 9.
+
+The vague level (``Probe.vague``, 2026-11-08) asks for "a small Caltrans plan
+set" with the same line, stations, files, sheets and quantities, and leaves
+out the border, the scale, the number of layouts, the match line's lettering
+and the title-block field list. ``vague_check`` grades the same job, the
+conventions by the spec's lenient rules and Caltrans practice: the Caltrans
+border; any standard scale, one for all the layouts, and as many layouts as
+that scale takes on the 22 x 34 sheet (``layouts_needed``: 3 at 1" = 50', 2 at
+1" = 60' or 100', 4 at 1" = 30'), so the match lines are that many less one;
+sheet kinds and index entries by meaning (a PLAN sheet is a layout, ``2-4
+LAYOUTS`` lists three); sheet numbers by meaning (``3 OF 5``), TOTAL SHEETS
+graded only where lettered; MATCH in any form beside the station; the summary
+a table or rows of text. Neither level grades layers.
 """
 from __future__ import annotations
 
@@ -83,13 +96,16 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
+from roaddraft.core.units import format_station
 from roaddraft.design.horizontal import Alignment
 from roaddraft.document import viewmap
 from roaddraft.document.fileformat import read_document, write_document
+from roaddraft.document.sheets import BORDER_MARGIN_IN, CALTRANS_BIND_IN, SHEET_SIZES
 from roaddraft.probes import notation as nt
 from roaddraft.probes import plotted as pl
 from roaddraft.probes.base import Probe, Result, Tally
 from roaddraft.probes.pilot import common
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
 
 PROBE_ID = "p12-route65-d13"
 SOURCES = ["PPM-045", "PPM-046", "PPM-047"]     # Route 65 layouts L-1, L-2, L-3
@@ -111,6 +127,13 @@ MATCH_REACH_FT = 40.0
 MATCH_TURN_DEG = 2.0
 MATCH_NEAR_IN = 1.5
 COVER_STEP_FT = 10.0
+#: the reference names the start attaches the base files under
+REF_NAMES = ("AA01", "BB01")
+#: the vague level: the scales a layout may be at (the spec's lenient rule), and the length
+#: of the plan area along the Caltrans sheet (22 x 34 in), which sets how many layouts a
+#: scale takes (``layouts_needed``)
+STANDARD_FPI = tuple(float(f) for f in DRAFTING_SPEC_V1["lenient"]["standard_feet_per_inch"])
+PLAN_W_IN = SHEET_SIZES["ANSI_D"][0] - CALTRANS_BIND_IN - BORDER_MARGIN_IN
 
 
 # ------------------------------------------------------------------ the base files
@@ -362,6 +385,125 @@ def _int(value) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+# the vague level reads the set by meaning: what follows is used only there
+
+_PLAN_WORD = re.compile(r"\bLAYOUT|\bPLAN\b")
+_SHEET_NO = re.compile(r"^(?:SHEET\s*(?:NO\.?|NUMBER)?\s*)?(\d+)(?:\s*(?:OF|/)\s*(\d+))?$")
+_TOTAL = re.compile(r"^(\d+)(?:\s*SHEETS?)?$")
+_RANGE_TEXT = r"(\d+)\s*(?:-|–|—|TO|THRU|THROUGH)\s*(\d+)"
+
+
+def _row_kind(text: str) -> str:
+    """What a title names, by its words: the title sheet, the summary, a layout (or plan)."""
+    t = _norm(text)
+    if "TITLE" in t or "COVER" in t:
+        return "title"
+    if "QUANTIT" in t:
+        return "soq"
+    if _PLAN_WORD.search(t):
+        return "layout"
+    return "other"
+
+
+def _kind_vague(sheet, align: Alignment) -> str:
+    """The kind by meaning: as ``_kind`` where that knows it; else by the words of the sheet
+    title or the sheet name (a PLAN sheet is a layout); else a sheet that shows "D13" in plan
+    is a layout."""
+    kind = _kind(sheet)
+    if kind != "other":
+        return kind
+    for want in ("title", "soq", "layout"):
+        if any(_row_kind(t) == want for t in (_title(sheet), _norm(sheet.name))):
+            return want
+    return "layout" if sheet.viewports and _covered(sheet, align) else "other"
+
+
+def _sheet_no(fields: dict) -> Tuple[Optional[int], List[int], Optional[str]]:
+    """``(sheet number, totals lettered, unreadable total)`` by meaning: ``3``, ``SHEET 3``,
+    ``3 OF 5`` or ``3/5`` in the sheet number; ``5`` or ``5 SHEETS`` in TOTAL SHEETS, whose
+    text comes back as the third item when it is lettered but reads as no number."""
+    m = _SHEET_NO.match(_norm(fields.get("sheet_number")))
+    n = int(m.group(1)) if m else None
+    totals = [int(m.group(2))] if m and m.group(2) else []
+    said = _norm(fields.get("total_sheets"))
+    t = _TOTAL.match(said)
+    if t:
+        totals.append(int(t.group(1)))
+    return n, totals, (said if said and not t else None)
+
+
+def _range_of(cell) -> List[int]:
+    """The sheet numbers of a range cell, ``2-4`` or ``2 THRU 4``."""
+    m = re.match(rf"^{_RANGE_TEXT}$", _norm(cell))
+    if not m:
+        return []
+    a, b = int(m.group(1)), int(m.group(2))
+    return list(range(a, b + 1)) if a < b <= a + 100 else []
+
+
+def _index_rows_vague(view: pl.Plot) -> Dict[int, List[str]]:
+    """The index by meaning: ``{sheet number: [titles]}`` from the rows of a table or of
+    text, a row a sheet number and its title or a range of numbers and the title they share
+    (``2-4  LAYOUTS``); a sheet with a row of its own is not listed again by a range, and a
+    row read twice (or a number lettered apart from its title) is one row."""
+    table = [list(map(str, r)) for t in view.tables for r in [t.headers] + t.rows]
+    numbered = lambda r: _number_cell(r) is not None or any(_range_of(c) for c in r)
+    rows = table if any(numbered(r) for r in table) else []
+    if not rows:
+        for t in view.free_texts():
+            for ln in (ln.strip() for ln in t.content.split("\n")):
+                m = re.match(rf"^({_RANGE_TEXT})\s+(.*)$", ln, re.I)
+                split = [m.group(1), m.group(4)] if m else re.split(r"\s{2,}|\t", ln, maxsplit=1)
+                rows.append(split if len(split) == 2 else re.split(r"\s+", split[0], maxsplit=1))
+        rows += pl.text_rows(view.free_texts())
+    single, ranged = [], []
+    for r in rows:
+        n = _number_cell(r)
+        if n is not None:
+            single.append((n, _norm(" ".join(c for c in r if _int(c) != n))))
+            continue
+        for k, c in enumerate(r):
+            if _range_of(c):
+                rest = _norm(" ".join(x for j, x in enumerate(r) if j != k))
+                ranged += [(m, rest) for m in _range_of(c)]
+                break
+    listed = {n for n, _t in single}
+    out: Dict[int, List[str]] = {}
+    for n, title in single + [(n, t) for n, t in ranged if n not in listed]:
+        if title not in out.setdefault(n, []):
+            out[n].append(title)
+    for n, titles in out.items():
+        if len(titles) > 1 and "" in titles:
+            titles.remove("")
+    return out
+
+
+def layouts_needed(fpi: float) -> int:
+    """How many layouts show 640+00 to 672+00 at ``fpi`` on the Caltrans sheet: the least
+    whose plan areas, laid along the road, cover the range with some overlap (3 at 1" = 50',
+    as the explicit brief says; 2 at 1" = 100'; 11 at 1" = 10')."""
+    return int(math.floor((RANGE[1] - RANGE[0]) / (PLAN_W_IN * float(fpi)))) + 1
+
+
+def _set_scale(layouts: list) -> float:
+    """The scale the layouts are drawn at: the one most of their viewports use (1" = 50'
+    when there are none)."""
+    counts: Dict[float, int] = {}
+    for s in layouts:
+        for vp in s.viewports:
+            f = float(vp.feet_per_inch)
+            counts[f] = counts.get(f, 0) + 1
+    return max(counts, key=lambda f: (counts[f], -f)) if counts else FPI
+
+
+def _scale_mix_problem(layouts: list) -> Optional[str]:
+    scales = sorted({float(vp.feet_per_inch) for s in layouts for vp in s.viewports})
+    if len(scales) > 1:
+        said = ", ".join("1\" = %g'" % f for f in scales)
+        return f"the layouts are drawn at {said}; a set's layouts share one scale"
+    return None
+
+
 def _view(session: Session, sheet) -> pl.Plot:
     items = [(sheet.id, e) for e in sheet.entities.values()]
     items += [("model", e) for e in session.doc.model_entities.values()]
@@ -406,7 +548,10 @@ def _number_cell(row: Sequence[str]) -> Optional[int]:
     return None
 
 
-def _index_problem(title_sheet, view: pl.Plot, sheets: list) -> Optional[str]:
+def _index_problem(title_sheet, view: pl.Plot, sheets: list, vague: bool = False,
+                   kinds: Optional[Dict[str, str]] = None) -> Optional[str]:
+    if vague:
+        return _index_problem_vague(title_sheet, view, sheets, kinds or {})
     rows = [(n, " ".join(c for c in r if _int(c) != n))
             for r in _rows_of(title_sheet, view) for n in [_number_cell(r)] if n is not None]
     if not rows:
@@ -430,7 +575,35 @@ def _index_problem(title_sheet, view: pl.Plot, sheets: list) -> Optional[str]:
     return None
 
 
-def _numbering_problem(sheets: list, by_kind: Dict[str, list], align: Alignment) -> Optional[str]:
+def _index_problem_vague(title_sheet, view: pl.Plot, sheets: list, kinds: Dict[str, str]
+                         ) -> Optional[str]:
+    """The index by meaning: one entry per sheet present (a range row lists each of its
+    sheets), each entry's title that sheet's title (one contains the other) or naming the same
+    kind of sheet (``LAYOUTS`` for a layout), and no entry for a sheet not there."""
+    by_number = _index_rows_vague(view)
+    if not by_number:
+        return f"no index of sheets on {title_sheet.name}"
+    numbers = {_sheet_no(s.title_block_fields or {})[0]: s for s in sheets}
+    stray = sorted(n for n in by_number if n not in numbers)
+    if stray:
+        return f"the index lists sheet {stray[0]}, which the set does not have"
+    for n, sheet in sorted((k, v) for k, v in numbers.items() if k is not None):
+        titles = by_number.get(n)
+        if not titles:
+            return f"the index has no row for sheet {n} ({_title(sheet)})"
+        want, kind = _title(sheet), kinds.get(sheet.id, "other")
+        if not any(t and (want in t or t in want or _row_kind(t) == kind != "other")
+                   for t in titles):
+            return f"the index calls sheet {n} {titles[0]!r}; its title block says {want!r}"
+        if len(titles) > 1:
+            return f"the index lists sheet {n} {len(titles)} times"
+    return None
+
+
+def _numbering_problem(sheets: list, by_kind: Dict[str, list], align: Alignment,
+                       vague: bool = False) -> Optional[str]:
+    if vague:
+        return _numbering_problem_vague(sheets, by_kind, align)
     total = len(sheets)
     numbers = []
     for s in sheets:
@@ -453,14 +626,47 @@ def _numbering_problem(sheets: list, by_kind: Dict[str, list], align: Alignment)
     return None
 
 
-def _layout_problem(sheet) -> Optional[str]:
+def _numbering_problem_vague(sheets: list, by_kind: Dict[str, list], align: Alignment
+                             ) -> Optional[str]:
+    """The numbering by meaning: every sheet numbered (``3``, ``3 OF 5``), 1 to N each once,
+    the title sheet 1, the layouts in station order; a total, where one is lettered, the
+    number of sheets. The vague brief does not ask for TOTAL SHEETS, and the spec's lenient
+    title block asks only for the sheet number."""
+    total = len(sheets)
+    numbers: Dict[str, int] = {}
+    for s in sheets:
+        n, totals, unread = _sheet_no(s.title_block_fields or {})
+        if n is None:
+            return f"sheet {s.name} has no sheet number in its title block"
+        off = [t for t in totals if t != total]
+        if unread is not None or off:
+            said = unread if unread is not None else str(off[0])
+            return f"sheet {s.name} says TOTAL SHEETS {said!r}; the set has {total}"
+        numbers[s.id] = n
+    if sorted(numbers.values()) != list(range(1, total + 1)):
+        return (f"the sheets are numbered {sorted(numbers.values())}; a set of {total} is 1 to "
+                f"{total}, each once")
+    if by_kind["title"] and numbers[by_kind["title"][0].id] != 1:
+        return "the title sheet is not sheet 1"
+    layouts = [(c[0], numbers[s.id]) for s in by_kind["layout"] for c in [_covered(s, align)] if c]
+    order = [n for _a, n in sorted(layouts)]
+    if order != sorted(order):
+        return "the layout sheets are not numbered in station order"
+    return None
+
+
+def _layout_problem(sheet, vague: bool = False) -> Optional[str]:
     if (sheet.title_block_template or "").lower() != "caltrans":
         return f"{sheet.name} is not on the Caltrans border (template {sheet.title_block_template!r})"
     if not sheet.viewports:
         return f"{sheet.name} has no viewport"
     x0, y0, x1, y1 = sheet.usable_area()
     for vp in sheet.viewports:
-        if abs(float(vp.feet_per_inch) - FPI) > 1e-6:
+        if vague:   # any standard scale (the scales must agree: _scale_mix_problem)
+            if not any(abs(float(vp.feet_per_inch) - f) <= 1e-6 for f in STANDARD_FPI):
+                return (f"{sheet.name}'s viewport is at 1\" = {float(vp.feet_per_inch):g}', not a "
+                        f"standard plan scale")
+        elif abs(float(vp.feet_per_inch) - FPI) > 1e-6:
             return f"{sheet.name}'s viewport is at 1\" = {float(vp.feet_per_inch):g}'; layouts are 1\" = 50'"
         a, b, c, d = vp.paper_bbox()
         if a < x0 - 0.05 or b < y0 - 0.05 or c > x1 + 0.05 or d > y1 + 0.05:
@@ -502,8 +708,11 @@ def _joined(segs: Sequence[pl.PSeg], snap: float = 0.01, turn: float = 1.0) -> L
     return out
 
 
-def _match_on(session: Session, sheet, align: Alignment, near: float) -> Tuple[Optional[float], str]:
-    """``(lettered station, problem)`` of the match line ``sheet`` shows near station ``near``."""
+def _match_on(session: Session, sheet, align: Alignment, near: float, vague: bool = False
+              ) -> Tuple[Optional[float], str]:
+    """``(lettered station, problem)`` of the match line ``sheet`` shows near station ``near``
+    (``vague``: lettered by meaning, MATCH in any form -- MATCH LINE, MATCHLINE, MATCH STA --
+    with the station)."""
     view = _view(session, sheet)
     vp = sheet.viewports[0]
     to_model = vp.transform().to_model
@@ -534,7 +743,8 @@ def _match_on(session: Session, sheet, align: Alignment, near: float) -> Tuple[O
     if not found:
         return None, f"no match line on {sheet.name} near {align.stations().format(near)}"
     texts = [t for t in view.free_texts()
-             if nt.has_word(t.content, "MATCH") and nt.has_word(t.content, "LINE")]
+             if ("MATCH" in t.content.upper() if vague else
+                 nt.has_word(t.content, "MATCH") and nt.has_word(t.content, "LINE"))]
     for st, seg in sorted(found, key=lambda f: abs(f[0] - near)):
         for t in texts:
             if seg.distance(t.center()) > MATCH_NEAR_IN:
@@ -548,10 +758,13 @@ def _match_on(session: Session, sheet, align: Alignment, near: float) -> Tuple[O
                               f"{align.stations().format(st)}")
             return value, ""
     return None, (f"the match line on {sheet.name} at {align.stations().format(found[0][0])} is not "
-                  f"lettered MATCH LINE with its station")
+                  f"lettered {'as a match line' if vague else 'MATCH LINE'} with its station")
 
 
-def _soq_problem(view: pl.Plot, unit: str, want: float, what: str) -> Optional[str]:
+def _soq_problem(view: pl.Plot, unit: str, want: float, what: str, vague: bool = False
+                 ) -> Optional[str]:
+    """A quantity in the summary: a table row in ``unit`` within 1 % of ``want`` (``vague``:
+    a row of text will do too, the summary lettered rather than placed as a table)."""
     pattern = {"SY": r"\bS\.?\s?Y\.?\b|\bSQ\.?\s*YD|\bSQUARE\s+YARD",
                "LF": r"\bL\.?\s?F\.?\b|\bLIN\.?\s*FT|\bLINEAR\s+F(EE|OO)T"}[unit]
     seen = []
@@ -569,7 +782,21 @@ def _soq_problem(view: pl.Plot, unit: str, want: float, what: str) -> Optional[s
             seen += nums
             if any(abs(n - want) <= QUANTITY_TOL * want for n in nums):
                 return None
-    if not view.tables:
+    if vague:
+        texts = view.free_texts()
+        lines = [" ".join(r) for r in pl.text_rows(texts)]
+        lines += [ln for t in texts if "\n" in t.content for ln in t.content.split("\n")]
+        for line in lines:
+            if re.search(pattern, line.upper()):
+                nums = number(line)
+                seen += nums
+                if any(abs(n - want) <= QUANTITY_TOL * want for n in nums):
+                    return None
+        if not seen:
+            return (f"the summary of quantities has no row in {unit} for {what}"
+                    if view.tables or lines else
+                    "no summary of quantities (a table or rows of text) on its sheet")
+    elif not view.tables:
         return "no table on the summary of quantities sheet"
     if not seen:
         return f"the summary of quantities has no row in {unit} for {what}"
@@ -577,45 +804,60 @@ def _soq_problem(view: pl.Plot, unit: str, want: float, what: str) -> Optional[s
             f"{unit}; the base linework gives {want:,.2f}")
 
 
-def check(baseline: Session, submitted: Session) -> Result:
+def check(baseline: Session, submitted: Session, vague: bool = False) -> Result:
+    """The set graded (``vague``: at the vague level, see ``vague_check``)."""
     tally = Tally()
     align = centerline()
     sheets = list(submitted.doc.sheets.values())
     by_kind: Dict[str, list] = {"title": [], "layout": [], "soq": [], "other": []}
+    kinds: Dict[str, str] = {}
     for s in sheets:
-        by_kind[_kind(s)].append(s)
+        kinds[s.id] = _kind_vague(s, align) if vague else _kind(s)
+        by_kind[kinds[s.id]].append(s)
+    # the layouts the set takes: three at the explicit 1" = 50'; at the vague level, as many
+    # as the scale they are drawn at takes
+    fpi = _set_scale(by_kind["layout"]) if vague else FPI
+    need = layouts_needed(fpi) if vague else LAYOUTS
     problem = None
     if len(by_kind["title"]) != 1:
         problem = f"{len(by_kind['title'])} title sheets; the set has one"
-    elif len(by_kind["layout"]) != LAYOUTS:
-        problem = f"{len(by_kind['layout'])} layout sheets; the set has {LAYOUTS}"
+    elif len(by_kind["layout"]) != need:
+        problem = (f"{len(by_kind['layout'])} layout sheets; at 1\" = {fpi:g}' the set takes {need}"
+                   if vague else f"{len(by_kind['layout'])} layout sheets; the set has {LAYOUTS}")
     elif len(by_kind["soq"]) != 1:
         problem = f"{len(by_kind['soq'])} summary of quantities sheets; the set has one"
     elif by_kind["other"]:
         problem = f"sheet {by_kind['other'][0].name} ({_title(by_kind['other'][0])!r}) is not one asked for"
-    tally.add("the set: a title sheet, three layouts, a summary of quantities", problem)
-    tally.add("sheet numbers and totals in every title block",
-              _numbering_problem(sheets, by_kind, align) if sheets else "the file has no sheets")
+    tally.add("the set: a title sheet, the layouts its scale takes, a summary of quantities" if vague
+              else "the set: a title sheet, three layouts, a summary of quantities", problem)
+    tally.add("sheet numbers in every title block, totals right where lettered" if vague
+              else "sheet numbers and totals in every title block",
+              _numbering_problem(sheets, by_kind, align, vague) if sheets else "the file has no sheets")
     title = by_kind["title"][0] if by_kind["title"] else None
     tally.add("the index of sheets",
-              _index_problem(title, _view(submitted, title), sheets) if title else "no title sheet")
+              _index_problem(title, _view(submitted, title), sheets, vague, kinds) if title
+              else "no title sheet")
     layouts = by_kind["layout"]
-    tally.add("the layouts on the Caltrans border at 1\" = 50'",
-              next((p for p in map(_layout_problem, layouts) if p), None) if layouts else "no layout sheets")
-    ok_layouts = [s for s in layouts if not _layout_problem(s)]
+    problem = next((p for p in (_layout_problem(s, vague) for s in layouts) if p), None)
+    if vague and problem is None:
+        problem = _scale_mix_problem(layouts)
+    tally.add("the layouts on the Caltrans border at one standard scale" if vague
+              else "the layouts on the Caltrans border at 1\" = 50'",
+              problem if layouts else "no layout sheets")
+    ok_layouts = [s for s in layouts if not _layout_problem(s, vague)]
     tally.add("640+00 to 672+00 all shown", _coverage_problem(ok_layouts, align) if ok_layouts
               else "no layout sheet to show it")
     ordered = sorted(((c, s) for s in ok_layouts for c in [_covered(s, align)] if c),
                      key=lambda cs: cs[0][0])
-    for k in range(LAYOUTS - 1):
+    for k in range(need - 1):
         item = f"the match line between layouts {k + 1} and {k + 2}"
         if k + 1 >= len(ordered):
             tally.add(item, "there is no such pair of layout sheets")
             continue
         (ca, a), (cb, b) = ordered[k], ordered[k + 1]
         near = (ca[1] + cb[0]) / 2.0
-        va, pa = _match_on(submitted, a, align, near)
-        vb, pb = _match_on(submitted, b, align, near)
+        va, pa = _match_on(submitted, a, align, near, vague)
+        vb, pb = _match_on(submitted, b, align, near, vague)
         problem = pa or pb or None
         if problem is None and abs(va - vb) > 0.005:
             problem = (f"the match line is lettered {align.stations().format(va)} on {a.name} and "
@@ -624,14 +866,37 @@ def check(baseline: Session, submitted: Session) -> Result:
     q = quantities()
     soq = by_kind["soq"][0] if by_kind["soq"] else None
     view = _view(submitted, soq) if soq else None
-    tally.add("HMA area (SY)", _soq_problem(view, "SY", q["SY"], "the HMA area") if soq
+    tally.add("HMA area (SY)", _soq_problem(view, "SY", q["SY"], "the HMA area", vague) if soq
               else "no summary of quantities sheet")
-    tally.add("right of way fence (LF)", _soq_problem(view, "LF", q["LF"], "the right of way fence")
+    tally.add("right of way fence (LF)", _soq_problem(view, "LF", q["LF"], "the right of way fence",
+                                                      vague)
               if soq else "no summary of quantities sheet")
+    if vague:
+        return tally.result(
+            f"a {len(sheets)}-sheet set: title sheet with a matching index, {len(layouts)} "
+            f"layout{'s' if len(layouts) != 1 else ''} at 1\" = {fpi:g}' showing 640+00 to "
+            f"672+00{' with agreeing match lines' if need > 1 else ''}, numbers consistent, and "
+            f"the quantities ({q['SY']:,.0f} SY, {q['LF']:,.0f} LF) within 1 %")
     return tally.result(
         f"a five-sheet set: title sheet with a matching index, three layouts at 1\" = 50' showing "
         f"640+00 to 672+00 with agreeing match lines, numbers and totals consistent, and the "
         f"quantities ({q['SY']:,.0f} SY, {q['LF']:,.0f} LF) within 1 %")
+
+
+def vague_check(baseline: Session, submitted: Session) -> Result:
+    """The set at the vague level, which names the job and its data but not the border, the
+    scale, the number of layouts, the match line's lettering or the title block's fields.
+    The job is graded the same (one title sheet, layouts showing every station, one summary;
+    numbers 1 to N with the title sheet 1 and the layouts in station order; an index that
+    matches the set; match lines whose station agrees with where they are drawn and across
+    the pair; both quantities within 1 %), the conventions by the lenient rules and Caltrans
+    practice: the Caltrans border (it is a Caltrans set), any standard scale shared by the
+    layouts, as many layouts as that scale takes on the Caltrans sheet (``layouts_needed``),
+    sheet titles and index entries read by kind (a PLAN sheet is a layout; ``2-4 LAYOUTS``
+    lists three), sheet numbers read by meaning (``3 OF 5``) with TOTAL SHEETS graded only
+    where lettered (the spec's vague title block asks only for the number), MATCH in any
+    form with the station, and the summary a table or rows of text."""
+    return check(baseline, submitted, vague=True)
 
 
 # ------------------------------------------------------------------ the solution
@@ -782,6 +1047,30 @@ PROMPT = (
     "(layer V-ROW in AA01) over the same stations, in linear feet. Fill in each sheet's title "
     "block with its sheet title, its sheet number and the total number of sheets.")
 
+def _sta_short(raw: float) -> str:
+    """'640+00' for a whole station."""
+    text = format_station(raw)
+    return text[:-3] if text.endswith(".00") else text
+
+
+def _vague() -> str:
+    """The vague brief: the job and its data (the line and stations, the one file, the base
+    files, the sheets a PE names, the two quantities with their units, layers and stations),
+    without the border, the scale, how many layouts, how a match line is lettered or which
+    title-block fields to fill: a Caltrans drafter knows those."""
+    a, b = (_sta_short(s) for s in RANGE)
+    return (
+        f"Put together a small Caltrans plan set for the Route 65 \"{ALIGN}\" line from {a} to "
+        f"{b}, all in this one file. The design and topo base files are attached "
+        f"({REF_NAMES[0]} and {REF_NAMES[1]}). I need a title sheet with an index of sheets, "
+        f"layout sheets covering {a} to {b}, and a summary of quantities with two items over "
+        f"those stations: the HMA pavement between the edges of pavement ({EP_LAYER} in "
+        f"{REF_NAMES[0]}), in square yards, and new right of way fence along the right of way "
+        f"lines ({ROW_LAYER} in {REF_NAMES[0]}), in linear feet.")
+
+
+VAGUE = _vague()
+
 NOTE = (
     "Start: an empty sheet file with the combined Route 65 base (L-1, L-2 and L-3's redrafted "
     "AA01/BB01 joined into one frame; \"D13\" one alignment 638+95.91 to 692+10.11, BC 654+06.05, "
@@ -793,8 +1082,9 @@ NOTE = (
 
 PROBES: List[Probe] = [
     Probe(id=PROBE_ID, prompt=PROMPT, check=check, solve=make_solve(), note=NOTE,
-          tags=["plan-set", "sheets", "caltrans", "quantities", "whole-job"], start=PROBE_ID),
+          tags=["plan-set", "sheets", "caltrans", "quantities", "whole-job"], start=PROBE_ID,
+          vague=VAGUE, vague_check=vague_check),
 ]
 
 __all__ = ["PROBES", "PROBE_ID", "base_documents", "centerline", "quantities", "build_start",
-           "check", "make_solve"]
+           "check", "vague_check", "layouts_needed", "make_solve"]

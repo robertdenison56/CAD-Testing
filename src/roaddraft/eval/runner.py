@@ -63,6 +63,12 @@ class Cell:
 
     @property
     def task_id(self) -> str:
+        """The task's id; a probe task at the vague level has its own (``probe_tasks.task_id``)."""
+        if self.level == "vague" and "probe" in self.entry:
+            tid = self.entry.get("vague_task_id")
+            if not tid:
+                raise ValueError(f"probe {self.entry['probe']} has no vague prompt")
+            return tid
         return self.entry["task_id"]
 
 
@@ -136,7 +142,7 @@ def make_agent(name: str, spec: RunSpec) -> Agent:
 
 def run_cell(cell: Cell, spec: RunSpec, pins: Optional[dict] = None,
              agent_factory: Optional[Callable[[str, RunSpec], Agent]] = None) -> EpisodeResult:
-    task = tasksets.task_from_entry(cell.entry)
+    task = tasksets.task_from_entry(cell.entry, level=cell.level)
     config = EpisodeConfig(level=cell.level, mode=cell.mode, dialect=cell.dialect,
                            budgets=spec.budgets, sample=cell.sample, run_id=spec.resolved_run_id())
     if "probe" in cell.entry:  # a probe task (eval/probe_tasks.py): its own episode and oracle

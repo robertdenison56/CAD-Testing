@@ -41,6 +41,11 @@ unchanged -- the sheet file and each base file compared entity by entity with
 a fresh build of the start, the only allowance being the one wrong item (and,
 for the design, the centerline drawn from it); and a finding recorded with
 set_meta (presence only: the sheet file's meta, or a base file's).
+
+**The vague brief** (``_vague``) names the sheet and the lines, says one thing disagrees, asks
+for the wrong one fixed wherever it lives and nothing else (the notes left out), and the finding
+under ``finding``; it drops the list of sources that must tell one story. The checks grade no
+drafting convention, so they serve both levels.
 """
 from __future__ import annotations
 
@@ -337,6 +342,20 @@ WFL_PROMPT = ("Sheet D.10 and the base files it references are meant to tell one
               "whichever file it lives, so it agrees with the others. Change nothing else. Then "
               "record what was wrong in the sheet file with set_meta {\"updates\": {\"finding\": "
               "\"...\"}}.")
+
+
+def _vague(sheet: str, subject: str, leave_out: str = "") -> str:
+    """The request at the vague level: which sheet and line, that one thing disagrees, fix
+    the wrong one wherever it lives and nothing else (``leave_out`` is not part of it), and
+    the finding under the meta key the check reads; without the list of sources to compare."""
+    rest = f"; {leave_out} are not part of this" if leave_out else ""
+    return (f"{sheet} and the base files it references disagree in one place about {subject}. "
+            f"Find it, work out which source is wrong and fix that one, in whichever file it "
+            f"lives. Change nothing else{rest}. Then record what was wrong in the sheet file "
+            f"with set_meta, under \"finding\".")
+
+
+WFL_VAGUE = _vague("Sheet D.10", "MAIN 01")
 PPM_PROMPT = ("Sheet L-1 and the base files it references are meant to tell one story about the "
               "\"D13\", \"TB2\" and \"TB1\" lines: the alignment designs in the design file, the "
               "centerlines drawn from them, the station ticks and numbers, the bearings and "
@@ -345,10 +364,13 @@ PPM_PROMPT = ("Sheet L-1 and the base files it references are meant to tell one 
               "correct that one, in whichever file it lives, so it agrees with the others. Change "
               "nothing else; the construction notes are not part of this. Then record what was "
               "wrong in the sheet file with set_meta {\"updates\": {\"finding\": \"...\"}}.")
+PPM_VAGUE = _vague("Sheet L-1", "the \"D13\", \"TB2\" and \"TB1\" lines", "the construction notes")
 
+# the checks grade the correction, the rest unchanged and the finding's presence -- no drafting
+# convention -- so each serves both levels (vague_check None)
 PROBES: List[Probe] = [
     Probe(id="p02-sources-wfl19a", start=START_TABLE, tags=["pilot", "sources", "wfl", "edit"],
-          prompt=WFL_PROMPT,
+          prompt=WFL_PROMPT, vague=WFL_VAGUE,
           check=_check_label(START_TABLE, "TX-042", _r_value, qa.WFL_CURVE["radius"],
                              "the curve data's R"),
           solve=_solve_label("TX-042", "R = 643.00'",
@@ -358,14 +380,14 @@ PROBES: List[Probe] = [
                "design, the centerline and the edges all say 643. Naive wrong: changing MAIN 01 to "
                "R 683 so the design matches the table (fails: the design changed, the table not)."),
     Probe(id="p02-sources-wfl19b", start=START_DESIGN, tags=["pilot", "sources", "wfl", "edit", "basefile"],
-          prompt=WFL_PROMPT, check=_check_design, solve=_solve_design,
+          prompt=WFL_PROMPT, vague=WFL_VAGUE, check=_check_design, solve=_solve_design,
           note="Planted: MAIN 01's radius 680 ft in the alignment file (PIs kept) with its centerline "
                "redrawn: the curve data, PT 152+96.54, stationing and edges describe R 643. The fix is "
                "in the base file: modify_alignment back to 643 with redraw. Naive wrong: re-lettering "
                "the sheet from get_design_data (R 680.00', T 586.85', L 968.32', PT 153+17.30) -- the sheet "
                "changes, the design does not."),
     Probe(id="p02-sources-ppm045", start=START_LENGTH, tags=["pilot", "sources", "caltrans", "edit"],
-          prompt=PPM_PROMPT,
+          prompt=PPM_PROMPT, vague=PPM_VAGUE,
           check=_check_label(START_LENGTH, "TX-084", _length_value, 426.42, "\"TB2\"'s tangent length"),
           solve=_solve_label("TX-084", "426.42’",
                              "\"TB2\" tangent length lettered 462.42'; the design's T-1 and the EC "
@@ -745,10 +767,14 @@ FDOT916_PROMPT = ("Sheet 1 and the base files it references are meant to tell on
                   "lives, so it agrees with the others. Change nothing else; the drainage notes "
                   "are not part of this. Then record what was wrong in the sheet file with "
                   "set_meta {\"updates\": {\"finding\": \"...\"}}.")
+PPM048_VAGUE = _vague("Sheet L-4", "the \"D13\", \"IND1\" and \"IN4\" lines",
+                      "the construction notes")
+CFL_VAGUE = _vague("Sheet PLA(SAMPLE)", "CL1 in the lower plan", "the construction notes")
+FDOT916_VAGUE = _vague("Sheet 1", "CL1", "the drainage notes")
 
 PROBES += [
     Probe(id="p02-sources-ppm048a", start=START_PPM048_TABLE, tags=["pilot", "sources", "caltrans", "edit"],
-          prompt=PPM048_PROMPT,
+          prompt=PPM048_PROMPT, vague=PPM048_VAGUE,
           check=_check_cell(START_PPM048_TABLE, qa.PPM048_TABLE, 1, 3, 251.05, "curve 36's T in the curve table"),
           solve=_solve_cell(1, 3, "251.05'", "Curve 36's T read 215.05'; its R 328.08' and Δ "
                             "74°50'50\", its L 428.58' and the design give 251.05'. Corrected the table."),
@@ -760,6 +786,7 @@ PROBES += [
                "328.0793 (another cell changed)."),
     Probe(id="p02-sources-ppm048b", start=START_PPM048_DESIGN,
           tags=["pilot", "sources", "caltrans", "edit", "basefile"], prompt=PPM048_PROMPT,
+          vague=PPM048_VAGUE,
           check=_check_design_of(START_PPM048_DESIGN, "p14-ppm048a", qa.PPM048_AA01, "IN4",
                                  "V-ALIGN-CNTR", 328.0793, "\"IN4\" restored to R 328.08 in the design file"),
           solve=_solve_ppm048_design,
@@ -770,7 +797,7 @@ PROBES += [
                "EC from get_design_data (the sheet changes, the design not), or restoring the "
                "radius without redrawing."),
     Probe(id="p02-sources-cflpla", start=START_CFL_PT, tags=["pilot", "sources", "cfl", "edit"],
-          prompt=CFL_PROMPT,
+          prompt=CFL_PROMPT, vague=CFL_VAGUE,
           check=_check_label(START_CFL_PT, "TX-057", _station_value("PT"), 3884.48, "the lower PT label", model=True),
           solve=_solve_label("TX-057", "PT 38+84.48",
                              "The lower PT was lettered 38+48.48; the design's PT and the curve data "
@@ -781,7 +808,7 @@ PROBES += [
                "14's rebuild of the whole curve. Naive wrong (tests): changing the curve data's L "
                "to fit the label."),
     Probe(id="p02-sources-fdot916", start=START_FDOT916_PC, tags=["pilot", "sources", "fdot", "edit"],
-          prompt=FDOT916_PROMPT,
+          prompt=FDOT916_PROMPT, vague=FDOT916_VAGUE,
           check=_check_label(START_FDOT916_PC, "TX-057", _station_value("PC"), 70.74, "the PC label", model=True),
           solve=_solve_label("TX-057", "PC STA. +70.74",
                              "The PC was lettered +70.47; the design's PC, the drawn centerline's "
@@ -792,7 +819,7 @@ PROBES += [
                "Naive wrong (tests): sliding the design's stationing 0.27 ft so its PC is 705+70.47."),
     Probe(id="p02-sources-ppm045b", start=START_PPM045_D13,
           tags=["pilot", "sources", "caltrans", "edit", "basefile"], prompt=PPM_PROMPT,
-          check=_check_ppm045_d13, solve=_solve_ppm045_d13,
+          vague=PPM_VAGUE, check=_check_ppm045_d13, solve=_solve_ppm045_d13,
           note="Planted: \"D13\"'s bearing lettered N 00°03'30\" W, a 7' turn on a line that runs "
                "almost due north, in the design file, where L-1 keeps its bearings (the sheet file "
                "has none of its own). The design, the drawn line and the POT offsets give E. The "

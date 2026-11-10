@@ -4,6 +4,7 @@ untouched starts fail, and the naive answers named in the module docstring
 fail."""
 from __future__ import annotations
 
+import re
 import shutil
 
 import pytest
@@ -200,3 +201,29 @@ def test_new_naive_answers_fail(tmp_path, starts, pid):
     assert not _attempt(tmp_path / "keep", starts, pid, wrong="keep_old").passed
     r = _attempt(tmp_path / "hand", starts, pid, wrong="handwriting")
     assert not r.passed and not dict(r.items)["nothing unrelated changed"]
+
+
+# ------------------------------------------------------------------ the vague level
+
+
+def _tool_names():
+    from roaddraft.mcp.server import tool_definitions
+    return {t["name"] for t in tool_definitions(Session(), attachments=True)}
+
+
+@pytest.mark.parametrize("pid", IDS)
+def test_vague_brief(pid):
+    # a shorter request: the sheet, the page and where it is, the markups as the whole
+    # brief and nothing else changed; no tool, no reading hints, no colour key (the key
+    # is printed at the foot of the page, rp.KEY_TEXT)
+    probe, inst = BY_ID[pid], BY_INST[pid]
+    vague = probe.vague
+    assert vague.strip() and vague != probe.prompt and len(vague) < len(probe.prompt)
+    names = [n for n in _tool_names() if re.search(rf"\b{re.escape(n)}\b", vague, re.I)]
+    assert not names, names
+    for words in (f"Sheet {inst.sheet} ", f"{inst.page}.pdf", f"{inst.page}.png", rp.MARKUPS,
+                  "whole brief", "everything else"):
+        assert words in vague, words
+    assert not re.search(r"\b(red|green|blue|region|zoom)\b", vague, re.I)
+    # the check grades no convention the vague brief leaves out: one check, both levels
+    assert probe.vague_check is None and probe.check_at("vague") is probe.check

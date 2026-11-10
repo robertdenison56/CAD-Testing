@@ -1019,13 +1019,21 @@ PROMPT = (
     "brief: nothing else says what to change. Pick up every one of them on {sheet} by the key at "
     "the foot of the page (red: revise as marked; green: delete; blue: a comment only, nothing to "
     "change), make each edit where the mark sits, and leave everything else exactly as it is.")
+#: the vague brief (2026-11-08): where the page is and that it is the whole brief, as a PE
+#: hands it over; no tool, no reading hints, and no colour key, which is printed at the foot
+#: of the page. The check grades no convention the brief stops stating (where each edit goes
+#: is the mark's, and an added note's height and layer are not graded), so it serves both.
+VAGUE = ("Sheet {sheet} came back from checking as a marked-up PDF, {page}.pdf in the project's "
+         "{folder} folder, with {page}.png beside it as an image of the same page. The markups "
+         "are the whole brief. Pick them all up on the sheet and leave everything else as it is.")
 
 
 def _probe(inst: Instance) -> Probe:
-    prompt = PROMPT.format(sheet=inst.sheet, page=inst.page, folder=MARKUPS)
+    words = dict(sheet=inst.sheet, page=inst.page, folder=MARKUPS)
+    prompt = PROMPT.format(**words)
     return Probe(id=inst.id, prompt=prompt, check=make_check(inst), solve=make_solve(inst),
                  note=inst.note, tags=["redline-understanding", "markup", "scan", "edit"] + list(inst.tags),
-                 start=inst.id, server_args=list(SERVER_ARGS))
+                 start=inst.id, server_args=list(SERVER_ARGS), vague=VAGUE.format(**words))
 
 
 PROBES: List[Probe] = [_probe(i) for i in INSTANCES]

@@ -116,8 +116,9 @@ from roaddraft.document import viewmap
 from roaddraft.probes import plotted as pl
 from roaddraft.probes.base import Probe, Result, Tally
 from roaddraft.probes.pilot import common
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
 
-H_SCALE = 50.0           # feet per inch along the profile, as in the plan
+H_SCALE = 50.0          # feet per inch along the profile, as in the plan
 V_SCALE = 5.0            # feet of elevation per inch
 GRID_POS_TOL = 0.01      # in: a grid line at its datum position
 GRID_COVER = 0.95        # share of the grid a grid line must span
@@ -325,6 +326,13 @@ LENGTH_RE = re.compile(
     _NUM + r"\s*(?:'|FT\.?|FEET)?\s*(?:V\.?\s*C\b|VERT(?:ICAL)?\.?\s*CURVE)"
     r"|\b(?:L|LVC|VCL|VC|LENGTH)\s*=\s*" + _NUM, re.I)
 K_RE = re.compile(r"\bK\s*=?\s*" + _NUM, re.I)
+#: the vague level reads a length and a K in more of the forms they are lettered in:
+#: also "L.V.C. = 150", "VC 150'", "VCL: 150", "K-VALUE = 69", "K: 69"
+LENGTH_RE_ANY = re.compile(
+    _NUM + r"\s*(?:'|FT\.?|FEET)?\s*(?:V\.?\s*C\b|VERT(?:ICAL)?\.?\s*CURVE)"
+    r"|\b(?:L\.?\s*V\.?\s*C\.?|V\.?\s*C\.?\s*L\.?|V\.?\s*C\.?|L|LENGTH)\s*(?:LENGTH\s*)?[=:]?\s*"
+    + _NUM, re.I)
+K_RE_ANY = re.compile(r"\bK(?:\s*-?\s*VALUE)?\s*[=:]?\s*" + _NUM, re.I)
 HIGH_RE = re.compile(r"\bHI(?:GH)?\.?\s*(?:PT|POINT)\b|\bH\.?\s*P\.?(?=[\s:=]|$)", re.I)
 LOW_RE = re.compile(r"\bLO(?:W)?\.?\s*(?:PT|POINT)\b|\bL\.?\s*P\.?(?=[\s:=]|$)", re.I)
 
@@ -540,45 +548,56 @@ def _grade_samples(job: Job, prof: Profile) -> List[float]:
     return out
 
 
-def _grade_item(job: Job, t: Tally, view: pl.Plot, prof: Profile) -> None:
-    grid_y = []
-    e = job.e0
-    while e <= job.e1 + 1e-6:
-        grid_y.append(job.y(e))
-        e += 5.0
+def _grade_item(job: Job, t: Tally, view: pl.Plot, prof: Profile, frame=None) -> None:
+    """``frame``: the profile grid as drawn (a ``Grid``, the vague level), read in place
+    of the job's stated datum; None reads the datum the explicit prompt states."""
+    fr = job if frame is None else frame
+    if frame is None:
+        grid_y = []
+        e = job.e0
+        while e <= job.e1 + 1e-6:
+            grid_y.append(job.y(e))
+            e += 5.0
+    else:
+        grid_y = list(frame.ys)
     cands = [s for s in view.segs
              if not _vertical(s)
              and not (_horizontal(s) and any(abs(s.a[1] - gy) <= 0.002 for gy in grid_y))
-             and max(s.a[0], s.b[0]) >= job.x0 - 0.01 and min(s.a[0], s.b[0]) <= job.x1 + 0.01
-             and max(s.a[1], s.b[1]) >= job.y0 - 0.5 and min(s.a[1], s.b[1]) <= job.y1 + 0.5]
+             and max(s.a[0], s.b[0]) >= fr.x0 - 0.01 and min(s.a[0], s.b[0]) <= fr.x1 + 0.01
+             and max(s.a[1], s.b[1]) >= fr.y0 - 0.5 and min(s.a[1], s.b[1]) <= fr.y1 + 0.5]
     misses = []
-    samples = _grade_samples(job, prof)
+    samples = _grade_samples(fr, prof)
     for st in samples:
-        want = job.y(prof.elevation_at(st))
-        ys = _crossings(cands, job.x(st))
-        if not any(abs(y - want) <= job.grade_tol_in for y in ys):
+        want = fr.y(prof.elevation_at(st))
+        ys = _crossings(cands, fr.x(st))
+        if not any(abs(y - want) <= fr.grade_tol_in for y in ys):
             near = min(ys, key=lambda y: abs(y - want)) if ys else None
             misses.append((st, near))
     if not misses:
         t.add("profile grade line", None)
         return
     st, near = misses[0]
-    drawn = (f"the nearest line there is at el {job.e0 + (near - job.y0) * job.v_scale:.2f}"
+    drawn = (f"the nearest line there is at el {fr.e0 + (near - fr.y0) * fr.v_scale:.2f}"
              if near is not None else "nothing is drawn there")
     t.add("profile grade line",
           f"the grade line misses the design profile at {len(misses)} of {len(samples)} "
           f"stations sampled every {GRADE_STEP:.0f} ft, first at {format_station(st)}: design "
-          f"el {prof.elevation_at(st):.2f}, {drawn} (tolerance {job.grade_tol_in * job.v_scale:.2f} ft)")
+          f"el {prof.elevation_at(st):.2f}, {drawn} (tolerance {fr.grade_tol_in * fr.v_scale:.2f} ft)")
 
 
-def _label_items(job: Job, t: Tally, view: pl.Plot, prof: Profile) -> None:
+def _label_items(job: Job, t: Tally, view: pl.Plot, prof: Profile, frame=None,
+                 lenient: bool = False) -> None:
+    """``frame`` as in ``_grade_item``; ``lenient`` reads a curve's length and K in
+    more of the forms a drafter letters them (the vague level: values read by meaning)."""
+    fr = job if frame is None else frame
+    length_re, k_re = (LENGTH_RE_ANY, K_RE_ANY) if lenient else (LENGTH_RE, K_RE)
     texts = view.texts
     any_point = False
     for vc in prof.curves():
-        if vc["length"] <= 0 or not (job.s0 <= vc["pvi_station"] <= job.s1):
+        if vc["length"] <= 0 or not (fr.s0 <= vc["pvi_station"] <= fr.s1):
             continue
         sta = format_station(vc["pvi_station"])
-        P = (job.x(vc["pvi_station"]), job.y(vc["pvi_elevation"]))
+        P = (fr.x(vc["pvi_station"]), fr.y(vc["pvi_elevation"]))
         near = _near(texts, P, LABEL_REACH)
         words = _joined(near)
         problem = None
@@ -588,23 +607,23 @@ def _label_items(job: Job, t: Tally, view: pl.Plot, prof: Profile) -> None:
             problem = (f"the PVI at {sta} is not lettered with its elevation "
                        f"{vc['pvi_elevation']:.2f}")
         t.add(f"PVI {sta}: station and elevation", problem)
-        lengths = [float(a or b) for a, b in LENGTH_RE.findall(words)]
+        lengths = [float(a or b) for a, b in length_re.findall(words)]
         t.add(f"PVI {sta}: curve length",
               None if any(abs(v - vc["length"]) < 0.5 for v in lengths) else
               f"the {vc['length']:.0f}' vertical curve at {sta} is not lettered with its length "
               f"(read: {', '.join(f'{v:g}' for v in lengths) or 'none'})")
-        ks = [float(v) for v in K_RE.findall(words)]
+        ks = [float(v) for v in k_re.findall(words)]
         t.add(f"PVI {sta}: K",
               None if any(abs(v - vc["K"]) <= 0.51 for v in ks) else
               f"the curve at {sta} is not lettered with K = {vc['K']:.1f} "
               f"(read: {', '.join(f'{v:g}' for v in ks) or 'none'})")
     for vc in prof.curves():
         hl = vc["high_low"]
-        if not hl or not (job.s0 <= hl["station"] <= job.s1):
+        if not hl or not (fr.s0 <= hl["station"] <= fr.s1):
             continue
         any_point = True
         word = HIGH_RE if hl["kind"] == "high" else LOW_RE
-        P = (job.x(hl["station"]), job.y(hl["elevation"]))
+        P = (fr.x(hl["station"]), fr.y(hl["elevation"]))
         near = _near(texts, P, LABEL_REACH)
         words = _joined(near)
         label = f"{hl['kind']} point {format_station(hl['station'])}"
@@ -620,7 +639,7 @@ def _label_items(job: Job, t: Tally, view: pl.Plot, prof: Profile) -> None:
             problem = f"the {hl['kind']} point is not lettered with its elevation {hl['elevation']:.2f}"
         t.add(label, problem)
     if not any_point:
-        box = (job.x0 - 1.0, job.y0 - 1.0, job.x1 + 1.0, job.y1 + 1.0)
+        box = (fr.x0 - 1.0, fr.y0 - 1.0, fr.x1 + 1.0, fr.y1 + 1.0)
         liars = [x for x in texts if box[0] <= x.center()[0] <= box[2]
                  and box[1] <= x.center()[1] <= box[3]
                  and (HIGH_RE.search(x.content) or LOW_RE.search(x.content))]
@@ -644,6 +663,411 @@ def make_check(job: Job):
         _label_items(job, t, view, prof)
         return t.result(f"{job.sheet}: plan over profile, grade line within "
                         f"{job.grade_tol_in * job.v_scale:.2f} ft, stations lined up, curves lettered")
+    return check
+
+
+# ------------------------------------------------------------ the vague level
+#
+# The vague prompt names the sheet, the line, the station range and the design
+# profile, and leaves the layout to the drafter: the scales, where the profile
+# grid sits on the paper, its elevation range and line spacing, the text, and
+# which items a plan-and-profile sheet letters. So the vague check reads the
+# profile grid as it is drawn instead of at a stated datum: the plan scale is any
+# standard scale (spec_v1 "lenient"); the grid's stations come from its station
+# lines (a line at every full station, spaced at the plan's scale, so the profile
+# runs at the plan's horizontal scale), its elevations from the lettering at the
+# ends of its elevation lines (two lettered lines fix the vertical scale and the
+# datum); the pair must be a sensible one (a vertical scale on an engineer's scale,
+# the vertical exaggerated 2 to 10 times), the elevation lines evenly spaced at
+# most 10 ft apart, and the grade on the sheet inside the grid. What a drafter
+# knows anyway is graded as at the explicit level, in the grid's own frame: the
+# plan over the profile, level, every full station stationed and lined up with the
+# profile's (0.05 in), the grade line within 0.10 ft, the PVI station and
+# elevation, length and K of each curve whose PVI is on the sheet, each high or
+# low point on it, and none lettered where there is none.
+
+#: the plan scales the vague level allows: any standard scale (spec_v1 "lenient")
+STANDARD_FPI = tuple(float(f) for f in DRAFTING_SPEC_V1["lenient"]["standard_feet_per_inch"])
+#: a profile's vertical scale: a value of an engineer's scale
+VERTICAL_FPI = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0)
+#: the vertical exaggerations (horizontal over vertical scale) a profile is drawn at
+EXAGGERATIONS = (2.0, 2.5, 4.0, 5.0, 10.0)
+MIN_GRID_LINE = 0.4      # in: a station line shorter than this is no grid line (a tick)
+LINE_SNAP = 0.002        # in: line pieces this close are one line
+EVEN_TOL = 0.01          # in: evenly spaced elevation lines
+MAX_ELEV_STEP_FT = 10.0  # the widest elevation-line spacing of a grid
+ELEV_LABEL_GAP = 2.0     # in: the widest gap between lettered elevations
+ELEV_FIT_TOL = 0.02      # in: a lettered elevation on its line
+
+
+@dataclass(frozen=True)
+class Grid:
+    """A profile grid as drawn on the paper: the frame its stations and elevations
+    are read in (``x``, ``y``, ``x0`` ... as ``Job`` has them). ``v_scale`` is None
+    when the elevations are not lettered well enough to fix it."""
+    sheet: str
+    alignment: str
+    s0: float
+    s1: float
+    h_scale: float
+    xa: float                       # paper x of station s0
+    ys: Tuple[float, ...]           # the elevation lines, bottom up
+    v_scale: Optional[float] = None
+    ea: float = 0.0                 # an elevation and its paper y
+    ya: float = 0.0
+    lettered: Tuple[float, ...] = ()    # paper y of the lettered elevation lines
+
+    def x(self, station: float) -> float:
+        return self.xa + (station - self.s0) / self.h_scale
+
+    def y(self, elevation: float) -> float:
+        return self.ya + (elevation - self.ea) / self.v_scale
+
+    def elevation(self, y: float) -> float:
+        return self.ea + (y - self.ya) * self.v_scale
+
+    @property
+    def x0(self) -> float:
+        return self.xa
+
+    @property
+    def x1(self) -> float:
+        return self.x(self.s1)
+
+    @property
+    def y0(self) -> float:
+        return self.ys[0]
+
+    @property
+    def y1(self) -> float:
+        return self.ys[-1]
+
+    @property
+    def e0(self) -> float:
+        return self.elevation(self.y0)
+
+    @property
+    def e1(self) -> float:
+        return self.elevation(self.y1)
+
+    @property
+    def grade_tol_in(self) -> float:
+        return GRADE_TOL_FT / self.v_scale
+
+
+def _lines(segs: Sequence[pl.PSeg], vertical: bool) -> List[Tuple[float, List[Tuple[float, float]]]]:
+    """The plot's straight vertical (or horizontal) lines by position: ``(x, spans)``
+    (``(y, spans)``), the spans along the line merged, pieces of one line joined; a
+    line is where its longest piece is (a tick beside a grid line does not move it)."""
+    pick, i, j = (_vertical, 0, 1) if vertical else (_horizontal, 1, 0)
+    rows = sorted((s.a[i], min(s.a[j], s.b[j]), max(s.a[j], s.b[j])) for s in segs if pick(s))
+    groups: List[List[Tuple[float, float, float]]] = []
+    for pos, lo, hi in rows:
+        if groups and pos - groups[-1][-1][0] <= LINE_SNAP:
+            groups[-1].append((pos, lo, hi))
+        else:
+            groups.append([(pos, lo, hi)])
+    out = []
+    for pieces in groups:
+        merged: List[List[float]] = []
+        for _pos, lo, hi in sorted(pieces, key=lambda p: p[1]):
+            if merged and lo <= merged[-1][1] + 1e-3:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        at = max(pieces, key=lambda p: p[2] - p[1])[0]
+        out.append((at, [(a, b) for a, b in merged]))
+    return out
+
+
+def _elevation_fit(view: pl.Plot, x0: float, x1: float, ys: Sequence[float]):
+    """The vertical scale and datum the lettering at the ends of the elevation lines
+    gives: ``(v_scale, elevation, its y, lettered line ys)``, or None. Each number
+    lettered within 1.2 in of an end and 0.2 in of a line is read as that line's
+    elevation; the scale and datum most of the lettered lines agree on (0.02 in)
+    win, a vertical scale within 1% of an engineer's scale value taken as it."""
+    pairs = set()
+    for tx in view.texts:
+        cx, cy = tx.center()
+        if not (x0 - 1.2 <= cx <= x0 + 1.2 or x1 - 1.2 <= cx <= x1 + 1.2):
+            continue
+        y = min(ys, key=lambda v: abs(v - cy))
+        if abs(y - cy) > 0.2:
+            continue
+        pairs.update((e, y) for e in numbers_in(tx.content))
+    pairs = sorted(pairs)
+    best = None
+    for (e1, y1), (e2, y2) in ((p, q) for i, p in enumerate(pairs) for q in pairs[i + 1:]):
+        if abs(y2 - y1) < 0.05 or e2 == e1:
+            continue
+        v = (e2 - e1) / (y2 - y1)
+        if v <= 0:
+            continue
+        v = next((s for s in VERTICAL_FPI if abs(v - s) <= 0.01 * s), v)
+        fit = [(e, y) for e, y in pairs if abs(y1 + (e - e1) / v - y) <= ELEV_FIT_TOL]
+        lines = {round(y, 4) for _e, y in fit}
+        key = (len(lines), v in VERTICAL_FPI)
+        if len(lines) >= 2 and (best is None or key > best[0]):
+            best = (key, v, fit)
+    if best is None:
+        return None
+    _key, v, fit = best
+    ea = fit[0][0]
+    ya = sum(y - (e - ea) / v for e, y in fit) / len(fit)
+    return v, ea, ya, tuple(sorted({y for _e, y in fit}))
+
+
+def _grid_at(job: Job, view: pl.Plot, horizontals, h_scale: float, xa: float,
+             span) -> Optional[Grid]:
+    """The grid whose station s0 is at paper x ``xa``, at ``h_scale``: its elevation
+    lines are the ``horizontals`` (``_lines``) across it, inside the station line's
+    ``span``."""
+    x0, x1 = xa, xa + (job.s1 - job.s0) / h_scale
+    ys = tuple(y for y, spans in horizontals
+               if span[0] - 0.01 <= y <= span[1] + 0.01 and _cover(spans, x0, x1) >= GRID_COVER)
+    if len(ys) < 2:
+        return None
+    grid = Grid(job.sheet, job.alignment, job.s0, job.s1, h_scale, xa, ys)
+    fit = _elevation_fit(view, x0, x1, ys)
+    if fit is None:
+        return grid
+    v, ea, ya, lettered = fit
+    return Grid(job.sheet, job.alignment, job.s0, job.s1, h_scale, xa, ys, v, ea, ya, lettered)
+
+
+def _stations_lettered(grid: Grid, view: pl.Plot) -> List[float]:
+    """The full stations lettered under the grid, under their station lines."""
+    return [st for st in _full_stations(grid.s0, grid.s1)
+            if any(_station_word(tx.content, st) for tx in view.texts
+                   if abs(tx.center()[0] - grid.x(st)) <= 0.3
+                   and grid.y0 - 0.7 <= tx.center()[1] <= grid.y0 + 0.1)]
+
+
+def find_grid(job: Job, view: pl.Plot, plan_scale: Optional[float] = None,
+              hint: Optional[Tuple[float, float]] = None) -> Optional[Grid]:
+    """The profile grid drawn on the sheet, wherever it sits: a vertical line at
+    every full station from ``job.s0`` to ``job.s1``, spaced at a standard horizontal
+    scale (the plan's first, ``plan_scale``), with horizontal lines across it. Of the
+    grids that fit (finer lines fit several ways), the one whose elevations are
+    lettered, with the most stations lettered under their lines, nearest the plan
+    (``hint``: a station and its paper x on the plan) is taken."""
+    full = _full_stations(job.s0, job.s1)
+    verticals = [(x, [c for c in spans if c[1] - c[0] >= MIN_GRID_LINE])
+                 for x, spans in _lines(view.segs, True)]
+    verticals = [(x, spans) for x, spans in verticals if spans]
+    if not full or not verticals:
+        return None
+    horizontals = _lines(view.segs, False)
+
+    def line_at(x: float, span):
+        for vx, spans in verticals:
+            if abs(vx - x) <= GRID_POS_TOL:
+                for c in spans:
+                    if c[0] < span[1] and c[1] > span[0]:
+                        return c
+        return None
+
+    scales = ([plan_scale] if plan_scale else []) + [f for f in STANDARD_FPI if f != plan_scale]
+    for h in scales:
+        step = 100.0 / h
+        found = []
+        for vx, spans in verticals:
+            for span in spans:
+                if all(line_at(vx + k * step, span) for k in range(1, len(full))):
+                    grid = _grid_at(job, view, horizontals, h, vx - (full[0] - job.s0) / h, span)
+                    if grid is not None:
+                        found.append(grid)
+        if found:
+            def rank(g: Grid):
+                near = -abs(g.x(hint[0]) - hint[1]) if hint else 0.0
+                return (g.v_scale is not None, len(g.ys) >= 3, len(_stations_lettered(g, view)),
+                        near)
+            return max(found, key=rank)
+    return None
+
+
+def _plan_viewport(job: Job, baseline: Session, sheet, scales: Sequence[float]):
+    """The plan: a viewport at one of ``scales`` showing the line at the middle of the
+    sheet's stations, the one of them that shows the most full stations; and a hint
+    for finding the grid (the first full station on the line and its paper x)."""
+    align = baseline.doc.design.alignments[job.alignment]
+    a0, a1 = align.begin_station, align.end_station
+    on = _full_stations(max(job.s0, a0), min(job.s1, a1))
+    mid = (max(job.s0, a0) + min(job.s1, a1)) / 2.0
+    mid_xy = align.station_to_xy(mid)[0]
+    best = None
+    for v in sheet.viewports:
+        if not any(abs(v.feet_per_inch - f) < 0.01 for f in scales):
+            continue
+        fn = v.transform().to_paper
+        if not viewmap.in_window(v, fn(mid_xy)):
+            continue
+        shown = sum(viewmap.in_window(v, fn(align.station_to_xy(s)[0])) for s in on)
+        if best is None or shown > best[0]:
+            best = (shown, v)
+    if best is None:
+        return None, None
+    vp = best[1]
+    hint = (on[0], vp.transform().to_paper(align.station_to_xy(on[0])[0])[0]) if on else None
+    return vp, hint
+
+
+def _vague_plan_items(job: Job, t: Tally, baseline: Session, view: pl.Plot, vp,
+                      grid: Optional[Grid]) -> None:
+    """``_plan_items`` at any standard plan scale, lined up with the grid as drawn."""
+    align = baseline.doc.design.alignments[job.alignment]
+    a0, a1 = align.begin_station, align.end_station
+    on = _full_stations(max(job.s0, a0), min(job.s1, a1))
+    if vp is None:
+        mid = (max(job.s0, a0) + min(job.s1, a1)) / 2.0
+        problem = (f"no viewport on {job.sheet} at a standard scale "
+                   f"({', '.join(f'{f:g}' for f in STANDARD_FPI)} ft/in) shows {job.alignment} at "
+                   f"{format_station(mid)}")
+        for item in ("plan view", "plan stations line up with the profile", "plan stationing"):
+            t.add(item, problem)
+        return
+    fn = vp.transform().to_paper
+    bx0, by0, bx1, by1 = vp.paper_bbox()
+    problem = None
+    if grid is not None and by0 < grid.y1 - 0.05 and bx0 < grid.x1 and bx1 > grid.x0:
+        problem = (f"the plan viewport (y {by0:.2f} to {by1:.2f} in) overlaps the profile grid "
+                   f"(top at y {grid.y1:.2f}): the plan goes above it")
+    missing = [s for s in on if not viewmap.in_window(vp, fn(align.station_to_xy(s)[0]))]
+    if problem is None and missing:
+        problem = (f"the plan viewport does not show {job.alignment} at "
+                   f"{', '.join(format_station(s) for s in missing)}")
+    t.add("plan view", problem)
+
+    problem = None
+    tangent = [s for s in on if _on_first_tangent(align, s)]
+    if len(tangent) >= 2:
+        p, q = fn(align.station_to_xy(tangent[0])[0]), fn(align.station_to_xy(tangent[-1])[0])
+        ang = math.degrees(math.atan2(q[1] - p[1], q[0] - p[0]))
+        if abs(pl.wrap(ang)) > LEVEL_TOL_DEG:
+            problem = (f"the centerline runs at {ang:.2f} deg on the paper between "
+                       f"{format_station(tangent[0])} and {format_station(tangent[-1])}; the "
+                       f"plan should be turned so it runs level, stations increasing to the right")
+    if problem is None and grid is None:
+        problem = "there is no profile grid to line the plan's stations up with"
+    if problem is None:
+        for s in on:
+            px = fn(align.station_to_xy(s)[0])[0]
+            if abs(px - grid.x(s)) > X_ALIGN_TOL:
+                problem = (f"{format_station(s)} is at x {px:.2f} in on the plan but "
+                           f"{grid.x(s):.2f} in on the profile "
+                           f"({abs(px - grid.x(s)) * grid.h_scale:.1f} ft off)")
+                break
+    t.add("plan stations line up with the profile", problem)
+
+    missing = []
+    for s in on:
+        p = fn(align.station_to_xy(s)[0])
+        if not any(_station_word(x.content, s) for x in _near(view.texts, p, STATION_LABEL_REACH)):
+            missing.append(s)
+    t.add("plan stationing", None if not missing else
+          f"no station label within {STATION_LABEL_REACH} in of the centerline at "
+          f"{', '.join(format_station(s) for s in missing)}")
+
+
+def _vague_grid_items(job: Job, t: Tally, view: pl.Plot, prof: Profile,
+                      grid: Optional[Grid]) -> None:
+    """The grid and its lettering, as drawn (see the section's comment)."""
+    if grid is None:
+        problem = (f"no profile grid on {job.sheet}: no vertical lines at every full station "
+                   f"from {format_station(job.s0)} to {format_station(job.s1)}, spaced at a "
+                   f"standard scale, with horizontal lines across them")
+        t.add("profile grid", problem)
+        t.add("grid lettering", problem)
+        return
+    problem = None
+    verticals = _lines(view.segs, True)
+    for st in _full_stations(job.s0, job.s1):
+        spans = [c for x, cs in verticals if abs(x - grid.x(st)) <= GRID_POS_TOL for c in cs]
+        if _cover(spans, grid.y0, grid.y1) < GRID_COVER:
+            problem = f"the grid's line at {format_station(st)} does not run its full height"
+            break
+    gaps = [b - a for a, b in zip(grid.ys, grid.ys[1:])]
+    if problem is None and (len(grid.ys) < 3 or max(gaps) - min(gaps) > EVEN_TOL):
+        problem = (f"the grid's elevation lines are not evenly spaced lines across it "
+                   f"({len(grid.ys)} lines, {', '.join(f'{g:.2f}' for g in gaps)} in apart)")
+    if problem is None and grid.v_scale is not None:
+        v, h = grid.v_scale, grid.h_scale
+        if not (v in VERTICAL_FPI and any(abs(h / v - x) < 1e-6 for x in EXAGGERATIONS)):
+            problem = (f"the profile is at 1\"={h:g}' horizontal and 1\"={v:.4g}' vertical "
+                       f"(exaggerated {h / v:.3g} times): not a standard pair (the vertical on an "
+                       f"engineer's scale, exaggerated {', '.join(f'{x:g}' for x in EXAGGERATIONS)} "
+                       f"times)")
+        elif min(gaps) * v > MAX_ELEV_STEP_FT + 1e-6:
+            problem = (f"the grid's elevation lines are {min(gaps) * v:.3g} ft apart "
+                       f"(at most {MAX_ELEV_STEP_FT:g})")
+        else:
+            elevations = [prof.elevation_at(s) for s in _grade_samples(grid, prof)]
+            lo, hi = min(elevations), max(elevations)
+            if lo < grid.e0 - GRADE_TOL_FT or hi > grid.e1 + GRADE_TOL_FT:
+                problem = (f"the grade on the sheet (el {lo:.2f} to {hi:.2f}) runs outside the "
+                           f"grid (el {grid.e0:.2f} to {grid.e1:.2f})")
+    t.add("profile grid", problem)
+
+    missing = [format_station(st) for st in _full_stations(job.s0, job.s1)
+               if st not in _stations_lettered(grid, view)]
+    problem = None
+    if missing:
+        problem = (f"grid lines not lettered: {', '.join(missing[:6])}"
+                   f"{' ...' if len(missing) > 6 else ''} (stations under the grid)")
+    elif grid.v_scale is None:
+        problem = ("the grid's elevations are not lettered at the ends of its lines (two lines "
+                   "at least), so the profile's elevations cannot be read")
+    else:
+        marks = [grid.y0] + list(grid.lettered) + [grid.y1]
+        wide = max(b - a for a, b in zip(marks, marks[1:]))
+        if wide > ELEV_LABEL_GAP + 1e-6:
+            problem = (f"the grid's elevations are lettered {wide:.2f} in apart at most "
+                       f"(lettered every {ELEV_LABEL_GAP:g} in at least)")
+    t.add("grid lettering", problem)
+
+
+def _no_frame_items(job: Job, t: Tally, prof: Profile, why: str) -> None:
+    """The grade line and the curve labels when there is no grid to read them in:
+    the items ``_grade_item`` and ``_label_items`` judge, each failed with ``why``."""
+    t.add("profile grade line", why)
+    any_point = False
+    for vc in prof.curves():
+        if vc["length"] > 0 and job.s0 <= vc["pvi_station"] <= job.s1:
+            sta = format_station(vc["pvi_station"])
+            for item in ("station and elevation", "curve length", "K"):
+                t.add(f"PVI {sta}: {item}", why)
+    for vc in prof.curves():
+        hl = vc["high_low"]
+        if hl and job.s0 <= hl["station"] <= job.s1:
+            any_point = True
+            t.add(f"{hl['kind']} point {format_station(hl['station'])}", why)
+    if not any_point:
+        t.add("no high or low point where the profile has none", why)
+
+
+def make_vague_check(job: Job):
+    """The check at the vague level (see the section's comment)."""
+    def check(baseline: Session, submitted: Session) -> Result:
+        t = Tally()
+        sheet = _sheet(submitted, job.sheet)
+        if sheet is None:
+            return Result(False, f"sheet {job.sheet} is gone", [])
+        view = pl.plot(submitted, sheet, pl.sheet_items(baseline, submitted, job.sheet))
+        prof = job.design()
+        vp, hint = _plan_viewport(job, baseline, sheet, STANDARD_FPI)
+        grid = find_grid(job, view, vp.feet_per_inch if vp is not None else None, hint)
+        _vague_plan_items(job, t, baseline, view, vp, grid)
+        _vague_grid_items(job, t, view, prof, grid)
+        if grid is None or grid.v_scale is None:
+            _no_frame_items(job, t, prof, "there is no profile grid to read it in" if grid is None
+                            else "the grid's elevations are not lettered, so it cannot be read")
+        else:
+            _grade_item(job, t, view, prof, frame=grid)
+            _label_items(job, t, view, prof, frame=grid, lenient=True)
+        scales = (f"1\"={grid.h_scale:g}' by 1\"={grid.v_scale:g}'"
+                  if grid is not None and grid.v_scale else "its own scales")
+        return t.result(f"{job.sheet}: plan over profile at {scales}, grade line within "
+                        f"{GRADE_TOL_FT:.2f} ft, stations lined up, curves lettered")
     return check
 
 
@@ -672,11 +1096,15 @@ def _text(session: Session, sheet: str, layer: str, at, content: str, rot: float
                                              "valign": valign}))
 
 
-def solve_job(job: Job, session: Session, vertical: float = None, curves: bool = True) -> None:
+def solve_job(job: Job, session: Session, vertical: float = None, curves: bool = True,
+              h_scale: float = None) -> None:
     """Lay the sheet out through the command bus. ``vertical`` and ``curves``
     exist to build the naive answers the tests check fail (a 1" = 10' vertical
-    scale; the grade drawn PVI to PVI with no vertical curves)."""
+    scale; the grade drawn PVI to PVI with no vertical curves); ``h_scale`` (the
+    plan's and the profile's horizontal scale, default 1" = 50') the layouts the
+    vague level allows and the explicit one does not."""
     vertical = job.v_scale if vertical is None else vertical
+    h = H_SCALE if h_scale is None else h_scale
     sh = job.sheet
     grid = _layer(session, "PROF_GRID", "gray", 0.18)
     grade = _layer(session, "PROF_GRADE", "black", 0.5)
@@ -686,14 +1114,14 @@ def solve_job(job: Job, session: Session, vertical: float = None, curves: bool =
     a = session.doc.design.alignments[job.alignment]
 
     def X(s):
-        return job.x0 + (s - job.s0) / H_SCALE
+        return job.x0 + (s - job.s0) / h
 
     def Y(e):
         return job.y0 + (e - job.e0) / vertical
 
     # plan: the centerline level across the top, stations over the profile's
     centre_x = 8.5
-    s_c = job.s0 + (centre_x - job.x0) * H_SCALE
+    s_c = job.s0 + (centre_x - job.x0) * h
     at = common.ok(session.query("station_to_xy", {"alignment": job.alignment, "station": s_c}))
     twist = -at["direction_deg"]
     if job.level_at is not None:     # level the first tangent, not the centre's direction
@@ -702,7 +1130,7 @@ def solve_job(job: Job, session: Session, vertical: float = None, curves: bool =
     common.ok(session.execute("create_viewport", {
         "sheet": sh, "center_paper": [centre_x, job.plan_y], "width_in": 15.4,
         "height_in": job.plan_h,
-        "model_center": at["point"], "feet_per_inch": 50.0,
+        "model_center": at["point"], "feet_per_inch": float(h),
         "rotation_deg": twist}))
     lo, hi = max(job.s0, a.begin_station), min(job.s1, a.end_station)
     common.ok(session.execute("annotate_stationing", {
@@ -720,7 +1148,7 @@ def solve_job(job: Job, session: Session, vertical: float = None, curves: bool =
     if n_cols > 1:
         common.ok(session.execute("array_entities", {"ids": [line], "kind": "rectangular",
                                                      "rows": 1, "columns": n_cols,
-                                                     "column_spacing": 100.0 / H_SCALE}))
+                                                     "column_spacing": 100.0 / h}))
     n_rows = int(round((job.e1 - job.e0) / 5.0)) + 1
     line = common.ok(session.execute("draw_line", {"space": sh, "layer": grid,
                                                    "start": [job.x0, job.y0],
@@ -819,11 +1247,21 @@ def _prompt(job: Job) -> str:
         f"paper x in the plan and the profile. Text 0.10 in.")
 
 
+def _vague(job: Job) -> str:
+    """The request as a PE makes it: the sheet, the line, its stations and the design
+    profile. The scales, the grid's place, range and lines, the text and what a plan
+    and profile sheet letters are the drafter's (graded by ``make_vague_check``)."""
+    sta = short_station
+    return (f"Lay out sheet {job.sheet} as a plan and profile sheet for {job.alignment} from "
+            f"{sta(job.s0)} to {sta(job.s1)}, with the design profile {job.profile}.")
+
+
 def _probe(job: Job, note: str) -> Probe:
     return Probe(
         id=job.id, prompt=_prompt(job), check=make_check(job),
         solve=lambda session, job=job: solve_job(job, session),
-        note=note, tags=["pilot-06", "plan-profile", "layout"], start=job.start)
+        note=note, tags=["pilot-06", "plan-profile", "layout"], start=job.start,
+        vague=_vague(job), vague_check=make_vague_check(job))
 
 
 for _job in JOBS + NEW_JOBS:
@@ -871,4 +1309,4 @@ PROBES: List[Probe] = [
 ]
 
 __all__ = ["PROBES", "JOBS", "NEW_JOBS", "Job", "build_host", "make_check", "solve_job",
-           "MAIN01_D5_D12"]
+           "MAIN01_D5_D12", "Grid", "find_grid", "make_vague_check"]

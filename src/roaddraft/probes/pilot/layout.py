@@ -107,6 +107,25 @@ conventional way pass and 4 fail).
 A bearing is re-placed along its line's offset or side, never slid along its
 tangent: d1-verify-v7 reads a bearing anchored at a station inside a tangent
 as that tangent's but then expects it at the tangent's middle (``BEARING_SLIDE``).
+
+**The vague level (2026-11-08)**: every instance also has a ``vague`` brief, the
+request as a PE would put it, built from the same table row as the explicit
+one. It keeps what the drafter cannot know (the sheet, the lines and how they
+are reached through the reference, the lines that keep their lettering, the
+stretch, the scale and border p05 is cut at) and the instrument rules (the
+design's own labels, anchored through the reference; keep what is there), and
+leaves out the standards the explicit brief spells out. Its check
+(``vague_check``) grades those by the spec's lenient rules: on 4 and 17, E1 at
+``prompt_level="vague"`` (any layer but 0, heights in the lenient ranges, any
+tick length in range, values read by meaning, the table's core columns); a
+station number or BC/EC may run along its line or square to it, a bearing still
+along its tangent, all reading from the bottom or right; a table's title must
+name its line only where the sheet carries another curve data table. On 5 the
+match line need only cross the line square at the break, at least 1.0 in long
+on paper (``match_line_min_in``), with its lettering at it and not upside down.
+The scale and border stay in p05's vague brief: the fewest sheets is counted at
+them (at 1" = 100' half the stretches fit one sheet, at 200' all do, and no
+break is left to choose).
 """
 from __future__ import annotations
 
@@ -255,11 +274,14 @@ def _finding(session: Session, f) -> str:
     return text[:300]
 
 
-def _orientation_problems(session: Session, sheet_name: str, qualified: str) -> List[str]:
+def _orientation_problems(session: Session, sheet_name: str, qualified: str,
+                          lenient: bool = False) -> List[str]:
     """Lettering of one line that does not run along it (station numbers,
     bearings) or square to it (BC/EC), as plotted, or that reads from the wrong
     side: along the line upright in (-90, 90], square to it bottom to top in
-    (-45, 135]."""
+    (-45, 135]. ``lenient`` (the vague level, whose brief states no label form):
+    a station number or BC/EC may run along its line or square to it, either
+    way reading from its own side; a bearing still runs along its tangent."""
     found = find_reference_alignment(session.doc, qualified)
     sheet = _sheet(session, sheet_name)
     if found is None or sheet is None or not sheet.viewports:
@@ -293,13 +315,22 @@ def _orientation_problems(session: Session, sheet_name: str, qualified: str) -> 
         line = align.direction_at(dist) + twist
         want = line if kind in ("station", "bearing") else line + 90.0
         what = f"{_q(e.content)} ({kind} at {align.stations().format(float(station))})"
-        if pl.turn_between(rot, want, 180.0) > TURN_DEG:
-            how = "along" if kind in ("station", "bearing") else "square to"
-            out.append(f"{what} is lettered at {pl.wrap(rot):.1f}° on the sheet; {how} the line "
-                       f"there is {pl.wrap(want) % 180.0:.1f}°")
-            continue
+        if lenient and kind != "bearing":
+            along = pl.turn_between(rot, line, 180.0) <= TURN_DEG
+            if not along and pl.turn_between(rot, line + 90.0, 180.0) > TURN_DEG:
+                out.append(f"{what} is lettered at {pl.wrap(rot):.1f}° on the sheet; along the "
+                           f"line there is {pl.wrap(line) % 180.0:.1f}° and square to it "
+                           f"{pl.wrap(line + 90.0) % 180.0:.1f}°")
+                continue
+        else:
+            along = kind in ("station", "bearing")
+            if pl.turn_between(rot, want, 180.0) > TURN_DEG:
+                how = "along" if along else "square to"
+                out.append(f"{what} is lettered at {pl.wrap(rot):.1f}° on the sheet; {how} the "
+                           f"line there is {pl.wrap(want) % 180.0:.1f}°")
+                continue
         r = pl.wrap(rot)
-        if kind in ("station", "bearing"):
+        if along:
             bad = not (-90.0 - READ_TOL_DEG < r <= 90.0 + READ_TOL_DEG)
         else:
             bad = reads_upside_down(r)
@@ -315,9 +346,25 @@ def _base_lettering(session: Session) -> set:
             for e in prims if isinstance(e, Text)}
 
 
+def _curve_tables_on(baseline: Session, submitted: Session, sheet_name: str) -> int:
+    """How many curve data tables ``sheet_name`` carries: the anchored ones on it,
+    and the sheet's own published ones (drafted as text, CURVE DATA) still there."""
+    sheet_b, sheet_s = _sheet(baseline, sheet_name), _sheet(submitted, sheet_name)
+    anchored = sum(1 for e in sheet_s.entities.values() if isinstance(e, Table)
+                   and (e.anchor or {}).get("kind") == "curve_table")
+    published = sum(1 for i, e in sheet_b.entities.items() if i in sheet_s.entities
+                    and isinstance(e, Text) and "CURVE DATA" in " ".join(e.content.upper().split()))
+    return anchored + published
+
+
 def _grade_lettering(baseline: Session, submitted: Session, sheet_id: str, sheet_name: str,
-                     names: Sequence[str], tally: Tally) -> None:
-    """Add every graded item of lettering ``names`` on ``sheet_name`` to ``tally``."""
+                     names: Sequence[str], tally: Tally, level: str = "explicit") -> None:
+    """Add every graded item of lettering ``names`` on ``sheet_name`` to ``tally``,
+    as posed at prompt ``level``: at ``vague``, E1 grades by the spec's lenient
+    rules, a station number or BC/EC may run along or square to its line, and a
+    table's title must name its line only where the sheet carries another curve
+    data table (the vague brief states no title)."""
+    vague = level == "vague"
     given = _given(baseline, sheet_name)
     sheet_b, sheet_s = _sheet(baseline, sheet_name), _sheet(submitted, sheet_name)
     if sheet_s is None:
@@ -341,7 +388,7 @@ def _grade_lettering(baseline: Session, submitted: Session, sheet_id: str, sheet
     legibility = None
     for name in names:
         truth = _truth(sheet_id, name, given)
-        report = verify(submitted.doc, truth)
+        report = verify(submitted.doc, truth, prompt_level=level)
         line = _q(name)
         if not report.design_fingerprint_ok:
             tally.add(f"{line}: the design", f"the design of {line} was changed")
@@ -359,12 +406,16 @@ def _grade_lettering(baseline: Session, submitted: Session, sheet_id: str, sheet
                 if len(bad) > 1:
                     problem += f" (and {len(bad) - 1} more)"
             tally.add(f"{line}: {what}", problem)
-        problems = _orientation_problems(submitted, sheet_name, _qualified(sheet_id, name))
-        tally.add(f"{line}: lettering along (BC/EC square to) its line and reading from the "
+        problems = _orientation_problems(submitted, sheet_name, _qualified(sheet_id, name),
+                                         lenient=vague)
+        tally.add(f"{line}: lettering along or square to its line (bearings along it) and "
+                  f"reading from the bottom or right" if vague else
+                  f"{line}: lettering along (BC/EC square to) its line and reading from the "
                   f"bottom or right", f"{line}: {problems[0]}" + (
                       f" (and {len(problems) - 1} more)" if len(problems) > 1 else "")
                   if problems else None)
-        if truth.curve_tables:
+        if truth.curve_tables and (not vague
+                                   or _curve_tables_on(baseline, submitted, sheet_name) > 1):
             titles = [e.title or "" for e in sheet_s.entities.values()
                       if isinstance(e, Table) and (e.anchor or {}).get("kind") == "curve_table"
                       and (e.anchor or {}).get("alignment") in (name, _qualified(sheet_id, name))]
@@ -800,12 +851,18 @@ def _p4_builder(pid: str):
     return build
 
 
-def _p4_check(pid: str):
+def _p4_check(pid: str, level: str = "explicit"):
     cfg = P4[pid]
 
     def check(baseline: Session, submitted: Session) -> Result:
         tally = Tally()
-        _grade_lettering(baseline, submitted, cfg["sheet_id"], cfg["sheet"], cfg["names"], tally)
+        _grade_lettering(baseline, submitted, cfg["sheet_id"], cfg["sheet"], cfg["names"], tally,
+                         level)
+        if level == "vague":
+            what = (f"{_q(cfg['names'][0])} of {cfg['sheet']}" if len(cfg["names"]) == 1 else
+                    f"all {len(cfg['names'])} lines of {cfg['sheet']}")
+            return tally.result(f"{what} lettered in full, by the lenient rules where the brief "
+                                f"states no standard, and nothing over anything")
         if len(cfg["names"]) == 1:
             return tally.result(f"{_q(cfg['names'][0])} of {cfg['sheet']} lettered in full and "
                                 f"to the spec, its table titled with it, and nothing over "
@@ -855,6 +912,37 @@ def _p4_prompt(pid: str) -> str:
             f"own, the base file's, or another line's), run under a leader, be cut by the edge of "
             f"the viewport, leave the border or read upside down as plotted. Keep everything "
             f"already on the sheet.")
+
+
+_COUNT = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+
+
+def _join(items: Sequence[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
+
+
+def _p4_vague(pid: str) -> str:
+    """The vague brief: the sheet, its lines and how they are reached, the lines that
+    keep their lettering, and the instrument rules; no lettering standard."""
+    cfg = P4[pid]
+    names, ref = cfg["names"], cfg["ref"]
+    where = cfg.get("set", "Caltrans layout")
+    kept = cfg.get("kept", ())
+    if len(names) == 1:
+        name = names[0]
+        lost = (f"its {_q(name)} line (alignment {name} of the base file attached as {ref}, "
+                f"reached as {ref}:{name})")
+    else:
+        lost = (f"its {_COUNT.get(len(names), len(names))} lines, {_and(names)} (alignments of "
+                f"the base file attached as {ref}, reached as "
+                f"{_join([f'{ref}:{n}' for n in names])})")
+    return (f"Sheet {cfg['sheet']} of this {where} has lost the alignment data of {lost}."
+            + (f" {_and(kept)} keep theirs." if kept else "") +
+            f" Letter {'it' if len(names) == 1 else 'them'} again in this sheet file with the "
+            f"design's own labels, anchored through the reference. The sheet is crowded; keep "
+            f"everything already on it.")
 
 
 def _one_line(name: str, whole: str) -> str:
@@ -979,13 +1067,17 @@ def _p17_builder(pid: str):
     return build
 
 
-def _p17_check(pid: str):
+def _p17_check(pid: str, level: str = "explicit"):
     cfg = P17[pid]
 
     def check(baseline: Session, submitted: Session) -> Result:
         tally = Tally()
         _grade_lettering(baseline, submitted, cfg["sheet_id"], cfg["sheet"], [cfg["name"]],
-                         tally)
+                         tally, level)
+        if level == "vague":
+            return tally.result(f"{_q(cfg['name'])} lettered in full on the re-cut sheet "
+                                f"{cfg['sheet']}, every label along or square to its line and "
+                                f"reading from the bottom or right as plotted")
         return tally.result(f"{_q(cfg['name'])} lettered in full on the re-cut sheet "
                             f"{cfg['sheet']}, every label along (or square to) its line and "
                             f"reading from the bottom or right as plotted")
@@ -1017,6 +1109,20 @@ def _p17_prompt(pid: str) -> str:
             f"it plots and run along its line (BC and EC square to it). Nothing may sit on "
             f"other lettering, be cut by the edge of the viewport or leave the border. Keep "
             f"everything else as it is.")
+
+
+def _p17_vague(pid: str) -> str:
+    """The vague brief: what was re-cut, the line and how it is reached, and the
+    instrument rules; no lettering standard and no word on reading direction."""
+    cfg = P17[pid]
+    name, ref = cfg["name"], cfg["ref"]
+    how = (", turned half a turn from the published sheet," if "turn" in cfg
+           else " at a new twist,")
+    return (f"Sheet {cfg['sheet']} of this {cfg['agency']} set has been re-cut{how} and the "
+            f"plan callouts drawn for the old view were taken off. The {_q(name)} line "
+            f"(alignment {name} of the base file attached as {ref}, reached as {ref}:{name}) "
+            f"has no lettering. Letter its alignment data in this sheet file with the design's "
+            f"own labels, anchored through the reference. Keep everything else as it is.")
 
 
 # ================================================================ pilot 5
@@ -1094,6 +1200,9 @@ TEXT_NEAR_IN = 0.5        # its lettering within this of it
 THETA_STEP = 0.25         # degrees, the twists tried when fitting a stretch
 MATCH = re.compile(r"MATCH\s*LINE.*?(\d+)\s*\+\s*(\d{2}(?:\.\d+)?)", re.I | re.S)
 ENDS_FT = 1.0             # a "match line" lettered at A or B is not a break
+#: the vague level's match line: at least this long on paper, any reach each side (the
+#: spec's lenient ``match_line_min_in``, as D1-00 grades a vague match line)
+MATCH_MIN_IN = float(SPEC["lenient"]["match_line_min_in"])
 
 
 @lru_cache(maxsize=None)
@@ -1253,10 +1362,27 @@ def _lettered(plot) -> List[Tuple[float, object]]:
     return out
 
 
+def _gap(text, seg) -> float:
+    """How far a plotted text's box lies from a segment, paper inches (0 where they meet)."""
+    quad = text.corners()
+    if crosses(seg.a, seg.b, quad, eps=0.0):
+        return 0.0
+    d = min(seg.distance(c) for c in quad)
+    for k in range(4):
+        a, b = quad[k], quad[(k + 1) % 4]
+        d = min(d, geo.dist_point_to_segment(seg.a, a, b), geo.dist_point_to_segment(seg.b, a, b))
+    return d
+
+
 def _match_problem(plot, align: Alignment, vp, station: float, text,
-                   fpi: float = FPI) -> Optional[str]:
+                   fpi: float = FPI, lenient: bool = False) -> Optional[str]:
     """Whether the match line at ``station`` crosses the line square to it on
-    this sheet, far enough each side, and is lettered along itself."""
+    this sheet, far enough each side, and is lettered along itself.
+    ``lenient`` (the vague level, whose brief states neither the reach nor the
+    lettering's form): square to the line through the station, at least
+    ``MATCH_MIN_IN`` long on paper whichever side it reaches, and lettered at it
+    (its text's box within ``TEXT_NEAR_IN``) in any direction that does not read
+    upside down."""
     begin = float(align.begin_station)
     dist = min(max(station - begin, 0.0), align.length)
     t = vp.transform()
@@ -1268,6 +1394,10 @@ def _match_problem(plot, align: Alignment, vp, station: float, text,
     for s in near:
         if pl.turn_between(s.angle, d + 90.0, 180.0) > SQUARE_DEG:
             continue
+        if lenient:
+            if s.length >= MATCH_MIN_IN - 1e-9:
+                good.append(s)
+            continue
         lefts = [pl.offset_from(p, q, d)[1] * fpi for p in (s.a, s.b)]
         if min(lefts) <= -REACH_FT and max(lefts) >= REACH_FT:
             good.append(s)
@@ -1278,9 +1408,19 @@ def _match_problem(plot, align: Alignment, vp, station: float, text,
         if pl.turn_between(s.angle, d + 90.0, 180.0) > SQUARE_DEG:
             return (f"the match line at {label} runs at {s.angle % 180.0:.2f}° on the sheet; "
                     f"square to the line there is {(d + 90.0) % 180.0:.2f}°")
+        if lenient:
+            return (f"the match line at {label} is {s.length:.2f} in long on the sheet; it "
+                    f"should be at least {MATCH_MIN_IN:g} in")
         lefts = [pl.offset_from(p, q, d)[1] * fpi for p in (s.a, s.b)]
         return (f"the match line at {label} reaches {min(lefts):.0f} ft to {max(lefts):.0f} ft "
                 f"from the centerline; it should run at least {REACH_FT:g} ft past it each side")
+    if lenient:
+        line = min(good, key=lambda s: _gap(text, s))
+        if _gap(text, line) > TEXT_NEAR_IN:
+            return f"{_q(text.content)} is not lettered at its match line"
+        if reads_upside_down(text.rotation):
+            return f"{_q(text.content)} reads upside down"
+        return None
     line = good[0]
     if line.distance(text.center()) > TEXT_NEAR_IN:
         return f"{_q(text.content)} is not lettered at its match line"
@@ -1291,11 +1431,15 @@ def _match_problem(plot, align: Alignment, vp, station: float, text,
     return None
 
 
-def _p5_check(pid: str):
+def _p5_check(pid: str, level: str = "explicit"):
+    """The check at prompt ``level``; at ``vague`` the match lines are graded by
+    ``_match_problem``'s lenient rule (the vague brief states neither their reach
+    nor their lettering), all else as at ``explicit``."""
     cfg = P5[pid]
 
     fpi, spare = float(cfg.get("fpi", FPI)), int(cfg.get("spare", 1))
     scale = f"1\" = {fpi:g}'"
+    vague = level == "vague"
 
     def check(baseline: Session, submitted: Session) -> Result:
         tally = Tally()
@@ -1392,9 +1536,11 @@ def _p5_check(pid: str):
                     if text is None or vp is None:
                         problem = f"sheet {sh.name} does not show the break at {st.format(b)}"
                     else:
-                        problem = _match_problem(plots[sh.id], align, vp, b, text, fpi)
+                        problem = _match_problem(plots[sh.id], align, vp, b, text, fpi,
+                                                 lenient=vague)
                     tally.add(f"match line {st.format(b)} on {sh.name}: square to "
-                              f"{cfg['line']} at its station, lettered along it",
+                              f"{cfg['line']} at its station, lettered "
+                              + ("at it" if vague else "along it"),
                               f"{sh.name}: {problem}" if problem else None)
             # each sheet: its own stretch, all of it shown, left to right
             bounds = [A] + breaks + [B]
@@ -1506,6 +1652,18 @@ def _p5_prompt(pid: str) -> str:
             f"followed by the break station to the hundredth (MATCH LINE STA 12+34.56), the same "
             f"on both sheets. {cfg['a']} and {cfg['b']} are the limits of this work: no match "
             f"lines there.")
+
+
+def _p5_vague(pid: str) -> str:
+    """The vague brief: the references, the line and how it is reached, the stretch,
+    the scale and the border (the fewest sheets is counted at them), as few sheets as
+    it takes and a match line at each break; nothing on how to cut, turn or letter."""
+    cfg = P5[pid]
+    return (f"This sheet file references the base files of {cfg['road']}, attached as "
+            f"{_join(list(cfg['files'].values()))}. Lay out the plan sheets for its centerline, "
+            f"alignment {cfg['line']} (reached as {cfg['alignment']}), from STA {cfg['a']} to "
+            f"STA {cfg['b']} at 1\" = {float(cfg.get('fpi', FPI)):g}' on {cfg['border']}: as "
+            f"few sheets as the stretch needs, with a match line at each break.")
 
 
 # ================================================================ the probes
@@ -1728,18 +1886,21 @@ for _pid in P4:
         note=_P4_NOTES[_pid],
         tags=_P4_TAGS.get(_pid, ["layout", "crowded", "caltrans", "twist", "verifier"]),
         start=common.register(_pid, common.sheet_file(P4[_pid]["sheet_id"]),
-                              _p4_builder(_pid))))
+                              _p4_builder(_pid)),
+        vague=_p4_vague(_pid), vague_check=_p4_check(_pid, "vague")))
 for _pid in P17:
     PROBES.append(Probe(
         id=_pid, prompt=_p17_prompt(_pid), check=_p17_check(_pid), solve=_p17_solve(_pid),
         note=_P17_NOTES[_pid], tags=["layout", "twist", "verifier"],
         start=common.register(_pid, common.sheet_file(P17[_pid]["sheet_id"]),
-                              _p17_builder(_pid))))
+                              _p17_builder(_pid)),
+        vague=_p17_vague(_pid), vague_check=_p17_check(_pid, "vague")))
 for _pid in P5:
     PROBES.append(Probe(
         id=_pid, prompt=_p5_prompt(_pid), check=_p5_check(_pid), solve=_p5_solve(_pid),
         note=_P5_NOTES[_pid], tags=["layout", "sheet-breaks", "match-line", P5[_pid]["agency"]],
-        start=common.register(_pid, P5[_pid]["doc"], _p5_builder(_pid))))
+        start=common.register(_pid, P5[_pid]["doc"], _p5_builder(_pid)),
+        vague=_p5_vague(_pid), vague_check=_p5_check(_pid, "vague")))
 
 
 __all__ = ["PROBES", "P4", "P17", "P5"]

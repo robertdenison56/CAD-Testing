@@ -194,3 +194,40 @@ def test_new_wrong_fixes_fail(tmp_path):
         common.save(aa, folder / qa.PPM_AA01)
         _finding(s, "D13 lettered W")
     assert _scored(tmp_path / "j", "p02-sources-ppm045b", replace).passed
+
+
+# ------------------------------------------------------------------ the vague level
+
+
+def _tools_named(text, allowed=("set_meta",)):
+    """The tool names a brief mentions, as words of their own ("area" is the plain word)."""
+    import re
+    from roaddraft.mcp.server import tool_definitions
+    names = [t["name"] for t in tool_definitions(Session(), attachments=True)]
+    return [n for n in names if n not in allowed and n != "area"
+            and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text, re.I)]
+
+
+@pytest.mark.parametrize("pid", IDS)
+def test_vague_brief(pid):
+    import re
+    p = BY_ID[pid]
+    assert p.vague.strip() and p.vague != p.prompt and len(p.vague) < len(p.prompt)
+    assert p.vague_check is None                 # the checks grade no drafting convention
+    assert not _tools_named(p.vague), _tools_named(p.vague)
+    # the job: one disagreement, the wrong source fixed wherever it lives, nothing else
+    # touched, and the finding under the key the check reads
+    assert "one place" in p.vague and "in whichever file it lives" in p.vague
+    assert "Change nothing else" in p.vague
+    assert "set_meta" in p.vague and '"finding"' in p.vague
+    # which sheet and which lines, and the notes left out, as the explicit brief names them
+    sheet = re.match(r"Sheet \S+", p.prompt).group(0)
+    assert p.vague.startswith(sheet + " and the base files it references")
+    for name in re.findall(r'"[A-Z][A-Z0-9 ]*"', p.prompt):
+        assert name in p.vague, name
+    for subject in ("MAIN 01", "CL1", "lower plan"):
+        assert (subject in p.vague) == (subject in p.prompt), subject
+    for notes in re.findall(r"the \w+ notes are not part of this", p.prompt):
+        assert notes in p.vague, notes
+    # and not the enumeration of what must tell one story
+    assert "station ticks" in p.prompt and "station ticks" not in p.vague

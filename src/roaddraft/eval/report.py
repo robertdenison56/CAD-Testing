@@ -612,16 +612,29 @@ def current_versions(taskset: Optional[str] = None) -> dict:
             "verifier_version": current_verifier(taskset)}
 
 
-def set_ids(taskset: str) -> set:
-    """The current task ids of a board set: a probe set's from its task texts, the others' from the manifest."""
+def set_ids(taskset: str, levels: Iterable[str] = ("explicit",)) -> set:
+    """The current task ids of a board set: a probe set's from its task texts at the run's prompt ``levels``
+    (a vague pilot is its own id, 2026-11-08), the others' from the manifest."""
     from roaddraft.eval.taskset import is_probe, load
     if is_probe(taskset):
         from roaddraft.eval.probe_tasks import current_ids
-        return set(current_ids())
+        return set().union(*(current_ids(level=lv) for lv in (set(levels) or {"explicit"})))
     return {r["task_id"] for r in load(taskset)["tasks"]}
 
 
-def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[str] = None) -> Optional[dict]:
+def _subset_at(taskset: str, ids: Iterable[str], levels: Iterable[str]) -> set:
+    """A cost subset's ids (the explicit ids of a probe set) as the run's ``levels`` name them."""
+    from roaddraft.eval.taskset import is_probe, load
+    ids = set(ids)
+    if not is_probe(taskset) or "vague" not in set(levels):
+        return ids
+    rows = {r["task_id"]: r for r in load(taskset)["tasks"]}
+    out = {rows[i]["vague_task_id"] for i in ids if i in rows and rows[i].get("vague_task_id")}
+    return out | (ids if "explicit" in set(levels) else set())
+
+
+def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[str] = None,
+             levels: Iterable[str] = ("explicit",)) -> Optional[dict]:
     """How much of what it ran on a run holds: ``tasks_run``, ``tasks_in_set`` (the set's tasks, or its cost
     subset's when the run declared one), ``missing`` (those the run has not run) and ``foreign`` (the run's ids
     the set no longer has: a changed or removed task, a redrawn set).  Every board set is held to it since
@@ -629,12 +642,13 @@ def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[s
     not on the board."""
     if taskset is None or taskset not in LEADERBOARD_SETS:
         return None
-    now, run = set_ids(taskset), set(task_ids)
+    levels = tuple(levels)
+    now, run = set_ids(taskset, levels), set(task_ids)
     out = {"tasks_run": len(run), "tasks_in_set": len(now)}
     if subset:
         from roaddraft.eval.subsets import subset_ids
         try:
-            target = set(subset_ids(taskset, subset))
+            target = _subset_at(taskset, subset_ids(taskset, subset), levels)
         except ValueError:
             target = set()
         out.update(subset=subset, set_size=len(now), tasks_in_set=len(target),
@@ -723,7 +737,8 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
                           "harness_version")}
     now = current_versions(taskset)
     subset = (meta.get("spec") or {}).get("subset")
-    cov = coverage(taskset, (e["row"]["task_id"] for e in eps), subset)
+    cov = coverage(taskset, (e["row"]["task_id"] for e in eps), subset,
+                   sorted({e["row"].get("level") or "explicit" for e in eps}))
     errors = sum(1 for e in eps if e["row"]["termination"] == "error")
     partial = run_partial(cov, errors, len(incomplete))
     held = ["spec_hash", "generator_version", "verifier_version"]

@@ -343,3 +343,233 @@ def test_new_breaks_naive_fail(tmp_path, pid):
     _lay(many, cfg, ends, twists)
     result = probe.check(base, many)
     assert [item for item, ok in result.items if not ok] == ["number of sheets"]
+
+
+# ------------------------------------------------- the vague level (2026-11-08)
+
+#: what the explicit briefs spell out and the vague ones leave to the drafter
+STANDARDS = ("align_MAIN-anno", "align_CURVE-DATA", "0.10 in", "0.12 in", "0.14 in", "CURVE DATA",
+             "MATCH LINE STA", "left to right", "40 ft", "upside down", "bottom or the right",
+             "square to", "Caltrans way", "N 71°33'54\" E")
+#: parameters of the tool surface a brief must not name
+PARAMS = ("view_rotation", "label_offset", "title_block_template", "feet_per_inch",
+          "rotation_deg", "target_entity")
+
+
+def _tool_names():
+    m = Session().manifest()
+    return {c["name"] for c in m["commands"] + m["queries"]}
+
+
+def test_vague_briefs():
+    import re
+    tools = _tool_names()
+    for p in layout.PROBES:
+        v = p.vague
+        assert v.strip() and v != p.prompt and len(v) < len(p.prompt), p.id
+        assert p.vague_check is not None, p.id
+        for name in tools:
+            assert not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", v), (p.id, name)
+        for word in PARAMS + STANDARDS:
+            assert word not in v, (p.id, word)
+        if p.id in layout.P4:
+            cfg = layout.P4[p.id]
+            assert f"Sheet {cfg['sheet']} " in v and f"attached as {cfg['ref']}" in v
+            for name in cfg["names"]:
+                assert f'"{name}"' in v and f"{cfg['ref']}:{name}" in v, (p.id, name)
+            for name in cfg.get("kept", ()):
+                assert f'"{name}"' in v
+            assert "anchored through the reference" in v and "keep everything" in v
+        elif p.id in layout.P17:
+            cfg = layout.P17[p.id]
+            assert f"Sheet {cfg['sheet']} " in v and f"attached as {cfg['ref']}" in v
+            assert f'"{cfg["name"]}"' in v and f"{cfg['ref']}:{cfg['name']}" in v
+            assert "anchored through the reference" in v and "Keep everything else" in v
+        else:
+            cfg = layout.P5[p.id]
+            for ref in cfg["files"].values():
+                assert ref in v
+            assert cfg["alignment"] in v and f"STA {cfg['a']}" in v and f"STA {cfg['b']}" in v
+            # the scale and border stay: the fewest sheets is counted at them
+            assert f"1\" = {float(cfg.get('fpi', layout.FPI)):g}'" in v and cfg["border"] in v
+            assert "as few sheets" in v and "match line" in v
+
+
+def test_vague_example_wording():
+    assert BY_ID["p04-crowded-fdot915"].vague == (
+        'Sheet 12 of this FDOT set has lost the alignment data of its two lines, "CL1" and "CL2" '
+        '(alignments of the base file attached as ALI, reached as ALI:CL1 and ALI:CL2). Letter '
+        "them again in this sheet file with the design's own labels, anchored through the "
+        "reference. The sheet is crowded; keep everything already on it.")
+    assert BY_ID["p04-crowded-ppm047"].vague.count('"D13" and "IN3" keep theirs.') == 1
+    assert ", turned half a turn from the published sheet," in BY_ID["p17-twist-ppm160"].vague
+    assert " at a new twist," in BY_ID["p17-twist-fdot916"].vague
+
+
+@pytest.mark.parametrize("pid", QUICK_P4 + NEW_P17)
+def test_vague_leaks_nothing(pid):
+    """No BC/EC station, bearing or curve value of the truth is in the vague brief."""
+    probe = BY_ID[pid]
+    cfg = layout.P4.get(pid) or layout.P17[pid]
+    names = cfg["names"] if "names" in cfg else [cfg["name"]]
+    for name in names:
+        truth = layout._task(cfg["sheet_id"], name).truth
+        for label in truth.labels:
+            if label["kind"] in ("pc", "pt", "pcc", "prc"):  # '24+05.27 BC'
+                assert label["content"].split()[0] not in probe.vague
+            elif label["kind"] == "bearing":
+                bearing, length = label["content"].rsplit(" ", 1)
+                assert bearing not in probe.vague and length not in probe.vague
+            elif label["kind"] == "station" and "+" in label["content"]:
+                assert label["content"] not in probe.vague
+        for table in truth.curve_tables:
+            for row in table["rows"]:
+                for cell in row[1:]:
+                    assert cell not in probe.vague
+
+
+def _solved(tmp_path, probe, n):
+    """``n`` copies of the start, each lettered or laid out by the scripted solution."""
+    base, subs = _copies(tmp_path, probe, n)
+    for sub in subs:
+        probe.solve(sub)
+    return base, subs
+
+
+def _added(base, sub):
+    """What the solution added: model entities and sheet entities the start lacks."""
+    before = set(base.doc.model_entities)
+    for s in base.doc.sheets.values():
+        before |= set(s.entities)
+    out = [e for i, e in sub.doc.model_entities.items() if i not in before]
+    for s in sub.doc.sheets.values():
+        out += [e for i, e in s.entities.items() if i not in before]
+    return out
+
+
+def _failed(result):
+    return [item for item, ok in result.items if not ok]
+
+
+def test_vague_crowded_any_layer_but_0(tmp_path):
+    """L-1 lettered by the script, then every new label, tick and table moved to a layer of
+    the drafter's own: the explicit check charges the layers (the brief named them), the
+    vague one does not; on layer 0 the vague check fails too."""
+    probe = BY_ID["p04-crowded-ppm045"]
+    base, (own, zero) = _solved(tmp_path, probe, 2)
+    assert probe.check(base, own).passed and probe.vague_check(base, own).passed
+    common.ok(own.execute("create_layer", {"name": "C-ANNO-TEXT"}))
+    for e in _added(base, own):
+        e.layer = "C-ANNO-TEXT"
+    explicit = probe.check(base, own)
+    assert not explicit.passed
+    assert _failed(explicit) == [f'"{n}": layers and text heights' for n in ("D13", "TB2", "TB1")]
+    assert probe.vague_check(base, own).passed
+    for e in _added(base, zero):
+        e.layer = "0"
+    vague = probe.vague_check(base, zero)
+    assert not vague.passed and "drafted on layer 0" in vague.detail
+    assert _failed(vague) == [f'"{n}": layers and text heights' for n in ("D13", "TB2", "TB1")]
+
+
+def test_vague_twist_table_as_the_drafter_likes(tmp_path):
+    """The re-cut FDOT sheet lettered by the script, then its one table retitled CURVE DATA
+    with 0.10-in text: the explicit check wants the title with the line and 0.12-in text,
+    the vague one takes both (one table on the sheet tells its line; 0.10 in is legible).
+    Labels on layer 0, or lettering without the viewport's twist, fail at vague too."""
+    from roaddraft.document.entities import Table
+    probe = BY_ID["p17-twist-fdot916"]
+    base, (table, zero) = _solved(tmp_path, probe, 2)
+    tables = [e for e in _added(base, table) if isinstance(e, Table)]
+    assert len(tables) == 1
+    tables[0].title, tables[0].text_height = "CURVE DATA", 0.10
+    explicit = probe.check(base, table)
+    assert _failed(explicit) == ['"CL1": layers and text heights',
+                                 '"CL1": its table\'s title names the line']
+    assert probe.vague_check(base, table).passed
+    for e in _added(base, zero):
+        e.layer = "0"
+    vague = probe.vague_check(base, zero)
+    assert not vague.passed and _failed(vague) == ['"CL1": layers and text heights']
+    base2, (none,) = _copies(tmp_path / "none", probe, 1)
+    _letter_defaults(none, "FDOT-916-1-Drainage-Network-Plan-Sheet", "1", ["CL1"], 0.0)
+    vague = probe.vague_check(base2, none)
+    assert not vague.passed and "wrong side" in vague.detail
+
+
+def test_vague_twist_title_needed_beside_another_table(tmp_path):
+    """L-3 keeps a published CURVE DATA table for D13 and IN3: IN4's table must still name
+    its line at vague, or the sheet's two tables cannot be told apart."""
+    from roaddraft.document.entities import Table
+    probe = BY_ID["p04-crowded-ppm047"]
+    base, (sub,) = _solved(tmp_path, probe, 1)
+    assert probe.vague_check(base, sub).passed
+    for e in _added(base, sub):
+        if isinstance(e, Table):
+            e.title = "CURVE DATA"
+    assert _failed(probe.vague_check(base, sub)) == ['"IN4": its table\'s title names the line']
+
+
+def test_vague_station_numbers_square_to_the_line(tmp_path):
+    """Station numbers lettered square to their line (as some agencies letter them): the
+    explicit check wants them along it, the vague one takes either; a bearing turned
+    square to its tangent fails at both."""
+    probe = BY_ID["p17-twist-fdot916"]
+    base, (square, bearing) = _solved(tmp_path, probe, 2)
+
+    def turn(session, kind):
+        from roaddraft.document.entities import Text
+        for e in _added(base, session):
+            if isinstance(e, Text) and (e.anchor or {}).get("kind") == kind:
+                rec = dict(e.anchor)
+                common.ok(session.execute("delete_entities", {"ids": [e.id]}))
+                common.ok(session.execute("place_label", {
+                    "space": "model", "alignment": rec["alignment"], "anchor": rec["ref"],
+                    "kind": kind, "content": e.content, "side": rec.get("side") or "right",
+                    "label_offset": rec.get("label_offset"), "height": float(e.height),
+                    "layer": e.layer, "view_rotation": float(rec.get("view_rotation") or 0.0),
+                    "rotation": "perpendicular"}))
+    turn(square, "station")
+    explicit = probe.check(base, square)
+    assert not explicit.passed and "(station at" in explicit.detail
+    assert _failed(explicit) == ['"CL1": lettering along (BC/EC square to) its line and '
+                                 'reading from the bottom or right']
+    vague = probe.vague_check(base, square)
+    assert vague.passed, vague.detail
+    turn(bearing, "bearing")
+    assert not probe.check(base, bearing).passed
+    vague = probe.vague_check(base, bearing)
+    assert not vague.passed and "(bearing at" in vague.detail
+    assert ('"CL1": lettering along or square to its line (bearings along it) and reading from '
+            'the bottom or right') in _failed(vague)
+
+
+def test_vague_breaks_match_line_as_the_drafter_likes(tmp_path):
+    """The CFL stretch laid out by the script, then each match line cut to 30 ft each side
+    (1.2 in on paper) and its lettering set level on the sheet across it: the explicit check
+    wants 40 ft each side lettered along the line, the vague one takes both. A match line
+    0.4 in long fails at vague too."""
+    from roaddraft.document.entities import Line, Text
+    probe = BY_ID["p05-breaks-cfl"]
+    base, (short, level, stub) = _solved(tmp_path, probe, 3)
+    assert probe.check(base, short).passed and probe.vague_check(base, short).passed
+
+    def shrink(session, keep):
+        for e in _added(base, session):
+            if isinstance(e, Line) and e.layer == "MATCH-LINE":
+                m = [(a + b) / 2.0 for a, b in zip(e.start, e.end)]
+                e.start = [c + (a - c) * keep for a, c in zip(e.start, m)]
+                e.end = [c + (b - c) * keep for b, c in zip(e.end, m)]
+    shrink(short, 0.5)
+    explicit = probe.check(base, short)
+    assert not explicit.passed and "should run at least 40 ft" in explicit.detail
+    assert probe.vague_check(base, short).passed
+    for e in _added(base, level):
+        if isinstance(e, Text) and e.layer == "MATCH-LINE":
+            e.rotation_deg = 0.0
+    explicit = probe.check(base, level)
+    assert not explicit.passed and "not lettered along its match line" in explicit.detail
+    assert probe.vague_check(base, level).passed
+    shrink(stub, 10.0 / 60.0)
+    vague = probe.vague_check(base, stub)
+    assert not vague.passed and "should be at least 1 in" in vague.detail
