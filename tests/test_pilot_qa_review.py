@@ -256,3 +256,39 @@ def test_first_instances_keep_their_model_space_blind_spot(tmp_path):
         qa._modify_text(aa, "TX-036", lambda t: t[:-1] + "W")
         common.save(aa, tmp_path / qa.PPM_AA01)
     assert _scored(tmp_path, "p14-qa-review-ppm045b", fix_in_base).passed
+
+
+# ------------------------------------------------------------------ the vague level
+
+#: each probe's sheet and the out-of-scope sentence its briefs share
+SCOPES = {"p14-qa-review-ppm045a": ("L-1", qa.PPM_SCOPE), "p14-qa-review-ppm045b": ("L-1", qa.PPM_SCOPE),
+          "p14-qa-review-wfl19": ("D.10", qa.WFL_SCOPE), "p14-qa-review-fdot916a": ("1", qa.FDOT916_SCOPE),
+          "p14-qa-review-fdot916b": ("1", qa.FDOT916_SCOPE), "p14-qa-review-ppm048a": ("L-4", qa.PPM048_SCOPE),
+          "p14-qa-review-ppm048b": ("L-4", qa.PPM048_SCOPE), "p14-qa-review-wfl19b": ("D.10", qa.WFL_SCOPE),
+          "p14-qa-review-cflpla": ("PLA(SAMPLE)", qa.CFL_SCOPE)}
+
+
+def _tool_names():
+    from roaddraft.mcp.server import tool_definitions
+    return {t["name"] for t in tool_definitions(Session(), attachments=True)}
+
+
+@pytest.mark.parametrize("pid", IDS)
+def test_vague_brief(pid):
+    # a shorter request: the sheet, what is out of scope, callouts on QA-REVIEW, nothing
+    # fixed or changed, NO ERRORS FOUND on a clean sheet; no tool, no list of what to check
+    # against, and (like the explicit brief) no count or kind of error
+    import re
+    probe = BY_ID[pid]
+    sheet, scope = SCOPES[pid]
+    vague = probe.vague
+    assert vague.strip() and vague != probe.prompt and len(vague) < len(probe.prompt)
+    names = [n for n in _tool_names() if re.search(rf"\b{re.escape(n)}\b", vague, re.I)]
+    assert not names, names
+    for words in (f"Sheet {sheet} ", scope, qa.QA_LAYER, qa.CLEAN_TEXT, "callout", "Do not fix",
+                  "change nothing else"):
+        assert words in vague, words
+    assert "alignments in the base files" not in vague and "leader tip" not in vague
+    assert not any(w in vague.lower() for w in ("bearing", "north arrow", "upside", "six", "three"))
+    # the check grades no convention the vague brief leaves out: one check, both levels
+    assert probe.vague_check is None and probe.check_at("vague") is probe.check

@@ -7,11 +7,16 @@ for finishing track D". The Nov 3 retirement (`../runs/RETIRED.md`) left every o
 harness e3-v3, and the board now has five sets, so $100 buys depth on the strongest open model and breadth on the
 two core sets, not set A's seven d1-test rows. Set up, nothing run: `queue-trackd-v3.sh` beside this file.
 
-*2026-11-08: the board's focus is the vague prompt* (Robert: "focus on the vague prompts only"; `../RERUN_PLAN.md`,
-top). Every run in this queue is set up with explicit prompts (`runpod_campaign.py e3 --level explicit`, the
-default), so its rows would rank in each set's explicit table, cost subsets included. Setting `--level vague` on
-the queue's steps is Robert's call, made before a go; the costs below do not change with the level beyond the
-shorter prompt.
+*2026-11-08: vague prompts only* (Robert: "focus on the vague prompts only", then "Update the runpod batches with
+vague prompts only"; `../RERUN_PLAN.md`, top). Every run and every smoke in the queue is at the vague level
+(`--level vague`; `e3-smoke` now defaults to vague), run ids `-single-vague-v3` and `-single-vague-cost5-v3`, so
+the rows rank on the main (vague) board; explicit rows have a board of their own since Nov 8. Qwen3.6's
+hard-pilots cost5 run and the image pilot that gates it were out for a few hours, while a pilot had one fixed brief,
+and are back at the vague level: since Nov 8 every pilot has a vague brief too (Robert: "Check if any of the eval
+tasks do not have a vague prompt style first, add them if needed"). The pinned worktree must carry that vague-pilot
+code before a go (the same patch the local and CLI pilot queues run from, `results/e3-lms/vague-pilots.patch`). The
+costs do not change with the level beyond the shorter prompt. Still set up, not run: it waits on the top-up and
+Robert's go.
 
 Robert, later on Nov 4: "the llms suggested are very similar, should i try others?" -> "Yes, swap them" (Gemma 4
 26B-A4B and Qwen3.6's d1-test-hard / d1-real-hard out; GLM-5.3 and gpt-oss-120b in), then, asked whether to drop
@@ -50,7 +55,7 @@ About $91 mid with the smokes and warm-ups, under the guard's $97. How the board
 Left out: Gemma 4 26B-A4B (a third Gemma, 49.5%; its endpoint stays at 131k, parked), Qwen3.8-27B ($14-18 a row;
 thinks past the 570 s cut), GLM-4.7-Flash (38.4%), gpt-oss-20b (no tool call in 76% of its probes), Qwen3.5-122B-A10B
 (H200 at $6.99/h now), Kimi (K2.6 $0.95 in / $4.00 out per M with no cache rate listed: $57-95 a row), Granite 4.0
-H Small and Qwen3 32B AWQ (a generation old, no listed price). Self-correct, vision and vague stay with the local
+H Small and Qwen3 32B AWQ (a generation old, no listed price). Self-correct and vision stay with the local
 three and the frontier rows.
 
 **Done on Nov 4 (no cost; endpoints parked at max 0 workers, read back after each write):**

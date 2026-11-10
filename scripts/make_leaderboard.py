@@ -5,8 +5,10 @@
 Reads every ``benchmarks/runs/<run_id>/summary.json`` (written by
 ``python -m roaddraft.eval report results/<run_id> --publish``) and writes
 
-    benchmarks/runs/LEADERBOARD.md    the ranked rows, the reference agents, every
-                                      published run that is not ranked and why
+    benchmarks/runs/LEADERBOARD.md    the vague-prompt rows (the focus), the reference
+                                      agents, every published run that is not ranked and why
+    benchmarks/runs/LEADERBOARD_EXPLICIT.md
+                                      the explicit-prompt rows, a board of their own
     benchmarks/runs/leaderboard.json  the same, for the tracker
     benchmarks/runs/leaderboard.svg   the picture: a bar per ranked row with its interval, per set
     README.md                         the board between the d1-leaderboard markers
@@ -34,6 +36,8 @@ def outputs(runs: Path, readme: Path) -> dict:
     out = {runs / "LEADERBOARD.md": report.render_board(b),
            runs / "leaderboard.json": json.dumps(b, indent=1, ensure_ascii=False) + "\n",
            runs / "leaderboard.svg": report.render_board_svg(b)}
+    for level, name in report.LEVEL_BOARD_FILES.items():   # each other prompt level, its own board
+        out[runs / name] = report.render_board(b, level=level)
     if readme.exists():
         out[readme] = report.replace_block(readme.read_text(encoding="utf-8"),
                                            report.render_board(b, readme=True))

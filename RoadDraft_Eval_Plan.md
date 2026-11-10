@@ -464,6 +464,8 @@ python -m roaddraft.eval run --taskset d1-test --models claude-opus-5,claude-son
 | `run_check` use | uses per episode and Δ effective score before/after the last check | mean |
 | Cost per sheet | recorded usage × price table | USD |
 | Prompt gap | effective(explicit prompt) − effective(vague prompt), paired by task (§3.8) | points ± CI |
+| Boards by prompt level (2026-11-08) | the vague-prompt runs are the main board (`runs/LEADERBOARD.md`, README, dashboard); the explicit-prompt runs a board of their own (`runs/LEADERBOARD_EXPLICIT.md`); every task has both prompts, the 112 hard-pilots too (`Probe.vague`, a vague pilot its own task id, graded by `Probe.vague_check` where its check graded a standard the vague brief drops); Robert: "Move all explicit prompts to there own board. Main focus is now on vague" | rows per level |
+| Standards split (2026-11-08) | a vague run's lost points split into a drafting standard not applied (finding categories completeness, standards, legibility, sheet_setup), the work done wrong (value, anchoring, placement), hard fails and early ends; paired with the same model's explicit run, each part split again into recovered when told and lost at both (`roaddraft.eval.standards`, `eval standards RUN`; Robert: "Important to know if any of these prompts fail due to not knowing drafting standards") | points a task |
 | Per task type | every metric above, split by task type and by 1 / 2 sheets (§3.8) | table |
 
 ## 6. Adapters (thin, after E4)

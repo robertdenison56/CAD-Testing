@@ -290,19 +290,25 @@ def test_each_set_ranks_its_prompt_levels_apart():
     th = b["boards"]["d1-test-hard"]
     assert th["ranked"] == [] and th["headline"] is None
     assert [r["run_id"] for r in th["other_prompts"]["explicit"]["ranked"]] == ["th"]
-    # each pilot carries its own brief: one ranking, whatever level the run set
+    # every pilot has a vague brief too since 2026-11-08: hard-pilots splits by level like the rest
     hp = b["boards"]["hard-pilots"]
-    assert hp["prompt"] is None and hp["other_prompts"] == {} and [r["run_id"] for r in hp["ranked"]] == ["hp"]
+    assert hp["prompt"] == "vague" and hp["ranked"] == []
+    assert [r["run_id"] for r in hp["other_prompts"]["explicit"]["ranked"]] == ["hp"]
+    # the explicit rows are a board of their own (Robert, 2026-11-08), in their own file
     md = R.render_board(b)
     section = md.split("## `d1-test`: seeded sheets")[1].split("## `d1-real`")[0]
-    assert section.index("### Vague prompt") < section.index("**Best model 70.0/100") \
-        < section.index("### Explicit prompt") < section.index("**Best model 99.0/100")
-    assert "No vague-prompt run on `d1-test-hard` yet." in md
-    hp_md = md.split("## `hard-pilots`")[1].split("## `d1-test-hard`")[0]
-    assert "Vague prompt" not in hp_md and "one ranking" in hp_md
-    assert "#### Explicit prompt" in R.render_board(b, readme=True)
+    assert "**Best model 70.0/100" in section and "99.0/100" not in md and "explicit prompts](LEADERBOARD_EXPLICIT.md)" in md
+    assert "No vague-prompt run on `d1-test-hard` yet; its explicit-prompt runs are ranked on their own board." in md
+    assert "No vague-prompt run on `hard-pilots` yet" in md
+    ex = R.render_board(b, level="explicit")
+    assert ex.startswith("# RoadDraft eval leaderboard: explicit prompts")
+    assert "**Best model 99.0/100 on d1-test with the explicit prompt" in ex and "70.0/100" not in ex
+    assert "**Best model 40.0/100 on hard-pilots with the explicit prompt" in ex
+    assert "oracle · single" not in ex   # the reference agents stay on the main board
+    assert R.LEVEL_BOARD_FILES == {"explicit": "LEADERBOARD_EXPLICIT.md"}
+    assert "99.0/100" not in R.render_board(b, readme=True)
     svg = R.render_board_svg(b)
-    assert "d1-test, vague prompt: seeded sheets" in svg and "d1-test, explicit prompt: seeded sheets" in svg
+    assert "d1-test, vague prompt: seeded sheets" in svg and "explicit prompt" not in svg
 
 
 def test_a_partial_probe_run_is_listed_not_ranked():
@@ -315,12 +321,12 @@ def test_a_partial_probe_run_is_listed_not_ranked():
     part["partial"], part["coverage"] = True, {"tasks_run": 24, "tasks_in_set": 33,
                                                "missing": ["PR-x"] * 9, "foreign": []}
     b = R.board([whole, part])
-    assert [r["run_id"] for r in b["boards"]["hard-pilots"]["ranked"]] == ["hp-all"]
+    assert [r["run_id"] for r in b["boards"]["hard-pilots"]["other_prompts"]["explicit"]["ranked"]] == ["hp-all"]
     assert [o["run_id"] for o in b["others"]] == ["hp-text"]
     assert b["others"][0]["reasons"] == ["partial, not scored: covers 24 of the set's 33 tasks; a row ranks "
                                          "once the run holds every task with none in error or unfinished"]
     md = R.render_board(b)
-    assert "**Best model 40.0/100 on hard-pilots" in md
+    assert "**Best model 40.0/100 on hard-pilots" in R.render_board(b, level="explicit")
     # partial and unscorable (Robert, 2026-11-04): listed with no score
     assert "- `hp-text` (hard-pilots, 10 episodes, **partial, not scored: 24 of 33 tasks**)" in md
     assert "claude-b · single · explicit, effort default (100 tasks × 3)" in md and "60.0 ±" not in md

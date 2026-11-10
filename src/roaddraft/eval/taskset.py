@@ -479,6 +479,12 @@ def check(name: str, root=None) -> List[str]:
     if saved_ids != fresh_ids:
         changed = sum(1 for a, b in zip(saved_ids, fresh_ids) if a != b) + abs(len(saved_ids) - len(fresh_ids))
         problems.append(f"task ids: {changed} of {len(fresh_ids)} differ")
+    # a probe set's vague ids too (2026-11-08): each carries the hash of its vague brief
+    saved_v = [t.get("vague_task_id") for t in saved["tasks"]]
+    fresh_v = [t.get("vague_task_id") for t in fresh["tasks"]]
+    if saved_v != fresh_v:
+        changed = sum(1 for a, b in zip(saved_v, fresh_v) if a != b) + abs(len(saved_v) - len(fresh_v))
+        problems.append(f"vague task ids: {changed} of {len(fresh_v)} differ")
     if is_real(name):
         problems += _check_real(saved)
     return problems
@@ -513,14 +519,15 @@ def _check_real(saved: dict) -> List[str]:
     return problems
 
 
-def task_from_entry(entry: dict, strict: bool = True) -> Task:
+def task_from_entry(entry: dict, strict: bool = True, level: str = "explicit") -> Task:
     """The task a manifest entry names; with ``strict`` its id must match.  A
     real-sheet entry (it names a ``sheet_id``) is rebuilt from the redrafted
     sheet by ``tasks.real.build_real_task``; a probe entry (it names a
-    ``probe``) is a ``probe_tasks.ProbeTask``, not a ``Task``."""
+    ``probe``) is a ``probe_tasks.ProbeTask``, not a ``Task``, posed at prompt
+    ``level`` (a D1 task is the same at every level: the episode picks its prompt)."""
     if "probe" in entry:
         from roaddraft.eval import probe_tasks
-        return probe_tasks.task_from_entry(entry, strict=strict)
+        return probe_tasks.task_from_entry(entry, strict=strict, level=level)
     if "sheet_id" in entry:
         from roaddraft.tasks.real import build_real_task
         task = build_real_task(entry["sheet_id"], entry["alignment"], entry["task_type"])
@@ -547,7 +554,7 @@ def entries(name: str, limit: Optional[int] = None, task_ids: Optional[Iterable[
     rows = load(name, root)["tasks"]
     if task_ids:
         wanted = set(task_ids)
-        rows = [r for r in rows if r["task_id"] in wanted]
+        rows = [r for r in rows if r["task_id"] in wanted or r.get("vague_task_id") in wanted]
     if limit is not None:
         rows = rows[:limit]
     return rows

@@ -252,3 +252,106 @@ def test_intl_drawing_start_and_naive_answers(tmp_path):
     for n, _d, xy in survey.intl_drawing_truth()[:4]:
         r = a.xy_to_station([xy[0] - dx, xy[1] - dy])
         assert r["offset"] == pytest.approx(-40.0, abs=0.02), n
+
+
+# ------------------------------------------------------------------ the vague level
+
+BY_ID = {p.id: p for p in survey.PROBES}
+DEED_IDS = [survey.MIS_ID, survey.DEED_PPM049.id, survey.DEED_FDOT915.id]
+DEED_TEXTS = {survey.MIS_ID: survey._deed_text(), survey.DEED_PPM049.id: survey._deed_text_ppm049(),
+              survey.DEED_FDOT915.id: survey._deed_text_fdot915()}
+#: what each points brief must keep: the data as delivered, the systems and units the files do
+#: not carry, the factor and the control it is about
+POINT_KEEPS = {
+    survey.GG_ID: [survey._ties_text(), "sheet D.11", "Wyoming West state plane grid", "YRB3",
+                   "backsighted 23307", "angles right", "horizontal ground distances",
+                   "combined factor at YRB3 is 0.999649"],
+    survey.IF_ID: [survey._intl_list("ift"), survey._intl_list("m"), "sheet L-3",
+                   "CCS83 Zone 2, international feet", "CCS83 Zone 2, metres"],
+    survey.GG2_ID: [survey._gg2_list(), "CFL Plan 1", "project ground", "Colorado Central",
+                    "scaled about CP-1", "0.999562", "US survey feet"],
+    survey.IF2_ID: [survey._if2_list("usft"), survey._if2_list("m"), "sheet D.6",
+                    "Montana State Plane (zone 2500)", "base files are in international feet",
+                    "(US survey feet)", "(metres)"],
+}
+
+
+def _tools_named(text, allowed=("set_meta",)):
+    """The tool names a brief mentions, as words of their own ("area" is the plain word)."""
+    import re
+    from roaddraft.mcp.server import tool_definitions
+    names = [t["name"] for t in tool_definitions(Session(), attachments=True)]
+    return [n for n in names if n not in allowed and n != "area"
+            and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text, re.I)]
+
+
+@pytest.mark.parametrize("probe", survey.PROBES, ids=IDS)
+def test_vague_brief(probe):
+    v = probe.vague
+    assert v.strip() and v != probe.prompt and len(v) < len(probe.prompt)
+    assert not _tools_named(v), _tools_named(v)
+    if probe.id in DEED_IDS:
+        # the deed as written, the balance the check grades and the keys it reads; no layer
+        assert v.endswith("The deed reads: " + DEED_TEXTS[probe.id])
+        for keep in ("check the closure", "compass rule", "closed", "area in square feet",
+                     "inside", "misclosure_ft", "precision (as 1:N)", "area_sqft", "set_meta"):
+            assert keep in v, keep
+        assert "V-PROP" in probe.prompt and "layer" not in v and "V-PROP" not in v
+        assert probe.vague_check is not None
+    else:
+        for keep in POINT_KEEPS[probe.id] + ["COGO points", "numbers and descriptions"]:
+            assert keep in v, keep
+        assert "set_meta" not in v
+        assert probe.vague_check is None         # the point checks grade numbers and positions
+
+
+def _relayered(tmp_path, probe, layer):
+    """The scripted solution, its parcel moved onto ``layer``."""
+    base, s, _ = _session_pair(tmp_path, probe)
+    probe.solve(s)
+    if layer not in s.doc.layers:
+        assert s.execute("create_layer", {"name": layer})["ok"]
+    for e in list(survey.added_model(base, s)):
+        if e.layer == survey.MIS_LAYER and e.TYPE != "text":
+            assert s.execute("modify_entity", {"id": e.id, "changes": {"layer": layer}})["ok"]
+    return base, s
+
+
+@pytest.mark.parametrize("pid", DEED_IDS)
+def test_vague_deed_takes_any_layer_but_0(tmp_path, pid):
+    probe = BY_ID[pid]
+    vague = probe.check_at("vague")
+    # the solution as scripted, on V-PROP: both levels pass, item by item alike
+    base, s = _relayered(tmp_path / "vprop", probe, survey.MIS_LAYER)
+    explicit, lenient = probe.check(base, s), vague(base, s)
+    assert explicit.passed and lenient.passed, lenient.detail
+    assert [d for _n, d in explicit.items] == [d for _n, d in lenient.items]
+    assert any(n.endswith(f"on {survey.ANY_LAYER}") for n, _d in lenient.items)
+    assert not any("V-PROP" in n for n, _d in lenient.items)
+    # on a layer of the drafter's own: the vague level passes, the explicit one does not
+    base, s = _relayered(tmp_path / "own", probe, "PROPERTY-LINES")
+    assert vague(base, s).passed and not probe.check(base, s).passed
+    assert [n for n, _d in vague(base, s).items] == [n for n, _d in lenient.items]
+    # on layer 0: not even the vague level takes it
+    base, s = _relayered(tmp_path / "zero", probe, "0")
+    result = vague(base, s)
+    assert not result.passed and f"nothing was drawn on {survey.ANY_LAYER}" in result.detail
+    # the untouched start fails
+    base, untouched, _ = _session_pair(tmp_path / "start", probe)
+    assert not vague(base, untouched).passed
+
+
+@pytest.mark.parametrize("deed", DEEDS, ids=[d.id for d in DEEDS])
+def test_vague_deed_still_grades_the_balance(tmp_path, deed):
+    """The deed as written, closed with a closing course, on a layer of its own: the vague
+    level fails it on the corners as the explicit one does on V-PROP."""
+    from dataclasses import replace
+    probe = BY_ID[deed.id]
+    base, s, _ = _session_pair(tmp_path / "raw", probe)
+    survey.solve_deed(replace(deed, layer="PARCEL"), s, balance=False)
+    result = probe.check_at("vague")(base, s)
+    assert not result.passed
+    assert dict(result.items)["corners on the compass-rule balance (0.02 ft)"] is False
+    # the raw parcel on one layer and the balanced one on another: the balanced one is graded
+    survey.solve_deed(replace(deed, layer="PARCEL-BAL"), s)
+    assert probe.check_at("vague")(base, s).passed

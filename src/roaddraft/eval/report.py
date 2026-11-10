@@ -54,10 +54,13 @@ seeded sheets), ``d1-real`` (the redrafted sample plan sheets) and
 ``hard-pilots`` (the harder tasks, each graded pass or fail by its own check:
 ``eval/probe_tasks.py``), with ``d1-test-hard`` and ``d1-real-hard`` beside
 them.  Within a set the prompt levels rank apart (``BOARD_LEVELS``, Robert,
-2026-11-08): the vague-prompt rows are the set's board and its headline, the
-explicit-prompt rows a ranking of their own below it, since a score at one
-level is not comparable with one at the other; ``hard-pilots`` has one
-ranking (``ONE_PROMPT_SETS``: each pilot carries its own brief).  A run is
+2026-11-08): the vague-prompt rows are the set's board and its headline, and
+the explicit-prompt rows are a board of their own, in their own file
+(``LEVEL_BOARD_FILES``: ``LEADERBOARD_EXPLICIT.md``; Robert, 2026-11-08: "Move
+all explicit prompts to their own board. Main focus is now on vague"), since a
+score at one level is not comparable with one at the other.  Every task has
+both prompts, the pilots too since 2026-11-08 (``Probe.vague``), so
+``hard-pilots`` splits by level like the D1 sets.  A run is
 held to its own set's generator version
 (``taskset.current_generator``): the seeded generator or the real-sheet
 builder.  A probe run is held to its task ids instead: each id carries the
@@ -113,9 +116,13 @@ NEVER_REPORTED = ("d1-dev", "d1-real-dev")
 #: the prompt levels a set's board ranks apart, the focus first (Robert, 2026-11-08: the
 #: vague prompt is the board's focus; an explicit-prompt score is not comparable with it)
 BOARD_LEVELS = ("vague", "explicit")
-#: the sets whose tasks each carry one prompt of their own (a pilot's brief, the same at
-#: either level), so their board has no prompt split
-ONE_PROMPT_SETS = ("hard-pilots",)
+#: the sets whose tasks each carry one prompt of their own, so their board has no prompt
+#: split: none since 2026-11-08, when every pilot gained a vague brief (``Probe.vague``) and
+#: hard-pilots split by level like the D1 sets (Robert: every eval task has a vague prompt)
+ONE_PROMPT_SETS: Tuple[str, ...] = ()
+#: the board of each prompt level other than the focus, its own file beside LEADERBOARD.md
+#: (Robert, 2026-11-08: "Move all explicit prompts to their own board. Main focus is now on vague")
+LEVEL_BOARD_FILES = {"explicit": "LEADERBOARD_EXPLICIT.md"}
 #: what each prompt level is, under its table's heading
 LEVEL_NOTES = {"vague": "the request in a sentence, the way a PE would ask for it; what belongs "
                         "on the sheet is the drafter's to know. The board's focus.",
@@ -630,29 +637,44 @@ def current_versions(taskset: Optional[str] = None) -> dict:
             "verifier_version": current_verifier(taskset)}
 
 
-def set_ids(taskset: str) -> set:
-    """The current task ids of a board set: a probe set's from its task texts, the others' from the manifest."""
+def set_ids(taskset: str, levels: Iterable[str] = ("explicit",)) -> set:
+    """The current task ids of a board set: a probe set's from its task texts at the run's prompt ``levels``
+    (a vague pilot is its own id, 2026-11-08), the others' from the manifest (a D1 task is one id at every
+    level)."""
     from roaddraft.eval.taskset import is_probe, load
     if is_probe(taskset):
         from roaddraft.eval.probe_tasks import current_ids
-        return set(current_ids())
+        return set().union(*(current_ids(level=lv) for lv in (set(levels) or {"explicit"})))
     return {r["task_id"] for r in load(taskset)["tasks"]}
 
 
-def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[str] = None) -> Optional[dict]:
+def _subset_at(taskset: str, ids: Iterable[str], levels: Iterable[str]) -> set:
+    """A cost subset's ids (the explicit ids of a probe set) as the run's ``levels`` name them."""
+    from roaddraft.eval.taskset import is_probe, load
+    ids = set(ids)
+    if not is_probe(taskset) or "vague" not in set(levels):
+        return ids
+    rows = {r["task_id"]: r for r in load(taskset)["tasks"]}
+    out = {rows[i]["vague_task_id"] for i in ids if i in rows and rows[i].get("vague_task_id")}
+    return out | (ids if "explicit" in set(levels) else set())
+
+
+def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[str] = None,
+             levels: Iterable[str] = ("explicit",)) -> Optional[dict]:
     """How much of what it ran on a run holds: ``tasks_run``, ``tasks_in_set`` (the set's tasks, or its cost
     subset's when the run declared one), ``missing`` (those the run has not run) and ``foreign`` (the run's ids
     the set no longer has: a changed or removed task, a redrawn set).  Every board set is held to it since
     2026-11-04 (before, only the probe sets: the seeded and real sets ranked a draw).  None for a set that is
-    not on the board."""
+    not on the board.  ``levels`` are the run's prompt levels, which name a probe task's id."""
     if taskset is None or taskset not in LEADERBOARD_SETS:
         return None
-    now, run = set_ids(taskset), set(task_ids)
+    levels = tuple(levels)
+    now, run = set_ids(taskset, levels), set(task_ids)
     out = {"tasks_run": len(run), "tasks_in_set": len(now)}
     if subset:
         from roaddraft.eval.subsets import subset_ids
         try:
-            target = set(subset_ids(taskset, subset))
+            target = _subset_at(taskset, subset_ids(taskset, subset), levels)
         except ValueError:
             target = set()
         out.update(subset=subset, set_size=len(now), tasks_in_set=len(target),
@@ -741,7 +763,8 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
                           "harness_version")}
     now = current_versions(taskset)
     subset = (meta.get("spec") or {}).get("subset")
-    cov = coverage(taskset, (e["row"]["task_id"] for e in eps), subset)
+    cov = coverage(taskset, (e["row"]["task_id"] for e in eps), subset,
+                   sorted({e["row"].get("level") or "explicit" for e in eps}))
     errors = sum(1 for e in eps if e["row"]["termination"] == "error")
     partial = run_partial(cov, errors, len(incomplete))
     held = ["spec_hash", "generator_version", "verifier_version"]
@@ -1432,52 +1455,81 @@ def eval_board_note(probe_board: str) -> str:
             f"board, closed 2026-10-27: [the probe board]({probe_board}).")
 
 
-def render_board(b: dict, readme: bool = False) -> str:
+def level_board(b: dict, level: Optional[str] = None) -> dict:
+    """``b`` as one prompt level's board: each set's ranking at ``level`` (the focus, vague, when None)
+    with its subsets; the reference agents, which run at no level of their own, stay on the focus board."""
+    focus = BOARD_LEVELS[0]
+    level = level or focus
+    boards = {}
+    for name, one in (b.get("boards") or {}).items():
+        others = one.get("other_prompts") or {}
+        if one.get("prompt") in (level, None) and level == focus:
+            view = {**one, "other_prompts": {}}
+        else:
+            o = others.get(level) or {"headline": None, "ranked": [], "subsets": {}}
+            view = {"title": one["title"], "prompt": level, "headline": o.get("headline"),
+                    "ranked": o.get("ranked") or [], "subsets": o.get("subsets") or {},
+                    "reference": [], "groups": o.get("groups") or group_columns(o.get("ranked") or []),
+                    "other_prompts": {}}
+        view["levels_with_rows"] = sorted(lv for lv, o in others.items() if o.get("ranked") or o.get("subsets"))
+        boards[name] = view
+    return {**b, "boards": boards, "level": level}
+
+
+def _board_files_line(level: str, readme: bool) -> str:
+    """Where the other prompt levels' boards are, from this board."""
+    here = "benchmarks/runs/" if readme else ""
+    if level == BOARD_LEVELS[0]:
+        links = ", ".join(f"[{lv} prompts]({here}{f})" for lv, f in LEVEL_BOARD_FILES.items())
+        return (f"Vague prompts only: the request in a sentence, the board's focus. Every other prompt "
+                f"level is ranked on a board of its own: {links}.")
+    return (f"The {level}-prompt runs, ranked on their own: a score at the {level} level is not comparable "
+            f"with one at the vague level, which is the main board's focus: [the main board]({here}LEADERBOARD.md).")
+
+
+def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> str:
+    """One prompt level's board: the main board (the vague prompt, the focus) when ``level`` is None, or the
+    board of another level (``LEVEL_BOARD_FILES``), each set's ranking at that level."""
+    focus = BOARD_LEVELS[0]
+    main_board = level in (None, focus)
+    level = level or focus
+    view = level_board(b, level)
     L: List[str] = []
     if not readme:
-        L += ["# RoadDraft eval leaderboard", "", eval_board_note("../leaderboard/TRACK_P.md"), "",
-              "![Effective score by model on each eval set](leaderboard.svg)", ""]
+        title = "# RoadDraft eval leaderboard" + ("" if main_board else f": {level} prompts")
+        L += [title, "", eval_board_note("../leaderboard/TRACK_P.md"), "",
+              _board_files_line(level, readme), ""]
+        if main_board:
+            L += ["![Effective score by model on each eval set](leaderboard.svg)", ""]
     else:
-        L += ["![Effective score by model on each eval set](benchmarks/runs/leaderboard.svg)", ""]
-    boards = b.get("boards") or {LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET],
-                                                    "headline": b["headline"],
-                                                    "ranked": b["ranked"],
-                                                    "reference": b["reference"]}}
+        L += [_board_files_line(level, readme), "",
+              "![Effective score by model on each eval set](benchmarks/runs/leaderboard.svg)", ""]
+    boards = view.get("boards") or {LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET],
+                                                       "headline": b["headline"],
+                                                       "ranked": b["ranked"],
+                                                       "reference": b["reference"]}}
     for n, (name, one) in enumerate(boards.items()):
         if n:
             L.append("")
         L += [f"{'###' if readme else '##'} `{name}`: {one['title']}", ""]
-        level = one.get("prompt")
-        others = {lv: o for lv, o in (one.get("other_prompts") or {}).items()
-                  if o["ranked"] or o.get("subsets")}
         groups = one.get("groups") or group_columns(one["ranked"] + one["reference"])
-        if level:
-            L += _level_heading(level, readme)
-        legend_shown = bool(one["headline"] and groups)
         if one["headline"]:
             L += _ranking_md(one, groups)
-        elif level and others:
-            L += [f"No {level}-prompt run on `{name}` yet."]
+        elif not main_board:
+            L += [f"No {level}-prompt run on `{name}`."]
+        elif one.get("levels_with_rows"):
+            L += [f"No vague-prompt run on `{name}` yet; its "
+                  + " and ".join(f"{lv}-prompt" for lv in one["levels_with_rows"])
+                  + " runs are ranked on their own board."]
         else:
             L += [_no_run(name)]
-        if not level and name in ONE_PROMPT_SETS:
-            L += ["", "Each pilot carries its own brief, the same at either prompt level, so this "
-                  "set has one ranking."]
-        if one["reference"]:
+        if one.get("reference"):
             L += ["", "Reference agents on the same tasks (the harness's own checks, not ranked):",
                   ""]
             L += _board_table(one["reference"], numbered=False, groups=groups)
         for sub in (one.get("subsets") or {}).values():
             L += ["", _subset_intro(name, sub, level), ""] + _subset_table_md(sub)
-        for lv, o in others.items():
-            L += [""] + _level_heading(lv, readme)
-            og = o.get("groups") or group_columns(o["ranked"])
-            L += _ranking_md(o, og, legend=not legend_shown) if o["headline"] \
-                else [f"No {lv}-prompt run on `{name}` yet."]
-            legend_shown = legend_shown or bool(o["headline"] and og)
-            for sub in (o.get("subsets") or {}).values():
-                L += ["", _subset_intro(name, sub, lv), ""] + _subset_table_md(sub)
-    if not readme and b["others"]:
+    if not readme and main_board and b["others"]:
         L += ["", "## Published runs that are not ranked", ""]
         for o in b["others"]:
             part = o.get("partial")
@@ -1509,16 +1561,21 @@ def render_board(b: dict, readme: bool = False) -> str:
               "or annotated from blank, construction callouts included) and the heaviest "
               "whole-line tasks `d1-real` did not draw. A model's rows on different sets are not "
               "averaged.",
-              "", "Within a set, the vague-prompt runs (the request in a sentence; the board's focus) "
-              "and the explicit-prompt runs (the full brief) are ranked apart, each in its own table: "
-              "a score at one prompt level is not comparable with a score at the other. `hard-pilots` "
-              "has one ranking, since each pilot carries its own brief.",
+              "", "Each prompt level is its own board (Robert, 2026-11-08): this file ranks the "
+              + ("vague-prompt runs (the request in a sentence, the way a PE would ask for it; what belongs on "
+                 "the sheet is the drafter's to know), the main board and its focus"
+                 if main_board else
+                 f"{level}-prompt runs (the full brief, stating every standard the task is graded on)")
+              + "; a score at one prompt level is not comparable with a score at the other. Every task "
+              "has both prompts: a pilot's vague brief keeps what the drafter cannot know (the files, lines, "
+              "stations and data given) and leaves its drafting standards to the drafter, graded by the "
+              "lenient rules where the brief no longer states them.",
               "", "A run that misses a task of its set, or has an episode that ended in error or never "
-              "finished, is partial and not scored: it is listed below without a score. The one exception is "
-              "a cost-subset run (`benchmarks/tasksets/cost-subsets.json`: five tasks of each task type, "
-              "Runpod runs only, to save cost), ranked in a table of its own under its set beside the full "
-              "runs re-scored on the same tasks; it too is partial and not scored if it misses a task of the "
-              "subset or has an episode in error or unfinished.",
+              "finished, is partial and not scored: it is listed on the main board without a score. The one "
+              "exception is a cost-subset run (`benchmarks/tasksets/cost-subsets.json`: five tasks of each "
+              "task type, Runpod runs only, to save cost), ranked in a table of its own under its set beside "
+              "the full runs re-scored on the same tasks; it too is partial and not scored if it misses a "
+              "task of the subset or has an episode in error or unfinished.",
               "", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
               "samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank "
               "on the effective mean, then hard-fail rate, invalid-call rate and cost. Effort is the "
@@ -1546,9 +1603,11 @@ def _esc(s: str) -> str:
 
 
 def render_board_svg(b: dict) -> str:
-    """The eval board as a picture: one panel per set, a bar per ranked row (effective score
-    on a 0 to 100 scale) with its 95% interval as a whisker; a set with no ranked run says so."""
-    boards = b.get("boards") or {LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET], "ranked": b["ranked"]}}
+    """The main board as a picture: one panel per set at the vague prompt (the focus; the other
+    levels are boards of their own, 2026-11-08), a bar per ranked row (effective score on a 0 to
+    100 scale) with its 95% interval as a whisker; a set with no ranked run says so."""
+    boards = (level_board(b).get("boards") if b.get("boards") else None) or {
+        LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET], "ranked": b["ranked"]}}
     left, bar_x, bar_w, pitch, right_w = 16, 300, 360, 24, 150
     width = bar_x + bar_w + right_w
     y = 56
@@ -1615,7 +1674,7 @@ def replace_block(text: str, block: str) -> str:
 
 
 __all__ = ["REPORT_VERSION", "LEADERBOARD_SETS", "SET_TITLES", "NEVER_REPORTED",
-           "BOARD_LEVELS", "ONE_PROMPT_SETS", "LEVEL_NOTES", "row_level",
+           "BOARD_LEVELS", "ONE_PROMPT_SETS", "LEVEL_NOTES", "LEVEL_BOARD_FILES", "level_board", "row_level",
            "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
            "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
            "effort_label", "effort_cell", "summarize_group", "by_group", "group_columns",

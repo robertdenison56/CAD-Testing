@@ -15,12 +15,18 @@
 #                        calls tools
 #   E. Qwen3.6-35B-A3B   hard-pilots cost5 (66; only if it read the image pilot), d1-test-hard cost5 (25),
 #                        d1-real-hard cost5 (25)
+# VAGUE PROMPTS ONLY (2026-11-08, Robert: "Update the runpod batches with vague prompts only", after "Stop all runs
+# with explicit prompts and start the vague ones"): every run and every smoke is at the vague level, run ids
+# -single-vague-v3 / -single-vague-cost5-v3. Qwen3.6's hard-pilots cost5 run and the image pilot that gates it were
+# out for a few hours (a pilot then had one fixed brief) and are BACK at the vague level: since Nov 8 every pilot has a
+# vague brief too (Robert: "Check if any of the eval tasks do not have a vague prompt style first, add them if
+# needed"). The worktree must carry the vague-pilot code (benchmarks/runpod/PLAN.md); mid estimate back to ~$91.
 # cost5 = the fixed cost subset of the set, 5 tasks of each task type (benchmarks/tasksets/cost-subsets.json;
 # Robert, Nov 4: "limit the amount of episodes to save cost but still get at least 5 tasks from each category"). The
 # board ranks such a run in its own table under the set, tagged partial to save cost, beside every full run re-scored
 # on the same tasks, and only when it holds every task of the subset with none in error or unfinished; d1-test runs
 # whole (its types hold 6-7 tasks, and its 10 ranked rows are the comparison).
-# Every run single mode, explicit prompts, k = 1 (no k = 3 or 5 anywhere: Robert, Nov 4), concurrency 4, from the
+# Every run single mode, vague prompts, k = 1 (no k = 3 or 5 anywhere: Robert, Nov 4), concurrency 4, from the
 # worktree runpod-trackd at TRACKD_PIN (runpod_campaign.py), run ids ending -v3; the reports are written, NOT
 # published (a look first, as the local and codex rows).
 #
@@ -113,9 +119,9 @@ warm() {  # the worker started on the queue route first: a cold start on the str
   "$PY" "$CAMP" warm "$1" >> "$LOG" 2>&1 || { log "warm $1 failed"; return 1; }
   log "warm $1 done"
 }
-smoke() {  # name [e3-smoke args]: d1-dev[:5]; the model's other runs need most of its five to end by submit or budget with steps
+smoke() {  # name [e3-smoke args]: d1-dev[:5] at the vague prompt; the model's other runs need most of its five to end by submit or budget with steps
   local name=$1; shift
-  "$PY" "$CAMP" e3-smoke "$name" "$@" >> "$LOG" 2>&1
+  "$PY" "$CAMP" e3-smoke "$name" --level vague "$@" >> "$LOG" 2>&1
   set -- "$name"
   ok_episode "e3-smoke-v3-$1" >> "$LOG" 2>&1 || { log "smoke $1 FAILED: its runs are skipped"; return 1; }
   log "smoke $1 ok"
@@ -148,25 +154,25 @@ Q=qwen3.6-35b-a3b; G31=gemma-4-31b; GLM=glm-5.3; OSS=gpt-oss-120b
 
 # A. Qwen3.6-35B-A3B: the best open row so far (Track P 67.7%, d1-variance 86.7), the cheapest self-hosted one an episode
 if warm $Q && smoke $Q; then
-  run 1 2 $Q e3-imagecheck-v3-$Q hard-pilots --pilots images --limit 1
-  ok_episode e3-imagecheck-v3-$Q >> "$LOG" 2>&1 && QIMG=all || { QIMG=text; log "$Q image pilot failed: its hard-pilots runs text only"; }
-  run 5 8  $Q e3-d1-test-$Q-single-v3 d1-test
-  run 4 6  $Q e3-d1-real-$Q-single-cost5-v3 d1-real --subset cost5
+  run 1 2 $Q e3-imagecheck-vague-v3-$Q hard-pilots --pilots images --limit 1 --level vague
+  ok_episode e3-imagecheck-vague-v3-$Q >> "$LOG" 2>&1 && QIMG=all || { QIMG=text; log "$Q image pilot failed: its hard-pilots runs text only"; }
+  run 5 8  $Q e3-d1-test-$Q-single-vague-v3 d1-test --level vague
+  run 4 6  $Q e3-d1-real-$Q-single-vague-cost5-v3 d1-real --subset cost5 --level vague
   QOK=1
 fi
 park $Q
 
 # B. Gemma 4 31B: the top open-weight probe row (74.7%), dense, 2.5x Qwen3.6's cost an episode
 if warm $G31 && smoke $G31; then
-  run 13 18 $G31 e3-d1-test-$G31-single-v3 d1-test
-  run 10 14 $G31 e3-d1-real-$G31-single-cost5-v3 d1-real --subset cost5
+  run 13 18 $G31 e3-d1-test-$G31-single-vague-v3 d1-test --level vague
+  run 10 14 $G31 e3-d1-real-$G31-single-vague-cost5-v3 d1-real --subset cost5 --level vague
 fi
 park $G31
 
 # C. GLM-5.3: the largest open-weight model Track D can reach (Runpod serves it; billed per token, same balance)
 if fits 2 5 >> "$LOG" 2>&1 && smoke $GLM --cost-cap 5; then
   if projected_100 e3-smoke-v3-$GLM >> "$LOG" 2>&1; then
-    run 25 31 $GLM e3-d1-test-$GLM-single-v3 d1-test --cost-cap 30
+    run 25 31 $GLM e3-d1-test-$GLM-single-vague-v3 d1-test --cost-cap 30 --level vague
   else
     log "$GLM: the smoke projects past \$33 for 100 episodes (or priced nothing); d1-test skipped"
   fi
@@ -174,20 +180,20 @@ fi
 
 # D. gpt-oss-120b: OpenAI's open model, a fourth family (its 20b sibling skipped tool calls in 76% of its probes)
 if warm $OSS && smoke $OSS; then
-  run 5 8 $OSS e3-d1-test-$OSS-single-v3 d1-test
-  run 4 6 $OSS e3-d1-real-$OSS-single-cost5-v3 d1-real --subset cost5
+  run 5 8 $OSS e3-d1-test-$OSS-single-vague-v3 d1-test --level vague
+  run 4 6 $OSS e3-d1-real-$OSS-single-vague-cost5-v3 d1-real --subset cost5 --level vague
 fi
 park $OSS
 
-# E. Qwen3.6-35B-A3B on the hard sets, cost5: the one open model past 12B on them (the local three cover the small end)
+# E. Qwen3.6-35B-A3B on hard-pilots and the two hard sets, cost5: the one open model past 12B on them (the local three cover the small end)
 if [[ -n "$QOK" ]] && warm $Q; then
   if [[ "$QIMG" == all ]]; then   # the subset holds 15 image pilots: a text-only run would be partial, not scored
-    run 9 13 $Q e3-hard-pilots-$Q-single-cost5-v3 hard-pilots --subset cost5
+    run 9 13 $Q e3-hard-pilots-$Q-single-vague-cost5-v3 hard-pilots --subset cost5 --level vague
   else
     log "$Q: no hard-pilots run (it did not read the image pilot; the subset needs images)"
   fi
-  run 4 6 $Q e3-d1-test-hard-$Q-single-cost5-v3 d1-test-hard --subset cost5
-  run 3 4 $Q e3-d1-real-hard-$Q-single-cost5-v3 d1-real-hard --subset cost5
+  run 4 6 $Q e3-d1-test-hard-$Q-single-vague-cost5-v3 d1-test-hard --subset cost5 --level vague
+  run 3 4 $Q e3-d1-real-hard-$Q-single-vague-cost5-v3 d1-real-hard --subset cost5 --level vague
 fi
 park $Q
 

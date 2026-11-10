@@ -81,6 +81,21 @@ class Probe:
     #: extra roaddraft-mcp options the probe needs (``--attachments {project}/scans``);
     #: ``{project}`` is the project folder the start is built in
     server_args: List[str] = field(default_factory=list)
+    #: the task at the vague prompt level (Robert, 2026-11-08: every eval task has one):
+    #: the request the way a PE would ask for it, keeping what the drafter cannot know
+    #: (which files, lines and stations, the data given, the answer format a check reads)
+    #: and leaving out the drafting standards ``prompt`` states (layers, text heights,
+    #: label forms, scales, tick lengths). Empty: the probe has no vague form.
+    vague: str = ""
+    #: the check at the vague level, when ``check`` grades a convention ``vague`` leaves
+    #: unstated: it grades that convention by the spec's lenient rules instead (any layer
+    #: but 0, legible lettering, any standard scale, values read by meaning). None: the
+    #: vague prompt keeps everything ``check`` grades, so ``check`` serves both levels.
+    vague_check: Optional[Callable[[Session, Session], Result]] = None
+
+    def check_at(self, level: str) -> Callable[[Session, Session], Result]:
+        """The check an episode at prompt ``level`` is graded by."""
+        return self.vague_check if level == "vague" and self.vague_check is not None else self.check
 
 
 __all__ = ["Probe", "Result", "Tally"]

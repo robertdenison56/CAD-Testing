@@ -5,6 +5,68 @@ on the PC against Runpod and the models to go through. The wipe is `runs/RETIRED
 This file is the time and the list. Nothing here starts a run: the Oct 24 local-only rule, the Oct 28 order
 (the PC first, Runpod after Stage 0) and "frontier rows on Robert's word" all stand.
 
+## Nov 8 evening: explicit on its own board, a vague prompt on every task, every model rerun at vague
+
+Robert, Nov 8 20:1x: "Move all explicit prompts to there own board. Main focus is now on vague. Rerun all models on
+the vague prompts. Check if any of the eval tasks do not have a vague prompt style first, add them if needed".
+
+**The check.** Every D1 task already had its own vague prompt: all seven D1 sets (d1-dev 50, d1-test 100,
+d1-variance 20, d1-real 100, d1-real-dev 24, d1-test-hard 100, d1-real-hard 100) build both levels per task type
+(`tasks/prompts.py`), and no task's vague text equals its explicit text. The 112 hard-pilots had one fixed brief
+each, so each pilot was given a vague brief (`Probe.vague`): the request the way a PE asks for it, keeping what the
+drafter cannot know (files, lines, stations, the data handed over, the answer format a check reads) and leaving
+out the drafting standards the fixed brief spelled out. Where a pilot's check graded a standard the vague brief no
+longer states, the pilot also has a vague check (`Probe.vague_check`) grading it by the spec's lenient rules (any
+layer but 0, legible heights, any standard scale, values read by meaning).
+
+By family (vague brief length against the fixed brief; a vague check where marked):
+
+| family | pilots | vague brief | vague check |
+|---|---:|---|---|
+| p04 crowded annotation, p17 twisted sheet | 13, 15 | "Sheet 12 ... has lost the alignment data of its two lines ... Letter them again ... anchored through the reference. The sheet is crowded" (about 15% of the fixed brief) | all: E1 at the vague level (any layer but 0, lenient heights and tick, values by meaning, core table columns); station numbers and BC/EC along or square to the line, still reading from the bottom or right; a table titled with its line only where the sheet holds another |
+| p05 sheet breaks | 8 | the stretch, scale and border kept (the fewest-sheets count is taken at that scale), "as few sheets as the stretch needs, with a match line at each break" | all: a match line at least 1.0 in on paper (D1-00's vague rule), lettered by meaning near it |
+| p06 plan and profile | 5 | "Lay out sheet Plan 1 as a plan and profile sheet for CL1 from 10+00 to 17+50, with the design profile CL1 PGL." | all: any standard plan scale; the grid found where it is drawn and its datum read from its elevation lettering; a standard exaggeration; curve data read in more forms |
+| p10 typical section | 5 | the whole design description kept; the drafting list and the viewport scale dropped | all: any standard scale for the detail; the cross slope as a percent or a decimal |
+| p11 redlines | 12 | the sheet, base file, revision record (RD, 10-19-26), "keep it anchored" | all: a revision note quoting the redline accepted on every sheet |
+| p12 plan set | 1 | the set's parts and the two quantities with their layers and units; border, scale, sheet count and lettering forms dropped | any standard scale and the layout count it needs; index, sheet numbers and match lines read by meaning; the quantities as a table or text |
+| p13 striping | 6 | "per the MUTCD", the speed, profile and lanes kept; the marking pattern dropped | all: the MUTCD's own ranges (pair 0.20-0.60 ft off the centerline, a 10/30-like ratio, edge lines within 0.35 ft of 12 ft); the zones graded as before |
+| p03 survey traps | 7 | the data kept (lists, systems, factors); explanations a surveyor knows dropped | the 3 deed pilots: the parcel on any layer but 0 |
+| p01, p02, p14, p15, p18 | 5, 8, 9, 8, 10 | tool hints, enumerations and the markup key dropped; the files, lines, questions and answer formats kept | none: their checks grade values and edits, nothing the vague brief stops stating |
+
+All 112 pass the selftest at both levels (each scripted solution passes its level's check, each untouched start
+fails it); every explicit brief, explicit check and scripted solution is unchanged.
+
+**How the set holds it.** A vague pilot is its own task id (`PR-<probe>-<hash of the vague text>`); the explicit
+ids are unchanged, so every published pilot row still matches the set. The manifest row carries both ids
+(`vague_task_id`), the episode is graded by the check of its level, and the board holds a run to the ids of its
+level. `hard-pilots` now splits by level like the D1 sets (`report.ONE_PROMPT_SETS` is empty). The pilot selftest
+checks both levels (`python -m roaddraft.probes.pilot selftest`).
+
+**The boards.** `runs/LEADERBOARD.md`, the README block and `leaderboard.svg` rank the vague-prompt runs only, the
+main board; `runs/LEADERBOARD_EXPLICIT.md` ranks every explicit-prompt run, set by set
+(`report.LEVEL_BOARD_FILES`), the eight hard-pilots rows among them. No row was dropped or re-scored. The eval
+dashboard (Vr9ftxKwjEbAEfiqnPjxqi) follows: vague tables and grids first, the explicit board in a section of its own
+(page v3, datasets v5).
+
+**The reruns.** Every model gets a vague row on all five sets, all at the v3 pin (3b7e7fe9: harness e3-v3, tools
+0334fd4aaade, instructions 4dff2849). The D1 queues of 14:4x carry on; added: the vague pilots for every model, and
+the two vague rows that ran before the v3 fixes (Terra d1-test 91.3, Sonnet d1-test 70.9), rerun at the pin. The
+pilot runs come from the worktree `vague-pilots`: 3b7e7fe9 with the vague-pilot code applied uncommitted
+(`results/e3-lms/vague-pilots.patch`; episodes record dirty).
+
+| model | d1-test | d1-real | d1-test-hard | d1-real-hard | hard-pilots | queue |
+|---|---|---|---|---|---|---|
+| GPT-6.1 Terra (codex) | rerun at v3 (follow-on) | ranked 90.5 | 13/100, paused | queued | follow-on | `e3-codex/queue-2026-11-08-vague-codex.sh`, then `...-vague-pilots-codex.sh` |
+| GPT-6 Luna (codex) | ranked 76.1 | ranked 71.8 | queued | queued | follow-on | same |
+| Claude Sonnet 5.5 (claude-code) | rerun at v3 (added) | queued | queued | queued | added | `e3-claude-code/queue-2026-11-08-vague-claude-code.sh` |
+| Claude Opus 5.5 (claude-code) | queued | queued | queued | queued | added | same |
+| Qwen3.5-9B, Gemma 4 12B, GLM-4.6V-Flash (PC) | 9B running | queued | queued | queued | follow-on | `e3-lms/queue-2026-11-08-vague-local.sh`, then `...-vague-pilots-local.sh` |
+| Qwen3.6, Gemma 4 31B, GLM-5.3, gpt-oss-120b (Runpod) | set up | cost5 | Qwen3.6 cost5 | Qwen3.6 cost5 | Qwen3.6 cost5 (back) | `runpod/queue-trackd-v3.sh`, not launched (top-up + go) |
+
+The codex queue was paused by hand at 20:31 (SIGSTOP on its own processes): ChatGPT's weekly usage limit holds
+until Nov 11 9:17 PM, and each 30-minute retry spent one of its 40 tries, so it would have given up long before the
+reset. A sleeper sends CONT at Nov 11 21:20. The claude-code queue still waits on the `claude` CLI sign-in.
+
 ## Nov 8: the vague prompt is the board's focus
 
 Robert, Nov 8: the explicit D1 prompts read too detailed (a natural-language rewrite was still "too long, give me
@@ -27,23 +89,57 @@ The board at the split:
 | d1-real-hard | none | 4 |
 | hard-pilots | one ranking, 8 rows | |
 
-The vague rows the headlines wait on (single mode, k = 1; none of them is queued except the local d1-test three):
+**Nov 8 14:4x PST, the queues switched to vague** (Robert: "Stop all runs with explicit prompts and start the vague
+ones", then "Update the runpod batches with vague prompts only"). Queue 10 (local, explicit) was stopped by hand on
+Gemma's hard-pilots (36 of 112 episodes on disk, resumable under its run id; GLM's pilots, the six local hard-set
+singles and the 15 self-correct / vision nights were never started). Every run below is single mode, k = 1, vague,
+run id `...-single-vague-v3`, from a worktree at 3b7e7fe9 (harness e3-v3, tools 0334fd4aaade, the pin of every v3
+row); hard-pilots has no vague run (a pilot's brief is fixed text), so no queue holds one now.
 
-| model | d1-test | d1-real | d1-test-hard | d1-real-hard |
-|---|---|---|---|---|
-| GPT-6.1 Terra (codex, medium) | ranked | to run | to run | to run |
-| GPT-6 Luna (codex, medium) | ranked | ranked | to run | to run |
-| Claude Sonnet 5.5 (claude-code, medium) | ranked | to run | to run | to run |
-| Claude Opus 5.5 (claude-code, medium) | to run (its 88.4 row was retired Nov 3) | to run | to run | to run |
-| Qwen3.5-9B, Gemma 4 12B, GLM-4.6V-Flash (local) | queue 10 steps 22-24, behind about 15 explicit nights | to run | to run | to run |
-| the Runpod $100 queue (`runpod/PLAN.md`) | explicit as set up | explicit (cost5) | explicit (cost5) | explicit (cost5) |
+| model | d1-test | d1-real | d1-test-hard | d1-real-hard | queue |
+|---|---|---|---|---|---|
+| GPT-6.1 Terra (codex, medium) | ranked 91.3 | queued (first) | queued | queued | `results/e3-codex/queue-2026-11-08-vague-codex.sh` |
+| GPT-6 Luna (codex, medium) | ranked 76.1 | ranked 71.8 | queued | queued | same |
+| Claude Sonnet 5.5 (claude-code, medium) | ranked 70.9 | queued (first) | queued | queued | `results/e3-claude-code/queue-2026-11-08-vague-claude-code.sh` |
+| Claude Opus 5.5 (claude-code, medium) | queued | queued | queued | queued | same |
+| Qwen3.5-9B, Gemma 4 12B, GLM-4.6V-Flash (local) | queued (9B first) | queued | queued | queued | `results/e3-lms/queue-2026-11-08-vague-local.sh` |
+| Qwen3.6, Gemma 4 31B, GLM-5.3, gpt-oss-120b (Runpod) | vague, set up | vague, cost5 | Qwen3.6 cost5 | Qwen3.6 cost5 | `runpod/queue-trackd-v3.sh`, not launched (top-up + go) |
 
-A frontier vague row is the same run with `--level vague` (run id `...-single-vague-v3`) through the CLI route at
-the same caps: 0.5-1.6 hours of wall time a d1 set on the subscriptions, the hard sets 2-4x that. Queue 10 (local,
-at Gemma's hard-pilots on Nov 8, 31 of 112) and the Runpod queue run explicit prompts as set up, and their rows land
-in the explicit tables. Moving the vague nights ahead, or setting `--level vague` on the Runpod queue, is Robert's
-call; nothing here starts a run. A queue that publishes from a worktree older than this change rebuilds the board
-in the old one-table layout, so regenerate it from main afterwards (`scripts/make_leaderboard.py`).
+The codex and claude-code queues publish each run with main's report and board code, so the board keeps its vague
+and explicit tables; the local queue writes its reports unpublished (a look first, then publish from main). The
+claude-code queue sits behind a waiter: the headless `claude` CLI it runs reported "OAuth session expired" on its
+first episode, so it starts once `claude auth status` reads signed in. Times: codex about 0.5-0.7 h a d1 set, the
+hard sets 2-4x; claude-code paced by `sonnet-caps.env` (50% of the 5-hour window, 85% of the week); the PC 10-20 h a
+night, 12 nights.
+
+### Do vague prompts fail on drafting standards?
+
+Robert, Nov 8: "Important to know if any of these prompts fail due to not knowing drafting standards".
+`python -m roaddraft.eval standards <vague run>` splits a vague run's lost points into a drafting standard not
+applied (an element a plan sheet carries left off, lettering on layer 0 or at an illegible height, labels over
+linework, a non-standard scale), the work done wrong (wrong values, doubled or hand-typed labels), hard fails and
+early ends; paired with the same model's explicit run on the same tasks, each part splits again into what the
+explicit episode earned back when told the standard and what it lost too. On the four vague rows that have an
+explicit twin:
+
+| vague row | lost a task | a standard not applied | of it, recovered when told | the largest standard |
+|---|---:|---:|---:|---|
+| GPT-6.1 Terra, d1-test (91.3) | 8.7 | 8.6 | 7.4 | lettering on layer 0, 3.2 |
+| GPT-6 Luna, d1-test (76.1) | 23.9 | 20.8 | 18.2 | lettering on layer 0, 8.2 (52 of 89 tasks) |
+| Claude Sonnet 5.5, d1-test (70.9) | 29.1 | 26.6 | 22.6 | lettering on layer 0, 13.1 (68 of 89 tasks) |
+| GPT-6 Luna, d1-real (71.8) | 28.2 | 20.9 | 15.1 | lettering on layer 0, 8.2 |
+
+So yes: most of what a vague prompt costs is drafting standards, and most of it comes back when the standard is
+stated. The largest single one is layer 0: every start document's current layer is `0`, a label command without
+`layer` lands there, and at the vague level the models leave `layer` off (Sonnet: 110 of 115 `place_label` calls in
+its layer-0 episodes) although 77 of the 89 start documents offer annotation layers; told the layer, they pass it.
+"Nothing is drafted on layer 0" is a CAD standard the vague prompt leaves to the drafter, so the verifier's lenient
+rule (any layer but 0) is working as written; whether the benchmark wants to test it is Robert's call. Next come
+labels set over linework or each other (1.3-5.3 points, about half recovered when told) and elements left off:
+bearings, BC/EC and curve numbers, station ticks and numbers, title-block fields (0.5-3.3 each, mostly
+recovered when told). Wrong values and early ends are small (each 0-4 points). k = 1: per task the split is noisy, the
+set totals are the read. The report goes in each run's `report/standards.md`; run it on each vague run as it lands
+(the local hard sets have no explicit twin, so theirs split by finding code alone).
 
 ## What changed under the rows
 

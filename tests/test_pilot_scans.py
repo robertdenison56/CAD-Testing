@@ -561,3 +561,87 @@ def test_later_prompts_leak_no_answers():
             elif q.kind == "bearing":           # the format example's N 12°34'56" E aside
                 assert not any(nt.azimuth_close(a, scans._azimuth(want), either_way=True)
                                for a in nt.bearings(prompt)), (pid, q.key)
+
+
+# ------------------------------------------------------------------ the vague level
+
+
+def _tools_named(text, allowed=("set_meta",)):
+    """The tool names a brief mentions: every tool the server can offer (view_attachment
+    too), as a word of its own; "area" is the plain word, not a hint."""
+    from roaddraft.mcp.server import tool_definitions
+    names = [t["name"] for t in tool_definitions(Session(), attachments=True)]
+    return [n for n in names if n not in allowed and n != "area"
+            and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text, re.I)]
+
+
+#: what each redraw's vague brief must keep beyond its file, scan and line name: the line it
+#: ties to, the stretch, and the datum point the survey gave
+REDRAW_KEEPS = {
+    "p01-redraw-alignment-ppm045": ['"TB1"', "D13", "layout sheet L-1"],
+    "p01-redraw-alignment-fdot915": ["700+00.00", "SR 30", "end of the curve", "local datum",
+                                     "N 9820.83, E 10300.67", "sheet 12"],
+    "p01-redraw-alignment-ppm050": ['"F6"', "FR", "layout sheet L-7"],
+    "p01-redraw-alignment-cflpnp": ["Begin Project", "25+00.00", "local datum",
+                                    "PI of the second curve", "N 10486.51, E 9889.59", "Plan 1"],
+    "p01-redraw-alignment-wfl20": ["160+00.00", "D.10", "local datum", '"APPR 01" 610+00.00',
+                                   "N 10090.40, E 10058.92", "equation", "sheet D.11"],
+}
+
+
+@pytest.mark.parametrize("pid", REDRAW_IDS + READING_IDS)
+def test_vague_brief_is_shorter_and_names_no_tool_hint(pid):
+    p, spec = BY_ID[pid], _spec(pid)
+    assert p.vague.strip() and p.vague != p.prompt and len(p.vague) < len(p.prompt)
+    assert p.vague_check is None                 # the checks grade no drafting convention
+    assert "view_attachment" in p.prompt and not _tools_named(p.vague), _tools_named(p.vague)
+    assert spec.scan in p.vague
+    # the selftest's levels: the vague brief is what the vague task is posed with
+    from roaddraft.probes import prompting
+    assert p.vague in prompting.task_text(p, "vague") and p.prompt not in prompting.task_text(p, "vague")
+
+
+@pytest.mark.parametrize("pid", REDRAW_IDS)
+def test_vague_redraw_keeps_the_data(pid):
+    p, spec = BY_ID[pid], _spec(pid)
+    assert spec.design_file in p.vague and f"name it {spec.alignment} and draw it" in p.vague
+    assert "set_meta" not in p.vague
+    for keep in REDRAW_KEEPS[pid]:
+        assert keep in p.vague, keep
+    # every station and coordinate the explicit brief gives, the vague one gives too
+    for sta in re.findall(r"\d+\+\d\d\.\d\d", p.prompt):
+        assert sta in p.vague, sta
+    for ne in re.findall(r"N [\d.]+, E [\d.]+", p.prompt):
+        assert ne in p.vague, ne
+    # and nothing the check grades: no curve point station, delta or bearing
+    for c in spec.curves:
+        assert scans._sta(c.pc) not in p.vague and scans._sta(c.pt) not in p.vague
+        assert c.delta not in p.vague
+    assert not nt.bearings(p.vague), p.vague
+    # the enumeration of what to read off the sheet, and the tool hints, are gone
+    assert "region" not in p.vague and "curve data" not in p.vague
+
+
+@pytest.mark.parametrize("pid", READING_IDS)
+def test_vague_reading_keeps_every_question_and_the_answer_form(pid):
+    p, spec = BY_ID[pid], _spec(pid)
+    for q in spec.questions:
+        assert f"{q.key}: {q.ask}" in p.vague, q.key
+    keys = [q.key for q in spec.questions]
+    assert keys == [f"q{i}" for i in range(1, len(keys) + 1)]
+    assert f"set_meta under its key, q1 to q{len(keys)}, the value alone" in p.vague
+    assert ("stations as 123+45.67, bearings as N 12°34'56\" E, lengths in feet"
+            in p.vague)
+    # the answers stay out of it, as they do out of the explicit brief
+    src = scans.Sources(spec.sheet)
+    for q in spec.questions:
+        want = q.truth(src)
+        if isinstance(want, float) and q.kind == "station":
+            assert scans._sta(want) not in p.vague, q.key
+        elif isinstance(want, float):
+            assert not re.search(rf"(?<![\d.+]){want:.{q.places}f}(?!\d)", p.vague), q.key
+        elif isinstance(want, tuple):
+            assert want[0] not in p.vague, q.key
+        elif q.kind == "bearing":
+            assert not any(nt.azimuth_close(a, scans._azimuth(want), either_way=True)
+                           for a in nt.bearings(p.vague)), q.key

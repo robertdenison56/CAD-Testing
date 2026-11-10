@@ -8,7 +8,7 @@
     python benchmarks/runpod/runpod_campaign.py status [NAME...]
     python benchmarks/runpod/runpod_campaign.py smoke NAME [--probe edge-c102] [--print]
     python benchmarks/runpod/runpod_campaign.py k3 NAME [PROBE...] [--force] [--print]
-    python benchmarks/runpod/runpod_campaign.py e3-smoke NAME [--limit 5] [--dry-run] [--print]
+    python benchmarks/runpod/runpod_campaign.py e3-smoke NAME [--limit 5] [--level vague] [--dry-run] [--print]
     python benchmarks/runpod/runpod_campaign.py e3 NAME [--taskset d1-variance] [--samples 5] [--mode single]
                                                 [--concurrency 4] [--limit N] [--pilots all|text|images]
                                                 [--run-id ID] [--dry-run] [--print]
@@ -530,8 +530,9 @@ def pilot_ids(kind: str) -> List[str]:
 
 
 def cmd_e3_smoke(args) -> int:
-    """The E3 smoke run: d1-dev[:5] x single x explicit (2026-10-18 on Qwen3.6-35B-A3B)."""
-    args.taskset, args.samples, args.mode, args.level = "d1-dev", 1, "single", "explicit"
+    """The E3 smoke run: d1-dev[:5] x single, at the vague prompt by default (2026-11-08, Robert: "Update the
+    runpod batches with vague prompts only"; explicit until then, first run 2026-10-18 on Qwen3.6-35B-A3B)."""
+    args.taskset, args.samples, args.mode = "d1-dev", 1, "single"
     args.run_id = f"e3-smoke-v3-{args.name}"     # -v3: the Oct 18 smoke of the same name stays on disk
     return cmd_e3(args)
 
@@ -655,6 +656,7 @@ def main(argv=None) -> int:
     e = sub.add_parser("e3-smoke"); e.add_argument("name"); e.add_argument("--limit", type=int, default=5)
     e.add_argument("--concurrency", type=int, default=3); e.add_argument("--dry-run", action="store_true")
     e.add_argument("--print", action="store_true"); e.add_argument("--cost-cap", type=float)
+    e.add_argument("--level", default="vague", choices=["explicit", "vague"])
     e.add_argument("--force", action="store_true", help="run a model whose Track D row is local (trackd_local)")
     e.set_defaults(fn=cmd_e3_smoke)
     e3 = sub.add_parser("e3"); e3.add_argument("name"); e3.add_argument("--taskset", default="d1-variance")

@@ -232,3 +232,133 @@ def test_ada_naive_answers_fail(tmp_path):
                    for x, y in t["fg"]]
 
     assert not _naive(tmp_path / "six", typical.ADA, high_side_on_the_six).passed
+
+
+# ------------------------------------------------------------------ the vague level
+
+import re  # noqa: E402
+
+from roaddraft.probes import prompting  # noqa: E402
+
+SPECS = {s["id"]: s for s in (typical.CFL, typical.WFL) + tuple(typical.NEW_SPECS)}
+
+
+def _tool_names():
+    from roaddraft.mcp.server import tool_definitions
+    return {t["name"] for t in tool_definitions(Session(), attachments=True)}
+
+
+@pytest.mark.parametrize("probe", typical.PROBES, ids=IDS)
+def test_vague_brief(probe):
+    # the description is the design and is kept whole: the section, its stations, the
+    # frame it is drawn in, the ground and grade given, lanes, slopes, layers, ditch,
+    # hinge and the V:H reading; and where it goes on the sheet. What is left out is
+    # how to draft it: catch to catch and each layer, dimensions, labels, the scale
+    spec = SPECS[probe.id]
+    vague = probe.vague
+    assert vague.strip() and vague != probe.prompt and len(vague) < len(probe.prompt)
+    names = [n for n in _tool_names() if re.search(rf"\b{re.escape(n)}\b", vague, re.I)]
+    assert not names, names
+    description = probe.prompt.split(" Draw the finished grade")[0]
+    assert vague.startswith(description + " Show it on sheet " + spec["sheet"] + ", ")
+    for words in (spec["station"], f"{spec['pg']:,.2f}", typical.EG_LAYER, "model space",
+                  "true-scale", "right positive", "V:H", "clear of"):
+        assert words in vague, words
+    for words in ("viewport", "1\" =", "dimension", "label", "Draw the finished grade"):
+        assert words not in vague, words
+    assert vague in prompting.task_text(probe, "vague")
+    assert probe.vague_check is not None and probe.check_at("vague") is probe.vague_check
+
+
+@pytest.mark.parametrize("probe", typical.PROBES, ids=IDS)
+def test_vague_start_fails(tmp_path, probe):
+    base, untouched = _pair(tmp_path, probe)
+    assert not probe.check_at("vague")(base, untouched).passed
+
+
+def _viewport(session, spec, **changes):
+    sheet = session.doc.sheet_by_ref(spec["sheet"])
+    vp = list(sheet.viewports)[0]
+    assert session.execute("modify_viewport", {"sheet": sheet.name, "viewport_id": vp.id,
+                                               "changes": changes})["ok"]
+
+
+def _solved(tmp_path, probe, edit=None):
+    base, s = _pair(tmp_path, probe)
+    probe.solve(s)
+    if edit:
+        edit(s)
+    return probe.check(base, s), probe.check_at("vague")(base, s)
+
+
+VIEWPORT = "viewport at 1\" = 10' showing the section, clear of the sheet's notes"
+VAGUE_VIEWPORT = "viewport at a standard scale showing the section, clear of the sheet's notes"
+
+
+@pytest.mark.parametrize("probe", [p for p in typical.PROBES if p.id != "p10-typical-fdot9132"],
+                         ids=[i for i in IDS if i != "p10-typical-fdot9132"])
+def test_vague_any_standard_scale(tmp_path, probe):
+    # the same section shown at 1" = 20': the scale the explicit brief states is
+    # 1" = 10', the vague one leaves it to the drafter
+    explicit, vague = _solved(tmp_path, probe,
+                              lambda s: _viewport(s, SPECS[probe.id], feet_per_inch=20.0))
+    assert not explicit.passed and dict(explicit.items)[VIEWPORT] is False
+    assert vague.passed, vague.detail
+
+
+def test_vague_scale_must_be_standard_and_fit(tmp_path):
+    probe = typical.PROBES[0]
+    _e, vague = _solved(tmp_path / "15", probe, lambda s: _viewport(s, typical.CFL, feet_per_inch=15.0))
+    assert dict(vague.items)[VAGUE_VIEWPORT] is False and "not a standard scale" in vague.detail
+    # FDOT's section does not fit at 1" = 10' on its sheet, at the vague level either
+    result = _naive(tmp_path / "ten", typical.FDOT, lambda t: None, scale=10.0)
+    assert dict(result.items)["viewport at 1\" = 20' showing the section, clear of the sheet's notes"] is False
+    fdot = next(p for p in typical.PROBES if p.id == typical.FDOT["id"])
+    base, s = _pair(tmp_path / "ten-vague", fdot)
+    typical.solve_drawn(dict(typical.FDOT, scale=10.0), s)
+    assert dict(fdot.check_at("vague")(base, s).items)[VAGUE_VIEWPORT] is False
+    base, s = _pair(tmp_path / "forty", fdot)
+    typical.solve_drawn(dict(typical.FDOT, scale=40.0), s)
+    assert fdot.check_at("vague")(base, s).passed
+
+
+def test_vague_cross_slope_read_by_meaning(tmp_path):
+    # "0.02" for the 2% cross slope: the explicit check reads it as given in the brief
+    # ("2%", "0.02 ft/ft"), the vague one by meaning
+    probe = typical.PROBES[0]
+
+    def decimal(s):
+        for e in list(s.doc.model_entities.values()):
+            if getattr(e, "content", None) == "2%":
+                assert s.execute("modify_entity", {"id": e.id, "changes": {"content": "0.02"}})["ok"]
+
+    explicit, vague = _solved(tmp_path, probe, decimal)
+    assert dict(explicit.items)["cross slope labelled (2%)"] is False
+    assert vague.passed, vague.detail
+
+
+def test_vague_still_grades_the_section(tmp_path):
+    probe = typical.PROBES[0]
+
+    def h_to_v(s):                  # the 1:3 fill lettered 3:1 (read H:V)
+        for e in list(s.doc.model_entities.values()):
+            if getattr(e, "content", None) == "1:3":
+                assert s.execute("modify_entity", {"id": e.id, "changes": {"content": "3:1"}})["ok"]
+
+    _e, vague = _solved(tmp_path / "hv", probe, h_to_v)
+    assert dict(vague.items)["side slope labelled (1:3)"] is False
+
+    def no_dims(s):
+        ids = [e.id for e in s.doc.model_entities.values() if type(e).__name__ == "Dimension"]
+        assert ids and s.execute("delete_entities", {"ids": ids})["ok"]
+
+    _e, vague = _solved(tmp_path / "dims", probe, no_dims)
+    assert dict(vague.items)["lane width dimensioned (10')"] is False
+    _e, vague = _solved(tmp_path / "twist", probe, lambda s: _viewport(s, typical.CFL, rotation_deg=2.0))
+    assert dict(vague.items)[VAGUE_VIEWPORT] is False
+    # the naive geometry fails at the vague level as at the explicit one
+    base, s = _pair(tmp_path / "flat", probe)
+    t = typical.cfl_truth()
+    s.execute("draw_polyline", {"space": "model",
+                                "vertices": [[p[0], t["pg"] if abs(p[0]) <= 12 else p[1]] for p in t["fg"]]})
+    assert "shoulder edge" in probe.check_at("vague")(base, s).detail

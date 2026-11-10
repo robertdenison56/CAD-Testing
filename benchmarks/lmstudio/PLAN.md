@@ -6,11 +6,18 @@ one episode at a time, so every set is a night or more per model. This file is t
 itself (specs, commands, guards) is `README.md` and `models.json` next door, and nothing starts without
 Robert's go (`lms_campaign.py e3 NAME --taskset ... --samples ...`).
 
-**2026-11-08: the board's focus is the vague prompt** (Robert: "focus on the vague prompts only"; `../RERUN_PLAN.md`,
-top). Each set ranks vague rows first and explicit rows in a table of their own. Queue 10 (`results/e3-lms/
-queue-2026-11-04-v3-local.sh`, at Gemma's hard-pilots on Nov 8) runs explicit prompts on every step but 22-24, the
-three models' d1-test vague nights, so its rows land in the explicit tables. Moving the vague nights forward, or
-adding vague nights on d1-real and the hard sets, is Robert's call.
+**2026-11-08: vague prompts only on the PC** (Robert: "focus on the vague prompts only", then "Stop all runs with
+explicit prompts and start the vague ones"; `../RERUN_PLAN.md`, top). Queue 10 (`results/e3-lms/
+queue-2026-11-04-v3-local.sh`, explicit) was stopped by hand at 14:4x PST on Gemma's hard-pilots (36 of 112 on disk,
+resumable under its run id). `results/e3-lms/queue-2026-11-08-vague-local.sh` took the PC at 14:45: the three models
+at the vague level, single, k = 1, set by set (d1-test, d1-real, d1-test-hard, d1-real-hard; 12 nights, the 9B
+first), from rerun-v3 at 3b7e7fe9, same watcher and retries as queue 10, reports written unpublished. Not queued:
+the explicit hard-set singles and the self-correct / vision nights. Evening (Robert: "Rerun all models on the vague
+prompts. Check if any of the eval tasks do not have a vague prompt style first, add them if needed"): every pilot
+now has a vague brief, so `results/e3-lms/queue-2026-11-08-vague-pilots-local.sh` follows the D1 vague queue with
+three more nights, hard-pilots vague for the 9B, Gemma and GLM (all 112, `--pilots all`), from the worktree
+vague-pilots (3b7e7fe9 + `results/e3-lms/vague-pilots.patch`). Explicit rows rank on their own board since then
+(`runs/LEADERBOARD_EXPLICIT.md`).
 
 ## What is running right now
 

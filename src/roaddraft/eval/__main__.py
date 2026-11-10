@@ -323,6 +323,27 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_standards(args) -> int:
+    from roaddraft.eval import standards
+    run_dir = Path(args.run_dir)
+    explicit = Path(args.explicit) if args.explicit else (None if args.no_pair else standards.find_explicit(run_dir))
+    s = standards.analyse(run_dir, explicit)
+    if not s["tasks"]:
+        print(f"{run_dir}: no finished episode", file=sys.stderr)
+        return 1
+    out = Path(args.out) if args.out else run_dir / "report"
+    standards.write(s, out)
+    print(f"{s['run_id']}: {s['tasks']} tasks, mean effective {s['effective_mean']:.1f}, "
+          f"{s['lost_per_task']:.1f} points a task lost"
+          + (f"; paired with {s['explicit_run_id']} on {s['paired_tasks']} tasks" if s["paired_tasks"] else ""))
+    for k in ("standard", "work", "hard_fail", "ended_early"):
+        pts = s["by_kind"].get(k, 0.0)
+        rec = (s["recovered_by_kind"] or {}).get(k)
+        print(f"  {standards.KIND_WORDS[k]:42s} {pts:5.1f}" + ("" if rec is None else f"  recovered when told {rec:5.1f}"))
+    print(f"-> {out / 'standards.md'}")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m roaddraft.eval",
                                      description="the RoadDraft evaluation harness")
@@ -417,6 +438,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                    help="publish a draft-spec or d1-dev run anyway, marked as not ranked")
     p.add_argument("--runs", default=None, help="the published runs folder (default benchmarks/runs)")
     p.set_defaults(func=cmd_report)
+
+    p = subs.add_parser("standards", help="a vague run's lost points split into drafting standards not "
+                                          "applied, the work done wrong, hard fails and early ends")
+    p.add_argument("run_dir", help="a run folder, results/<run_id>")
+    p.add_argument("--explicit", help="the explicit run of the same model to pair with (default: the same "
+                                      "run id without -vague, beside it)")
+    p.add_argument("--no-pair", action="store_true", help="split by finding code alone")
+    p.add_argument("--out", help="where standards.md/.json go (default <run_dir>/report)")
+    p.set_defaults(func=cmd_standards)
 
     args = parser.parse_args(argv)
     if not args.command:

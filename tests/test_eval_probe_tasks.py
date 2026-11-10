@@ -220,8 +220,13 @@ def test_the_report_holds_a_pilot_run_to_its_task_ids_and_ranks_it_apart():
             "coverage": {"tasks_run": 29, "tasks_in_set": 29, "missing": [], "foreign": []},
             "versions": {"spec_version": ["v1"]}, "publish_problems": [], "rows": [row]}
     b = R.board([full])
-    assert not b["ranked"] and b["boards"][P.PILOT_SET]["ranked"][0]["rank"] == 1
-    assert "## `hard-pilots`: the harder tasks (pass or fail)" in R.render_board(b)
+    # an explicit pilot row ranks on the explicit board (2026-11-08: the pilots have vague briefs too)
+    assert not b["ranked"] and not b["boards"][P.PILOT_SET]["ranked"]
+    assert b["boards"][P.PILOT_SET]["other_prompts"]["explicit"]["ranked"][0]["rank"] == 1
+    assert "## `hard-pilots`: the harder tasks (pass or fail)" in R.render_board(b, level="explicit")
+    vague = {**full, "run_id": "hp-v", "rows": [{**row, "label": "m · single · vague",
+                                                  "key": {**row["key"], "level": "vague"}}]}
+    assert R.board([vague])["boards"][P.PILOT_SET]["ranked"][0]["run_id"] == "hp-v"
     # the same run on 24 of 33 tasks: published, listed as partial, not ranked
     part = {**full, "run_id": "hp-text", "partial": True,
             "coverage": {"tasks_run": 24, "tasks_in_set": 33, "missing": ["x"] * 9, "foreign": []},
@@ -272,3 +277,63 @@ def test_a_pilots_page_reaches_an_openai_request_as_a_data_url():
     assert url.startswith("data:image/png;base64,") and len(url) > 10000
     assert "base64" not in msgs[-2]["content"]          # the tool message is the JSON alone
     assert [m["role"] for m in bodies[1]["messages"][-2:]] == ["assistant", "tool"]   # the listing: no image
+
+
+# ------------------------------------------------- the vague level (2026-11-08)
+
+
+def _fake_probe(vague="Letter CL1 on this sheet.", vague_check=None):
+    from roaddraft.probes.base import Probe, Result
+    return Probe(id="p04-fake", prompt="Letter CL1 on this sheet: ticks every 100 ft, 0.10 in text, layer X.",
+                 check=lambda a, b: Result(False, "explicit"), vague=vague, vague_check=vague_check)
+
+
+def test_a_vague_pilot_is_its_own_task_id_and_the_explicit_id_is_unchanged():
+    from roaddraft.probes import prompting
+    p = _fake_probe()
+    assert P.task_id(p) == P.task_id(p, "explicit")
+    assert P.task_id(p, "vague") != P.task_id(p) and P.task_id(p, "vague").startswith("PR-p04-fake-")
+    assert "Letter CL1 on this sheet." in P.brief_text(p, "vague") and "0.10 in" not in P.brief_text(p, "vague")
+    assert P.levels_of(p) == ("explicit", "vague") and P.levels_of(_fake_probe(vague="")) == ("explicit",)
+    assert P.current_ids([p], "vague") == {P.task_id(p, "vague")}
+    assert P.current_ids([_fake_probe(vague="")], "vague") == frozenset()
+    with pytest.raises(ValueError, match="no vague prompt"):
+        prompting.task_text(_fake_probe(vague=""), "vague")
+
+
+def test_the_vague_check_grades_a_vague_episode_and_only_that():
+    from roaddraft.probes.base import Result
+    p = _fake_probe(vague_check=lambda a, b: Result(True, "vague"))
+    assert p.check_at("explicit") is p.check and p.check_at("vague")(None, None).detail == "vague"
+    q = _fake_probe()
+    assert q.check_at("vague") is q.check   # no vague check: the one check serves both levels
+
+
+def test_a_vague_cell_runs_under_the_vague_id_of_its_manifest_row():
+    from roaddraft.eval.runner import Cell
+    row = {"probe": "p04-fake", "task_id": "PR-p04-fake-aaaa", "vague_task_id": "PR-p04-fake-bbbb"}
+    assert Cell(row, "m", "explicit", "single", 0).task_id == "PR-p04-fake-aaaa"
+    assert Cell(row, "m", "vague", "single", 0).task_id == "PR-p04-fake-bbbb"
+    with pytest.raises(ValueError, match="no vague prompt"):
+        Cell({**row, "vague_task_id": None}, "m", "vague", "single", 0).task_id
+    d1 = {"task_id": "D1-1", "seed": 1}
+    assert Cell(d1, "m", "vague", "single", 0).task_id == "D1-1"   # a D1 task is one id at every level
+
+
+def test_the_board_holds_a_vague_pilot_run_to_the_vague_ids():
+    ex, vg = P.current_ids(level="explicit"), P.current_ids(level="vague")
+    assert len(ex) == len(P.pilots()) and not (ex & vg)
+    assert R.set_ids(P.PILOT_SET, ["vague"]) == set(vg)
+    cov = R.coverage(P.PILOT_SET, sorted(vg), levels=["vague"])
+    assert cov["missing"] == [] and cov["foreign"] == [] and cov["tasks_in_set"] == len(vg)
+    on_explicit = R.coverage(P.PILOT_SET, sorted(vg))
+    assert len(on_explicit["foreign"]) == len(vg)
+    rows = {r["probe"]: r for r in tasksets.build(P.PILOT_SET)["tasks"]}
+    assert all(r["vague_task_id"] == P.task_id(P.by_id(pid), "vague") for pid, r in rows.items())
+    # every pilot has a vague brief (Robert, 2026-11-08: every eval task has a vague prompt)
+    assert len(vg) == len(ex) == len(P.pilots())
+    assert all(p.vague and p.vague != p.prompt and len(p.vague) < len(p.prompt) for p in P.pilots())
+    # the committed manifest carries both ids, and its tripwire watches the vague ones
+    assert tasksets.check(P.PILOT_SET) == []
+    saved = tasksets.load(P.PILOT_SET)
+    assert {r["vague_task_id"] for r in saved["tasks"]} == set(vg)
