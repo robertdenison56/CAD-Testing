@@ -93,8 +93,8 @@ def cmd_run(args) -> int:
         options["strict"] = True
     task_ids = args.task or None
     if args.subset:
-        if args.task or args.limit:
-            print("run: --subset takes the subset's tasks; it does not combine with --task or --limit",
+        if args.limit:
+            print("run: --subset takes the subset's tasks; it does not combine with --limit",
                   file=sys.stderr)
             return 2
         from roaddraft.eval.subsets import subset_ids
@@ -103,6 +103,13 @@ def cmd_run(args) -> int:
         except ValueError as ex:
             print(f"run: {ex}", file=sys.stderr)
             return 2
+        if args.task:   # part of the subset (a text-only model's text pilots): the report says what it holds
+            stray = [t for t in args.task if t not in set(task_ids)]
+            if stray:
+                print(f"run: --task with --subset takes the subset's own tasks; not in {args.subset}: "
+                      f"{', '.join(stray[:5])}", file=sys.stderr)
+                return 2
+            task_ids = [t for t in task_ids if t in set(args.task)]
     spec = RunSpec(taskset=args.taskset,
                    agents=tuple(args.agent or ([] if models else ["oracle"])),
                    levels=tuple(args.level or ["explicit"]), modes=tuple(args.mode or ["single"]),

@@ -655,7 +655,22 @@ def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[s
                    subset_known=bool(target), subset_stale=sorted(target - now))
         now = target
     out.update(missing=sorted(now - run), foreign=sorted(run - now))
+    pages = image_ids(taskset) & now
+    if pages and set(out["missing"]) == pages:
+        # every text pilot and no image pilot: a text-only model's run (Robert, 2026-11-10: "mark any hard
+        # pilots that are text only as such, do not move off the board"); it ranks, marked, on its text pilots
+        out.update(missing=[], text_only={"tasks": len(now - pages), "of": len(now), "images_not_run": len(pages)})
     return out
+
+
+def image_ids(taskset: str) -> set:
+    """The ids, at either prompt level, of a probe set's tasks that come with a page (a scan, a marked-up
+    PDF): the pilots a text-only model cannot be given.  Empty for a set without any."""
+    from roaddraft.eval.taskset import is_probe, load
+    if not is_probe(taskset):
+        return set()
+    return {r[k] for r in load(taskset)["tasks"] if r.get("attachments")
+            for k in ("task_id", "vague_task_id") if r.get(k)}
 
 
 def _ids(ids: Sequence[str], limit: int = 6) -> str:

@@ -441,3 +441,25 @@ def test_the_board_ranks_subset_runs_in_their_own_table_beside_full_runs_rescore
     assert "| 2 | qwen-x · single · explicit | default | **70.0** |" in md
     assert "**partial, not scored: 59 of 60 tasks**" in md
     assert "cost subset cost5, partial to save cost (60 of 100 tasks)" in R.render_board_svg(b)
+
+
+def test_a_hard_pilots_run_on_the_text_pilots_alone_is_text_only_not_partial():
+    """Robert, 2026-11-10: "mark any hard pilots that are text only as such, do not move off the board". A run
+    with every text pilot and no image pilot (a model that takes no images) is not partial; one that also
+    misses a text pilot, or ran some image pilots, still is."""
+    from roaddraft.eval.report import coverage, image_ids, run_partial, set_ids
+    from roaddraft.eval.subsets import subset_ids
+    pages = image_ids("hard-pilots")
+    for ids in (set_ids("hard-pilots"), set(subset_ids("hard-pilots", "cost5"))):
+        subset = "cost5" if len(ids) < 100 else None
+        text = sorted(ids - pages)
+        assert pages & ids and text
+        cov = coverage("hard-pilots", text, subset)
+        assert cov["missing"] == [] and not run_partial(cov, 0, 0)
+        assert cov["text_only"] == {"tasks": len(text), "of": len(ids), "images_not_run": len(pages & ids)}
+        assert run_partial(coverage("hard-pilots", text[1:], subset), 0, 0)             # a text pilot missing
+        some = text + sorted(pages & ids)[:1]
+        part = coverage("hard-pilots", some, subset)
+        assert "text_only" not in part and run_partial(part, 0, 0)                      # some pages, not all
+        assert "text_only" not in coverage("hard-pilots", sorted(ids), subset)           # a whole run
+    assert image_ids("d1-test") == set() and "text_only" not in coverage("d1-test", [])
