@@ -135,3 +135,106 @@ def test_new_stopping_sight_distance_heights_fail(tmp_path):
         up, down = st.zones(rows, job.psd, job.ra, job.rb, obj=2.0)
         result = _checked(tmp_path / job.start, job, up=up, down=down)
         assert not result.passed, job.id
+
+
+# ------------------------------------------------------- the vague level (2026-11-08)
+
+import re
+
+from roaddraft.mcp.server import tool_definitions
+from roaddraft.probes.pilot.profile import short_station
+
+
+def _both(tmp_path, job, patch=None, monkeypatch=None, **solve):
+    """``(explicit, vague)`` results of the scripted striping, solved with the module
+    constants in ``patch`` (a drafting convention done another way) and graded with them
+    restored."""
+    start = fixture.start_document(tmp_path / job.start, job.start)
+    baseline = Session.load(start, out_dir=start.parent)
+    session = Session.load(start, out_dir=start.parent)
+    with monkeypatch.context() as m:
+        for name, value in (patch or {}).items():
+            m.setattr(st, name, value)
+        st.solve_job(job, session, **solve)
+    assert session.query("save_document", {"path": str(start)})["ok"]
+    probe = BY_ID[job.id]
+    got = lambda: Session.load(start, out_dir=start.parent)
+    return probe.check(baseline, got()), probe.vague_check(baseline, got())
+
+
+def test_vague_briefs():
+    tools = [t["name"] for t in tool_definitions(Session())]
+    for job, p in zip(st.JOBS, st.PROBES):
+        v = p.vague
+        assert v.strip() and v != p.prompt and len(v) < len(p.prompt), p.id
+        assert p.vague_check is not None
+        for name in tools:
+            assert not re.search(rf"\b{re.escape(name)}\b", v, re.I), (p.id, name)
+        # the job and its data, and how the work is read
+        for kept in (job.alignment, short_station(job.ra), short_station(job.rb),
+                     f"sheet {job.sheet}", "MUTCD", "model space", "two-lane", "12-ft lanes",
+                     "edge lines", job.profile, f"85th-percentile speed of {job.mph} mph",
+                     "horizontal sight lines are clear", "profile governs", job.extent,
+                     "as a line along its center", "actual stripes", "not a linetype"):
+            assert kept in v, (p.id, kept)
+        # the marking pattern and the MUTCD's sections are the drafter's to know
+        for dropped in ("10-ft", "30-ft", f"{st.PAIR}", "yellow", "White", "solid",
+                        "Table 3B-1", "3B.02", "400 ft", "each direction"):
+            assert dropped not in v, (p.id, dropped)
+
+
+def test_vague_solutions_pass_and_starts_fail(tmp_path, monkeypatch):
+    for job in st.JOBS:
+        explicit, vague = _both(tmp_path / "ok", job, monkeypatch=monkeypatch)
+        assert explicit.passed and vague.passed, (job.id, vague.detail)
+        start = fixture.start_document(tmp_path / "start" / job.start, job.start)
+        s = Session.load(start, out_dir=start.parent)
+        assert not BY_ID[job.id].vague_check(s, s).passed
+
+
+def test_vague_takes_the_pair_offsets_the_mutcd_allows(tmp_path, monkeypatch):
+    """6-in lines 6 in apart: each stripe of a pair 0.5 ft off the centerline. The explicit
+    brief says 0.33 ft; the MUTCD asks for a discernible space."""
+    for job in (st.D6, st.D11):
+        explicit, vague = _both(tmp_path / job.start, job, {"PAIR": 0.5}, monkeypatch)
+        assert not explicit.passed
+        assert not dict(explicit.items)["nothing in the wrong zone"]
+        assert vague.passed, (job.id, vague.detail)
+
+
+def test_vague_takes_broken_lines_in_the_mutcd_ratio(tmp_path, monkeypatch):
+    """12-ft stripes with 36-ft gaps (the MUTCD's 10 and 30 "or a similar ratio")."""
+    explicit, vague = _both(tmp_path, st.D7, {"DASH": 12.0, "GAP": 36.0}, monkeypatch)
+    assert not dict(explicit.items)["broken centerline where passing is allowed"]
+    assert vague.passed, vague.detail
+
+
+def test_vague_takes_an_edge_line_off_the_lane_edge(tmp_path, monkeypatch):
+    """A 6-in edge line with its inner edge on the 12-ft lane edge: its center at 12.25 ft."""
+    _explicit, vague = _both(tmp_path, st.D6, {"EDGE": 12.25}, monkeypatch)
+    assert vague.passed, vague.detail
+
+
+def test_vague_still_fails_what_the_mutcd_does_not_allow(tmp_path, monkeypatch):
+    # 10-ft stripes with 20-ft gaps: not the MUTCD's ratio
+    _e, vague = _both(tmp_path / "ratio", st.D7, {"GAP": 20.0}, monkeypatch)
+    assert not dict(vague.items)["broken centerline where passing is allowed"]
+    # a pair 0.75 ft each side of the centerline: no longer a double line
+    _e, vague = _both(tmp_path / "wide", st.D6, {"PAIR": 0.75}, monkeypatch)
+    assert not vague.passed and not dict(vague.items)["no-passing zone, up-station traffic"]
+
+
+def test_vague_naive_answers_still_fail(tmp_path, monkeypatch):
+    """The zones are the MUTCD's own at both levels: double yellow over the crest, the solid on
+    the wrong side and stopping-sight-distance heights fail the vague check too."""
+    crest = [(12150.0, 12250.0)]
+    _e, vague = _both(tmp_path / "pvc", st.D6, monkeypatch=monkeypatch, up=crest, down=crest)
+    assert not vague.passed
+    _e, vague = _both(tmp_path / "swap", st.D7, monkeypatch=monkeypatch, swap=True)
+    assert not dict(vague.items)["no-passing zone, down-station traffic"]
+    rows = [(p[0], p[1], p[2] if len(p) > 2 else 0.0) for p in st.D6.pvis]
+    up, down = st.zones(rows, st.D6.psd, st.D6.ra, st.D6.rb, obj=2.0)
+    _e, vague = _both(tmp_path / "ssd", st.D6, monkeypatch=monkeypatch, up=up, down=down)
+    assert not dict(vague.items)["no-passing zone, up-station traffic"]
+    _e, vague = _both(tmp_path / "none", st.D10, monkeypatch=monkeypatch, up=[], down=[])
+    assert not vague.passed

@@ -2,7 +2,7 @@
 
     python -m roaddraft.probes.pilot list [--tag TAG]
     python -m roaddraft.probes.pilot setup ID --out DIR [--force]
-    python -m roaddraft.probes.pilot selftest [ID ...] [--tag TAG]
+    python -m roaddraft.probes.pilot selftest [ID ...] [--tag TAG] [--level explicit|vague]
     python -m roaddraft.probes.pilot reference --out benchmarks/pilot_references [ID ...]
 
 ``selftest`` is what keeps a pilot honest: its scripted solution must pass
@@ -66,6 +66,7 @@ def cmd_setup(args) -> int:
 
 
 def cmd_selftest(args) -> int:
+    args.levels = args.levels or ["explicit", "vague"]
     chosen = [p for p in _chosen(args.probes, args.tag) if p.solve]
     failures = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -77,16 +78,24 @@ def cmd_selftest(args) -> int:
                 fixture.start_document(built[probe.start], probe.start)
             start = built[probe.start]
             ref = reference.write(probe, Path(tmp) / probe.id, start, plots=False)
-            mark = "ok  " if ref.result.passed else "FAIL"
-            print(f"  {mark} {probe.id}: {ref.result.detail}  ({time.time() - t0:.0f} s)", flush=True)
-            if not ref.result.passed:
-                failures.append(probe.id)
             pristine = start / fixture.START[probe.start]
-            empty = probe.check(Session.load(pristine, out_dir=start),
-                                Session.load(pristine, out_dir=start))
-            if empty.passed:
-                print(f"  FAIL {probe.id}: the untouched start already passes")
-                failures.append(probe.id + " (vacuous)")
+            levels = [lv for lv in args.levels if lv == "explicit" or probe.vague]
+            if "vague" in args.levels and not probe.vague:
+                print(f"  FAIL {probe.id}: no vague prompt")
+                failures.append(probe.id + " (no vague prompt)")
+            for level in levels:
+                tag = "" if level == "explicit" else " [vague]"
+                result = ref.result if level == "explicit" else probe.check_at(level)(
+                    Session.load(pristine, out_dir=start), Session.load(ref.document, out_dir=start))
+                mark = "ok  " if result.passed else "FAIL"
+                print(f"  {mark} {probe.id}{tag}: {result.detail}  ({time.time() - t0:.0f} s)", flush=True)
+                if not result.passed:
+                    failures.append(probe.id + tag)
+                empty = probe.check_at(level)(Session.load(pristine, out_dir=start),
+                                              Session.load(pristine, out_dir=start))
+                if empty.passed:
+                    print(f"  FAIL {probe.id}{tag}: the untouched start already passes")
+                    failures.append(probe.id + tag + " (vacuous)")
     print(f"{len(chosen) - len(failures)}/{len(chosen)} pilot solutions pass and their "
           f"starts fail")
     return 1 if failures else 0
@@ -127,6 +136,8 @@ def main(argv=None) -> int:
     st = subs.add_parser("selftest")
     st.add_argument("probes", nargs="*")
     st.add_argument("--tag")
+    st.add_argument("--level", dest="levels", action="append", choices=["explicit", "vague"],
+                    help="the prompt level(s) whose check the solution must pass (default: both)")
     ref = subs.add_parser("reference")
     ref.add_argument("probes", nargs="*")
     ref.add_argument("--tag")

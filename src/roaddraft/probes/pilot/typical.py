@@ -49,6 +49,13 @@ Graded (all in model feet, from the submitted document only):
     from catch point to catch point, inside the border above the title strip
     and clear of the sheet's remaining notes and details.
 
+The vague brief (``vague_brief``, cut from the explicit one) keeps the whole
+description, which is the design, and where the section goes on the sheet; how to
+draft it (catch to catch, each layer, the dimensions and labels, the viewport's
+scale) is the drafter's. ``check_section(lenient=True)`` grades the same items,
+the viewport at any standard scale and the cross slope read as a percent or a
+decimal. No layer is graded at either level.
+
 Three more sections (2026-11, FDOT 913-2 divided, WFL JEFF sidehill with slope
 tables, WFL ADA superelevated) are described where they are defined, at the
 end of this module; their specs carry ``v2`` and may set their own dims, cross
@@ -69,6 +76,7 @@ from roaddraft.document.entities import (
 from roaddraft.document.fileformat import read_document, write_document
 from roaddraft.probes.base import Probe, Result, Tally
 from roaddraft.probes.pilot import common
+from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
 
 VERTEX_FT = 0.05
 LAYER_FT = 0.03
@@ -78,6 +86,10 @@ EG_LAYER = "XS_EXISTING_GROUND"
 #: paper the viewport may use: inside the WFL border, above its title strip
 #: (C.1 carries that strip as a line at y = 1.3; A6's title box is below it)
 PAPER_AREA = (0.7, 1.3, 16.3, 10.7)
+#: the viewport scales the vague level allows (the brief leaves the scale to the
+#: drafter): any standard scale (spec_v1 "lenient"), and 1" = 5', the detail scale
+#: a typical section is also drawn at
+LENIENT_FPI = (5.0,) + tuple(float(f) for f in DRAFTING_SPEC_V1["lenient"]["standard_feet_per_inch"])
 
 
 # ------------------------------------------------------------------ geometry
@@ -284,7 +296,12 @@ def _dimension_reads(dim: Dimension, width: float) -> bool:
         return False
 
 
-def check_section(spec: dict, baseline: Session, submitted: Session) -> Result:
+def check_section(spec: dict, baseline: Session, submitted: Session,
+                  lenient: bool = False) -> Result:
+    """``lenient``: the vague level, whose brief leaves the viewport's scale and the
+    lettering's form to the drafter: the viewport at any standard scale
+    (``LENIENT_FPI``) and the cross slope read as a percent or a decimal ("2%",
+    "0.02"); everything else as the explicit level grades it."""
     truth = spec["truth"]()
     added = _added(baseline, submitted)
     model = [e for space, e in added if space == "model"]
@@ -328,8 +345,8 @@ def check_section(spec: dict, baseline: Session, submitted: Session) -> Result:
                   + ("" if dims else " (no dimensions were added)"))
 
     texts = [e.content for _space, e in added if isinstance(e, Text)]
-    if spec.get("cross_slopes"):
-        for pct in spec["cross_slopes"]:
+    if spec.get("cross_slopes") or lenient:
+        for pct in spec.get("cross_slopes") or (2.0,):
             pattern = _percent_pattern(pct)
             tally.add(f"cross slope labelled ({pct:g}%)",
                       None if any(pattern.search(t) for t in texts) else
@@ -343,14 +360,15 @@ def check_section(spec: dict, baseline: Session, submitted: Session) -> Result:
                   None if any(pattern.search(t) for t in texts) else
                   f"no text gives the {ratio} slope (V:H)")
 
-    tally.add(f"viewport at 1\" = {spec.get('scale', SCALE_FT_PER_IN):g}' showing the section, "
-              f"clear of the sheet's notes", _viewport_problem(spec, baseline, submitted, truth))
+    scale = "a standard scale" if lenient else f"1\" = {spec.get('scale', SCALE_FT_PER_IN):g}'"
+    tally.add(f"viewport at {scale} showing the section, clear of the sheet's notes",
+              _viewport_problem(spec, baseline, submitted, truth, lenient))
     return tally.result(f"section drawn to the description: catch points "
                         f"{truth['catches'][0][1][0]:.2f} and {truth['catches'][1][1][0]:.2f} ft, "
-                        f"shown at 1\" = {spec.get('scale', SCALE_FT_PER_IN):g}'")
+                        f"shown at {scale}")
 
 
-def _viewport_problem(spec, baseline, submitted, truth) -> Optional[str]:
+def _viewport_problem(spec, baseline, submitted, truth, lenient: bool = False) -> Optional[str]:
     sheet = submitted.doc.sheet_by_ref(spec["sheet"])
     if sheet is None:
         return f"sheet {spec['sheet']} is gone"
@@ -362,9 +380,11 @@ def _viewport_problem(spec, baseline, submitted, truth) -> Optional[str]:
     notes = [e.bbox(baseline.doc) for e in base_sheet.entities.values() if isinstance(e, Text)]
     must_show = [truth["catches"][0][1], truth["catches"][1][1], [0.0, truth["pg"]]]
     problems = []
+    scales = LENIENT_FPI if lenient else (spec.get("scale", SCALE_FT_PER_IN),)
     for vp in ports:
-        if abs(vp.feet_per_inch - spec.get("scale", SCALE_FT_PER_IN)) > 1e-6:
-            problems.append(f"viewport {vp.id} is at 1\" = {vp.feet_per_inch:g}'")
+        if not any(abs(vp.feet_per_inch - f) <= 1e-6 for f in scales):
+            problems.append(f"viewport {vp.id} is at 1\" = {vp.feet_per_inch:g}'"
+                            + (", not a standard scale" if lenient else ""))
             continue
         if abs(((vp.rotation_deg + 180.0) % 360.0) - 180.0) > 0.01:
             problems.append(f"viewport {vp.id} is twisted {vp.rotation_deg:g}°")
@@ -514,6 +534,27 @@ WFL_PROMPT = (
     "vertical), above its title and clear of the other sections and notes.")
 
 
+#: where the explicit brief stops describing the section and starts saying how to draft it
+_DRAFTING = " Draw the finished grade from catch point to catch point"
+_SHOW = re.compile(r"Then show it on sheet (?P<sheet>\S+) in a viewport at [^()]*"
+                   r"\(horizontal and vertical\), (?P<where>[^.]+)\.$")
+
+
+def vague_brief(spec: dict, prompt: str) -> str:
+    """The vague brief, cut from the explicit one: all of its description, which is
+    the design the drafter is handed (the section's sheet and stations, the frame it
+    is drawn in, the ground and grade given, the lanes, slopes, pavement layers,
+    ditch and hinge, the V:H reading of the slopes) and where it goes on the sheet;
+    without what it says about drafting it (the finished grade catch to catch and
+    each layer drawn, the widths dimensioned, the slopes labelled, the viewport's
+    scale), which a drafter knows and the vague check grades by the lenient rules."""
+    head, sep, tail = prompt.partition(_DRAFTING)
+    show = _SHOW.search(tail)
+    if not sep or show is None or show["sheet"] != spec["sheet"]:
+        raise ValueError(f"{spec['id']}: the brief does not end the way its vague form is cut")
+    return f"{head} Show it on sheet {spec['sheet']}, {show['where']}."
+
+
 def _note(spec: dict, naive: str) -> str:
     t = spec["truth"]()
     pts = "; ".join(f"{n} [{p[0]:.2f}, {p[1]:.2f}]" for n, p in t["breaks"] + t["catches"])
@@ -528,12 +569,16 @@ WFL_START = common.register(WFL["id"], common.sheet_file(WFL["sheet_id"]),
 PROBES: List[Probe] = [
     Probe(id=CFL["id"], prompt=CFL_PROMPT, start=CFL_START, tags=["typical-section", "cfl"],
           check=lambda b, s: check_section(CFL, b, s), solve=lambda s: solve_section(CFL, s),
+          vague=vague_brief(CFL, CFL_PROMPT),
+          vague_check=lambda b, s: check_section(CFL, b, s, lenient=True),
           note=_note(CFL, "Naive answers that fail: the 1:3 fill read as 3:1 (H:V) or run a "
                           "fixed distance instead of to the ground line, the crown skipped "
                           "(flat lanes are 0.24 ft high at the shoulder edge), or the section "
                           "drawn on the sheet in inches.")),
     Probe(id=WFL["id"], prompt=WFL_PROMPT, start=WFL_START, tags=["typical-section", "wfl"],
           check=lambda b, s: check_section(WFL, b, s), solve=lambda s: solve_section(WFL, s),
+          vague=vague_brief(WFL, WFL_PROMPT),
+          vague_check=lambda b, s: check_section(WFL, b, s, lenient=True),
           note=_note(WFL, "The hinge is the 1:2 foreslope meeting the subgrade 2.0 ft below the "
                           "2% finished grade (19.17 ft out, not 19.0 = 15 + 2 x 2.0). Naive answers "
                           "that fail: the hinge at 19.00, the subgrade drawn level, layer depths "
@@ -879,6 +924,8 @@ for _spec, _prompt in ((FDOT, FDOT_PROMPT), (JEFF, JEFF_PROMPT), (ADA, ADA_PROMP
 PROBES += [
     Probe(id=FDOT["id"], prompt=FDOT_PROMPT, start=FDOT["start"], tags=["typical-section", "fdot"],
           check=lambda b, s: check_section(FDOT, b, s), solve=lambda s: solve_drawn(FDOT, s),
+          vague=vague_brief(FDOT, FDOT_PROMPT),
+          vague_check=lambda b, s: check_section(FDOT, b, s, lenient=True),
           note=_note(FDOT, "Eleven grade breaks on two roadways that slope away from the median, "
                            "profile grade at the inside lane edges (not the centreline). Naive "
                            "answers that fail: the profile grade put on the construction "
@@ -887,6 +934,8 @@ PROBES += [
                            "viewport at 1\" = 10' (off the sheet).")),
     Probe(id=JEFF["id"], prompt=JEFF_PROMPT, start=JEFF["start"], tags=["typical-section", "wfl"],
           check=lambda b, s: check_section(JEFF, b, s), solve=lambda s: solve_drawn(JEFF, s),
+          vague=vague_brief(JEFF, JEFF_PROMPT),
+          vague_check=lambda b, s: check_section(JEFF, b, s, lenient=True),
           note=_note(JEFF, "Fill left and cut right on a sidehill; the slopes come from the "
                            "tables: 1:3 fill (10.94 ft high; 1:4 would be 13.46, 1:6 25.0) and "
                            "1:2 cut (5.83 ft; 1:3 would be 8.75, 1:1.5 exactly 5.0). Naive "
@@ -896,6 +945,8 @@ PROBES += [
                            "section mirrored (cut left).")),
     Probe(id=ADA["id"], prompt=ADA_PROMPT, start=ADA["start"], tags=["typical-section", "wfl"],
           check=lambda b, s: check_section(ADA, b, s), solve=lambda s: solve_drawn(ADA, s),
+          vague=vague_brief(ADA, ADA_PROMPT),
+          vague_check=lambda b, s: check_section(ADA, b, s, lenient=True),
           note=_note(ADA, "Full superelevation 6% rotated about the centreline, the right lane "
                           "widened to 14 ft, the high-side shoulder breaking over to 2%. Naive "
                           "answers that fail: the normal 2% crown, rotation about the inside "

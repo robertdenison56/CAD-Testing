@@ -86,6 +86,13 @@ scale on an 11 x 17 print of a 22 x 34 sheet or off the profile grid, and one a 
 lettered without its hundreds, a grade's minus a half-height dash, the left bridge's stations
 beside the right one's, a lettered tangent length a hundredth off its stations).
 
+Each instance has a vague brief too (``Redraw.vague``, ``Reading.vague``): the request as a PE
+puts it, without the tool hints (view_attachment, region) or the list of what to read off the
+sheet. It keeps what the drafter cannot know: the file, the line and its name, the scan, the
+stretch, the tie or datum point given, and for p15 every question with the meta keys and the
+answer form the check parses. Neither check grades a drafting convention, so each serves both
+levels.
+
 The two need images to reach the model: the claude-code and codex backends
 pass MCP image content through themselves, the anthropic backend only with
 ``--vision``, and the openai-compatible backend (LM Studio, Runpod) never.
@@ -199,6 +206,20 @@ class Redraw:
     redraft_ft: float = 0.3
     #: how the redraft's strokes beside the line are found (``_traces``' options)
     traces: Optional[dict] = None
+    #: the vague brief's pieces (``vague``): the line as the PE names it, the sheet the scan
+    #: is of, the stretch to rebuild, and the tie or datum handed over
+    line: str = ""
+    sheet_name: str = ""
+    extent: str = ""
+    given: str = ""
+
+    @property
+    def vague(self) -> str:
+        """The request at the vague level: which file, line, scan and stretch, the name, and
+        the tie or datum point given, without the tool hints or what to read off the sheet."""
+        return (f"{self.design_file}, the file you have open, has lost the {self.line}. Rebuild "
+                f"it from {self.scan}, a scan of {self.sheet_name}, {self.extent}; name it "
+                f"{self.alignment} and draw it. {self.given}")
 
 
 def _engine_alignment(name: str, start, legs: list, begin_station: float) -> Alignment:
@@ -511,6 +532,8 @@ TB1_SPEC = Redraw(
           "linework); the tie read as 63.32' Lt; the second bearing read N 01°05'41\" W. The "
           "table's rounded R 3280' still passes."),
     solve=_tb1_solve,
+    line="\"TB1\" line", sheet_name="layout sheet L-1", extent="over the length the sheet shows",
+    given="Hold it to the tie the sheet gives to D13.",
 )
 
 
@@ -567,6 +590,10 @@ CL1_SPEC = Redraw(
           "wrong answers that fail: the curve turned left; the line started at BEGIN PROJECT "
           "700+23.62 on the tie point."),
     solve=_cl1_solve,
+    line="SR 61 construction centerline, CL1", sheet_name="roadway plan-profile sheet 12",
+    extent=f"from station {_sta(CL1['begin'])} at SR 30 through the end of the curve",
+    given=(f"The file is on a local datum, not state plane: SR 61 station {_sta(CL1['begin'])} "
+           f"is at N {CL1['tie'][1]:.2f}, E {CL1['tie'][0]:.2f}."),
 )
 
 
@@ -693,6 +720,8 @@ F6_SPEC = Redraw(
           "the loop turned right; the middle tangent laid out S 45°15'06\" E as lettered; the "
           "tie taken at F2's POT on FR (71+28.97)."),
     solve=_f6_solve,
+    line="\"F6\" line", sheet_name="layout sheet L-7", extent="over the length the sheet shows",
+    given="Hold it to the tie the sheet gives to FR.",
 )
 
 
@@ -767,6 +796,10 @@ CFL1_SPEC = Redraw(
           "apart (the difference of their stations); the second curve turned right; the "
           "lettered state-plane N/E taken for Begin Project."),
     solve=_cfl1_solve,
+    line="Main Road centerline, CL1", sheet_name="plan and profile sheet Plan 1",
+    extent=f"from Begin Project through station {_sta(CFL1['end'])}",
+    given=(f"The file is on a local datum, not state plane: the survey staked the PI of the "
+           f"second curve at N {CFL1['pi2'][1]:.2f}, E {CFL1['pi2'][0]:.2f}."),
 )
 
 
@@ -780,7 +813,7 @@ CFL1_SPEC = Redraw(
 #: of APPR 01 610+00.00, fitted to the redraft on its local datum).
 D11 = {"b1": "S 12°39'14\" E", "b2": "S 45°53'12\" E", "begin": 15296.54, "pc": 15527.34,
        "pt": 15900.29, "delta": "33°13'58\"", "radius": 643.00, "end": 16000.00,
-       "eq": 15569.97, "tie": [10058.92, 10090.40]}
+       "eq": 15569.97, "tie": [10058.92, 10090.40], "appr": 61000.00}
 
 
 def _d11_legs():
@@ -835,6 +868,12 @@ D11_SPEC = Redraw(
           "curve turned right; the PC (not 155+69.97) put on the APPR 01 point; the line run "
           "on at S12°39'14\"E + 33°13'58\" (the delta added the wrong way)."),
     solve=_d11_solve,
+    line="\"MAIN 01\" line over sheet D.11", sheet_name="plan and profile sheet D.11",
+    extent=(f"from the PT where the sheet picks up the curve from D.10 through station "
+            f"{_sta(D11['end'])}"),
+    given=(f"The file is on a local datum: the survey has \"APPR 01\" {_sta(D11['appr'])} at "
+           f"N {D11['tie'][1]:.2f}, E {D11['tie'][0]:.2f}; tie MAIN 01 in at the equation the "
+           f"sheet letters there."),
 )
 
 
@@ -1022,6 +1061,16 @@ class Reading:
                 f"document with set_meta {{\"updates\": {{{keys}}}}}, each answer the value "
                 f"alone: stations as 123+45.67, bearings as N 12°34'56\" E, lengths in feet. "
                 f"{asks}")
+
+    @property
+    def vague(self) -> str:
+        """The request at the vague level: the scan, every question, the meta keys and the
+        answer form the check reads, without the tool hints."""
+        asks = " ".join(f"{q.key}: {q.ask}" for q in self.questions)
+        keys = f"{self.questions[0].key} to {self.questions[-1].key}"
+        return (f"Before we use the scanned {self.kind} in {self.scan}, check what it says. "
+                f"Record each answer with set_meta under its key, {keys}, the value alone: "
+                f"stations as 123+45.67, bearings as N 12°34'56\" E, lengths in feet. {asks}")
 
 
 def _reading_builder(spec: Reading):
@@ -1656,16 +1705,18 @@ D12_SPEC = Reading(
 
 def _redraw_probe(spec: Redraw) -> Probe:
     start = common.register(f"scan-{spec.id}", spec.design_file, _redraw_builder(spec))
+    # the check grades the line and its drawing, no drafting convention: it serves both levels
     return Probe(id=spec.id, prompt=spec.prompt, check=_check_redraw(spec), solve=spec.solve,
                  note=spec.note, tags=["scan", "redraw", "draft", "alignment"], start=start,
-                 server_args=list(SERVER_ARGS))
+                 server_args=list(SERVER_ARGS), vague=spec.vague)
 
 
 def _reading_probe(spec: Reading) -> Probe:
     start = common.register(f"scan-{spec.id}", spec.doc, _reading_builder(spec))
+    # the vague brief keeps every question, key and answer form the check reads
     return Probe(id=spec.id, prompt=spec.prompt, check=_check_reading(spec),
                  solve=_reading_solve(spec), note=spec.note, tags=["scan", "reading"],
-                 start=start, server_args=list(SERVER_ARGS))
+                 start=start, server_args=list(SERVER_ARGS), vague=spec.vague)
 
 
 REDRAWS = [TB1_SPEC, CL1_SPEC, F6_SPEC, CFL1_SPEC, D11_SPEC]

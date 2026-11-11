@@ -608,7 +608,7 @@ def current_versions(taskset: Optional[str] = None) -> dict:
             "verifier_version": current_verifier(taskset)}
 
 
-def coverage(taskset: Optional[str], task_ids: Iterable[str]) -> Optional[dict]:
+def coverage(taskset: Optional[str], task_ids: Iterable[str], levels: Iterable[str] = ("explicit",)) -> Optional[dict]:
     """How much of the current set a probe run holds: ``tasks_run``,
     ``tasks_in_set``, ``missing`` (current ids the run has not run) and
     ``foreign`` (the run's ids the set no longer has: a changed or removed
@@ -617,8 +617,9 @@ def coverage(taskset: Optional[str], task_ids: Iterable[str]) -> Optional[dict]:
     from roaddraft.eval.taskset import is_probe
     if taskset is None or not is_probe(taskset):
         return None
-    from roaddraft.eval.probe_tasks import current_ids
-    now, run = current_ids(), set(task_ids)
+    from roaddraft.eval.probe_tasks import current_ids   # a vague pilot is its own id (2026-11-08)
+    now = set().union(*(current_ids(level=lv) for lv in (set(levels) or {"explicit"})))
+    run = set(task_ids)
     return {"tasks_run": len(run), "tasks_in_set": len(now),
             "missing": sorted(now - run), "foreign": sorted(run - now)}
 
@@ -686,7 +687,8 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
                 for f in ("spec_version", "spec_hash", "generator_version", "verifier_version",
                           "harness_version")}
     now = current_versions(taskset)
-    cov = coverage(taskset, (e["row"]["task_id"] for e in eps))
+    cov = coverage(taskset, (e["row"]["task_id"] for e in eps),
+                   sorted({e["row"].get("level") or "explicit" for e in eps}))
     held = ["spec_hash", "generator_version", "verifier_version"]
     if cov is not None:   # a probe run is held to its task ids, not the set's hash
         held.remove("generator_version")

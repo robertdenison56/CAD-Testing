@@ -35,6 +35,11 @@ def test_selftest(tmp_path, pid):
     doc = fixture.start_document(tmp_path / "start", probe.start)
     untouched = probe.check(Session.load(doc, out_dir=doc.parent), Session.load(doc, out_dir=doc.parent))
     assert not untouched.passed
+    # the vague level's check: the scripted solution passes it too, the start fails it
+    vague = probe.check_at("vague")
+    solved = vague(Session.load(doc, out_dir=doc.parent), Session.load(ref.document, out_dir=ref.document.parent))
+    assert solved.passed, solved.detail
+    assert not vague(Session.load(doc, out_dir=doc.parent), Session.load(doc, out_dir=doc.parent)).passed
 
 
 def _attempt(tmp_path, inst, **skip):
@@ -258,3 +263,56 @@ def test_angle_point_dropped_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(redlines, "apply_revision", drop_angle_point)
     r = _attempt(tmp_path, inst)
     assert not r.passed and "angle point" in r.items[0][0] + str(r.detail), r.items[0]
+
+
+# ------------------------------------------------------------------ the vague level
+
+
+def _tool_names():
+    from roaddraft.mcp.server import tool_definitions
+    return {t["name"] for t in tool_definitions(Session(), attachments=True)}
+
+
+@pytest.mark.parametrize("pid", IDS)
+def test_vague_brief(pid):
+    # a shorter request in a PE's words: the sheet, where the line lives and how it is
+    # attached, the instrument rule (anchored lettering) and the revision's who and when,
+    # no tool, no labelers, nothing about where the revision goes, no value to work out
+    probe, inst = BY_ID[pid], _inst(pid)
+    vague = probe.vague
+    assert vague.strip() and vague != probe.prompt and len(vague) < len(probe.prompt)
+    names = [n for n in _tool_names() if re.search(rf"\b{re.escape(n)}\b", vague, re.I)]
+    assert not names, names
+    for words in (f"Sheet {inst.sheet} ", f'"{inst.alignment}"', inst.design_file,
+                  f"attached as {inst.design_ref}", "REDLINE", redlines.REVISED_BY,
+                  redlines.REVISED_ON, "anchored", "everything else"):
+        assert words in vague, words
+    assert "labeler" not in vague and "revision block" not in vague
+    assert not re.search(r"\d+\+\d{2}", vague) and "R = " not in vague
+    assert probe.vague_check is not None and probe.check_at("vague") is probe.vague_check
+    assert probe.check_at("explicit") is probe.check
+
+
+def test_vague_revision_note_quoting_the_redline(tmp_path):
+    # the vague brief does not say where the revision goes: a revision note on PD-1 that
+    # quotes the redline's words beside RD and the date is the record there; the explicit
+    # brief asks for the border's revision block, and its check reads such a note as the
+    # redline left on the drawing
+    inst = redlines.RADIUS
+    start = tmp_path / "start"
+    doc = fixture.start_document(start, inst.id)
+    work = tmp_path / "work"
+    shutil.copytree(start, work)
+    mine = work / doc.name
+    session = Session.load(mine, out_dir=work)
+    redlines.make_solve(inst, revision=False)(session)
+    common.ok(session.execute("place_text", {
+        "space": inst.sheet, "position": [18.7, 4.2], "height": 0.1,
+        "content": f"REVISION 1: {inst.note[0]}, {inst.note[1]} -- RD 10-19-26"}))
+    common.save(session, mine)
+    probe = BY_ID[inst.id]
+    explicit = probe.check(Session.load(doc, out_dir=start), Session.load(mine, out_dir=work))
+    vague = probe.check_at("vague")(Session.load(doc, out_dir=start), Session.load(mine, out_dir=work))
+    assert not explicit.passed and "redline note" in explicit.detail, explicit.detail
+    assert vague.passed, vague.detail
+    assert [k for k, _d in vague.items] == [k for k, _d in explicit.items]

@@ -74,9 +74,9 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.design import cogo
@@ -286,41 +286,44 @@ def _parse_precision(text: Optional[str]) -> Optional[float]:
     return max(found) if found else None
 
 
-def check_misclosure(baseline: Session, submitted: Session) -> Result:
+def check_misclosure(baseline: Session, submitted: Session,
+                     layer: str = MIS_LAYER) -> Result:
+    """The deed's check; ``layer`` is the one the parcel is looked for on (the
+    vague level's ``lenient_layer`` tries each)."""
     truth = misclosure_truth()
     corners = truth["corners"]
     tally = Tally()
     drawn = [e for e in added_model(baseline, submitted)
-             if e.layer == MIS_LAYER and isinstance(e, (Line, Polyline))]
+             if e.layer == layer and isinstance(e, (Line, Polyline))]
     own_area = None
     if not drawn:
-        tally.add("balanced parcel drawn closed on V-PROP", f"nothing was drawn on {MIS_LAYER}")
+        tally.add(f"balanced parcel drawn closed on {layer}", f"nothing was drawn on {layer}")
         tally.add("corners on the compass-rule balance (0.02 ft)", "no corners to check")
-        tally.add("no unbalanced or extra corners on V-PROP", "no corners to check")
+        tally.add(f"no unbalanced or extra corners on {layer}", "no corners to check")
     else:
         closed = submitted.query("area", {"ids": [e.id for e in drawn]})
         loops = closed.get("loops") or []
         if not closed.get("ok"):
-            tally.add("balanced parcel drawn closed on V-PROP",
-                      f"the {MIS_LAYER} linework is not a closed boundary: "
+            tally.add(f"balanced parcel drawn closed on {layer}",
+                      f"the {layer} linework is not a closed boundary: "
                       f"{closed['error']['message']}")
         elif len(loops) != 1:
-            tally.add("balanced parcel drawn closed on V-PROP",
-                      f"the {MIS_LAYER} linework makes {len(loops)} loops, not one parcel")
+            tally.add(f"balanced parcel drawn closed on {layer}",
+                      f"the {layer} linework makes {len(loops)} loops, not one parcel")
         else:
-            tally.add("balanced parcel drawn closed on V-PROP", None)
+            tally.add(f"balanced parcel drawn closed on {layer}", None)
         vertices = _vertices(drawn)
         misses = [(i, min(math.dist(v, c) for v in vertices)) for i, c in enumerate(corners)]
         worst = max(misses, key=lambda m: m[1])
         tally.add("corners on the compass-rule balance (0.02 ft)",
                   None if worst[1] <= MIS_CORNER_FT else
                   f"corner {worst[0] + 1} of the balanced parcel is {worst[1]:.3f} ft from the "
-                  f"nearest {MIS_LAYER} vertex (compass rule puts it at [{corners[worst[0]][0]:.3f}, "
+                  f"nearest {layer} vertex (compass rule puts it at [{corners[worst[0]][0]:.3f}, "
                   f"{corners[worst[0]][1]:.3f}])")
         stray = [v for v in vertices if min(math.dist(v, c) for c in corners) > MIS_CORNER_FT]
-        tally.add("no unbalanced or extra corners on V-PROP",
+        tally.add(f"no unbalanced or extra corners on {layer}",
                   None if not stray else
-                  f"{len(stray)} {MIS_LAYER} vertices are not corners of the balanced parcel, "
+                  f"{len(stray)} {layer} vertices are not corners of the balanced parcel, "
                   f"e.g. [{stray[0][0]:.3f}, {stray[0][1]:.3f}]")
         if tally.clean:
             own_area = float(closed["area"])
@@ -355,7 +358,7 @@ def check_misclosure(baseline: Session, submitted: Session) -> Result:
               "set_meta has no area_sqft" if not found else
               None if area_ok(found[0]) else
               f"area_sqft is {value}; the balanced parcel is {truth['area']:,.1f} sq ft")
-    return tally.result(f"balanced parcel on {MIS_LAYER}, misclosure "
+    return tally.result(f"balanced parcel on {layer}, misclosure "
                         f"{truth['misclosure']:.3f} ft, 1:{truth['precision']:,.0f}, "
                         f"{truth['area']:,.0f} sq ft")
 
@@ -386,9 +389,10 @@ def solve_misclosure(session: Session) -> None:
         "area_sqft": round(area["area"])}}))
 
 
+MIS_INTRO = ("Right of Way sent the grant deed for the remainder parcel east of Route 65 on "
+             "layout sheet L-1.")
 MIS_PROMPT = (
-    "Right of Way sent the grant deed for the remainder parcel east of Route 65 on layout "
-    "sheet L-1. Plot it in this design file (the L-1 base, on the project's local "
+    MIS_INTRO + " Plot it in this design file (the L-1 base, on the project's local "
     "coordinates). The deed reads: " + _deed_text() + " Check the closure: work out the "
     "misclosure and the precision, balance the traverse by the compass (Bowditch) rule holding "
     "the point of beginning, and draw the balanced parcel as one closed boundary on layer "
@@ -869,13 +873,15 @@ def _deed_text_fdot915() -> str:
             f"{c[4]}; thence {c[5]} to the POINT OF BEGINNING.")
 
 
+DEED_PPM049_INTRO = ("Right of Way sent the grant deed for the remainder parcel east of "
+                     "Route 65 on layout sheet L-5.")
+DEED_FDOT915_INTRO = ("The right of way agent sent the legal description of the parcel "
+                      "north-east of SR 61 on plan-profile sheet 12.")
 DEED_PPM049_PROMPT = _deed_prompt(
-    "Right of Way sent the grant deed for the remainder parcel east of Route 65 on layout "
-    "sheet L-5. Plot it in this design file (the L-5 base, on the project's local "
+    DEED_PPM049_INTRO + " Plot it in this design file (the L-5 base, on the project's local "
     "coordinates).", _deed_text_ppm049(), "L-5")
 DEED_FDOT915_PROMPT = _deed_prompt(
-    "The right of way agent sent the legal description of the parcel north-east of SR 61 on "
-    "plan-profile sheet 12. Plot it in this design file (the sheet's design base, on the "
+    DEED_FDOT915_INTRO + " Plot it in this design file (the sheet's design base, on the "
     "project's local coordinates).", _deed_text_fdot915(), "12")
 
 
@@ -957,6 +963,11 @@ def solve_grid_to_ground(session: Session) -> None:
                                                 "points": points}))
 
 
+def _gg2_list() -> str:
+    return "; ".join(f"{n} N {north:,.3f} E {east:,.3f} {desc}"
+                     for n, desc, north, east in GG2_LOCATES)
+
+
 GG2_PROMPT = (
     "The utility consultant's GPS locates of the existing culverts on CFL Plan 1 need to go "
     "into this survey file. Our base files are on the project's ground coordinates: NAD83 "
@@ -964,8 +975,7 @@ GG2_PROMPT = (
     "control point CP-1 (point 1 in this file, which has the same coordinates on both) with "
     "the project combined scale factor 0.999562; the project control CP-1 to CP-3 is in this "
     "file. The consultant's list (NAD83 Colorado Central grid, US survey feet; N, E): "
-    + "; ".join(f"{n} N {north:,.3f} E {east:,.3f} {desc}" for n, desc, north, east in GG2_LOCATES)
-    + ". Set them as COGO points with those numbers and descriptions.")
+    + _gg2_list() + ". Set them as COGO points with those numbers and descriptions.")
 
 
 # ================================= 6. a drawing in international feet (WFL)
@@ -1042,6 +1052,81 @@ IF2_PROMPT = (
     "control report (NAD83 Montana State Plane, metres): " + _if2_list("m") + ".")
 
 
+# ------------------------------------------------------------- the vague level
+#
+# The vague briefs keep everything the drafter cannot know or read from the files: the deed
+# text, the field ties and point lists as delivered, the coordinate systems and units of the
+# data and of the drawing where the files do not say them (their meta still reads "local
+# datum" after the move onto state plane; a drawing in international feet goes against the
+# engine's US survey feet), the combined factor, the set_meta keys and the balance method the
+# checks grade. They drop the survey practice a surveyor knows (that YRB3 is point 9003 and
+# CP-1 point 1, which the files show), the steps spelled out, and the deed's layer: the deed
+# checks look for the parcel on V-PROP, so at the vague level ``lenient_layer`` takes it on
+# any layer but 0, as the spec's lenient rules do. The point checks grade numbers and
+# positions only, so they serve both levels.
+
+#: how a vague check's items name the parcel's layer
+ANY_LAYER = "a layer other than 0"
+
+
+def lenient_layer(check: Callable[[Session, Session, str], Result]) -> Callable[[Session, Session], Result]:
+    """A deed check at the vague level, which names no layer: ``check(baseline, submitted,
+    layer)`` run on each layer (but 0) the submission added linework on, the best result kept
+    (passed first, then the most items done), its items named for the rule rather than the
+    layer so they read alike whichever was used. With no such layer: nothing was drawn."""
+    def vague_check(baseline: Session, submitted: Session) -> Result:
+        layers = sorted({e.layer for e in added_model(baseline, submitted)
+                         if isinstance(e, (Line, Polyline, Arc)) and (e.layer or "0") != "0"})
+        tried = [(layer, check(baseline, submitted, layer)) for layer in layers] or \
+            [(ANY_LAYER, check(baseline, submitted, ANY_LAYER))]
+        layer, best = max(tried, key=lambda lr: (lr[1].passed, lr[1].scope()[0]))
+        tail = f" on {layer}"
+        items = [(name[:-len(tail)] + f" on {ANY_LAYER}" if name.endswith(tail) else name, done)
+                 for name, done in best.items]
+        return Result(best.passed, best.detail, items)
+    return vague_check
+
+
+def _deed_vague(intro: str, deed_text: str) -> str:
+    return (intro + " Plot it in this file (its coordinates are the project's local ones), "
+            "check the closure and balance it by the compass rule, then draw the balanced parcel "
+            "closed with its area in square feet labelled inside it. Record misclosure_ft, "
+            "precision (as 1:N) and area_sqft with set_meta. The deed reads: " + deed_text)
+
+
+def _point_name(rows, number: int) -> str:
+    """A control point's name, the first word of its description (``YRB3``, ``CP-1``)."""
+    return next(row[-1] for row in rows if row[0] == number).split()[0]
+
+
+MIS_VAGUE = _deed_vague(MIS_INTRO, _deed_text())
+DEED_PPM049_VAGUE = _deed_vague(DEED_PPM049_INTRO, _deed_text_ppm049())
+DEED_FDOT915_VAGUE = _deed_vague(DEED_FDOT915_INTRO, _deed_text_fdot915())
+GG_VAGUE = (
+    "Today's field ties for sheet D.11 go into this survey file as COGO points, with the "
+    "numbers and descriptions given. The base files are on NAD83 Wyoming West state plane grid. "
+    f"The crew occupied {_point_name(GG_CONTROL, GG_OCCUPIED)}, backsighted {GG_BACKSIGHT} and "
+    "turned angles right, measuring horizontal ground distances: " + _ties_text() + ". The "
+    f"combined factor at {_point_name(GG_CONTROL, GG_OCCUPIED)} is {GG_FACTOR:g}.")
+IF_VAGUE = (
+    "Plot Right of Way's monuments on the easterly R/W line of layout sheet L-3 and our crew's "
+    "two GPS control points as COGO points in this design file (CCS83 Zone 2), with the numbers "
+    "and descriptions given. The R/W consultant's list (CCS83 Zone 2, international feet): "
+    + _intl_list("ift") + ". The control report (CCS83 Zone 2, metres): " + _intl_list("m") + ".")
+GG2_VAGUE = (
+    "The utility consultant's GPS locates of the existing culverts on CFL Plan 1 go into this "
+    "survey file as COGO points, with the numbers and descriptions given. Our base files are on "
+    "project ground: NAD83 Colorado Central state plane grid scaled about "
+    f"{_point_name(GG2_CONTROL, 1)} by the combined factor {GG2_FACTOR:g}. The consultant's "
+    "list (Colorado Central grid, US survey feet): " + _gg2_list() + ".")
+IF2_VAGUE = (
+    "The county's record of survey and our GPS control for sheet D.6 go into this survey file "
+    "as COGO points, with the numbers and descriptions given. The project is on NAD83 Montana "
+    "State Plane (zone 2500), and the base files are in international feet. The record of "
+    "survey's R/W monuments (US survey feet): " + _if2_list("usft") + ". The GPS control report "
+    "(metres): " + _if2_list("m") + ".")
+
+
 # ------------------------------------------------------------------- registry
 
 MIS_START = common.register(MIS_ID, MIS_FILE, _build_misclosure)
@@ -1055,6 +1140,7 @@ IF2_START = common.register(IF2_ID, IF2_FILE, _build_intl_drawing)
 
 PROBES: List[Probe] = [
     Probe(id=MIS_ID, prompt=MIS_PROMPT, check=check_misclosure, solve=solve_misclosure,
+          vague=MIS_VAGUE, vague_check=lenient_layer(check_misclosure),
           start=MIS_START, tags=["survey", "cogo", "caltrans"],
           note="Deed of 6 courses from the PPM-045 R/W corners, perimeter 1,794.57 ft; written "
                "with course 4 0.24 ft long and course 5 25\" off, it misses by 0.275 ft "
@@ -1062,20 +1148,24 @@ PROBES: List[Probe] = [
                "to 0.230 ft at corner 6; balanced area 132,346.1 sq ft. Naive answers that fail: "
                "the deed drawn as written with a closing course (corners 0.02-0.23 ft off, "
                "area 132,370 sq ft), or the last corner moved onto the POB."),
-    Probe(id=GG_ID, prompt=GG_PROMPT, check=check_grid_ground, solve=solve_grid_ground,
+    Probe(id=GG_ID, prompt=GG_PROMPT, vague=GG_VAGUE, check=check_grid_ground,
+          solve=solve_grid_ground,
           start=GG_START, tags=["survey", "grid-ground", "wfl"],
           note="D.11's file set moved onto D.1's state plane coordinates (YRB3 at the drawn GPS "
                "symbol). Ties 447-687 ft from YRB3; reduced to grid they land on the CMP end "
                "sections and at the borings. Plotted at ground distance they are 0.157-0.241 ft "
                "long, divided by the factor 0.31-0.48 ft long; both fail the 0.05 ft tolerance."),
-    Probe(id=IF_ID, prompt=IF_PROMPT, check=check_intl_feet, solve=solve_intl_feet,
+    Probe(id=IF_ID, prompt=IF_PROMPT, vague=IF_VAGUE, check=check_intl_feet,
+          solve=solve_intl_feet,
           start=IF_START, tags=["survey", "units", "caltrans"],
           note="AA01/BB01 of L-3 moved by (+6,753,418.37, +2,068,236.52). Monuments 201-204 "
                "converted (x 0.999998) fall on the easterly R/W line LN-229; plotted as given "
                "they sit 13.53 ft E and 4.16 ft N of it. GPS points in metres need 3937/1200; "
                "3.28084 is off by the same 13.5 ft, 3.2808333 by about 0.07 ft."),
     Probe(id=DEED_PPM049.id, prompt=DEED_PPM049_PROMPT,
-          check=lambda b, s: check_deed(DEED_PPM049, b, s),
+          check=lambda b, s: check_deed(DEED_PPM049, b, s), vague=DEED_PPM049_VAGUE,
+          vague_check=lenient_layer(lambda b, s, layer: check_deed(
+              replace(DEED_PPM049, layer=layer), b, s)),
           solve=lambda s: solve_deed(DEED_PPM049, s), start=DEED_PPM049_START,
           tags=["survey", "cogo", "caltrans"],
           note="Deed of 10 courses on the L-5 easterly R/W (AA01 LN-433, LN-432) and an old "
@@ -1086,7 +1176,9 @@ PROBES: List[Probe] = [
                "closing course, the last corner moved onto the POB, the two scrivener's errors "
                "found and corrected (it then closes, but that is not the balance asked for)."),
     Probe(id=DEED_FDOT915.id, prompt=DEED_FDOT915_PROMPT,
-          check=lambda b, s: check_deed(DEED_FDOT915, b, s),
+          check=lambda b, s: check_deed(DEED_FDOT915, b, s), vague=DEED_FDOT915_VAGUE,
+          vague_check=lenient_layer(lambda b, s, layer: check_deed(
+              replace(DEED_FDOT915, layer=layer), b, s)),
           solve=lambda s: solve_deed(DEED_FDOT915, s), start=DEED_FDOT915_START,
           tags=["survey", "cogo", "fdot"],
           note="Deed of 6 courses with a tangent curve, on SR 61's north-east R/W 67.95 ft "
@@ -1099,7 +1191,8 @@ PROBES: List[Probe] = [
                "closing course, the last corner moved onto the POB, the curve drawn as its "
                "chord (2.0 ft inside the arc at its middle, 156 sq ft short), the curve "
                "turned the wrong way."),
-    Probe(id=GG2_ID, prompt=GG2_PROMPT, check=check_grid_to_ground, solve=solve_grid_to_ground,
+    Probe(id=GG2_ID, prompt=GG2_PROMPT, vague=GG2_VAGUE, check=check_grid_to_ground,
+          solve=solve_grid_to_ground,
           start=GG2_START, tags=["survey", "grid-ground", "cfl"],
           note="The other way round from p03-grid-ground-wfl20: the drawing is project ground "
                "(CFL Plan 1's set moved so 10+00 is on the lettered BEGIN PROJECT "
@@ -1108,7 +1201,8 @@ PROBES: List[Probe] = [
                "Plotted as given they are 0.10-0.51 ft short of the ends (toward CP-1); "
                "multiplied by the factor 0.21-1.02 ft; scaled about N 0, E 0 over 1,000 ft "
                "off. All fail the 0.05 ft tolerance."),
-    Probe(id=IF2_ID, prompt=IF2_PROMPT, check=check_intl_drawing, solve=solve_intl_drawing,
+    Probe(id=IF2_ID, prompt=IF2_PROMPT, vague=IF2_VAGUE, check=check_intl_drawing,
+          solve=solve_intl_drawing,
           start=IF2_START, tags=["survey", "units", "wfl"],
           note="The mirror of p03-intl-feet-ppm047: the drawing is international feet (WFL "
                "D.6's set moved onto Montana State Plane magnitudes, sheet centre E 928,412 "

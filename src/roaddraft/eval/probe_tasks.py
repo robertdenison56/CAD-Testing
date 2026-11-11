@@ -103,14 +103,22 @@ def task_type(probe: Probe) -> str:
     return "pilot-" + FAMILIES.get(family(probe), family(probe))
 
 
-def brief_text(probe: Probe) -> str:
-    """The task text, exactly as the probe runner sends it."""
-    return prompting.task_text(probe)
+def brief_text(probe: Probe, level: str = "explicit") -> str:
+    """The task text at prompt ``level``, exactly as the probe runner sends it."""
+    return prompting.task_text(probe, level)
 
 
-def task_id(probe: Probe) -> str:
-    h = hashlib.sha256(brief_text(probe).encode("utf-8")).hexdigest()[:10]
+def task_id(probe: Probe, level: str = "explicit") -> str:
+    """``PR-<probe id>-<hash of its task text at level>``: the explicit id is the one every
+    run before 2026-11-08 ran under; a vague task is its own id (its own text), so a vague
+    run is held to the vague texts as an explicit run is to the explicit ones."""
+    h = hashlib.sha256(brief_text(probe, level).encode("utf-8")).hexdigest()[:10]
     return f"{ID_PREFIX}{probe.id}-{h}"
+
+
+def levels_of(probe: Probe) -> Tuple[str, ...]:
+    """The prompt levels ``probe`` can be posed at."""
+    return ("explicit", "vague") if probe.vague else ("explicit",)
 
 
 def attachments_arg(probe: Probe, project: Path) -> Optional[str]:
@@ -143,10 +151,11 @@ def generator_version(probes: Optional[Sequence[Probe]] = None) -> str:
     return "probe-" + h.hexdigest()[:12]
 
 
-def current_ids(probes: Optional[Sequence[Probe]] = None) -> FrozenSet[str]:
-    """The task ids of the current set.  An id carries the hash of its task
-    text, so a run whose ids are all here ran on texts the set still has."""
-    return frozenset(task_id(p) for p in (probes if probes is not None else pilots()))
+def current_ids(probes: Optional[Sequence[Probe]] = None, level: str = "explicit") -> FrozenSet[str]:
+    """The task ids of the current set at prompt ``level``.  An id carries the hash of its
+    task text, so a run whose ids are all here ran on texts the set still has."""
+    return frozenset(task_id(p, level) for p in (probes if probes is not None else pilots())
+                     if level in levels_of(p))
 
 
 def check_sources() -> List[Path]:
@@ -172,7 +181,8 @@ def entry(probe: Probe) -> dict:
     """A task-set manifest entry."""
     return {"probe": probe.id, "family": family(probe), "task_type": task_type(probe),
             "start": probe.start, "sheets": 1,
-            "attachments": "--attachments" in probe.server_args, "task_id": task_id(probe)}
+            "attachments": "--attachments" in probe.server_args, "task_id": task_id(probe),
+            "vague_task_id": task_id(probe, "vague") if probe.vague else None}
 
 
 @dataclass
@@ -182,20 +192,23 @@ class ProbeTask:
     task_id: str
     task_type: str
     brief: str
+    level: str = "explicit"
 
     @property
     def files(self):  # the project is built by the probe's fixture, not shipped
         return None
 
 
-def task_from_entry(row: dict, strict: bool = True) -> ProbeTask:
+def task_from_entry(row: dict, strict: bool = True, level: str = "explicit") -> ProbeTask:
+    """The probe task a manifest row names, posed at prompt ``level``."""
     probe = by_id(row["probe"])
-    tid = task_id(probe)
-    if strict and tid != row["task_id"]:
-        raise ValueError(f"task id of probe {probe.id} is {tid}, the manifest says "
-                         f"{row['task_id']}: its task text changed; python -m roaddraft.eval "
+    tid = task_id(probe, level)
+    want = row.get("vague_task_id") if level == "vague" else row["task_id"]
+    if strict and tid != want:
+        raise ValueError(f"{level} task id of probe {probe.id} is {tid}, the manifest says "
+                         f"{want}: its task text changed; python -m roaddraft.eval "
                          "taskset --write")
-    return ProbeTask(probe, tid, task_type(probe), brief_text(probe))
+    return ProbeTask(probe, tid, task_type(probe), brief_text(probe, level), level)
 
 
 # ------------------------------------------------------------- the server
@@ -298,15 +311,16 @@ class ProbeReport:
                 "findings": []}
 
 
-def grade(probe: Probe, project: Path, touched: bool = True) -> ProbeReport:
-    """The probe's check on the document ``project`` holds, against its start
-    built fresh; an episode that made no engine call fails, as on Track P."""
+def grade(probe: Probe, project: Path, touched: bool = True, level: str = "explicit") -> ProbeReport:
+    """The probe's check at prompt ``level`` (``Probe.check_at``) on the document
+    ``project`` holds, against its start built fresh; an episode that made no
+    engine call fails, as on Track P."""
     with tempfile.TemporaryDirectory(prefix="roaddraft-probe-start-") as tmp:
         start = Path(fixture.start_document(Path(tmp), probe.start))
         baseline = Session.load(start, out_dir=Path(tmp))
         submitted = Session.load(Path(project) / fixture.START[probe.start],
                                  out_dir=Path(project).parent / "renders")
-        result: Result = probe.check(baseline, submitted)
+        result: Result = probe.check_at(level)(baseline, submitted)
     passed = bool(result.passed) and touched
     # an episode that changed nothing did none of the items, whatever the start
     # already satisfies (a clean control's "no false alarms")
@@ -351,7 +365,8 @@ def rescore(episode_file, journal: dict) -> dict:
                 if (src / rel).is_file():
                     (project / rel).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(src / rel, project / rel)
-        return grade(probe, project, bool(journal.get("touched", True))).to_dict()
+        return grade(probe, project, bool(journal.get("touched", True)),
+                     journal.get("level", "explicit")).to_dict()
 
 
 # ---------------------------------------------------------------- episode
@@ -371,6 +386,10 @@ class ProbeEpisode(Episode):
 
     def __init__(self, task: ProbeTask, agent: Agent, config: EpisodeConfig = EpisodeConfig(),
                  out_root=None, pins: Optional[dict] = None):
+        if task.level != config.level:
+            raise ValueError(f"probe task {task.task_id} is posed at the {task.level} level, the "
+                             f"episode runs at {config.level}: build it with "
+                             "task_from_entry(row, level=...)")
         self.task = task
         self.probe = task.probe
         self.agent = agent
@@ -512,7 +531,7 @@ class ProbeEpisode(Episode):
                 return _error(name, "budget_exhausted",
                               f"run_check has been used {self.state.run_check_uses} times, its budget")
             self.state.note_check()
-            report = grade(self.probe, self.project, self.engine_calls > 0)
+            report = grade(self.probe, self.project, self.engine_calls > 0, self.config.level)
             done, asked = report.scope
             return {"ok": True, "name": name, "status": "pass" if report.passed else "fail",
                     "items_done": done, "items_asked": asked,
@@ -524,7 +543,7 @@ class ProbeEpisode(Episode):
 
     def finish(self) -> Tuple[ProbeReport, List[dict]]:
         touched = self.engine_calls > 0
-        report = grade(self.probe, self.project, touched)
+        report = grade(self.probe, self.project, touched, self.config.level)
         kept, rel = [], None
         if self.path is not None:
             dest = Path(self.out_root) / "projects" / Path(self.path).stem
@@ -533,6 +552,7 @@ class ProbeEpisode(Episode):
             kept = keep(self.project, self.probe, dest)
             rel = Path("..") / "projects" / Path(self.path).stem
         journal = {"type": "journal", "probe": self.probe.id, "start": self.probe.start,
+                   "level": self.config.level,
                    "document_name": fixture.START[self.probe.start], "touched": touched,
                    "project": rel.as_posix() if rel else None, "kept_files": kept}
         records = [journal, {"type": "verify", **report.to_dict()},
@@ -617,6 +637,6 @@ class ProbeOracleAgent(_QueueAgent):
 
 __all__ = ["PILOT_SET", "FAMILIES", "BUDGETS", "ProbeTask", "ProbeReport", "ProbeEpisode",
            "ProbeOracleAgent", "EpisodeServer", "pilots", "by_id", "entry", "task_id",
-           "task_type", "brief_text", "generator_version", "current_ids", "check_sources",
+           "task_type", "brief_text", "levels_of", "generator_version", "current_ids", "check_sources",
            "check_version", "task_from_entry", "grade",
            "rescore", "keep", "oracle_calls", "system_prompt"]

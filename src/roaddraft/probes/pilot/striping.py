@@ -80,6 +80,19 @@ yellow from PVC to PVT (121+50 to 125+50) both ways; the right zone with the
 solid line on the wrong side; zones from stopping-sight-distance heights
 (3.5-ft eye, 2.0-ft object).
 
+The vague level (``Probe.vague``, 2026-11-08) keeps the job and its data -- the
+line, range and sheet, two lanes of 12 ft, the profile and speed, the clear
+horizontal sight lines, what the profile covers -- and how the work is read
+(stripe centers, real stripes, model space), and says "per the MUTCD" for the
+rest. The MUTCD's own values stay the standard (Table 3B-1, the 3.5-ft heights,
+zones exactly where the sight distance falls short, joined under 400 ft, the
+solid on the restricted traffic's side), so ``vague_check`` grades the zones as
+``check`` does; it reads only what the explicit brief fixed beyond the MUTCD
+over the range the MUTCD allows: each stripe of a pair 0.20 to 0.60 ft off the
+centerline, broken lines of 10-ft stripes and 30-ft gaps or a similar ratio
+(12/36), edge lines within 0.35 ft of 12 ft. Neither level grades layers or
+colours.
+
 Four more instances (2026-11), each on another stretch or profile, so no
 answer is a copy of the D.6/D.7 crest:
 
@@ -135,6 +148,20 @@ SOLID_MIN = 15.0            # a merged piece longer than this is a solid line
 DASH, GAP = 10.0, 30.0
 DASH_TOL, GAP_TOL = 0.5, 1.0
 MERGE = 0.5                 # ft: pieces this close in one band are one mark
+
+# The vague level states none of the marking pattern, only "per the MUTCD", so what the
+# explicit brief fixed beyond the MUTCD is read over the range the MUTCD allows (2009,
+# Section 3A.06): a double line is two normal lines (4 to 6 in) "separated by a discernible
+# space", so each stripe of a pair may sit from 0.20 ft (4-in lines 0.8 in apart) to 0.60 ft
+# (6-in lines 8 in apart) off the centerline; broken lines "should consist of 10-foot line
+# segments and 30-foot gaps, or dimensions in a similar ratio", so a stripe of 10 ft up to
+# SOLID_MIN with gaps three times it (within RATIO_TOL); the edge lines bound 12-ft lanes, so
+# an edge line's center may sit up to 0.35 ft off 12 ft (a 6-in line inside or outside the
+# lane edge). The zones themselves are the MUTCD's own (Table 3B-1, Section 3B.02) and are
+# graded the same at both levels.
+PAIR_SPAN = (0.20, 0.60)
+EDGE_TOL_VAGUE = 0.35
+RATIO, RATIO_TOL = GAP / DASH, 0.3
 
 #: MAIN 01, pieced together from WFL sheets D.5-D.12 (display stations)
 MAIN01_PVIS = ((10400.0, 6280.87), (11100.0, 6266.87, 150.0), (11610.0, 6255.14, 400.0),
@@ -377,7 +404,19 @@ def _points(e) -> List[List[float]]:
 BANDS = {"center": 0.0, "right": PAIR, "left": -PAIR, "edge-right": EDGE, "edge-left": -EDGE}
 
 
-def _band(offsets: Sequence[float]) -> Optional[str]:
+def _band(offsets: Sequence[float], lenient: bool = False) -> Optional[str]:
+    if lenient:   # the vague level: the offsets the MUTCD allows (PAIR_SPAN, EDGE_TOL_VAGUE)
+        for name, at in BANDS.items():
+            if name == "center":
+                fits = all(abs(o) <= BAND_TOL["center"] for o in offsets)
+            elif name.startswith("edge"):
+                fits = all(abs(o - at) <= EDGE_TOL_VAGUE for o in offsets)
+            else:
+                side = 1.0 if at > 0 else -1.0
+                fits = all(PAIR_SPAN[0] <= side * o <= PAIR_SPAN[1] for o in offsets)
+            if fits:
+                return name
+        return None
     for name, at in BANDS.items():
         tol = BAND_TOL["edge" if name.startswith("edge") else "pair" if at else "center"]
         if all(abs(o - at) <= tol for o in offsets):
@@ -397,8 +436,9 @@ class Marks:
         return [m for m in self.bands.get(band, []) if m[1] - m[0] <= SOLID_MIN]
 
 
-def read_marks(job: Job, baseline: Session, submitted: Session) -> Marks:
-    """The striping the submission added, as station intervals per band."""
+def read_marks(job: Job, baseline: Session, submitted: Session, lenient: bool = False) -> Marks:
+    """The striping the submission added, as station intervals per band (``lenient``: the
+    bands the MUTCD allows, for the vague level)."""
     align = baseline.doc.design.alignments[job.alignment]
     before = set(baseline.doc.model_entities)
     raw: Dict[str, List[Interval]] = {b: [] for b in BANDS}
@@ -416,7 +456,7 @@ def read_marks(job: Job, baseline: Session, submitted: Session) -> Marks:
             offs.append(r["offset"])
         if not sts or max(sts) < job.ra or min(sts) > job.rb:
             continue
-        band = _band(offs)
+        band = _band(offs, lenient)
         if band is None:
             if any(abs(o) <= 0.8 for o in offs):
                 strays.append((eid, min(sts)))
@@ -459,22 +499,52 @@ def _zone_problem(drawn: List[Interval], want: Sequence[Interval], who: str, job
     return None
 
 
-def _dash_problem(dashes: List[Interval], lo: float, hi: float, what: str) -> Optional[str]:
+def _dash_problem(dashes: List[Interval], lo: float, hi: float, what: str,
+                  lenient: bool = False) -> Optional[str]:
     if hi - lo < DASH + GAP + 5.0:
         return None
     ds = [d for d in dashes if d[1] > lo and d[0] < hi]
     if not ds:
         return f"no broken line on {what} from {_sta(lo)} to {_sta(hi)}"
     inner = [d for d in ds if d[0] >= lo - 1e-6 and d[1] <= hi + 1e-6]
+    problem = None
     for d in inner:
         if abs((d[1] - d[0]) - DASH) > DASH_TOL:
-            return (f"a {d[1] - d[0]:.1f} ft stripe at {_sta(d[0])} on {what} "
-                    f"({DASH:.0f}-ft stripes, {GAP:.0f}-ft gaps)")
+            problem = (f"a {d[1] - d[0]:.1f} ft stripe at {_sta(d[0])} on {what} "
+                       f"({DASH:.0f}-ft stripes, {GAP:.0f}-ft gaps)")
+            break
     for p, q in zip(inner, inner[1:]):
-        if abs((q[0] - p[1]) - GAP) > GAP_TOL:
-            return (f"a {q[0] - p[1]:.1f} ft gap at {_sta(p[1])} on {what} "
-                    f"({DASH:.0f}-ft stripes, {GAP:.0f}-ft gaps)")
-    if ds[0][0] - lo > DASH + GAP or hi - ds[-1][1] > DASH + GAP:
+        if problem is None and abs((q[0] - p[1]) - GAP) > GAP_TOL:
+            problem = (f"a {q[0] - p[1]:.1f} ft gap at {_sta(p[1])} on {what} "
+                       f"({DASH:.0f}-ft stripes, {GAP:.0f}-ft gaps)")
+            break
+    if problem is None and (ds[0][0] - lo > DASH + GAP or hi - ds[-1][1] > DASH + GAP):
+        problem = (f"the broken line on {what} runs {_sta(ds[0][0])} to {_sta(ds[-1][1])}, "
+                   f"short of {_sta(lo)} to {_sta(hi)}")
+    if problem is not None and lenient:
+        return _ratio_problem(ds, inner, lo, hi, what)
+    return problem
+
+
+def _ratio_problem(ds: List[Interval], inner: List[Interval], lo: float, hi: float, what: str
+                   ) -> Optional[str]:
+    """A broken line read the way the MUTCD allows it (the vague level): one stripe length
+    from 10 ft to SOLID_MIN and one gap three times it, kept the length of the region."""
+    stripes = sorted(b - a for a, b in inner)
+    gaps = sorted(q[0] - p[1] for p, q in zip(inner, inner[1:]))
+    stripe = stripes[len(stripes) // 2] if stripes else DASH
+    gap = gaps[len(gaps) // 2] if gaps else RATIO * stripe
+    if not (DASH - DASH_TOL <= stripe <= SOLID_MIN and abs(gap / stripe - RATIO) <= RATIO_TOL):
+        return (f"the broken line on {what} is {stripe:.1f}-ft stripes with {gap:.1f}-ft gaps; "
+                f"the MUTCD's is {DASH:.0f}-ft stripes with {GAP:.0f}-ft gaps, or a similar ratio")
+    for d in inner:
+        if abs((d[1] - d[0]) - stripe) > DASH_TOL:
+            return (f"a {d[1] - d[0]:.1f} ft stripe at {_sta(d[0])} on {what}, among "
+                    f"{stripe:.1f}-ft stripes")
+    for p, q in zip(inner, inner[1:]):
+        if abs((q[0] - p[1]) - gap) > GAP_TOL:
+            return f"a {q[0] - p[1]:.1f} ft gap at {_sta(p[1])} on {what}, among {gap:.1f}-ft gaps"
+    if ds[0][0] - lo > stripe + gap or hi - ds[-1][1] > stripe + gap:
         return (f"the broken line on {what} runs {_sta(ds[0][0])} to {_sta(ds[-1][1])}, "
                 f"short of {_sta(lo)} to {_sta(hi)}")
     return None
@@ -488,10 +558,13 @@ def _overlap(marks: Sequence[Interval], regions: Sequence[Interval]) -> Optional
     return None
 
 
-def make_check(job: Job):
+def make_check(job: Job, lenient: bool = False):
+    """The check of ``job``; ``lenient`` is the vague level's, which reads the pair offsets,
+    the edge line offsets and the broken-line pattern over the range the MUTCD allows (see
+    PAIR_SPAN) and grades the zones exactly as the explicit level does."""
     def check(baseline: Session, submitted: Session) -> Result:
         up, down = truth(job)
-        marks = read_marks(job, baseline, submitted)
+        marks = read_marks(job, baseline, submitted, lenient)
         rng = [(job.ra, job.rb)]
         t = Tally()
 
@@ -515,7 +588,7 @@ def make_check(job: Job):
         problem = None
         for lo, hi in _shrink(passing, ZONE_TOL, job.ra, job.rb):
             problem = problem or _dash_problem(marks.dashes("center"), lo, hi,
-                                               "the centerline (passing both ways)")
+                                               "the centerline (passing both ways)", lenient)
         t.add("broken centerline where passing is allowed", problem)
 
         problem = None
@@ -523,7 +596,7 @@ def make_check(job: Job):
             for lo, hi in _shrink(_minus(zone_set, other), ZONE_TOL, job.ra, job.rb):
                 problem = problem or _dash_problem(
                     marks.dashes(band), lo, hi,
-                    f"the {band} stripe beside the one-direction zone")
+                    f"the {band} stripe beside the one-direction zone", lenient)
         t.add("broken stripe beside each one-direction zone", problem)
 
         problem = None
@@ -543,8 +616,9 @@ def make_check(job: Job):
                            f"where both directions may pass (one broken centerline there)")
         if problem is None and marks.strays:
             eid, at = marks.strays[0]
+            off = f"{PAIR_SPAN[0]:.2f} to {PAIR_SPAN[1]:.2f}" if lenient else f"{PAIR}"
             problem = (f"{eid} near the centerline at {_sta(at)} is not on the centerline or "
-                       f"{PAIR} ft off it, so it reads as no stripe")
+                       f"{off} ft off it, so it reads as no stripe")
         t.add("nothing in the wrong zone", problem)
 
         zs = "; ".join(f"{who} {_sta(a)} to {_sta(b)}" for who, xs in (("up-station", up),
@@ -638,6 +712,21 @@ def _prompt(job: Job) -> str:
         f"minimum length; join zones less than 400 ft apart).")
 
 
+def _vague(job: Job) -> str:
+    """The vague brief: the job and its data (the line, range and sheet, the lanes, the
+    profile, the speed, the clear horizontal sight lines, what the profile covers) and how
+    the work is read (stripe centers, real stripes, model space), but not the marking
+    pattern, its offsets and colours, or the MUTCD's sections and tables: "per the MUTCD"."""
+    return (
+        f"Stripe {job.alignment} from {short_station(job.ra)} to {short_station(job.rb)} (sheet "
+        f"{job.sheet}) per the MUTCD, centerline and edge lines, in model space. It is a "
+        f"two-lane road with {EDGE:.0f}-ft lanes. Place the no-passing zones from the passing "
+        f"sight distance on the design profile {job.profile} for an 85th-percentile speed of "
+        f"{job.mph} mph; the horizontal sight lines are clear, so the profile governs, and "
+        f"{job.extent}. Draw every stripe as a line along its center, the broken lines as "
+        f"their actual stripes, not a linetype.")
+
+
 def _register(job: Job) -> str:
     desc = f"[STRIPING - {_sta(job.ra)} TO {_sta(job.rb)}]"
     return common.register(job.start, job.sheet_file,
@@ -649,7 +738,8 @@ def _register(job: Job) -> str:
 def _probe(job: Job, note: str) -> Probe:
     return Probe(id=job.id, prompt=_prompt(job), check=make_check(job),
                  solve=lambda session, job=job: solve_job(job, session),
-                 note=note, tags=["pilot-13", "striping", "sight-distance"], start=job.start)
+                 note=note, tags=["pilot-13", "striping", "sight-distance"], start=job.start,
+                 vague=_vague(job), vague_check=make_check(job, lenient=True))
 
 
 for _job in JOBS:

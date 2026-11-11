@@ -117,6 +117,13 @@ The items:
     AA01 and all of BB01 stay as they were. The callouts' own leaders may
     be redrawn.
 
+At the vague prompt level (``VAGUE``) the brief names the sheet, the base file and
+its reference, says the alignment data stays anchored, and gives the revision's
+initials and date, but not where the revision goes; its check (``make_check(inst,
+"vague")``) grades the same items and takes a revision note that quotes the
+redline's words beside RD and the date as the record on every sheet (item 10
+allows it only where the brief asks for a note).
+
 Naive wrong answers this catches (``tests/test_pilot_redlines.py``):
 changing the design and nothing else (stale lettering: D1-04/05/06 fail);
 re-lettering on the sheet without changing AA01 (the design item fails); and,
@@ -1184,7 +1191,11 @@ def _revision_problem(baseline: Session, submitted: Session, inst: Redline) -> O
     return f"no revision recorded on {inst.sheet} (REVISED BY RD, DATE REVISED 10-19-26)"
 
 
-def _redline_problem(submitted: Session, inst: Redline) -> Optional[str]:
+def _redline_problem(submitted: Session, inst: Redline, revision_note: bool = False) -> Optional[str]:
+    """The markup off the drawing. ``revision_note``: a revision note that quotes
+    the redline's words beside RD and the date is a record of the revision, not the
+    redline left, on any sheet (the vague level, whose brief does not say where the
+    revision goes); otherwise only where the brief asks for a note (``inst.revision``)."""
     spaces = [("model", submitted.doc.model_entities)] + [
         (s.name, s.entities) for s in submitted.doc.sheets.values()]
     for where, ents in spaces:
@@ -1194,7 +1205,8 @@ def _redline_problem(submitted: Session, inst: Redline) -> Optional[str]:
     note = _norm(inst.note[0])
     for _i, content in _all_texts(submitted):
         if note in _norm(content):
-            if inst.revision == "note" and INITIALS_RE.search(_norm(content)) and _dated(content):
+            if (inst.revision == "note" or revision_note) and INITIALS_RE.search(_norm(content)) \
+                    and _dated(content):
                 continue   # the revision note asked for may say what was revised
             return f"the redline note is still on the drawing: {_quote(content)}"
     return None
@@ -1210,7 +1222,13 @@ def _design_item(inst: Redline) -> str:
     return f"{name} restationed {inst.value:+.2f} ft in {inst.design_ref}"
 
 
-def make_check(inst: Redline):
+def make_check(inst: Redline, level: str = "explicit"):
+    """The check at prompt ``level``. The vague brief asks for the revision to be
+    recorded without saying where, so at ``vague`` a revision note that quotes the
+    redline's words (with RD and the date) is the record on every sheet, as it is on
+    the sheets whose brief asks for a note; everything else is graded the same."""
+    vague = level == "vague"
+
     def check(baseline: Session, submitted: Session) -> Result:
         tally = Tally()
         sheet_b = _sheet(baseline, inst.sheet)
@@ -1268,7 +1286,7 @@ def make_check(inst: Redline):
                       _callout_problem(inst, c, submitted, revised))
 
         # 10-12
-        tally.add("the redline markup removed", _redline_problem(submitted, inst))
+        tally.add("the redline markup removed", _redline_problem(submitted, inst, revision_note=vague))
         tally.add("the revision recorded (RD, 10-19-26)", _revision_problem(baseline, submitted, inst))
         skip = lettering | redline | {c.id for c in callouts} | _leader_ids(baseline, inst, callouts)
         tally.add("nothing unrelated changed", _unchanged_problem(baseline, submitted, inst, skip))
@@ -1440,6 +1458,15 @@ PROMPTS["note"] = PROMPTS["radius"].replace(
     "Record the revision in the border's revision block (revised by {by}, {on})",
     "Record the revision in a revision note on the sheet, since its border has no revision "
     "block (revised by {by}, {on}),")
+#: the vague brief (2026-11-08): the request as a PE hands it over. It keeps what the drafter
+#: cannot know (the sheet, where the line lives and how it is attached, the revision's who and
+#: when) and the benchmark's instrument rule that the alignment data stays anchored (the E1
+#: verifier credits anchored lettering only); it leaves out what picking up a redline means
+#: (change the design, bring the sheet up to date), the labelers and where the revision goes
+VAGUE = ("Sheet {sheet} came back from checking with a redline, in red on layer REDLINE. Pick it "
+         "up: the \"{name}\" line lives in the base file {design}, attached as {ref}, and the "
+         "alignment data on the sheet is anchored to it through {ref}; keep it anchored. Record "
+         "the revision ({by}, {on}), take the redline off, and leave everything else as it is.")
 
 NOTES = {
     "radius": (
@@ -1587,11 +1614,13 @@ def _probe(inst: Redline) -> Probe:
     template = PROMPTS[key]
     if inst.sheet.isdigit():   # FDOT's sheet "1": "everything on sheet 1"
         template = template.replace("everything on {sheet}", "everything on sheet {sheet}")
-    prompt = template.format(sheet=inst.sheet, name=inst.alignment, design=inst.design_file,
-                                 ref=inst.design_ref, by=REVISED_BY, on=REVISED_ON)
+    words = dict(sheet=inst.sheet, name=inst.alignment, design=inst.design_file,
+                 ref=inst.design_ref, by=REVISED_BY, on=REVISED_ON)
+    prompt = template.format(**words)
     return Probe(id=inst.id, prompt=prompt, check=make_check(inst), solve=make_solve(inst),
                  note=NOTES.get(inst.id) or NOTES[inst.kind],
-                 tags=["redline", "edit", inst.agency, "base-file", inst.kind], start=inst.id)
+                 tags=["redline", "edit", inst.agency, "base-file", inst.kind], start=inst.id,
+                 vague=VAGUE.format(**words), vague_check=make_check(inst, "vague"))
 
 
 PROBES: List[Probe] = [_probe(i) for i in INSTANCES]
