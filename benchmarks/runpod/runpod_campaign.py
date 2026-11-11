@@ -75,8 +75,10 @@ PIN = "2658fa0"                      # 2026-10-19: main a1c0038 + 89f7a13 (eval 
 # 4dff2849, harness e3-v3, as queue 10 and the codex queue. f6725cbb (2026-11-09) = 9f7c02bb + the vague-pilot
 # patch the local and CLI pilot queues run from (results/e3-lms/vague-pilots.patch) and report.py reading a cost
 # subset at the run's prompt level.
+# ad6bf5e3 (2026-11-10) = f6725cbb + Kimi K2.6's price row + a hard-pilots run on the text pilots alone is text only, not partial, and
+# --subset takes --task for part of the subset (a text-only model's cost5 run); the first queue ran at f6725cbb.
 TRACKD_WORKTREE = REPO / ".claude" / "worktrees" / "runpod-trackd"
-TRACKD_PIN: Optional[str] = "f6725cbb"
+TRACKD_PIN: Optional[str] = "ad6bf5e3"
 PILOT_SET = REPO / "benchmarks" / "tasksets" / "hard-pilots.json"
 PYTHON = REPO / ".venv" / "bin" / "python"
 CAMPAIGN = REPO / "benchmarks" / "probe_runs" / "2026-10-17-k3"
@@ -478,21 +480,27 @@ def cmd_e3(args) -> int:
         sys.exit(f"{args.name}: its Track D row runs on RobertsPC ({local_row(m)}); the Runpod spread does not "
                  f"duplicate it (Robert, 2026-10-28). --force runs a Runpod row of it anyway.")
     subset = getattr(args, "subset", None)
+    pilots = getattr(args, "pilots", "all")
+    if args.taskset == "hard-pilots" and m.get("vision") is False and pilots == "all":
+        pilots = "text"   # a text-only model: the text pilots; the board marks the row "text only" (2026-11-10)
     run_id = args.run_id or (f"e3-{args.taskset}-{args.name}-{args.mode}" + ("-vague" if args.level == "vague" else "")
-                             + (f"-{subset}" if subset else "") + "-v3")
+                             + (f"-{subset}" if subset else "")
+                             + ("-text" if args.taskset == "hard-pilots" and pilots == "text" else "") + "-v3")
     cmd = [str(PYTHON), "-m", "roaddraft.eval", "run", "--taskset", args.taskset,
            "--model", m["model"], "--provider", "openai", "--base-url", route(m), "--api-key-env", "RUNPOD_API_KEY",
            "--out", str(E3_OUT), "--run-id", run_id, "--mode", args.mode, "--level", args.level,
            "--samples", str(args.samples), "--concurrency", str(args.concurrency)]
     if args.limit:
         cmd += ["--limit", str(args.limit)]
-    pilots = getattr(args, "pilots", "all")
     if subset:   # a cost subset (eval/subsets.py): the board ranks it, tagged partial to save cost
-        if args.limit or pilots != "all":
-            sys.exit("--subset takes the subset's tasks; it does not combine with --limit or --pilots")
+        if args.limit:
+            sys.exit("--subset takes the subset's tasks; it does not combine with --limit")
         cmd += ["--subset", subset]
     if args.taskset == "hard-pilots" and pilots != "all":
-        cmd += [x for i in pilot_ids(pilots) for x in ("--task", i)]
+        ids = pilot_ids(pilots)
+        if subset:   # the subset's pilots of that kind (the board marks a text-pilots run "text only")
+            ids = [i for i in subset_task_ids(args.taskset, subset) if i in set(ids)]
+        cmd += [x for i in ids for x in ("--task", i)]
     if m.get("extra_body"):
         cmd += ["--extra-body", json.dumps(m["extra_body"])]
     if m.get("send_reasoning"):   # gpt-oss: harmony wants a tool turn's reasoning back (the probe runner's flag)
@@ -519,6 +527,15 @@ def cmd_e3(args) -> int:
     print(f"exit {rc}; report with: PYTHONPATH={TRACKD_WORKTREE / 'src'} {PYTHON} -m roaddraft.eval report "
           f"{E3_OUT / run_id}")
     return rc
+
+
+def subset_task_ids(taskset: str, tag: str) -> List[str]:
+    """A cost subset's task ids, in its order (benchmarks/tasksets/cost-subsets.json, as the harness reads it)."""
+    data = json.loads((REPO / "benchmarks" / "tasksets" / "cost-subsets.json").read_text())
+    one = (data.get("subsets") or {}).get(taskset)
+    if data.get("tag") != tag or not one:
+        sys.exit(f"no cost subset {tag!r} for {taskset}")
+    return list(one["task_ids"])
 
 
 def pilot_ids(kind: str) -> List[str]:

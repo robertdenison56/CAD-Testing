@@ -93,8 +93,8 @@ def cmd_run(args) -> int:
         options["strict"] = True
     task_ids = args.task or None
     if args.subset:
-        if args.task or args.limit:
-            print("run: --subset takes the subset's tasks; it does not combine with --task or --limit",
+        if args.limit:
+            print("run: --subset takes the subset's tasks; it does not combine with --limit",
                   file=sys.stderr)
             return 2
         from roaddraft.eval.subsets import subset_ids
@@ -103,6 +103,13 @@ def cmd_run(args) -> int:
         except ValueError as ex:
             print(f"run: {ex}", file=sys.stderr)
             return 2
+        if args.task:   # part of the subset (a text-only model's text pilots): the report says what it holds
+            stray = [t for t in args.task if t not in set(task_ids)]
+            if stray:
+                print(f"run: --task with --subset takes the subset's own tasks; not in {args.subset}: "
+                      f"{', '.join(stray[:5])}", file=sys.stderr)
+                return 2
+            task_ids = [t for t in task_ids if t in set(args.task)]
     spec = RunSpec(taskset=args.taskset,
                    agents=tuple(args.agent or ([] if models else ["oracle"])),
                    levels=tuple(args.level or ["explicit"]), modes=tuple(args.mode or ["single"]),
@@ -344,6 +351,30 @@ def cmd_standards(args) -> int:
     return 0
 
 
+def cmd_causes(args) -> int:
+    from roaddraft.eval import causes
+    rows = []
+    for rd in args.run_dirs:
+        run_dir = Path(rd)
+        explicit = None if args.no_pair else causes.find_explicit(run_dir)
+        s = causes.analyse(run_dir, explicit)
+        if not s["tasks"]:
+            print(f"{run_dir}: no finished episode", file=sys.stderr)
+            continue
+        if not args.no_write:
+            causes.write(s, run_dir / "report")
+        rows.append(s)
+        b = s["by_cause"]
+        print(f"{s['run_id']}: {s['tasks']} tasks, effective {s['effective_mean']:.1f}, lost {s['lost_per_task']:.1f}"
+              f" = standard {b['standard']:.1f}, tool use {b['tool_use']:.1f}, reasoning {b['reasoning']:.1f},"
+              f" budget {b['budget']:.1f}" + (f", unresolved {b['unresolved']:.1f}" if b["unresolved"] else "")
+              + (f"  [paired with {s['explicit_run_id']}]" if s["paired_tasks"] else ""))
+    if args.table and rows:
+        Path(args.table).write_text(causes.render_table(rows), encoding="utf-8")
+        print(f"-> {args.table}")
+    return 0 if rows else 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m roaddraft.eval",
                                      description="the RoadDraft evaluation harness")
@@ -447,6 +478,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--no-pair", action="store_true", help="split by finding code alone")
     p.add_argument("--out", help="where standards.md/.json go (default <run_dir>/report)")
     p.set_defaults(func=cmd_standards)
+
+    p = subs.add_parser("causes", help="every lost point of a run put down to one cause: a drafting "
+                                       "standard not known, tool use, reasoning, or budget")
+    p.add_argument("run_dirs", nargs="+", help="run folders, results/<run_id>")
+    p.add_argument("--no-pair", action="store_true",
+                   help="do not pair with the explicit run (every standard unconfirmed)")
+    p.add_argument("--no-write", action="store_true", help="print only; no report/causes.md")
+    p.add_argument("--table", help="also write one table of every run here (markdown)")
+    p.set_defaults(func=cmd_causes)
 
     args = parser.parse_args(argv)
     if not args.command:

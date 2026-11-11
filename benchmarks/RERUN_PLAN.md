@@ -61,6 +61,9 @@ pilot runs come from the worktree `vague-pilots`: 3b7e7fe9 with the vague-pilot 
 | Claude Sonnet 5.5 (claude-code) | rerun at v3 (added) | queued | queued | queued | added | `e3-claude-code/queue-2026-11-08-vague-claude-code.sh` |
 | Claude Opus 5.5 (claude-code) | queued | queued | queued | queued | added | same |
 | Qwen3.5-9B, Gemma 4 12B, GLM-4.6V-Flash (PC) | 9B running | queued | queued | queued | follow-on | `e3-lms/queue-2026-11-08-vague-local.sh`, then `...-vague-pilots-local.sh` |
+
+Nov 10 20:40: GLM dropped from the three hard sets (Robert); the PC's rest (Gemma d1-test-hard in flight, then the 9B
+and Gemma on d1-real-hard and hard-pilots) moved to `e3-lms/queue-2026-11-10-vague-hard-local.sh`; see `lmstudio/PLAN.md`.
 | Qwen3.6, Gemma 4 31B, GLM-5.3, gpt-oss-120b (Runpod) | set up | cost5 | Qwen3.6 cost5 | Qwen3.6 cost5 | Qwen3.6 cost5 (back) | `runpod/queue-trackd-v3.sh`, not launched (top-up + go) |
 
 The codex queue was paused by hand at 20:31 (SIGSTOP on its own processes): ChatGPT's weekly usage limit holds
@@ -134,12 +137,60 @@ stated. The largest single one is layer 0: every start document's current layer 
 `layer` lands there, and at the vague level the models leave `layer` off (Sonnet: 110 of 115 `place_label` calls in
 its layer-0 episodes) although 77 of the 89 start documents offer annotation layers; told the layer, they pass it.
 "Nothing is drafted on layer 0" is a CAD standard the vague prompt leaves to the drafter, so the verifier's lenient
-rule (any layer but 0) is working as written; whether the benchmark wants to test it is Robert's call. Next come
+rule (any layer but 0) is working as written. Robert, Nov 10: "The layer 0 standard must remain": it stays graded,
+and the start documents keep layer `0` current. Next come
 labels set over linework or each other (1.3-5.3 points, about half recovered when told) and elements left off:
 bearings, BC/EC and curve numbers, station ticks and numbers, title-block fields (0.5-3.3 each, mostly
 recovered when told). Wrong values and early ends are small (each 0-4 points). k = 1: per task the split is noisy, the
 set totals are the read. The report goes in each run's `report/standards.md`; run it on each vague run as it lands
 (the local hard sets have no explicit twin, so theirs split by finding code alone).
+
+### Why each model fails: the cause analysis, once the runs are complete
+
+Robert, Nov 10: "all failures should be analyzed once complete to determine if models were failing due not knowing
+the standards or failing the tool use, thinking, etc." When the last rows land (the local hard sets, then any Runpod
+queue 2 rows), every lost point and every failed episode on the vague board gets one cause:
+
+- **a standard not known**: the `standard` part of `eval standards`, split by its explicit twin where there is one
+  (recovered when told = the model did not know it);
+- **tool use**: invalid or erroring calls left unrecovered, labels typed by hand where a label command draws them,
+  a point computed by hand where the command takes the entity or anchor, the wrong command or label kind;
+- **reasoning**: a wrong value from right tool use, the wrong target, the brief or the sheet misread, a job stopped
+  short and submitted unfinished;
+- **budget or harness**: the step, time or context limit, an engine stall, a provider error (not the model's skill).
+
+Built Nov 10: `python -m roaddraft.eval causes RUN [RUN ...] --table benchmarks/runs/FAILURE_CAUSES.md`
+(`roaddraft.eval.causes`; the rules are in its docstring, 17 tests). It reads only the episode files: the
+verifier's findings, each call and what it made, and the start document's own entities (findings on those are
+left out). A standard counts as *confirmed* only when the same model's explicit run on the same harness and tool
+surface earned it back when told; one it lost even when told goes to reasoning. hard-pilots is pass or fail, so a
+failed pilot takes one cause. Each run's detail (sub-causes, task types, example tasks, the pilot items most
+often missed) is in its `report/causes.md`.
+
+**First pass, Nov 10, on the 35 published vague runs** (benchmarks/runs/FAILURE_CAUSES.md; points a task):
+
+- The frontier on the D1 sets loses almost only standards: d1-test Opus 4.3 of 4.5, Terra 6.4 of 7.2; d1-real
+  Terra 8.6 of 9.5. On the paired hard sets the confirmed standards are Opus 16.1 of 22.4 and Terra 14.8 of 27.9
+  (d1-real-hard), and Sonnet and Luna 28-33 of 45-57. Runpod's open-weight rows look the same on d1-test (Gemma 4
+  31B 17.4 of 19.9, Qwen3.6 21.7 of 23.7, GLM-5.3 32.1 of 33.5), but none has an explicit run, so unconfirmed.
+- The local three lose most to reasoning: d1-real the 9B 22.5 of 40.3 and Gemma 4 12B 24.0 of 41.0 (mostly
+  overlaps left even when told, and labels drawn where no sheet shows them or at the wrong place). GLM-4.6V-Flash
+  submits with nothing drawn on about a fifth of its tasks (19-22 points of reasoning) and loses 35-52 to tool use,
+  mostly tasks where every drawing call it made failed.
+- Tool use is mostly one hint: `annotate_stationing` refused a sheet and said "use place_label for sheet labels",
+  which has no tick kind, so the ticks were never drawn. It is 82 of the 93 tool-use points summed over the
+  hard-pilots runs and 36 of 50 on d1-test-hard. That refusal is fixed on main (4d135e7d: stationing is drawn in
+  model space, the hint says how), after the runs' pin 3b7e7fe9, so these rows measure the old hint. Terra's 11.6
+  on d1-real-hard is mostly the fault budget: the same failing call repeated (a layer it never created).
+- hard-pilots loses most to reasoning: a pilot failed even when told, with no tool fault (Opus 33.9 of 59.8,
+  Sonnet 56.3 of 75.9, Luna 75.0 of 97.3); the vague brief leaving out what a pilot needed is 12.5-15.2 for Opus,
+  Terra and Sonnet. Qwen3.6's 66 have no explicit run: 42.4 unresolved.
+
+Hand-checked on 7 episodes before this pass; three rules came from them (a submit with nothing drawn; text escaped
+wrong in a call, which is tool use; a curve table listing another sheet's curves, which is a standard). Open:
+Opus, Sonnet and Terra have no explicit run at the v3 pin on d1-test or d1-real, so those rows' standards are
+unconfirmed; a failed pilot's single cause is coarse (its missed items are in the run report); k = 1. Rerun the
+command, with its `--table`, as the local hard sets and any Runpod queue 2 rows land.
 
 ## What changed under the rows
 

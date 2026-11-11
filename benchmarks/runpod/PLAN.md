@@ -1,5 +1,78 @@
 # Plan: Track D on Runpod, the model tree (drafted 2026-10-28 evening)
 
+## The second queue: the large models, $120 in all (2026-11-10, SET UP, NOT run)
+
+Robert, Nov 10, after the first queue: "still want to use the 100 for model testing, plan out those models and
+runs". The first queue (`queue-trackd-v3.sh`, Nov 10 09:20-17:16) spent $28.62 for eight runs, none with an episode
+in error; $71.38 is left, $68 under the same $3 reserve. Every run below is vague, single, k = 1, pin ad6bf5e3 (the first queue ran at f6725cbb), d1-test
+whole and the other sets as `cost5`, as the first queue.
+
+What the first queue measured (balance read before and after each run), against the plan's estimates:
+
+| run | est. (mid) | billed | time |
+|---|---|---|---|
+| Qwen3.6 d1-test / d1-real cost5 | $5 / $4 | $1.46 / $0.88 | 23 / 14 min |
+| Qwen3.6 hard-pilots / d1-test-hard / d1-real-hard, cost5 | $9 / $4 / $3 | $12.28 / $2.04 / $0.59 | 214 / 32 / 11 min |
+| Gemma 4 31B d1-test / d1-real cost5 | $13 / $10 | $2.92 / $2.63 | 53 / 44 min |
+| GLM-5.3 d1-test (87% of input cached) | $25 | $4.31 | 27 min |
+
+So a d1 run costs a quarter of its estimate and hard-pilots is the one dear set ($12 for a 9.1). gpt-oss-120b did
+not run: its warm-up job sat 25 min in the queue with no worker (AMPERE_80 only, stock LOW on Nov 4 and Nov 10).
+
+**Redrawn the same day** (Robert: "i would like larger models on the test and hard pilots if possible"): the 27-31B
+rows and the hard D1 sets are out; the queue is the models past 100B on d1-test and hard-pilots. What is possible:
+
+| model | size | reads images | d1-test | hard-pilots cost5 |
+|---|---|---|---|---|
+| GLM-5.3 (public, per token) | 753B | no (text-generation; `vision: false`) | done, 66.5 | the 51 text pilots, marked text only: $22-30 |
+| gpt-oss-120b (`ioe4cjrhf39vp3`) | 117B | no | $4 (high 7) | the 51 text pilots, marked text only: $10-18 |
+| Qwen3.5-122B-A10B FP8 (`d1aaw4ddzlsghg`, H200 $6.99/h) | 125B | yes | $10-15 | no: the card leaves 9 GB of KV, one or two 65k streams, and 37 of Qwen3.6's 66 pilot episodes sent a prompt past 65k; about $100 at that pace |
+| Kimi K2.6 (public `moonshot-kimi`) | 1,027B | yes | $27 (no cached rate listed) | no: about $120 uncached (1.7 M input tokens an episode at $0.95) |
+
+Sizes and image support from the models' Hugging Face cards, Nov 10. The subset holds 15 image pilots of its 66, so a
+text-only model cannot fill it. Robert, Nov 10 (after a `--no-images` variant, built and withdrawn the same evening,
+in which the model attempted the image pilots without their page): "mark any hard pilots that are text only as such,
+do not move off the board", and, asked, "Skip the photo pilots". So: a `hard-pilots` run that holds every text pilot
+of its set or subset and none of the image pilots is no longer "partial, not scored"; it stays in its table, its row
+marked **text only (51 of 66 pilots)**, scored on its text pilots alone (`report.coverage` `text_only`; the board
+footer states the rule). A spec with `"vision": false` in `models.json` (GLM-5.3, gpt-oss-120b) runs the text pilots
+by default (`e3 --subset cost5` passes the subset's 51 text ids; run id `...-cost5-text-v3`). Worktree c195f63a,
+then ad6bf5e3 with Kimi's price row; `TRACKD_PIN` ad6bf5e3; the same changes uncommitted on main. No published run is text only today.
+
+Robert, Nov 10: "add kimi". Kimi K2.6 is in, on d1-test, second in the order:
+
+| order | model | runs | est. $ (mid, high) | set-up it needs first |
+|---|---|---|---|---|
+| 1 | gpt-oss-120b | smoke; d1-test | 4, 7 | add BLACKWELL_96 ($3.49/h, stock HIGH) beside AMPERE_80 (LOW; no worker in 25 min on Nov 10) |
+| 2 | Kimi K2.6 | smoke under a $5 cap; d1-test under a cost cap, only if the smoke projects under the cap | 27, 32 | a `models.json` spec (public, `moonshot-kimi`, model id read off the endpoint) and a `prices.json` row ($0.95 in, $4.00 out per M) |
+| 3 | GLM-5.3 | hard-pilots cost5, its 51 text pilots, under a cost cap | 25, 32 | none |
+| 4 | Qwen3.5-122B-A10B | smoke; d1-test at 65k context, concurrency 2 | 12, 18 | redeploy from the Hub (its REST-created endpoint never ran); rate in `models.json` is $5.93, now $6.99 |
+| 5 | gpt-oss-120b | hard-pilots cost5, its 51 text pilots (if its d1-test calls tools) | 14, 20 | as 1 |
+
+About $85 with the warm-ups and smokes. Robert, Nov 10: "Yes, raise to $120", so the queue has $91.38 ($120 less
+the first queue's $28.62), $88 under its $3 reserve, and all five rows fit at their mid estimates. Kimi's smoke also
+shows whether Runpod caches its input unlisted, which would cut its row to a few dollars.
+
+**Set up on Nov 10 (no cost; every endpoint read back parked at max 0 workers):**
+- gpt-oss-120b `ioe4cjrhf39vp3`: pools AMPERE_80 -> AMPERE_80 + BLACKWELL_96;
+- Qwen3.5-122B-A10B REDEPLOYED from the Hub as `8jlpbwp0bkjooj` (deploy-hub-repo, release v2.30.3, template
+  `vzneteh98d`; image set back to the ladder's `b7212acc6`, the exact CUDA 13.0 pin cleared for a 13.0 floor,
+  `MAX_MODEL_LEN` 65536, idle 600 s, HOPPER_141); the REST-created `d1aaw4ddzlsghg` never ran and is left parked for
+  Robert to delete, beside `7maayov2g1xjoi`;
+- Kimi K2.6: `models.json` spec `kimi-k2.6` (public `moonshot-kimi`, model id `kimi-k2.6` read off the route's
+  `/models`) and a `prices.json` row ($0.95 in, $4.00 out, a cached token priced as input until a bill says otherwise);
+- `queue-trackd-v4.sh`: the five rows in order, the first queue's balance guard at `BUDGET` 91, Kimi's projection
+  gate ($35 for 100 episodes) under `--cost-cap 40`, GLM-5.3's pilots under `--cost-cap 40`, the 122B's warm job given
+  50 minutes for its 125 GB and run at `--concurrency 2`, a warm job that meets no worker purged from its queue;
+- a `--dry-run` of each of the five runs passes the preflight at ad6bf5e3 (100, 100, 51, 100 and 51 episodes).
+
+Launch, after Robert's go:
+`nohup caffeinate -i zsh benchmarks/runpod/queue-trackd-v4.sh > results/e3-runpod/queue-trackd-v4.out 2>&1 &`
+
+Estimates: GLM-5.3 from $0.043 a d1-test episode scaled by input tokens (the text pilots sent 1.96 M an episode on
+Qwen3.6, against 0.30 M on d1-test); gpt-oss-120b from Qwen3.6's bill on the same sets (a like-sized active set on
+the same card); Qwen3.5-122B from Qwen3.6's d1-test episode-hours at twice the time and half the concurrency.
+
 ## The $100 plan (2026-11-04, supersedes set A below)
 
 Robert, Nov 4: "begin setting up the containers for runpod runs, select appropriate models and keep budget to $100
@@ -87,8 +160,9 @@ three and the frontier rows.
    9f7c02bb on the local branch `runpod-trackd-v3`, checked out at `.claude/worktrees/runpod-trackd` (pins read
    there: tools 0334fd4aaade, instructions 4dff2849, harness e3-v3, clean; 110 eval tests pass), `TRACKD_PIN`
    9f7c02bb. Not main's surface: the stationing help (4d135e7d) moves it to 9db020d9af1e and edits the prompt.
-2. Balance: $11.85 on Nov 4 (runpodctl user); about $90 more puts $100 behind the queue. The balance is the hard
-   stop as well as the guard.
+   Nov 9: the vague-pilot patch committed there as f6725cbb (841 eval and pilot tests pass), `TRACKD_PIN` f6725cbb.
+2. Balance: $161.85 on Nov 9 (runpodctl user; $11.85 on Nov 4), so the top-up is done and the queue's guard
+   ($97 spent), not the balance, is the stop.
 3. Launch: `nohup caffeinate -i zsh benchmarks/runpod/queue-trackd-v3.sh > results/e3-runpod/queue-trackd-v3.out 2>&1 &`
    (about 15-25 h, one endpoint at a time). Publish each row after a look, as the local ones.
 

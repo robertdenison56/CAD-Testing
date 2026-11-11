@@ -687,7 +687,22 @@ def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[s
                    subset_known=bool(target), subset_stale=sorted(target - now))
         now = target
     out.update(missing=sorted(now - run), foreign=sorted(run - now))
+    pages = image_ids(taskset) & now
+    if pages and set(out["missing"]) == pages:
+        # every text pilot and no image pilot: a text-only model's run (Robert, 2026-11-10: "mark any hard
+        # pilots that are text only as such, do not move off the board"); it ranks, marked, on its text pilots
+        out.update(missing=[], text_only={"tasks": len(now - pages), "of": len(now), "images_not_run": len(pages)})
     return out
+
+
+def image_ids(taskset: str) -> set:
+    """The ids, at either prompt level, of a probe set's tasks that come with a page (a scan, a marked-up
+    PDF): the pilots a text-only model cannot be given.  Empty for a set without any."""
+    from roaddraft.eval.taskset import is_probe, load
+    if not is_probe(taskset):
+        return set()
+    return {r[k] for r in load(taskset)["tasks"] if r.get("attachments")
+            for k in ("task_id", "vague_task_id") if r.get(k)}
 
 
 def _ids(ids: Sequence[str], limit: int = 6) -> str:
@@ -1282,16 +1297,21 @@ def board(summaries: Sequence[dict]) -> dict:
                                 for k, c in (g.get("by_group") or {}).items()}}
             kind = "reference" if g["key"].get("provider") == "harness" else "ranked"
             level = row_level(taskset, g["key"])
+            text = (s.get("coverage") or {}).get("text_only")
+            if text and kind == "ranked":   # marked, and kept on the board (Robert, 2026-11-10)
+                row["text_only"] = text
+                row["label"] += f" · text only ({text['tasks']} of {text['of']} pilots)"
             if sub:   # a cost-subset run: ranked in its own table, tagged (Robert, 2026-11-04)
                 if kind == "ranked":
-                    row["scored_as"] = f"subset run ({sub['tasks']} of {sub['set_size']})"
+                    row["scored_as"] = (f"subset run ({sub['tasks']} of {sub['set_size']})" if not text else
+                                        f"subset run, its {text['tasks']} text pilots (no image pilot run)")
                     per[taskset]["subset"].setdefault(level, {}).setdefault(sub["tag"], []).append(row)
                 continue
             if kind == "reference":   # the harness's own agents: one list, whatever the level
                 per[taskset]["reference"].append(row)
                 continue
             per[taskset]["ranked"].setdefault(level, []).append(row)
-            if g.get("task_means"):
+            if g.get("task_means") and not text:   # a text-only run lacks the subset's image pilots
                 full[taskset].setdefault(level, []).append((row, g))
 
     def one_ranking(name: str, level: Optional[str]) -> dict:
@@ -1586,7 +1606,10 @@ def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> 
               "exception is a cost-subset run (`benchmarks/tasksets/cost-subsets.json`: five tasks of each "
               "task type, Runpod runs only, to save cost), ranked in a table of its own under its set beside "
               "the full runs re-scored on the same tasks; it too is partial and not scored if it misses a "
-              "task of the subset or has an episode in error or unfinished.",
+              "task of the subset or has an episode in error or unfinished. A `hard-pilots` run that holds "
+              "every text pilot of its set or subset and none of the pilots that come with a page (a model "
+              "that takes no images) is not partial: it stays in its table, marked **text only**, scored on "
+              "its text pilots alone, which is not the same tasks as the rows beside it.",
               "", "Effective score: 0 on a hard fail, else the rubric score; per task over its "
               "samples, then over tasks; 95% CI a bootstrap over tasks within task type. Rows rank "
               "on the effective mean, then hard-fail rate, invalid-call rate and cost. Effort is the "

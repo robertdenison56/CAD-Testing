@@ -19,6 +19,15 @@ three more nights, hard-pilots vague for the 9B, Gemma and GLM (all 112, `--pilo
 vague-pilots (3b7e7fe9 + `results/e3-lms/vague-pilots.patch`). Explicit rows rank on their own board since then
 (`runs/LEADERBOARD_EXPLICIT.md`).
 
+**2026-11-10 20:40 PST: GLM dropped from the hard sets** (Robert: "drop GLM from the hard sets"). GLM-4.6V-Flash keeps
+its d1-test (25.2) and d1-real (13.6) vague rows; its d1-test-hard, d1-real-hard and hard-pilots vague runs are not run
+(about 70 of the ~180 PC hours left: the hard sets take 4-5x a plain set's episode time, and GLM's stall reloads about
+double its wall time). Both 11-08 queue shells were stopped by hand; Gemma's d1-test-hard run (16 of 100 then) was left
+running, and `results/e3-lms/queue-2026-11-10-vague-hard-local.sh` took over: it waits for that eval, resumes it if
+anything is left, then the 9B and Gemma on d1-real-hard (rerun-v3) and hard-pilots (vague-pilots), same functions,
+run ids unchanged, reports unpublished. Projection: Gemma d1-test-hard ~Nov 11 10:00, d1-real-hard both ~Nov 12 18:00,
+hard-pilots both ~Sun Nov 15, give or take a day.
+
 ## What is running right now
 
 **Nothing since 04:06 PDT on 2026-10-28: the Track D queue of Oct 27 is through** (`results/e3-lms/queue-2026-10-27.sh`,
