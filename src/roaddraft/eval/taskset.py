@@ -42,6 +42,14 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   sample sheet, the MCP server's tools, graded pass or fail by its own check.
   Ranked on its own board.  Too few instances per family to spare a dev split.
 
+- ``d1-train``, ``d1-train-hard`` (2026-11-10, ``RoadDraft_Training_Plan.md``):
+  the training sets, seeds 10000-11199 on ``d1-test``'s dials and seeds
+  12000-12299 on ``d1-test-hard``'s.  What a training set is built from:
+  reference trajectories, and rollouts sampled for rejection-sampling
+  fine-tuning.  Not in ``NAMES``: no board ranks them and the default
+  ``taskset`` check leaves them alone (name them to check or write them).
+  ``train_overlap`` is the tripwire between them and every eval set.
+
 The prompt level is a run dimension, not a task-set one.  A test regenerates
 each manifest and asserts identical task ids: a changed spec or generator
 fails it, which is the tripwire; ``python -m roaddraft.eval taskset --write``
@@ -101,6 +109,12 @@ HARD_SEEDS = range(2000, 2100)
 HARD_SEEDED_TYPES = tuple(sorted(("plan-sheet", "annotate-base") + tuple(HARD_TASK_TYPES)))
 HARD_CURVES = (3, 4, 5)
 HARD_SHEETS = (2, 3)
+#: the training sets (2026-11-10): seeded tasks on seeds no eval set draws, ``d1-train`` on
+#: ``d1-test``'s dials and ``d1-train-hard`` on ``d1-test-hard``'s.  Kept out of ``NAMES``:
+#: every set there is held out of training, and nothing here is ever run for a score.
+TRAIN_NAMES = ("d1-train", "d1-train-hard")
+TRAIN_SEEDS = range(10000, 11200)
+TRAIN_HARD_SEEDS = range(12000, 12300)
 
 
 def dials(index: int) -> dict:
@@ -432,13 +446,28 @@ def build(name: str) -> dict:
         manifest = build("d1-test")
         return {**manifest, "taskset": name, "parent": "d1-test",
                 "tasks": manifest["tasks"][:VARIANCE_SIZE]}
+    elif name == "d1-train":
+        seeds = TRAIN_SEEDS
     elif name == "d1-test-hard":
         return {"taskset": name, "generator_version": GENERATOR_VERSION,
                 "spec_version": DRAFTING_SPEC_V1["version"],
                 "spec_hash": spec_hash(DRAFTING_SPEC_V1),
                 "tasks": [_hard_entry(seed, i) for i, seed in enumerate(HARD_SEEDS)]}
+    elif name == "d1-train-hard":
+        # a seed no hard type lays out is left out (a held-out set keeps every seed; a
+        # training set need not), its place in the dial cycle with it, and named in the manifest
+        tasks, skipped = [], []
+        for i, seed in enumerate(TRAIN_HARD_SEEDS):
+            try:
+                tasks.append(_hard_entry(seed, i))
+            except RuntimeError:
+                skipped.append(seed)
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
+                "tasks": tasks}
     else:
-        raise ValueError(f"unknown task set {name!r}; sets: {', '.join(NAMES)}")
+        raise ValueError(f"unknown task set {name!r}; sets: {', '.join(NAMES + TRAIN_NAMES)}")
     tasks = [_entry(seed, i) for i, seed in enumerate(seeds)]
     return {"taskset": name, "generator_version": GENERATOR_VERSION,
             "spec_version": DRAFTING_SPEC_V1["version"], "spec_hash": spec_hash(DRAFTING_SPEC_V1),
@@ -519,6 +548,44 @@ def _check_real(saved: dict) -> List[str]:
     return problems
 
 
+def shared(train: dict, held_out: dict) -> List[str]:
+    """What training manifest ``train`` shares with manifest ``held_out``: a
+    task id, or a seed (two seeded tasks on one seed are one design, whatever
+    their types).  A training set is seeded, so an entry of its own on a real
+    sheet or a probe is reported too: every sample sheet and every pilot is in
+    an eval set, and none can be trained on."""
+    a, b = train.get("taskset"), held_out.get("taskset")
+    problems = [f"{a}: {e.get('task_id')} is not a seeded task; a training set holds no real sheet "
+                "and no probe" for e in train["tasks"] if "seed" not in e]
+    ids = {e["task_id"] for e in train["tasks"]} | {e["vague_task_id"] for e in train["tasks"]
+                                                    if e.get("vague_task_id")}
+    theirs = {e["task_id"] for e in held_out["tasks"]} | {e["vague_task_id"]
+                                                          for e in held_out["tasks"]
+                                                          if e.get("vague_task_id")}
+    both = sorted(ids & theirs)
+    if both:
+        problems.append(f"{a} and {b} share {len(both)} task id(s); first: {both[0]}")
+    seeds = sorted({e["seed"] for e in train["tasks"] if "seed" in e}
+                   & {e["seed"] for e in held_out["tasks"] if "seed" in e})
+    if seeds:
+        problems.append(f"{a} and {b} share {len(seeds)} seed(s); first: {seeds[0]}")
+    return problems
+
+
+def train_overlap(root=None) -> List[str]:
+    """Everything a training set shares with an eval set or with the other
+    training set, from the manifests on disk: empty when the training data is
+    clean.  The tripwire the training plan rests on; a test holds it empty."""
+    problems: List[str] = []
+    trains = {name: load(name, root) for name in TRAIN_NAMES}
+    for name, manifest in trains.items():
+        for other in NAMES:
+            problems += shared(manifest, load(other, root))
+    first, second = (trains[n] for n in TRAIN_NAMES)
+    problems += shared(first, second)
+    return problems
+
+
 def task_from_entry(entry: dict, strict: bool = True, level: str = "explicit") -> Task:
     """The task a manifest entry names; with ``strict`` its id must match.  A
     real-sheet entry (it names a ``sheet_id``) is rebuilt from the redrafted
@@ -566,4 +633,5 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "build_probes", "PROBE_NAMES", "load_catalog", "real_dev_sheets", "real_quotas", "build_real", "build",
            "manifest_path", "write", "load", "check", "task_from_entry", "entries", "HARD_NAMES",
            "HARD_SEEDS", "HARD_SEEDED_TYPES", "hard_dials", "JOB_CATALOG", "REAL_HARD_SIZE",
-           "REAL_HARD_FILL", "build_real_hard"]
+           "REAL_HARD_FILL", "build_real_hard", "TRAIN_NAMES", "TRAIN_SEEDS", "TRAIN_HARD_SEEDS",
+           "shared", "train_overlap"]

@@ -126,6 +126,39 @@ All free, all on the Mac, none waiting on a decision:
 
 Then, on your word: the T1 smoke, the first paid step.
 
+### Status, 2026-11-10 (Robert: "Yes, start")
+
+**Step 1, done.** `benchmarks/tasksets/d1-train.json` (1,200 tasks, seeds 10000-11199, 72 to 78 of each of
+the 16 seeded types) and `d1-train-hard.json` (297 tasks, seeds 12000-12299; three seeds no hard type lays out
+are left out and named in the manifest). They are not in `taskset.NAMES`, so no board ranks them.
+`taskset.train_overlap()` reports any task id or seed a training set shares with an eval set, and
+`tests/test_eval_taskset.py` holds it empty.
+
+**Step 2, started: 8 of the 16 seeded types.** `roaddraft.trajectories.grounded`:
+
+- `GroundedAgent` drafts through the ordinary episode loop, handed only the task text and the phases the
+  request calls for. It reads the document, the layers, the sheet's scale and the design before it uses any of
+  them. It sets the annotation scale to the sheet's scale and lets the engine size the lettering, so no command
+  carries a height or offset worked out by hand; that route scores 100 at both prompt levels.
+- `audit` reads a finished episode as the model saw it and reports every value in a call that was not in the
+  task text, an earlier result, the tool's own definition or spec v1 when the call was made. It knows nothing
+  of the agent, so it reads a model's rollout the same way (T2's filter).
+- A recording is kept when it submits, scores 100 and the audit finds nothing.
+- Covered phases: design, layers, linework, edges, stationing, bearings, callouts, reference. Covered types:
+  `draw-alignment`, `stationing`, `bearings`, `curve-callouts`, `pavement-edges`, `attach-reference`,
+  `create-alignment`, `layer-setup`. On `d1-dev` all 24 tasks of those types are kept at both levels.
+- The audit on the plain oracle, same tasks: 100 on every type and ungrounded on every type (the sizes it
+  multiplies out, the curve table's position, the dimension points, the viewport's centre, the title-block
+  fields, and a `set_meta` no task asks for).
+
+**Left in step 2**, in the order I would take them: the curve table (where it goes on the sheet, and which
+curves each sheet shows), the north arrow and title block (what the vague prompt lets the drafter know of the
+project), the sheet and its viewports (scale choice, match lines), the width dimensions. Those four phases are
+what stands between the 8 types and all 16, and the whole-sheet types need every one.
+
+One known looseness in the audit: a small round number (5, 6) can match a spec value by chance and pass. It
+catches what matters (3.5, 22.5, 28.35, a coordinate), and tightening it per tool is a later refinement.
+
 ## 6. Decisions for Robert
 
 1. **The rig for base, T0 and checkpoints.** PC only: free, one to one and a half nights per 100 episodes, and

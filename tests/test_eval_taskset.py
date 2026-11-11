@@ -206,3 +206,47 @@ def test_d1_real_draws_no_whole_job():
     from roaddraft.tasks.types import REAL_JOB_TYPES
     assert not set(REAL_JOB_TYPES) & set(tasksets.real_quotas())
     assert not {t["task_type"] for t in tasksets.load("d1-real")["tasks"]} & set(REAL_JOB_TYPES)
+
+
+# ------------------------------------------------------------ the training sets (2026-11-10)
+
+
+def test_the_training_sets_share_nothing_with_any_eval_set():
+    """The tripwire the training plan rests on: no task id and no seed of a
+    training set is in a set a model is ever scored on, dev sets included."""
+    assert tasksets.train_overlap() == []
+    assert not set(tasksets.TRAIN_NAMES) & set(tasksets.NAMES)
+    train, hard = (tasksets.load(n) for n in tasksets.TRAIN_NAMES)
+    assert [t["seed"] for t in train["tasks"]] == list(tasksets.TRAIN_SEEDS)
+    kept = [s for s in tasksets.TRAIN_HARD_SEEDS if s not in hard["skipped_seeds"]]
+    assert [t["seed"] for t in hard["tasks"]] == kept and len(kept) >= 0.9 * len(tasksets.TRAIN_HARD_SEEDS)
+    assert {t["task_type"] for t in train["tasks"]} == set(tasksets.SEEDED_TYPES)
+    assert {t["task_type"] for t in hard["tasks"]} == set(tasksets.HARD_SEEDED_TYPES)
+    eval_seeds = {t["seed"] for n in tasksets.NAMES for t in tasksets.load(n)["tasks"] if "seed" in t}
+    assert not eval_seeds & (set(tasksets.TRAIN_SEEDS) | set(tasksets.TRAIN_HARD_SEEDS))
+
+
+def test_shared_reports_an_id_a_seed_and_a_task_that_is_not_seeded():
+    test = tasksets.load("d1-test")
+    stolen = {"taskset": "d1-train", "tasks": [dict(test["tasks"][3])]}
+    problems = tasksets.shared(stolen, test)
+    assert any("task id" in p for p in problems) and any("seed" in p for p in problems)
+    # the same seed under another type is the same design: still shared
+    retyped = {"taskset": "d1-train", "tasks": [{**test["tasks"][3], "task_id": "D1-001003-other"}]}
+    assert [p for p in tasksets.shared(retyped, test) if "seed" in p]
+    real = {"taskset": "d1-train", "tasks": [dict(tasksets.load("d1-real")["tasks"][0])]}
+    assert any("not a seeded task" in p for p in tasksets.shared(real, test))
+    assert tasksets.shared({"taskset": "d1-train", "tasks": []}, test) == []
+
+
+def test_the_training_manifests_are_on_the_current_spec_and_rebuild_to_their_ids():
+    """A sample, not the whole set (1,500 tasks take two minutes to rebuild):
+    ``python -m roaddraft.eval taskset d1-train d1-train-hard`` checks them all."""
+    from roaddraft.tasks.brief import GENERATOR_VERSION
+    from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
+    for name in tasksets.TRAIN_NAMES:
+        m = tasksets.load(name)
+        assert m["generator_version"] == GENERATOR_VERSION, name
+        assert m["spec_hash"] == spec_hash(DRAFTING_SPEC_V1), name
+        for entry in m["tasks"][:6] + m["tasks"][-2:]:
+            assert tasksets.task_from_entry(entry).task_id == entry["task_id"]
