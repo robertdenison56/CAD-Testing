@@ -1,6 +1,6 @@
-# Run `e3-d1-test-gpt-6.1-terra-codex-medium-single-vague`
+# Run `e3-d1-test-claude-opus-5-5-claude-code-medium-single-vague-v3`
 
-Task set **d1-test** · 100 episodes · spec v1 (sha256:0e07d5e83c0b) · generator d1-v6 · verifier d1-verify-v7 · harness e3-v2
+Task set **d1-test** · 100 episodes · spec v1 (sha256:0e07d5e83c0b) · generator d1-v6 · verifier d1-verify-v8 · harness e3-v3
 
 ## Rows
 
@@ -8,7 +8,7 @@ Effective score: 0 on a hard fail, else the rubric score; per task over its samp
 
 | # | Row | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Submit | Steps (med / p90) | Invalid calls | Recovery | run_check | Cost / sheet | Tasks × k |
 |---:|---|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|
-| 1 | gpt-6.1-terra (medium) via codex · single · vague | medium | **91.3** | 89.5–93.1 | 91.3 | 0% | 47% | 100% | 16 / 31 | 0% | 66% | 0.0 | – | 100 × 1 |
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **95.5** | 93.6–96.9 | 95.5 | 0% | 66% | 100% | 14 / 26 | 0% | 86% | 0.0 | $0.371 | 100 × 1 |
 
 ## Per-check credit
 
@@ -18,18 +18,18 @@ Mean credit (0–1) over the episodes whose task has the check in scope; – whe
 
 | Check | Weight | #1 |
 |---|---:|---:|
-| D1-00 sheet setup | 5 | 0.93 |
+| D1-00 sheet setup | 5 | 0.88 |
 | D1-01 alignment linework on the alignment… | 10 | 1.00 |
 | D1-02 station tick at every interval station… | 9 | 1.00 |
 | D1-03 station numbers (the Caltrans way… | 12 | 1.00 |
-| D1-04 BC/EC (PCC/PRC) station lettered at… | 14 | 0.79 |
+| D1-04 BC/EC (PCC/PRC) station lettered at… | 14 | 1.00 |
 | D1-05 bearing and distance on every tangent… | 10 | 1.00 |
 | D1-06 curve table on the sheet (No., R, Δ, T… | 14 | 1.00 |
-| D1-07 label position within tolerance of the… | 8 | 0.99 |
-| D1-08 legibility | 6 | 0.89 |
+| D1-07 label position within tolerance of the… | 8 | 0.98 |
+| D1-08 legibility | 6 | 0.92 |
 | D1-09 layers and text heights per spec | 6 | 0.83 |
-| D1-10 title block fields present; scale… | 5 | 0.29 |
-| D1-11 north arrow present on the sheet | 1 | 0.53 |
+| D1-10 title block fields present; scale… | 5 | 0.73 |
+| D1-11 north arrow present on the sheet | 1 | 0.79 |
 | D1-12 pavement edges | 8 | 1.00 |
 | D1-13 pavement width dimensioned across each… | 6 | 1.00 |
 | D1-14 the base drawing attached as a… | 5 | 1.00 |
@@ -41,52 +41,52 @@ Share of episodes with at least one finding in the category (findings per episod
 
 | Category | #1 | Codes |
 |---|---:|---|
-| completeness | 28% (2.5) | missing_field 184, missing 69 |
-| value | 0% (0.0) |  |
-| anchoring | 4% (0.1) | unanchored 5, duplicate 1 |
-| placement | 4% (0.0) | misplaced 3, not_visible 1 |
-| legibility | 14% (0.6) | upside_down 27, overlap 24, clipped 4 |
-| standards | 24% (1.2) | wrong_layer 108, wrong_height 15 |
-| sheet_setup | 1% (0.0) | not_fitted 1 |
+| completeness | 15% (0.9) | missing_field 72, missing 15 |
+| value | 1% (0.0) | wrong_value 1 |
+| anchoring | 0% (0.0) |  |
+| placement | 7% (0.1) | misplaced 7, not_visible 2 |
+| legibility | 8% (0.5) | overlap 30, clipped 10, off_sheet 5 |
+| standards | 22% (3.0) | wrong_layer 300, wrong_height 2 |
+| sheet_setup | 4% (0.0) | not_fitted 4 |
 
 ### Tool use and termination
 
 | | #1 |
 |---|---:|
-| tool calls | 1739 |
+| tool calls | 1501 |
 | invalid-call rate | 0% |
-| other fault rate | 3% |
-| recovery rate | 66% |
-| coordinate path share | 6% |
-| stopped without calling submit | 1% |
+| other fault rate | 2% |
+| recovery rate | 86% |
+| coordinate path share | 0% |
+| stopped without calling submit | 4% |
 | Δ effective after last run_check | – |
 | ended submit | 100 |
-| error command_failed | 53 |
-| error invalid_params | 1 |
-| error query_failed | 7 |
+| error command_failed | 24 |
+| error invalid_params | 2 |
+| error query_failed | 2 |
 
 ## By task type and sheet count
 
 | Task type | #1 |
 |---|---:|
-| annotate-base | 93.9 (n 7) |
-| annotate-sheet | 87.5 (n 7) |
+| annotate-base | 91.8 (n 7) |
+| annotate-sheet | 97.1 (n 7) |
 | attach-reference | 100.0 (n 7) |
-| bearings | 95.2 (n 7) |
-| create-alignment | 89.3 (n 6) |
-| curve-callouts | 97.1 (n 6) |
-| curve-table | 88.5 (n 6) |
-| draw-alignment | 75.0 (n 6) |
+| bearings | 97.8 (n 7) |
+| create-alignment | 100.0 (n 6) |
+| curve-callouts | 100.0 (n 6) |
+| curve-table | 74.0 (n 6) |
+| draw-alignment | 100.0 (n 6) |
 | layer-setup | 100.0 (n 6) |
-| pavement | 80.9 (n 6) |
+| pavement | 95.2 (n 6) |
 | pavement-edges | 100.0 (n 6) |
-| pavement-widths | 87.5 (n 6) |
-| plan-sheet | 90.4 (n 6) |
-| sheet-setup | 86.8 (n 6) |
-| stationing | 99.4 (n 6) |
-| title-block | 88.4 (n 6) |
-| 1 sheet | 93.7 (n 53) |
-| 2 sheets | 88.7 (n 47) |
+| pavement-widths | 94.4 (n 6) |
+| plan-sheet | 95.9 (n 6) |
+| sheet-setup | 81.9 (n 6) |
+| stationing | 100.0 (n 6) |
+| title-block | 98.6 (n 6) |
+| 1 sheet | 96.9 (n 53) |
+| 2 sheets | 93.9 (n 47) |
 
 ## Interval sizing
 
@@ -94,6 +94,8 @@ The v0.1 target is a 95% half-width under 5 points. Tasks needed assumes the hal
 
 | Row | Tasks | Half-width | Unstratified | Within-task SD | Tasks for the target |
 |---|---:|---:|---:|---:|---:|
-| gpt-6.1-terra (medium) via codex · single · vague | 100 | 1.8 | 2.3 | – | 14 |
+| claude-opus-5-5 (medium) via claude-code · single · vague | 100 | 1.7 | 2.1 | – | 12 |
 
-_Generated by `python -m roaddraft.eval report` (e4-v1); do not edit._
+Prices from the table checked 2026-10-06.
+
+_Generated by `python -m roaddraft.eval report` (e4-v2); do not edit._

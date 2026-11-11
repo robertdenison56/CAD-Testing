@@ -498,3 +498,27 @@ def test_the_board_ranks_subset_runs_in_their_own_table_beside_full_runs_rescore
     assert "| 2 | qwen-x · single · vague | default | **70.0** |" in md
     assert "**partial, not scored: 59 of 60 tasks**" in md
     assert "cost subset cost5, partial to save cost (60 of 100 tasks)" in R.render_board_svg(b)
+
+
+def test_a_vague_subset_table_rescores_full_runs_under_their_vague_ids():
+    # a probe set's cost subset is drawn on its explicit ids, while a vague run's per-task means are
+    # keyed by the vague ids; the vague table must re-score the full runs on the same tasks under those
+    # (2026-11-10: the hard-pilots vague table showed the Runpod subset run alone, every full run dropped)
+    from roaddraft.eval.subsets import subset_ids
+    from roaddraft.eval.taskset import load
+    rows = load("hard-pilots")["tasks"]
+    picked = set(subset_ids("hard-pilots", "cost5"))
+    assert len(picked) == 66 and all(r.get("vague_task_id") for r in rows)
+    full_row = _fake_row("claude-a", "anthropic", 40.0)
+    full_row["task_means"] = {r["vague_task_id"]: (100.0 if r["task_id"] in picked else 0.0) for r in rows}
+    full_row["task_types"] = {r["vague_task_id"]: r["task_type"] for r in rows}
+    full = _fake_summary("full-pilots", [full_row], taskset="hard-pilots")
+    sub = _fake_summary("sub-pilots", [_fake_row("qwen-x", "openai", 9.0)], taskset="hard-pilots")
+    sub["cost_subset"] = {"tag": "cost5", "tasks": 66, "set_size": 112}
+    t = R.board([full, sub])["boards"]["hard-pilots"]["subsets"]["cost5"]
+    assert [(r["run_id"], r["effective_mean"], r["rank"]) for r in t["rows"]] == [
+        ("full-pilots", 100.0, 1), ("sub-pilots", 9.0, 2)]                   # re-scored on the subset's 66
+    assert t["tasks"] == 66 and t["rows"][0]["scored_as"] == "full run, re-scored on the subset's 66"
+    # the explicit level keeps the explicit ids
+    assert R._subset_ids_at("hard-pilots", sorted(picked), ["explicit"]) == sorted(picked)
+    assert R._subset_at("d1-real", ["a", "b"], ["vague"]) == {"a", "b"}      # not a probe set: as drawn

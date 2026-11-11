@@ -80,3 +80,16 @@ The rows below stay ranked. They ran on the same `e3-v2` harness and `379e02f1` 
 | `d1-test` | claude-sonnet-5-5 (medium) via claude-code · single · vague | 70.9 | curve-callouts 68.6 on 6 tasks | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague` |
 | `d1-variance` | Qwen/Qwen3.6-35B-A3B · single · explicit | 86.7 | curve-callouts 20.0 on 5 tasks | `e3-d1-variance-qwen3.6-35b-a3b-single` |
 | `d1-variance` | google/gemma-4-12B-it · single · explicit | 69.3 | curve-callouts 17.4 on 5 tasks | `e3-d1-variance-gemma-4-12b-single` |
+
+# Board rows retired on 2026-11-10
+
+Robert, Nov 10 2026: retire the pre-v3 runs that a v3 rerun has superseded on the board. Both ranked rows below ran on the older surface (`379e02f1`) under harness `e3-v2`, and were kept on Nov 3 because the day's fixes did not touch what they recorded. They have since been re-run at the v3 pin (`0334fd4aaade`, harness `e3-v3`, run id `…-single-vague-v3`), so the old folder was a duplicate second row for the same model × set × prompt level and ranks no more.
+
+The published folders moved to `results/_retired-e3-v2/published/<run id>/`; the raw episodes stay under `results/e3-*/<run id>/`. To restore a row, move its folder back under `benchmarks/runs/` and run `scripts/make_leaderboard.py`.
+
+| Set | Row | Effective | Superseded by | Run |
+|---|---|---:|---|---|
+| `d1-test` | gpt-6.1-terra (medium) via codex · single · vague | 91.3 | `e3-d1-test-gpt-6.1-terra-codex-medium-single-vague-v3` (92.8) | `e3-d1-test-gpt-6.1-terra-codex-medium-single-vague` |
+| `d1-test` | claude-sonnet-5-5 (medium) via claude-code · single · vague | 70.9 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague-v3` (76.0) | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague` |
+
+(Both were in the Nov-3 "Kept" list above; the v3 reruns now replace them.)

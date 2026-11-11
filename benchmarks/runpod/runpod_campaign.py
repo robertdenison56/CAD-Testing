@@ -72,9 +72,11 @@ PIN = "2658fa0"                      # 2026-10-19: main a1c0038 + 89f7a13 (eval 
 # fix) plus the eval provider's reading of Runpod's 570 s proxy cut and vLLM's context refusal as the turn_time and
 # context stops: 9f7c02bb (2026-11-04) = 3b7e7fe9 + main's 463a9707 cherry-picked (the cost subsets, the board's
 # partial rule, the provider changes), on the local branch runpod-trackd-v3; tools 0334fd4aaade, instructions
-# 4dff2849, harness e3-v3, as queue 10 and the codex queue.
+# 4dff2849, harness e3-v3, as queue 10 and the codex queue. f6725cbb (2026-11-09) = 9f7c02bb + the vague-pilot
+# patch the local and CLI pilot queues run from (results/e3-lms/vague-pilots.patch) and report.py reading a cost
+# subset at the run's prompt level.
 TRACKD_WORKTREE = REPO / ".claude" / "worktrees" / "runpod-trackd"
-TRACKD_PIN: Optional[str] = "9f7c02bb"
+TRACKD_PIN: Optional[str] = "f6725cbb"
 PILOT_SET = REPO / "benchmarks" / "tasksets" / "hard-pilots.json"
 PYTHON = REPO / ".venv" / "bin" / "python"
 CAMPAIGN = REPO / "benchmarks" / "probe_runs" / "2026-10-17-k3"

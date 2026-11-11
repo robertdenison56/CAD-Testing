@@ -23,16 +23,20 @@ Vague prompts only: the request in a sentence, the board's focus. Every other pr
 
 ### `d1-test`: seeded sheets
 
-**Best model 91.3/100 on d1-test with the vague prompt (gpt-6.1-terra (medium) via codex · single · vague, 95% CI 89.5–93.1, hard-fail 0%).**
+**Best model 95.5/100 on d1-test with the vague prompt (claude-opus-5-5 (medium) via claude-code · single · vague, 95% CI 93.6–96.9, hard-fail 0%).**
 
 | # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
 |---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
-| 1 | gpt-6.1-terra (medium) via codex · single · vague | medium | **91.3** | 89.5–93.1 | 91.3 | 0% | 47% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6.1-terra-codex-medium-single-vague` |
-| 2 | gpt-6-luna (medium) via codex · single · vague | medium | **76.1** | 72.7–79.3 | 77.8 | 3% | 31% | 1% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single-vague-v3` |
-| 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **70.9** | 67.6–73.8 | 73.1 | 3% | 20% | 0% | $0.159 | 100 × 1 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague` |
-| 4 | google/gemma-4-12b · single · vague | thinking on | **67.2** | 63.6–70.7 | 72.3 | 9% | 32% | 2% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single-vague-v3` |
-| 5 | qwen/qwen3.5-9b · single · vague | default | **62.6** | 57.7–67.6 | 66.3 | 6% | 31% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague-v3` |
-| 6 | zai-org/glm-4.6v-flash · single · vague | default | **25.2** | 21.3–29.4 | 26.8 | 7% | 14% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single-vague-v3` |
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **95.5** | 93.6–96.9 | 95.5 | 0% | 66% | 0% | $0.371 | 100 × 1 | `e3-d1-test-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **92.8** | 90.7–94.8 | 92.8 | 0% | 58% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 3 | google/gemma-4-31B-it · single · vague | thinking on | **80.1** | 77.1–82.7 | 80.7 | 1% | 35% | 0% | – | 100 × 1 | `e3-d1-test-gemma-4-31b-single-vague-v3` |
+| 4 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **76.3** | 73.4–79.1 | 77.6 | 2% | 22% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.6-35b-a3b-single-vague-v3` |
+| 5 | gpt-6-luna (medium) via codex · single · vague | medium | **76.1** | 72.7–79.3 | 77.8 | 3% | 31% | 1% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single-vague-v3` |
+| 6 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **76.0** | 74.1–77.8 | 76.0 | 0% | 23% | 0% | $0.181 | 100 × 1 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 7 | google/gemma-4-12b · single · vague | thinking on | **67.2** | 63.6–70.7 | 72.3 | 9% | 32% | 2% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single-vague-v3` |
+| 8 | glm-5.3 · single · vague | default | **66.5** | 62.5–70.2 | 71.5 | 9% | 22% | 2% | $0.042 | 100 × 1 | `e3-d1-test-glm-5.3-single-vague-v3` |
+| 9 | qwen/qwen3.5-9b · single · vague | default | **62.6** | 57.7–67.6 | 66.3 | 6% | 31% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 10 | zai-org/glm-4.6v-flash · single · vague | default | **25.2** | 21.3–29.4 | 26.8 | 7% | 14% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single-vague-v3` |
 
 ### `d1-real`: the sample plan sheets
 
@@ -41,34 +45,94 @@ Vague prompts only: the request in a sentence, the board's focus. Every other pr
 | # | Model · mode · prompt | Effort | Effective | 95% CI | Draft | Letter | Sheet | Notes | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
 |---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
 | 1 | gpt-6.1-terra (medium) via codex · single · vague | medium | **90.5** | 87.9–93.1 | 97.0 ± 3.8 (n 25) | 88.2 ± 6.6 (n 25) | 88.1 ± 4.9 (n 25) | 88.9 ± 4.2 (n 25) | 91.0 | 1% | 52% | 0% | – | 100 × 1 | `e3-d1-real-gpt-6.1-terra-codex-medium-single-vague-v3` |
-| 2 | gpt-6-luna (medium) via codex · single · vague | medium | **71.8** | 67.2–76.0 | 85.0 ± 7.5 (n 25) | 74.8 ± 4.6 (n 25) | 71.3 ± 6.6 (n 25) | 56.0 ± 13.6 (n 25) | 75.0 | 6% | 22% | 1% | – | 100 × 1 | `e3-d1-real-gpt-6-luna-codex-medium-single-vague-v3` |
-| 3 | qwen/qwen3.5-9b · single · vague | default | **59.6** | 54.3–64.6 | 95.5 ± 4.5 (n 25) | 53.0 ± 11.0 (n 25) | 49.3 ± 9.8 (n 25) | 40.8 ± 13.3 (n 25) | 61.2 | 7% | 29% | 0% | – | 100 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-v3` |
-| 4 | google/gemma-4-12b · single · vague | thinking on | **59.0** | 54.1–64.2 | 100.0 ± 0.0 (n 25) | 53.2 ± 9.1 (n 25) | 57.1 ± 10.5 (n 25) | 25.8 ± 14.2 (n 25) | 62.7 | 9% | 30% | 2% | – | 100 × 1 | `e3-d1-real-gemma-4-12b-q8-lms-single-vague-v3` |
+| 2 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **86.7** | 82.8–90.3 | 100.0 ± 0.0 (n 25) | 71.0 ± 11.5 (n 25) | 88.2 ± 5.3 (n 25) | 87.6 ± 7.5 (n 25) | 89.3 | 4% | 48% | 0% | $0.763 | 100 × 1 | `e3-d1-real-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **75.1** | 70.9–79.1 | 85.0 ± 7.5 (n 25) | 68.1 ± 8.2 (n 25) | 73.1 ± 5.4 (n 25) | 74.2 ± 11.5 (n 25) | 78.1 | 5% | 25% | 0% | $0.329 | 100 × 1 | `e3-d1-real-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 4 | gpt-6-luna (medium) via codex · single · vague | medium | **71.8** | 67.2–76.0 | 85.0 ± 7.5 (n 25) | 74.8 ± 4.6 (n 25) | 71.3 ± 6.6 (n 25) | 56.0 ± 13.6 (n 25) | 75.0 | 6% | 22% | 1% | – | 100 × 1 | `e3-d1-real-gpt-6-luna-codex-medium-single-vague-v3` |
+| 5 | qwen/qwen3.5-9b · single · vague | default | **59.6** | 54.3–64.6 | 95.5 ± 4.5 (n 25) | 53.0 ± 11.0 (n 25) | 49.3 ± 9.8 (n 25) | 40.8 ± 13.3 (n 25) | 61.2 | 7% | 29% | 0% | – | 100 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 6 | google/gemma-4-12b · single · vague | thinking on | **59.0** | 54.1–64.2 | 100.0 ± 0.0 (n 25) | 53.2 ± 9.1 (n 25) | 57.1 ± 10.5 (n 25) | 25.8 ± 14.2 (n 25) | 62.7 | 9% | 30% | 2% | – | 100 × 1 | `e3-d1-real-gemma-4-12b-q8-lms-single-vague-v3` |
+| 7 | zai-org/glm-4.6v-flash · single · vague | default | **13.6** | 8.5–19.2 | 20.0 ± 16.0 (n 25) | 7.8 ± 8.8 (n 25) | 23.1 ± 9.0 (n 25) | 3.4 ± 5.1 (n 25) | 13.6 | 0% | 6% | 0% | – | 100 × 1 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single-vague-v3` |
 
 Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Draft = draft linework (`real-draw-alignment`); Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`); Notes = notes and dimensions (`real-construction-callouts`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
 
+**Cost subset `cost5` on `d1-real`, vague prompt: partial runs, to save cost.** 60 of the set's 100 tasks, 5 of each task type (every task of a smaller type), the fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when they hold every task of the subset with none in error or unfinished. Each full run of the set is re-scored on the same 60 tasks so the rows compare; a subset score is not comparable with a full-set score above.
+
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Tasks × k | Scored as | Run |
+|---:|---|---|---:|---|---|---|---|
+| 1 | gpt-6.1-terra (medium) via codex · single · vague | medium | **88.7** | 84.7–92.2 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 2 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **82.4** | 76.8–87.5 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 3 | google/gemma-4-31B-it · single · vague | thinking on | **76.8** | 72.2–81.2 | 60 × 1 | subset run (60 of 100) | `e3-d1-real-gemma-4-31b-single-vague-cost5-v3` |
+| 4 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **72.8** | 68.4–76.9 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 5 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **70.5** | 65.5–75.2 | 60 × 1 | subset run (60 of 100) | `e3-d1-real-qwen3.6-35b-a3b-single-vague-cost5-v3` |
+| 6 | google/gemma-4-12b · single · vague | thinking on | **55.5** | 49.5–61.2 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-gemma-4-12b-q8-lms-single-vague-v3` |
+| 7 | qwen/qwen3.5-9b · single · vague | default | **53.2** | 46.3–59.7 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 8 | zai-org/glm-4.6v-flash · single · vague | default | **12.9** | 7.6–18.1 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single-vague-v3` |
+
 ### `hard-pilots`: the harder tasks (pass or fail)
 
-No vague-prompt run on `hard-pilots` yet; its explicit-prompt runs are ranked on their own board.
-
-### `d1-test-hard`: seeded sheets, the whole job (3-5 curves, 2-3 sheets)
-
-**Best model 92.9/100 on d1-test-hard with the vague prompt (gpt-6.1-terra (medium) via codex · single · vague, 95% CI 90.7–94.3, hard-fail 0%).**
+**Best model 40.2/100 on hard-pilots with the vague prompt (claude-opus-5-5 (medium) via claude-code · single · vague, 95% CI 33.9–46.4, hard-fail 60%).**
 
 | # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
 |---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
-| 1 | gpt-6.1-terra (medium) via codex · single · vague | medium | **92.9** | 90.7–94.3 | 92.9 | 0% | 11% | 0% | – | 100 × 1 | `e3-d1-test-hard-gpt-6.1-terra-codex-medium-single-vague-v3` |
-| 2 | gpt-6-luna (medium) via codex · single · vague | medium | **43.2** | 37.8–48.4 | 54.7 | 21% | 0% | 3% | – | 100 × 1 | `e3-d1-test-hard-gpt-6-luna-codex-medium-single-vague-v3` |
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **40.2** | 33.9–46.4 | 85.8 | 60% | 40% | 0% | $1.20 | 112 × 1 | `e3-hard-pilots-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **28.6** | 23.2–33.9 | 80.3 | 71% | 29% | 0% | – | 112 × 1 | `e3-hard-pilots-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **24.1** | 18.8–28.6 | 69.0 | 76% | 24% | 0% | $0.643 | 112 × 1 | `e3-hard-pilots-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 4 | gpt-6-luna (medium) via codex · single · vague | medium | **2.7** | 0.0–5.4 | 39.8 | 97% | 3% | 1% | – | 112 × 1 | `e3-hard-pilots-gpt-6-luna-codex-medium-single-vague-v3` |
+
+**Cost subset `cost5` on `hard-pilots`, vague prompt: partial runs, to save cost.** 66 of the set's 112 tasks, 5 of each task type (every task of a smaller type), the fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when they hold every task of the subset with none in error or unfinished. Each full run of the set is re-scored on the same 66 tasks so the rows compare; a subset score is not comparable with a full-set score above.
+
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Tasks × k | Scored as | Run |
+|---:|---|---|---:|---|---|---|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **48.5** | 42.4–56.1 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **36.4** | 30.3–42.4 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **30.3** | 24.2–36.4 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 4 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **9.1** | 3.0–15.2 | 66 × 1 | subset run (66 of 112) | `e3-hard-pilots-qwen3.6-35b-a3b-single-vague-cost5-v3` |
+| 5 | gpt-6-luna (medium) via codex · single · vague | medium | **4.5** | 0.0–9.1 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gpt-6-luna-codex-medium-single-vague-v3` |
+
+### `d1-test-hard`: seeded sheets, the whole job (3-5 curves, 2-3 sheets)
+
+**Best model 93.7/100 on d1-test-hard with the vague prompt (claude-opus-5-5 (medium) via claude-code · single · vague, 95% CI 93.1–94.3, hard-fail 0%).**
+
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
+|---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **93.7** | 93.1–94.3 | 93.7 | 0% | 6% | 0% | $1.09 | 100 × 1 | `e3-d1-test-hard-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **92.9** | 90.7–94.3 | 92.9 | 0% | 11% | 0% | – | 100 × 1 | `e3-d1-test-hard-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **54.5** | 49.4–59.5 | 72.5 | 23% | 0% | 0% | $0.584 | 100 × 1 | `e3-d1-test-hard-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 4 | gpt-6-luna (medium) via codex · single · vague | medium | **43.2** | 37.8–48.4 | 54.7 | 21% | 0% | 3% | – | 100 × 1 | `e3-d1-test-hard-gpt-6-luna-codex-medium-single-vague-v3` |
+| 5 | qwen/qwen3.5-9b · single · vague | default | **9.4** | 6.4–12.7 | 37.7 | 65% | 0% | 0% | – | 100 × 1 | `e3-d1-test-hard-qwen3.5-9b-q4km-lms-single-vague-v3` |
+
+**Cost subset `cost5` on `d1-test-hard`, vague prompt: partial runs, to save cost.** 25 of the set's 100 tasks, 5 of each task type (every task of a smaller type), the fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when they hold every task of the subset with none in error or unfinished. Each full run of the set is re-scored on the same 25 tasks so the rows compare; a subset score is not comparable with a full-set score above.
+
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Tasks × k | Scored as | Run |
+|---:|---|---|---:|---|---|---|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **94.4** | 92.9–95.7 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-test-hard-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **90.2** | 82.0–95.0 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-test-hard-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **51.1** | 41.2–61.4 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-test-hard-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 4 | gpt-6-luna (medium) via codex · single · vague | medium | **47.2** | 38.7–55.0 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-test-hard-gpt-6-luna-codex-medium-single-vague-v3` |
+| 5 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **41.7** | 29.1–54.2 | 25 × 1 | subset run (25 of 100) | `e3-d1-test-hard-qwen3.6-35b-a3b-single-vague-cost5-v3` |
+| 6 | qwen/qwen3.5-9b · single · vague | default | **13.4** | 8.4–18.1 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-test-hard-qwen3.5-9b-q4km-lms-single-vague-v3` |
 
 ### `d1-real-hard`: the sample plan sheets, the whole job
 
-**Best model 72.1/100 on d1-real-hard with the vague prompt (gpt-6.1-terra (medium) via codex · single · vague, 95% CI 66.7–77.0, hard-fail 4%).**
+**Best model 77.6/100 on d1-real-hard with the vague prompt (claude-opus-5-5 (medium) via claude-code · single · vague, 95% CI 72.7–82.3, hard-fail 7%).**
 
 | # | Model · mode · prompt | Effort | Effective | 95% CI | Letter | Sheet | Job | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
 |---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| 1 | gpt-6.1-terra (medium) via codex · single · vague | medium | **72.1** | 66.7–77.0 | 78.9 ± 17.3 (n 20) | 92.2 ± 3.9 (n 41) | 47.5 ± 8.3 (n 39) | 74.9 | 4% | 8% | 0% | – | 100 × 1 | `e3-d1-real-hard-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **77.6** | 72.7–82.3 | 81.9 ± 11.7 (n 20) | 91.7 ± 4.2 (n 41) | 60.6 ± 9.3 (n 39) | 83.0 | 7% | 1% | 0% | $0.958 | 100 × 1 | `e3-d1-real-hard-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **72.1** | 66.7–77.0 | 78.9 ± 17.3 (n 20) | 92.2 ± 3.9 (n 41) | 47.5 ± 8.3 (n 39) | 74.9 | 4% | 8% | 0% | – | 100 × 1 | `e3-d1-real-hard-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 3 | gpt-6-luna (medium) via codex · single · vague | medium | **51.0** | 47.8–54.4 | 60.3 ± 7.0 (n 20) | 69.1 ± 3.6 (n 41) | 27.3 ± 6.4 (n 39) | 54.3 | 7% | 0% | 2% | – | 100 × 1 | `e3-d1-real-hard-gpt-6-luna-codex-medium-single-vague-v3` |
+| 4 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **50.8** | 47.2–54.0 | 60.9 ± 6.5 (n 20) | 65.2 ± 4.1 (n 41) | 30.4 ± 6.8 (n 39) | 56.1 | 11% | 0% | 0% | $0.465 | 100 × 1 | `e3-d1-real-hard-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
 
 Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`); Job = the whole job (`real-sheet-job`, `real-annotate-job`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
+
+**Cost subset `cost5` on `d1-real-hard`, vague prompt: partial runs, to save cost.** 25 of the set's 100 tasks, 5 of each task type (every task of a smaller type), the fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when they hold every task of the subset with none in error or unfinished. Each full run of the set is re-scored on the same 25 tasks so the rows compare; a subset score is not comparable with a full-set score above.
+
+| # | Model · mode · prompt | Effort | Effective | 95% CI | Tasks × k | Scored as | Run |
+|---:|---|---|---:|---|---|---|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **72.2** | 60.5–83.1 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-real-hard-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **59.2** | 48.3–70.4 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-real-hard-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 3 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **50.6** | 46.3–55.6 | 25 × 1 | subset run (25 of 100) | `e3-d1-real-hard-qwen3.6-35b-a3b-single-vague-cost5-v3` |
+| 4 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **47.6** | 39.7–55.0 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-real-hard-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 5 | gpt-6-luna (medium) via codex · single · vague | medium | **47.4** | 42.0–52.6 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-real-hard-gpt-6-luna-codex-medium-single-vague-v3` |
 
 The full board, with the runs not ranked and why: [benchmarks/runs/LEADERBOARD.md](benchmarks/runs/LEADERBOARD.md). Generated by `scripts/make_leaderboard.py`; do not edit by hand.
 <!-- d1-leaderboard:end -->

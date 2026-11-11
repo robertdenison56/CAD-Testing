@@ -648,15 +648,21 @@ def set_ids(taskset: str, levels: Iterable[str] = ("explicit",)) -> set:
     return {r["task_id"] for r in load(taskset)["tasks"]}
 
 
-def _subset_at(taskset: str, ids: Iterable[str], levels: Iterable[str]) -> set:
-    """A cost subset's ids (the explicit ids of a probe set) as the run's ``levels`` name them."""
+def _subset_ids_at(taskset: str, ids: Iterable[str], levels: Iterable[str]) -> List[str]:
+    """A cost subset's ids (the explicit ids of a probe set) as the run's ``levels`` name them, in the
+    subset's order (the board's bootstrap resamples in that order, so a re-scored row is stable)."""
     from roaddraft.eval.taskset import is_probe, load
-    ids = set(ids)
-    if not is_probe(taskset) or "vague" not in set(levels):
+    ids, levels = list(ids), set(levels)
+    if not is_probe(taskset) or "vague" not in levels:
         return ids
     rows = {r["task_id"]: r for r in load(taskset)["tasks"]}
-    out = {rows[i]["vague_task_id"] for i in ids if i in rows and rows[i].get("vague_task_id")}
-    return out | (ids if "explicit" in set(levels) else set())
+    out = [rows[i]["vague_task_id"] for i in ids if i in rows and rows[i].get("vague_task_id")]
+    return out + (ids if "explicit" in levels else [])
+
+
+def _subset_at(taskset: str, ids: Iterable[str], levels: Iterable[str]) -> set:
+    """A cost subset's ids (the explicit ids of a probe set) as the run's ``levels`` name them."""
+    return set(_subset_ids_at(taskset, ids, levels))
 
 
 def coverage(taskset: Optional[str], task_ids: Iterable[str], subset: Optional[str] = None,
@@ -1300,7 +1306,7 @@ def board(summaries: Sequence[dict]) -> dict:
                         f"({b['label']}, 95% CI {b['ci_low']:.1f}–{b['ci_high']:.1f}, "
                         f"hard-fail {_p(b['hard_fail_rate'])})")
         return {"headline": headline, "ranked": ranked,
-                "subsets": {tag: subset_table(name, tag, rows, full[name].get(level, []))
+                "subsets": {tag: subset_table(name, tag, rows, full[name].get(level, []), level)
                             for tag, rows in sorted(per[name]["subset"].get(level, {}).items())}}
 
     boards = {}
@@ -1339,14 +1345,19 @@ def rescore_on(g: dict, ids: Sequence[str]) -> Optional[dict]:
             "half_width": _r((hi - lo) / 2), "n_tasks": len(ids)}
 
 
-def subset_table(taskset: str, tag: str, rows: Sequence[dict], full_rows: Sequence[Tuple[dict, dict]]) -> dict:
+def subset_table(taskset: str, tag: str, rows: Sequence[dict], full_rows: Sequence[Tuple[dict, dict]],
+                 level: Optional[str] = None) -> dict:
     """One cost subset's ranking on a set: its subset runs beside every ranked full run re-scored on the same
-    tasks, so the rows compare (a subset's mean weights its task types alike, the full set's by its mix)."""
+    tasks, so the rows compare (a subset's mean weights its task types alike, the full set's by its mix).
+    ``level`` is the table's prompt level: a probe set's subset is drawn on its explicit ids, and a vague
+    full run's per-task means are keyed by the vague ids (2026-11-10: the hard-pilots vague table had
+    dropped every full run)."""
     from roaddraft.eval.subsets import PER_TYPE, load_subsets, subset_ids
     try:
         ids = subset_ids(taskset, tag)
     except ValueError:
         ids = []
+    ids = _subset_ids_at(taskset, ids, [level] if level else [])
     out = [dict(r) for r in rows]
     for row, g in full_rows:
         again = rescore_on(g, ids)
