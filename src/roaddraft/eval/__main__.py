@@ -9,6 +9,7 @@
         [--strict] [--base-url URL] [--api-key-env VAR] [--extra-body JSON] [--lms-context N]
         [--dialect neutral] [--cost-cap USD] [--output-tokens N]
         [--context-tokens N] ...                      # defaults to --lms-context
+        [--system-extra FILE]                         # appended to every model's system prompt (T0)
         [--claude-bin PATH] [--claude-arg ARG ...] [--max-budget-usd D]   # --provider claude-code
         [--codex-bin PATH] [--codex-arg ARG ...]                          # --provider codex
     python -m roaddraft.eval taskset [NAME ...] [--write | --check]
@@ -34,9 +35,10 @@ from roaddraft.eval import taskset as tasksets
 from roaddraft.eval.agents import AGENTS, ReplayAgent
 from roaddraft.eval.budget import Budgets
 from roaddraft.eval.episode import Episode, EpisodeConfig
+from roaddraft.eval.prompts import SystemExtra
 from roaddraft.eval.tools import DIALECTS
 from roaddraft.eval.providers import PROVIDERS
-from roaddraft.eval.runner import RunSpec, make_agent, matrix, measured_cost, run
+from roaddraft.eval.runner import ResumeMismatch, RunSpec, make_agent, matrix, measured_cost, run
 from roaddraft.eval.tools import MODES
 from roaddraft.eval.trajectory import read_episode, reverify
 from roaddraft.tasks.prompts import LEVELS, task_text
@@ -92,6 +94,17 @@ def cmd_run(args) -> int:
     if args.strict:
         options["strict"] = True
     task_ids = args.task or None
+    extra = None
+    if args.system_extra:
+        if args.agent or not models:
+            print("run: --system-extra goes into a model's system prompt; the oracle, null, scripted "
+                  "and replay agents have none, so run it with --model only", file=sys.stderr)
+            return 2
+        try:
+            extra = SystemExtra.load(args.system_extra)
+        except ValueError as ex:
+            print(f"run: {ex}", file=sys.stderr)
+            return 2
     if args.subset:
         if args.limit:
             print("run: --subset takes the subset's tasks; it does not combine with --limit",
@@ -118,7 +131,8 @@ def cmd_run(args) -> int:
                    budgets=_budgets(args),
                    journal=args.journal, models=tuple(models), provider=args.provider,
                    provider_options={k: v for k, v in options.items() if v is not None},
-                   dialects=tuple(args.dialect or ["neutral"]), cost_cap=args.cost_cap)
+                   dialects=tuple(args.dialect or ["neutral"]), cost_cap=args.cost_cap,
+                   system_extra=extra)
     cells = matrix(spec)
     if args.dry_run:
         print(f"run {spec.resolved_run_id()}: {len(cells)} episodes -> {spec.out_root}")
@@ -138,6 +152,9 @@ def cmd_run(args) -> int:
                 print(f"  {model}: {n} episodes, no measured cost yet")
         if spec.cost_cap is not None:
             print(f"  cost cap ${spec.cost_cap:.2f}")
+        if extra is not None:
+            print(f"  system extra {extra.path} {extra.sha256[:19]}: {len(extra.text.strip())} "
+                  "characters after every model's system prompt")
         return 0
     for model in models:   # fail before the matrix, not once per cell
         try:
@@ -148,7 +165,11 @@ def cmd_run(args) -> int:
     if args.provider == "codex" and spec.concurrency > 1 and models:
         print("codex: a ChatGPT Plus account answers parallel runs with 429s; "
               "--concurrency 1 runs them one at a time", file=sys.stderr)
-    summary = run(spec, progress=lambda s: print(s, flush=True))
+    try:
+        summary = run(spec, progress=lambda s: print(s, flush=True))
+    except ResumeMismatch as exc:
+        print(f"run: {exc}", file=sys.stderr)
+        return 2
     print(f"\nrun {summary['run_id']}: {summary['episodes']} episodes, {summary['skipped']} resumed, "
           f"{len(summary['failures'])} failed to start"
           + (f", ${summary['spent_usd']:.2f} spent" if summary.get("spent_usd") else "")
@@ -425,6 +446,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--output-tokens", type=int,
                    help=f"output-token budget per episode (default {Budgets.output_tokens})")
     p.add_argument("--cost-cap", type=float, help="dollars: no new episode starts past it")
+    p.add_argument("--system-extra", metavar="FILE",
+                   help="a text file appended to every model's system prompt (training plan T0: a "
+                        "convention sheet); run.json and each episode header name it and its sha256, "
+                        "and the prompt hash covers it. Every provider takes it, claude-code and "
+                        "codex too (it is part of the system prompt they are given)")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_run)
 

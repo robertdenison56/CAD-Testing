@@ -45,7 +45,7 @@ from roaddraft.eval.agents import Agent, Submit, ToolCall
 from roaddraft.eval.agents.basic import _QueueAgent
 from roaddraft.eval.budget import Budgets, BudgetState
 from roaddraft.eval.episode import (HARNESS_VERSION, INVALID, STATE_KEYS, Episode,
-                                    EpisodeConfig, _error, _hash)
+                                    EpisodeConfig, _error, _hash, begin_context, prompt_fields)
 from roaddraft.eval.tools import HARNESS_DEFINITIONS, RENDER_QUERIES, repair_params, shape_params
 from roaddraft.mcp.server import INSTRUCTIONS, RoadDraftMCP
 from roaddraft.probes import fixture, prompting
@@ -450,11 +450,7 @@ class ProbeEpisode(Episode):
         self._schemas = {d["name"]: d["input_schema"] for d in self.tools}
         self.state = BudgetState()
         self.agent.reset(self.task, self.config.level, self.config.mode)
-        system = system_prompt(self.config.mode, self.budgets)
-        self.agent.begin({"mode": self.config.mode, "level": self.config.level,
-                          "dialect": self.config.dialect,
-                          "budgets": self.budgets, "scope": self.scope, "episode_path": self.path,
-                          "system": system})
+        self.agent.begin(begin_context(self, system=system_prompt(self.config.mode, self.budgets)))
         return {"turn": 0, "brief": self.brief_text, "tools": self.tools,
                 "state": self.state_summary(), "budget": self.state.remaining(self.budgets),
                 "mode": self.config.mode, "dialect": self.config.dialect}
@@ -474,7 +470,8 @@ class ProbeEpisode(Episode):
                 "spec_version": SPEC_VERSION, "spec_hash": spec_hash(),
                 "generator_version": generator_version(),
                 "verifier_version": check_version(), "harness_version": HARNESS_VERSION,
-                "prompt_hash": _hash(self.brief_text), "git_commit": pins.get("commit"),
+                **prompt_fields(self.brief_text, self.config.system_extra),
+                "git_commit": pins.get("commit"),
                 "dirty": pins.get("dirty"),
                 "tools_sha256": _hash(json.dumps(self.tools, sort_keys=True)),
                 **self.agent.describe(), "agent": self.agent.name,

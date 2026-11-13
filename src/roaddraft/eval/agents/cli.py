@@ -29,9 +29,12 @@ waiting (a budget), the CLI is killed with its bridge: nothing more is
 asked of the model.
 
 The system prompt is the eval's (``eval.prompts``, as the LLM agent builds
-it), given to the CLI in place of its own; the task text is its first user
-message.  The CLI's own event stream and stderr are kept beside the
-trajectories, under ``<run>/cli/``, for the record.
+it, with the run's ``--system-extra`` appended when it has one), given to the
+CLI in place of its own -- Claude Code's ``--system-prompt``, Codex's
+``model_instructions_file`` -- so a CLI row is told the extra exactly as an
+API row is; the task text is its first user message.  The CLI's own event
+stream and stderr are kept beside the trajectories, under ``<run>/cli/``, for
+the record.
 """
 from __future__ import annotations
 
@@ -230,8 +233,7 @@ class CLIAgent(Agent):
         self.budgets = context.get("budgets")
         self.episode_path = context.get("episode_path")
         self._started = time.monotonic()
-        if not self.fixed_system:
-            self.system = system_for(context)
+        self.system = system_for(context, self.fixed_system)
 
     def close(self) -> None:
         if self.proc is not None and self.proc.poll() is None:

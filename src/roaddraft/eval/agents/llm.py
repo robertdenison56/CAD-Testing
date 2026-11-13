@@ -2,7 +2,8 @@
 tool-calling loop behind the same ``act(observation)`` as every other agent.
 
 Turn 0 hands the model the system prompt (``eval.prompts``, with the
-episode's budgets and mode), the task text as the first
+episode's budgets and mode, and the run's ``--system-extra`` after it when
+it has one), the task text as the first
 user message, and the episode's tool definitions.  Each later turn hands
 back every result of the calls the model made, in order, in one message --
 the bus result JSON verbatim, a fault as an error result carrying the
@@ -82,14 +83,19 @@ def message_size(message: dict) -> Tuple[int, int]:
     return chars, images
 
 
-def system_for(context: dict) -> str:
-    """The system prompt an episode's ``begin`` context asks for: the task's
-    own where it has one (a probe task), else the template filled with the
-    mode and budgets."""
-    if context.get("system"):
-        return context["system"]
-    return prompts.system_prompt(context.get("dialect", "neutral"), context["mode"],
-                                 context.get("budgets"))
+def system_for(context: dict, fixed: Optional[str] = None) -> str:
+    """The system prompt an episode's ``begin`` context asks for: ``fixed``
+    (an agent built with its own), else the task's own where it has one (a
+    probe task), else the template filled with the mode and budgets; then
+    the run's system extra (``--system-extra``) after it, when it has one."""
+    if fixed:
+        base = fixed
+    elif context.get("system"):
+        base = context["system"]
+    else:
+        base = prompts.system_prompt(context.get("dialect", "neutral"), context["mode"],
+                                     context.get("budgets"))
+    return prompts.with_extra(base, context.get("system_extra"))
 
 
 class LLMAgent(Agent):
@@ -126,8 +132,7 @@ class LLMAgent(Agent):
     def begin(self, context: dict) -> None:
         budgets = context.get("budgets")
         self.context_tokens = getattr(budgets, "context_tokens", None) or None
-        if not self.fixed_system:
-            self.system = system_for(context)
+        self.system = system_for(context, self.fixed_system)
 
     # ----------------------------------------------------------------- turns
 

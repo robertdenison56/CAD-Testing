@@ -121,9 +121,9 @@ All free, all on the Mac, none waiting on a decision:
    phases behind the 9B's largest losses (layers, stationing, lettering). Acceptance: every training task's
    grounded reference scores 100 at the vague level through the episode loop, and the audit finds no ungrounded
    value. This is the critical path, several working sessions.
-3. **The converter and the dataset card**: episode files to chat-template conversations, with the tool digest,
+3. **The converter and the dataset card** (built 2026-11-12, night; status below): episode files to chat-template conversations, with the tool digest,
    prompt hash, spec, generator and verifier versions in the header, and the token histogram that sizes T1.
-4. **T0's two pieces**: the convention sheet and the `--system-extra` flag. Ready to queue when the local hard
+4. **T0's two pieces** (built 2026-11-12, night; status below): the convention sheet and the `--system-extra` flag. Ready to queue when the local hard
    sets finish (about Nov 15).
 
 Then, on your word: the T1 smoke, the first paid step.
@@ -552,6 +552,126 @@ on a pilot.
   `update_labels` leaves them stale. The seeded sheets letter everything with the engine's own text, so that
   trap does not arise; taking off and lettering again avoids it on both.
 
+### Status, 2026-11-12, night (the width dimensions; the crowded bearings)
+
+**Every seeded type is covered.** The width phase dimensions the pavement width square across each tangent
+with `place_dimension`. It takes the tangent's two pavement edges and the same fraction along each (to the
+millionth: a station is graded to 0.005 ft), so the engine finds the points; the annotation scale sizes the
+text. At plan scale the text does not fit between the edges and goes out past the second point, so the edge
+away from the BC and EC labels goes second. Where a dimension may stand is judged in the line's terms from
+each label's record. A label along or square to a tangent is taken at its true length, worked out from its
+box, its height and the tangent's run (`(W × len − h × |dy|) / |dx|`, the engine's own width to 0.01 ft),
+never its box. The dimension line must miss every label's stretch; the text must miss every label that
+reaches past the edge on its side. A stated station is kept and the line moved half a text height off what
+it would cross. A station left to the drafter is the half station nearest the tangent's middle that clears
+(the spec's standard; at that station itself the bearing blocks the line on 142 of 147 tasks), else the
+nearest place just past what is in the way. Past a station equation the station is worked out from the
+equation's own numbers; the tangent rows' rounded station texts are off by up to the 0.005 ft tolerance. On
+sheets handed over, the text's box is worked out from the record, the engine's warning ("the text needs
+21.52") and the tool's defaults, and checked against each view; a dimension a frame would cut is set again
+(`find_entities`' `shown` follows the dimension line, not its text). On sheets the drafter lays out, each
+frame is trimmed round the dimensions' boxes. The audit now also grounds a size a tool's definition gives as
+a ratio of the text height ("1.2 x the text height"); that only loosens it.
+
+| set | before | kept, explicit | kept, vague |
+|---|---:|---:|---:|
+| `d1-train` | 1,051 | 1,198 | 1,198 |
+| `d1-train-hard` | 235 | 294 | 294 |
+| `d1-train-crowd` | 534 | 592 | 592 |
+| `d1-train-twist`, `d1-train-revise` | 1,200 | 1,200 | 1,200 |
+| all | 3,020 | 3,284 | 3,284 |
+
+Width types: `pavement` 72/72, `pavement-widths` 75/75, `plan-sheet-pavement` 59/60 (D1-012124: a frame
+that keeps reaching past what its view shows, the frame trimming's existing stop). The widths phase with the
+edges adds 9 to 12 calls to a whole plan: `plan-sheet-pavement` takes a median 133 calls at the vague level
+and 124 explicit, at most 150 and 141. One vague plan uses the whole 150-step budget and three use 148:
+kept, with no slack, so any call added to a whole plan has to be counted.
+
+**The crowded bearings.** Where the clearing step finds two labels meeting only by a loose measure (a length
+bounded by its box, or the other's corners those of its box), both are measured by their true sizes first:
+the length from the box, the height and the tangent's run, and the other's true corners by arithmetic along
+its own tangent. Those corners are projected onto the first one's tangent by arithmetic where they fall on
+it, else by `xy_to_station`; no `station_to_xy`, so no display-station trap past an equation. The step now
+also tries three and six text heights further off. Crowd went from 534 to 592 a level: 58 gained, none lost.
+Kept recordings take a median 58 calls (52 before), at most 137. Every crowd recording and 13 revise
+recordings changed (they go through the clearing step); `d1-train`, `d1-train-hard` and `d1-train-twist`
+re-record turn for turn identical. The 8 not kept: 7 bearings that truly overlap at all nine places tried,
+one over budget. Generator, verifier, engine and tool surface unchanged; widths stay untwisted (decision 9).
+The previous recordings are in `results/grounded/before-widths/` (455 MB, duplicates).
+
+### Status, 2026-11-12, night (step 3: the converter and the dataset card)
+
+**The converter.** `roaddraft.trajectories.conversations` turns an eval episode file into the conversation
+the harness has with a model, built from the harness's own pieces rather than a copy of them. The system
+prompt is the one `agents.llm.system_for` gives an LLM agent under the episode's mode and budgets; a model
+run's header carries its own, which is used as is. The tool list is what `eval.tools.tool_definitions`
+makes for the episode's scope, held to the header's digest. The task text is taken at its level and held to
+the header's prompt hash. Each turn's results come back as `LLMAgent._results` hands them, laid out as the
+OpenAI-compatible provider sends them: one tool message per result as compact JSON, and the `[harness]`
+note as a user message. A turn keeps its calls in one assistant message, as the harness ran it (the drafter
+often asks two or three queries a turn), and the conversation ends on the `submit` call. One path serves
+references and rollouts. A test runs an LLM agent through the fake provider and finds the conversation
+equal, message for message, to what the provider was sent. Before a conversation is written, its task is
+rebuilt from the manifest (prompt, truth and starting document must match), its journal is re-scored (100
+or dropped), and the grounded keep rule runs again (audit, `twist_ignored`, `left_stale`).
+
+**The data, rebuilt on the recordings above** (the first pass ran on the 3,020 a level before the width
+phase). `convert` wrote `results/training/<set>-<level>.jsonl` for all ten pairs, `tools.json` with four
+tool sets (74 tools; 75 with `create_alignment`; 76 with the revision commands; 77 with both) and
+`summary.json`; `card` writes `benchmarks/training/DATASET_CARD.md`. 6,568 conversations, none dropped.
+
+| set | kept a level | tokens, median | most |
+|---|---:|---:|---:|
+| `d1-train` | 1,198 | 32,071 | 69,269 |
+| `d1-train-hard` | 294 | 71,718 | 121,294 |
+| `d1-train-twist` | 600 | 33,956 | 64,313 |
+| `d1-train-crowd` | 592 | 61,421 | 113,596 |
+| `d1-train-revise` | 600 | 41,648 | 77,697 |
+| all | 3,284 | 37,952 | 121,294 |
+
+The fixed prompt is 27.8k-30.1k tokens; 812 of the 6,568 conversations run past 65,536 tokens and none past
+131,072; 300.8M tokens in all. The width phase and the crowd's true-size measure made the whole-sheet and
+crowded conversations longer: the hard set's median went from 64k to 72k and its longest to 121k, near the
+131k window. **Tokens.** The 9B's own tokenizer is not on the Mac. `scripts/training_tokens.py` builds
+Qwen3.5's tokenizer from llama.cpp's qwen35 vocabulary (it agrees on all 51 of llama.cpp's test strings) and
+renders through llama.cpp's Qwen3.5 template. Against LM Studio's counts on 240 requests of four 9B
+`d1-test` episodes, the first request counts 27,670 against the server's 27,698; the gap grows by about 2
+tokens a tool call and 2.3 an argument, at most 1.9% of a request. So the lengths are 1-2% low and the loss
+tokens lower still; a recount with the 9B's `tokenizer.json` belongs in the T1 smoke.
+
+**Open for T1.** The drafter's shown work is visible text, and Qwen3.5's template adds an empty think block
+to each assistant turn. One in eight conversations runs past 64k tokens, so the T1 sequence length (and its
+price) is set by the hard and crowded sets.
+
+### Status, 2026-11-12, night (step 4: T0's two pieces)
+
+**The flag.** `python -m roaddraft.eval run --system-extra FILE` adds a file after every model's system
+prompt, one blank line between. API and CLI routes both get it: Claude Code in `--system-prompt`, Codex in
+its instructions file; probe tasks (hard-pilots) after their own system prompt. It is refused with a
+non-model `--agent` (oracle, null, scripted, replay). `run.json` and every episode header record the file
+and its sha256; `prompt_hash` covers the brief and the extra together, and `prompt_sha256` and
+`system_prompt` show the prompt as sent. A run will not resume over episodes given a different extra, or
+none. With the flag off nothing moves: `tests/test_eval_system_extra.py` pins every brief hash on the seven
+held-out sets at both levels and the system prompt for each mode, and the pins match the 7,214 v3 board
+headers. The board's v3 rows ran before the stationing hint (4d135e7d), so their system prompt differs from
+main's by one line: T0 is read against a base rerun on the same pin, as §3 says.
+
+**The sheet.** `benchmarks/training/conventions-v1.md` (sha256 `89b9a471…`, 4,840 characters, about 1.2-1.5k
+tokens, 4-5% of the fixed prompt). It covers what each kind of request covers, layers (never 0), sheet
+setup, lettering with the spec's offsets, legibility and a check before submitting, written from
+`DRAFTING_SPEC_V1` and from `eval standards` on the 9B and four other vague runs. A test holds every number
+in it to the spec, and any station or bearing to the spec's own examples.
+
+**Not run.** Smoke on the fake provider only: same scores, both hashes moved, the base `prompt_hash` equal to
+the 9B's recorded header. Base and T0 on `d1-test` and `d1-real` at vague are 400 episodes, about 4-6 PC
+nights; they wait on decision 1 (rig) and decision 3 (pin). `lms_campaign.py e3` does not pass the flag yet,
+so the PC run calls `python -m roaddraft.eval run` directly.
+
+**Open, for rollouts.** The converter checks a model run's task text against the header's `prompt_hash`
+(`trajectories/conversations.py`, the `prompt` drop). A run given an extra hashes the brief and the extra
+together, so the converter drops it as `prompt`. T0 runs are on held-out sets and never reach training; a
+T2 rollout run with an extra would need the check to use `eval.episode.prompt_hash(brief, extra)`.
+
 ## 6. Decisions for Robert
 
 1. **The rig for base, T0 and checkpoints.** PC only: free, one to one and a half nights per 100 episodes, and
@@ -587,13 +707,15 @@ on a pilot.
    Build it as a training-only type with a check of its own (recommended: no board set or id moves), or
    leave `p05` to transfer from the stated-break layouts.
 9. **Width dimensions through a turned viewport** (2026-11-11). `place_dimension` has no `view_rotation`;
-   giving it one moves the tool surface. Until then the three width types stay untwisted, and they are the
-   207 tasks the drafter does not cover.
+   giving it one moves the tool surface. Until then the three width types stay untwisted. The drafter
+   covers them untwisted since 2026-11-12, night (206 of 207 kept a level), so this only decides whether a
+   width task may be twisted.
 10. **What the engine tells a drafter about lettering that collides** (2026-11-12, the clearing step). Today
     nothing: a text is reported by its box on the model's axes, and a model that cannot look at a render has
     to work out the rest. The three ways on:
-    - Leave the surface as it is. The step is built on it and 534 of 600 crowded recordings are kept. The
-      cost is calls, and a method a model has to learn.
+    - Leave the surface as it is. The step is built on it and 592 of 600 crowded recordings are kept (534
+      before the true-size measure of 2026-11-12, night). The cost is calls (a median 58 a crowded
+      recording), and a method a model has to learn.
     - Let the listing of what a sheet shows carry each text's four corners on the paper. One read then
       replaces steps 1 and 2. It moves the tool surface, so every board row ran without it.
     - A query that lists the pairs that collide on a sheet. That hands over the verifier's own answer; I
@@ -680,12 +802,14 @@ passes. The 23 pilots with a page stay out of training for now.
 Build 2 is done, and so is the sheet and viewport phase of build 1 (the status of 2026-11-11, night): 516
 more tasks a level are recorded, 281 of the 283 layout tasks of `d1-train` and `d1-train-twist` and 235 of
 `d1-train-hard`, recorded for the first time. What is left of build 1 is the drafter choosing how many
-sheets a line takes and where they break, which no seeded task asks yet (decision 8); the 207 width tasks
-wait on the width dimensions. What build 2 does not reach in `p17`: the pilots' sheets carry other lines and
-published lettering, and what the best row misses there is new lettering over other lettering as well as
-lettering upside down. The first of those is build 3, built 2026-11-12 (the status above): `d1-train-crowd`,
-600 crowded sheets, 534 recorded a level. Build 4 followed the same day: `d1-train-revise`, 600 revised
-sheets, all 600 recorded a level. Build 5 (the reasoning families) and the open half of build 1 are left.
+sheets a line takes and where they break, which no seeded task asks yet (decision 8). The 207 width tasks
+are recorded since 2026-11-12, night (206 kept a level), untwisted. What build 2 does not reach in `p17`: the
+pilots' sheets carry other lines and published lettering, and what the best row misses there is new
+lettering over other lettering as well as lettering upside down. The first of those is build 3, built
+2026-11-12 (the status above): `d1-train-crowd`, 600 crowded sheets, 534 recorded a level, then 592 once
+labels were measured by their true sizes (2026-11-12, night). Build 4 followed the same day:
+`d1-train-revise`, 600 revised sheets, all 600 recorded a level. Every seeded type is now covered: 3,284 of
+3,297 tasks kept a level. Build 5 (the reasoning families) and the open half of build 1 are left.
 
 **A validation set on real sheets.** `pilot-dev`: `p17`, `p04`, `p05` and `p11` instances on the 9 clean
 sheets, registered outside the pilot package. For choosing a checkpoint only, like `d1-real-dev`.

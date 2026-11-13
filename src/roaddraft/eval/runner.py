@@ -15,6 +15,11 @@ resumed ones included) have cost ``cost_cap`` dollars, no new episode starts
 and the running ones finish.  Episodes of an unpriced model cost nothing
 against the cap, so a cap on a local model never trips.
 
+A run may append one file to every model's system prompt (``system_extra``,
+``--system-extra``: training plan stage T0).  ``run.json`` and every episode
+header name the file and its digest, and a run is not resumed over finished
+episodes that were told another one (``ResumeMismatch``).
+
 A dead endpoint stops the runner too (``stopped = "engine"``): before each
 episode the agent is asked whether it is ready (an LLM agent's provider
 probes its local server and reloads the engine, up to its own deadline),
@@ -40,6 +45,7 @@ from roaddraft.eval import taskset as tasksets
 from roaddraft.eval.agents import AGENTS, Agent, CLIAgent, LLMAgent, ReplayAgent
 from roaddraft.eval.budget import Budgets
 from roaddraft.eval.episode import HARNESS_VERSION, Episode, EpisodeConfig, EpisodeResult
+from roaddraft.eval.prompts import SystemExtra
 from roaddraft.eval.trajectory import episode_path, is_complete, read_episode
 
 DEFAULT_RESULTS = "results"
@@ -93,6 +99,8 @@ class RunSpec:
     dialects: Sequence[str] = ("neutral",)
     cost_cap: Optional[float] = None   # dollars; stops the runner, not an episode
     subset: Optional[str] = None       # a cost subset's tag (eval/subsets.py): task_ids are its ids
+    #: a file appended to every model's system prompt (``--system-extra``, plan stage T0)
+    system_extra: Optional[SystemExtra] = None
 
     @property
     def all_agents(self) -> List[str]:
@@ -113,6 +121,10 @@ class RunSpec:
         d = asdict(self)
         d["budgets"] = self.budgets.to_dict()
         d["run_id"] = self.resolved_run_id()
+        # the file and its digest, not its text; no key at all without one, so run.json reads as before
+        del d["system_extra"]
+        if self.system_extra is not None:
+            d["system_extra"] = self.system_extra.record()
         return d
 
 
@@ -144,7 +156,8 @@ def run_cell(cell: Cell, spec: RunSpec, pins: Optional[dict] = None,
              agent_factory: Optional[Callable[[str, RunSpec], Agent]] = None) -> EpisodeResult:
     task = tasksets.task_from_entry(cell.entry, level=cell.level)
     config = EpisodeConfig(level=cell.level, mode=cell.mode, dialect=cell.dialect,
-                           budgets=spec.budgets, sample=cell.sample, run_id=spec.resolved_run_id())
+                           budgets=spec.budgets, sample=cell.sample, run_id=spec.resolved_run_id(),
+                           system_extra=spec.system_extra)
     if "probe" in cell.entry:  # a probe task (eval/probe_tasks.py): its own episode and oracle
         from roaddraft.eval import probe_tasks
         if cell.agent == "oracle" and agent_factory is None:
@@ -239,26 +252,54 @@ def summarize(results: Iterable[dict]) -> dict:
     return {"groups": out, "episodes": len(rows)}
 
 
+def _header_and_end(path) -> dict:
+    """A finished episode's header and end records, without its turns."""
+    rec = read_episode(path)
+    return {"header": rec["header"], "end": rec["end"]}
+
+
+class ResumeMismatch(ValueError):
+    """The run's folder holds finished episodes told another system extra (or none)."""
+
+
+def check_resumed_prompt(spec: RunSpec, finished: Sequence[tuple]) -> None:
+    """A resumed run keeps its prompt: ``ResumeMismatch`` when any finished
+    episode (``(cell, record)`` pairs) was told another system extra than
+    ``spec`` asks for, or none where it asks for one, or one where it asks for
+    none.  Nothing is written before it is checked."""
+    want = spec.system_extra.sha256 if spec.system_extra is not None else None
+    odd = [cell.task_id for cell, rec in finished
+           if ((rec.get("header") or {}).get("system_extra") or {}).get("sha256") != want]
+    if odd:
+        told = f"the system extra {spec.system_extra.path} ({want[:19]})" if want else "no system extra"
+        raise ResumeMismatch(
+            f"{len(odd)} finished episodes in {spec.out_root} ({', '.join(odd[:3])}"
+            f"{', ...' if len(odd) > 3 else ''}) were told another system extra than this run "
+            f"asks for ({told}); a resumed run keeps its prompt: give it a new --run-id")
+
+
 def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] = None,
         progress: Optional[Callable[[str], None]] = None) -> dict:
     """Run the matrix; returns the summary (also written as ``summary.json``)."""
     cells = matrix(spec)
     out_root = spec.out_root
     out_root.mkdir(parents=True, exist_ok=True)
+    todo, skipped = [], []
+    for cell in cells:
+        (skipped if is_complete(cell_path(spec, cell)) else todo).append(cell)
+    finished = [(cell, _header_and_end(cell_path(spec, cell))) for cell in skipped]
+    check_resumed_prompt(spec, finished)   # before run.json is rewritten
     pins = _pins()
     (out_root / "run.json").write_text(json.dumps(
         {"spec": spec.to_dict(), "harness_version": HARNESS_VERSION, "pins": pins,
          "cells": len(cells), "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=1))
-    todo, skipped = [], []
-    for cell in cells:
-        (skipped if is_complete(cell_path(spec, cell)) else todo).append(cell)
     say = progress or (lambda s: None)
     say(f"{len(cells)} cells: {len(todo)} to run, {len(skipped)} already complete")
     results: List[dict] = []
     failures: List[dict] = []
     # the episodes already on disk count in the summary and against the cost cap
-    for cell in skipped:
-        end = read_episode(cell_path(spec, cell))["end"]
+    for cell, rec in finished:
+        end = rec["end"]
         results.append({"task_id": cell.task_id, "agent": cell.agent, "level": cell.level,
                         "mode": cell.mode, "dialect": cell.dialect, "sample": cell.sample,
                         "termination": end["termination"], "effective_score": end["effective_score"],
@@ -343,4 +384,5 @@ def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] 
 
 
 __all__ = ["DEFAULT_RESULTS", "DEAD_EPISODES", "EngineDown", "Cell", "RunSpec", "matrix", "make_agent",
-           "run_cell", "cell_path", "measured_cost", "summarize", "run"]
+           "run_cell", "cell_path", "measured_cost", "summarize", "ResumeMismatch",
+           "check_resumed_prompt", "run"]

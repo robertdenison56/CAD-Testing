@@ -318,6 +318,26 @@ def test_the_oracle_through_codex_scores_100_and_the_usage_lands_in_the_last_tur
     assert seen["system"] == prompts.system_prompt("neutral", "single")
 
 
+def test_a_system_extra_reaches_both_clis_inside_the_system_prompt_they_are_given(tmp_path, fake_cli):
+    """``--system-extra`` (training plan T0) on the CLI route: Claude Code's
+    ``--system-prompt`` and Codex's instructions file carry it, as an API row's
+    system prompt does, and the header names it."""
+    script, record = fake_cli
+    sheet = tmp_path / "conventions.md"
+    sheet.write_text("# House rules\n\n- Never draft on layer 0.\n")
+    extra = prompts.SystemExtra.load(sheet)
+    want = prompts.with_extra(prompts.system_prompt("neutral", "single"), extra.text)
+    assert want != prompts.system_prompt("neutral", "single") and want.endswith("layer 0.\n")
+    for provider in (ClaudeCodeProvider("claude-fake", claude_bin=str(script)),
+                     CodexProvider("gpt-fake", codex_bin=str(script))):
+        r = run_episode(_task(1), CLIAgent(provider), EpisodeConfig(system_extra=extra),
+                        out_root=tmp_path / provider.name)
+        assert r.termination == "submit", (provider.name, r.error)
+        assert json.loads(record.read_text())["system"] == want, provider.name
+        h = read_episode(r.path)["header"]
+        assert h["system_extra"] == extra.record() and h["prompt_sha256"] == prompts.digest(want)
+
+
 def test_calls_that_arrive_together_are_one_turn_answered_in_order(tmp_path, monkeypatch, fake_cli):
     script, record = fake_cli
     monkeypatch.setenv("FAKE_CLI_MODE", "parallel")

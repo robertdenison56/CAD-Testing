@@ -45,6 +45,7 @@ from roaddraft.document.fileformat import INTERCHANGE_EXT
 from roaddraft.eval import prices
 from roaddraft.eval.agents import Agent, AgentRefusal, Submit, ToolCall
 from roaddraft.eval.budget import Budgets, BudgetState
+from roaddraft.eval.prompts import SystemExtra
 from roaddraft.eval.providers.base import LimitReached
 from roaddraft.eval.tools import (
     DIALECTS, HARNESS_TOOLS, MODES, RENDER_QUERIES, allowed_names, repair_params, shape_params,
@@ -80,6 +81,8 @@ class EpisodeConfig:
     sample: int = 0
     run_id: str = ""
     result_cap: int = RESULT_CAP
+    #: a file appended to the model's system prompt (``--system-extra``), or None
+    system_extra: Optional[SystemExtra] = None
 
     def __post_init__(self):
         if self.level not in LEVELS:
@@ -139,6 +142,40 @@ def _error(name: str, etype: str, message: str, hint: Optional[str] = None) -> d
 
 def _hash(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def prompt_hash(brief_text: str, system_extra: Optional[SystemExtra] = None) -> str:
+    """The header's ``prompt_hash``: the digest of the task text, as every run
+    has recorded it; with a system extra (``--system-extra``), the digest of
+    the task text and the extra's text together, so an episode told the
+    extra never shares a prompt hash with its twin that was not."""
+    if system_extra is None:
+        return _hash(brief_text)
+    return _hash(json.dumps({"brief": brief_text, "system_extra": system_extra.text},
+                            sort_keys=True, ensure_ascii=False))
+
+
+def prompt_fields(brief_text: str, system_extra: Optional[SystemExtra] = None) -> dict:
+    """The header's prompt fields: ``prompt_hash``, and with a system extra,
+    ``system_extra`` naming its file and digest."""
+    fields = {"prompt_hash": prompt_hash(brief_text, system_extra)}
+    if system_extra is not None:
+        fields["system_extra"] = system_extra.record()
+    return fields
+
+
+def begin_context(episode, system: Optional[str] = None) -> dict:
+    """What an episode hands its agent's ``begin``: the mode, level, dialect,
+    budgets, scope and file, the system prompt when the task has its own (a
+    probe), and the system extra's text when the run has one."""
+    context = {"mode": episode.config.mode, "level": episode.config.level,
+               "dialect": episode.config.dialect,
+               "budgets": episode.budgets, "scope": episode.scope, "episode_path": episode.path}
+    if system is not None:
+        context["system"] = system
+    if episode.config.system_extra is not None:
+        context["system_extra"] = episode.config.system_extra.text
+    return context
 
 
 def _harness_failure(exc: BaseException) -> str:
@@ -206,9 +243,7 @@ class Episode:
         self._schemas = {d["name"]: d["input_schema"] for d in self.tools}
         self.state = BudgetState()
         self.agent.reset(self.task, self.config.level, self.config.mode)
-        self.agent.begin({"mode": self.config.mode, "level": self.config.level,
-                          "dialect": self.config.dialect,
-                          "budgets": self.budgets, "scope": self.scope, "episode_path": self.path})
+        self.agent.begin(begin_context(self))
         return {"turn": 0, "brief": self.brief_text, "tools": self.tools,
                 "state": self.state_summary(), "budget": self.state.remaining(self.budgets),
                 "mode": self.config.mode, "dialect": self.config.dialect}
@@ -248,7 +283,8 @@ class Episode:
                 "spec_version": brief.spec_version, "spec_hash": brief.spec_hash,
                 "generator_version": brief.generator_version,
                 "verifier_version": VERIFIER_VERSION, "harness_version": HARNESS_VERSION,
-                "prompt_hash": _hash(self.brief_text), "git_commit": pins.get("commit"),
+                **prompt_fields(self.brief_text, self.config.system_extra),
+                "git_commit": pins.get("commit"),
                 "dirty": pins.get("dirty"), "tools_sha256": _hash(json.dumps(self.tools, sort_keys=True)),
                 **self.agent.describe(), "agent": self.agent.name,
                 "dialect": self.config.dialect, "mode": self.config.mode,

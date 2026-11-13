@@ -9,10 +9,17 @@ is the only dialect.  ``$steps``, ``$faults`` and ``$mode_rules`` are
 filled from the episode's budgets and mode.  The rendered
 prompt's digest goes into the trajectory header, so a changed word is a
 changed run.
+
+A run may add one file to the end of that prompt (``--system-extra FILE``,
+training plan stage T0: a convention sheet, measured as T0 minus base on the
+same tasks).  ``SystemExtra`` is that file, read once for the run;
+``with_extra`` appends its text.  With no extra the prompt is the template's,
+byte for byte, so every run before the flag reads as it did.
 """
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 from typing import Optional
@@ -20,6 +27,8 @@ from typing import Optional
 from roaddraft.eval.budget import Budgets
 
 HERE = Path(__file__).resolve().parent
+#: the checkout: a system extra inside it is recorded by its path from here
+REPO = HERE.parents[3]
 
 MODE_RULES = {
     "single": ("- This run is single-shot: there is no run_check and no render. Check the "
@@ -61,4 +70,49 @@ def digest(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-__all__ = ["MODE_RULES", "template", "system_prompt", "digest"]
+@dataclass(frozen=True)
+class SystemExtra:
+    """A file a run appends to every system prompt it sends (``--system-extra``).
+
+    ``path`` is where it was read, from the checkout's root when it lies inside
+    it; ``sha256`` is the digest of the file's bytes; ``text`` is what is
+    appended.  The run's ``run.json`` and every episode header name the file
+    and its digest (``record``), and the episode's prompt hash covers its text."""
+    path: str
+    sha256: str
+    text: str
+
+    @classmethod
+    def load(cls, path) -> "SystemExtra":
+        p = Path(path)
+        try:
+            data = p.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"cannot read the system extra {path}: {exc.strerror or exc}") from None
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(f"the system extra {path} is not UTF-8 text") from None
+        if not text.strip():
+            raise ValueError(f"the system extra {path} is empty")
+        resolved = p.resolve()
+        try:
+            shown = resolved.relative_to(REPO.resolve()).as_posix()
+        except ValueError:
+            shown = resolved.as_posix()
+        return cls(path=shown, sha256="sha256:" + hashlib.sha256(data).hexdigest(), text=text)
+
+    def record(self) -> dict:
+        """What a run's manifest and an episode's header say of it."""
+        return {"path": self.path, "sha256": self.sha256}
+
+
+def with_extra(system: str, extra: Optional[str]) -> str:
+    """``system`` with a system extra's text after it, a blank line between;
+    ``system`` itself, unchanged, when there is none."""
+    if extra is None:
+        return system
+    return system.rstrip("\n") + "\n\n" + extra.strip() + "\n"
+
+
+__all__ = ["MODE_RULES", "template", "system_prompt", "digest", "SystemExtra", "with_extra"]
