@@ -28,6 +28,17 @@ anything is left, then the 9B and Gemma on d1-real-hard (rerun-v3) and hard-pilo
 run ids unchanged, reports unpublished. Projection: Gemma d1-test-hard ~Nov 11 10:00, d1-real-hard both ~Nov 12 18:00,
 hard-pilots both ~Sun Nov 15, give or take a day.
 
+**2026-11-11 08:03 PST: relaunched behind an LM Link wait.** RobertsPC left the LM Link at about 23:24 on Nov 10 (Gemma
+d1-test-hard at 41/100, one errored episode set aside), and every attempt after that failed preflight in a second, so
+the 11-10 queue spent all 30 tries of each run by 07:29 and ran nothing more. The hard-pilots steps also failed on a
+dirty worktree: vague-pilots carries the vague-pilot patch uncommitted and preflight refuses a dirty src/tests (the old
+pilots queue would have hit the same). `results/e3-lms/queue-2026-11-11-vague-hard-local.sh` is the same work, but each
+run and each attempt first waits for the PC on the link (every 5 min, no attempt spent), and hard-pilots runs only if
+vague-pilots is clean when the D1 runs end. Projection from the PC's return: ~4.5 days (Gemma d1-test-hard ~9 h, the 9B
+d1-real-hard ~18 h, Gemma ~14 h, pilots ~60-70 h). 09:3x: the dirty worktree is fixed (Robert: "Yes, commit it"): the
+patch is committed in vague-pilots as 0c3f20dd on the local branch `vague-pilots-v3` (parent 3b7e7fe9, same files the
+frontier vague pilots ran, not pushed), src/tests now clean, so the queue runs both pilot sets after the D1 runs.
+
 ## What is running right now
 
 **Nothing since 04:06 PDT on 2026-10-28: the Track D queue of Oct 27 is through** (`results/e3-lms/queue-2026-10-27.sh`,

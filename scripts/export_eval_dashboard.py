@@ -42,7 +42,9 @@ RUNNERS = {"claude-code": "Claude Code CLI", "codex": "Codex CLI"}
 QUANT = {"q4km": "Q4_K_M", "q8": "Q8_0"}
 # model ids the probe board never ran
 LOCAL_NAMES = {"google/gemma-4-12b": "Gemma 4 12B", "zai-org/glm-4.6v-flash": "GLM-4.6V-Flash",
-               "gpt-6.1-terra": "GPT-6.1-Terra"}
+               "gpt-6.1-terra": "GPT-6.1-Terra",
+               "mistralai/Mistral-Small-4-119B-2603-NVFP4": "Mistral Small 4 119B (NVFP4, vLLM)",
+               "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4": "Nemotron 3.5 Super VL 120B-A12B (NVFP4, vLLM)"}
 LEVELS = ("minimal", "low", "medium", "high", "xhigh", "max")
 
 # d1-test has no question groups of its own; its seeded types sit under the d1-real
