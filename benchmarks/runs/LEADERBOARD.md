@@ -64,7 +64,13 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **40.2** | 33.9–46.4 | 85.8 | 60% | 40% | 0% | $1.20 | 112 × 1 | `e3-hard-pilots-claude-opus-5-5-claude-code-medium-single-vague-v3` |
 | 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **28.6** | 23.2–33.9 | 80.3 | 71% | 29% | 0% | – | 112 × 1 | `e3-hard-pilots-gpt-6.1-terra-codex-medium-single-vague-v3` |
 | 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **24.1** | 18.8–28.6 | 69.0 | 76% | 24% | 0% | $0.643 | 112 × 1 | `e3-hard-pilots-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
-| 4 | gpt-6-luna (medium) via codex · single · vague | medium | **2.7** | 0.0–5.4 | 39.8 | 97% | 3% | 1% | – | 112 × 1 | `e3-hard-pilots-gpt-6-luna-codex-medium-single-vague-v3` |
+| 4 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **8.0** | 4.5–12.5 | 45.5 | 92% | 8% | 0% | – | 112 × 1 | `e3-hard-pilots-qwen3.6-35b-a3b-single-vague-v3` |
+| 5 | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | thinking on | **4.5** | 1.8–8.0 | 43.8 | 96% | 4% | 1% | – | 112 × 1 | `e3-hard-pilots-nemotron-3.5-super-vl-single-vague-v3` |
+| 6 | openai/gpt-oss-120b · single · vague · text only (89 of 112 pilots) | medium (default) | **3.4** | 1.1–6.7 | 35.9 | 97% | 3% | 2% | – | 89 × 1 | `e3-hard-pilots-gpt-oss-120b-single-vague-text-v3` |
+| 7 | gpt-6-luna (medium) via codex · single · vague | medium | **2.7** | 0.0–5.4 | 39.8 | 97% | 3% | 1% | – | 112 × 1 | `e3-hard-pilots-gpt-6-luna-codex-medium-single-vague-v3` |
+| 8 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **2.7** | 0.0–5.4 | 30.2 | 97% | 3% | 1% | – | 112 × 1 | `e3-hard-pilots-mistral-small-4-single-vague-v3` |
+| 9 | google/gemma-4-31B-it · single · vague | thinking on | **1.8** | 0.0–4.5 | 40.9 | 98% | 2% | 0% | – | 112 × 1 | `e3-hard-pilots-gemma-4-31b-single-vague-v3` |
+| 10 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **0.9** | 0.0–2.7 | 28.0 | 99% | 1% | 1% | – | 112 × 1 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` |
 
 **Cost subset `cost5` on `hard-pilots`, vague prompt: partial runs, to save cost.** 66 of the set's 112 tasks, 5 of each task type (every task of a smaller type), the fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when they hold every task of the subset with none in error or unfinished. Each full run of the set is re-scored on the same 66 tasks so the rows compare; a subset score is not comparable with a full-set score above.
 
@@ -73,13 +79,13 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **48.5** | 42.4–56.1 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-claude-opus-5-5-claude-code-medium-single-vague-v3` |
 | 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **36.4** | 30.3–42.4 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gpt-6.1-terra-codex-medium-single-vague-v3` |
 | 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **30.3** | 24.2–36.4 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
-| 4 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **9.1** | 3.0–15.2 | 66 × 1 | subset run (66 of 112) | `e3-hard-pilots-qwen3.6-35b-a3b-single-vague-cost5-v3` |
-| 5 | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | thinking on | **6.1** | 1.5–10.6 | 66 × 1 | subset run (66 of 112) | `e3-hard-pilots-nemotron-3.5-super-vl-single-vague-cost5-v3` |
+| 4 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **9.1** | 3.0–15.2 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-qwen3.6-35b-a3b-single-vague-v3` |
+| 5 | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | thinking on | **6.1** | 1.5–10.6 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-nemotron-3.5-super-vl-single-vague-v3` |
 | 6 | gpt-6-luna (medium) via codex · single · vague | medium | **4.5** | 0.0–9.1 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gpt-6-luna-codex-medium-single-vague-v3` |
 | 7 | openai/gpt-oss-120b · single · vague · text only (51 of 66 pilots) | medium (default) | **3.9** | 0.0–7.8 | 51 × 1 | subset run, its 51 text pilots (no image pilot run) | `e3-hard-pilots-gpt-oss-120b-single-vague-cost5-text-v3` |
-| 8 | google/gemma-4-31B-it · single · vague | thinking on | **3.0** | 0.0–7.6 | 66 × 1 | subset run (66 of 112) | `e3-hard-pilots-gemma-4-31b-single-vague-cost5-v3` |
-| 9 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **3.0** | 0.0–6.1 | 66 × 1 | subset run (66 of 112) | `e3-hard-pilots-mistral-small-4-single-vague-cost5-v3` |
-| 10 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **1.5** | 0.0–4.5 | 66 × 1 | subset run (66 of 112) | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-cost5-v3` |
+| 8 | google/gemma-4-31B-it · single · vague | thinking on | **3.0** | 0.0–7.6 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gemma-4-31b-single-vague-v3` |
+| 9 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **3.0** | 0.0–6.1 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-mistral-small-4-single-vague-v3` |
+| 10 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **1.5** | 0.0–4.5 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` |
 
 ## `d1-test-hard`: seeded sheets, the whole job (3-5 curves, 2-3 sheets)
 

@@ -93,3 +93,17 @@ The published folders moved to `results/_retired-e3-v2/published/<run id>/`; the
 | `d1-test` | claude-sonnet-5-5 (medium) via claude-code · single · vague | 70.9 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague-v3` (76.0) | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague` |
 
 (Both were in the Nov-3 "Kept" list above; the v3 reruns now replace them.)
+
+# Board rows retired on 2026-11-13
+
+Robert, Nov 13 2026 ("Drop duplicates"): drop the `hard-pilots` cost5 rows that a full-set run now duplicates. Each model's cost5 run held 66 of the 112 pilots; Runpod queue v7 (`benchmarks/runpod/queue-trackd-v7.sh`, Nov 12-13) copied those 66 finished episodes into a full-set run id and ran the other 46, so the full run re-scored on the subset's 66 is the same 66 episodes with the same score. The cost5 table listed each model twice, once as the subset run and once as the full run re-scored. Nothing was wrong with these rows; they are retired as duplicates only.
+
+The published folders moved to `results/_retired-e3-v3/published/<run id>/` (not tracked); the raw episodes stay under `results/e3-runpod/<run id>/`. To restore a row, move its folder back under `benchmarks/runs/` and run `scripts/make_leaderboard.py`. `gpt-oss-120b`'s cost5 text run (`e3-hard-pilots-gpt-oss-120b-single-vague-cost5-text-v3`, 3.9 on 51 text pilots) stays: its full text-only run is not re-scored into the cost5 table, so that row is not duplicated.
+
+| Set | Row | Effective (66) | Duplicated by (full set, 112) | Run |
+|---|---|---:|---|---|
+| `hard-pilots` | Qwen/Qwen3.6-35B-A3B · single · vague | 9.1 | `e3-hard-pilots-qwen3.6-35b-a3b-single-vague-v3` (8.0) | `e3-hard-pilots-qwen3.6-35b-a3b-single-vague-cost5-v3` |
+| `hard-pilots` | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | 6.1 | `e3-hard-pilots-nemotron-3.5-super-vl-single-vague-v3` (4.5) | `e3-hard-pilots-nemotron-3.5-super-vl-single-vague-cost5-v3` |
+| `hard-pilots` | google/gemma-4-31B-it · single · vague | 3.0 | `e3-hard-pilots-gemma-4-31b-single-vague-v3` (1.8) | `e3-hard-pilots-gemma-4-31b-single-vague-cost5-v3` |
+| `hard-pilots` | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | 3.0 | `e3-hard-pilots-mistral-small-4-single-vague-v3` (2.7) | `e3-hard-pilots-mistral-small-4-single-vague-cost5-v3` |
+| `hard-pilots` | google/gemma-4-26B-A4B-it · single · vague | 1.5 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` (0.9) | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-cost5-v3` |
