@@ -85,7 +85,8 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 7 | gpt-6-luna (medium) via codex · single · vague | medium | **2.7** | 0.0–5.4 | 39.8 | 97% | 3% | 1% | – | 112 × 1 | `e3-hard-pilots-gpt-6-luna-codex-medium-single-vague-v3` |
 | 8 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **2.7** | 0.0–5.4 | 30.2 | 97% | 3% | 1% | – | 112 × 1 | `e3-hard-pilots-mistral-small-4-single-vague-v3` |
 | 9 | google/gemma-4-31B-it · single · vague | thinking on | **1.8** | 0.0–4.5 | 40.9 | 98% | 2% | 0% | – | 112 × 1 | `e3-hard-pilots-gemma-4-31b-single-vague-v3` |
-| 10 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **0.9** | 0.0–2.7 | 28.0 | 99% | 1% | 1% | – | 112 × 1 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` |
+| 10 | qwen/qwen3.5-9b · single · vague | default | **0.9** | 0.0–2.7 | 25.4 | 99% | 1% | 0% | – | 112 × 1 | `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 11 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **0.9** | 0.0–2.7 | 28.0 | 99% | 1% | 1% | – | 112 × 1 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` |
 
 **Cost subset `cost5` on `hard-pilots`, vague prompt: partial runs, to save cost.** 66 of the set's 112 tasks, 5 of each task type (every task of a smaller type), the fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when they hold every task of the subset with none in error or unfinished. Each full run of the set is re-scored on the same 66 tasks so the rows compare; a subset score is not comparable with a full-set score above.
 
@@ -101,6 +102,7 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 8 | google/gemma-4-31B-it · single · vague | thinking on | **3.0** | 0.0–7.6 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gemma-4-31b-single-vague-v3` |
 | 9 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **3.0** | 0.0–6.1 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-mistral-small-4-single-vague-v3` |
 | 10 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **1.5** | 0.0–4.5 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` |
+| 11 | qwen/qwen3.5-9b · single · vague | default | **1.5** | 0.0–4.5 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-vague-v3` |
 
 ### `d1-test-hard`: seeded sheets, the whole job (3-5 curves, 2-3 sheets)
 
