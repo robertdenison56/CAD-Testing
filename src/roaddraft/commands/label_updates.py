@@ -37,7 +37,7 @@ from roaddraft.design.errors import DesignError
 from roaddraft.design.horizontal import Alignment
 from roaddraft.design.labels import (
     CURVE_COLUMNS, LABEL_KINDS, SHEET_LABEL_OFFSET, TickSpec, compile_label, curve_table_rows,
-    sheet_pose, stationing_plan,
+    label_pose, sheet_pose, stationing_plan,
 )
 from roaddraft.document import annotation as anno
 from roaddraft.document.document import Document
@@ -52,6 +52,10 @@ LINEWORK_KINDS = ("element", "offset")
 #: (feet in model space, inches on a sheet), and its rotation (degrees)
 TOL = 1e-6
 ANGLE_TOL = 1e-6
+#: how far a label may stand from its no-twist pose and still be taken as lettered through
+#: no twist (degrees): a pose differs by the twist itself, so anything finer than the
+#: smallest twist a sheet uses will do
+UNTWISTED_DEG = 0.01
 
 
 @dataclass
@@ -273,17 +277,26 @@ def _settings(group: list, align: Alignment, before: Optional[Alignment]) -> dic
 
 def _view_rotation(texts: list, align: Alignment) -> float:
     """The twist a set was lettered to read through.  A label records it
-    (``view_rotation`` in its anchor); one lettered before the record carried
-    it does not, and laying such a set out again through no twist turns every
-    label whose line runs past 90 degrees in the model round, so it reads
-    upside down through the viewport it was posed for (L-1's "TB1", at
-    93.96 degrees under a -89.94 degree twist).  So the twist is read off the
-    pose instead: the one that keeps a label that runs along its line the way
-    it stands -- upright through the view when the text runs with the line,
-    turned round when it runs against it."""
+    (``view_rotation`` in its anchor) when there is one; a label lettered
+    through no twist records none, and nor does one lettered before the
+    record carried it.  Laying the second kind out again through no twist
+    turns every label whose line runs past 90 degrees in the model round, so
+    it reads upside down through the viewport it was posed for (L-1's "TB1",
+    at 93.96 degrees under a -89.94 degree twist).  So when no twist is
+    recorded: no twist, when no twist poses every label the way it stands;
+    otherwise the twist read off the pose -- the one that keeps a label that
+    runs along its line the way it stands, upright through the view when the
+    text runs with the line, turned round when it runs against it.
+
+    (Until 2026-11-12 the pose was read on every set that recorded no twist,
+    untwisted ones too.  That guess keeps a station number level, which is not
+    no twist, and laid a curve point's label out upside down on a plain
+    untwisted sheet after a restation; Robert: "Fix it now".)"""
     recorded = [t for t in texts if t.anchor.get("view_rotation") is not None]
     if recorded:
         return float(recorded[0].anchor["view_rotation"])
+    if _untwisted(texts, align):
+        return 0.0
     along = [t for t in texts if t.anchor.get("rotation", "along") == "along"
              and t.anchor.get("station") is not None]
     if not along:
@@ -293,6 +306,23 @@ def _view_rotation(texts: list, align: Alignment) -> float:
     direction = float(align.direction_at(dist))
     against = abs(_fold(float(t.rotation_deg) - direction)) > 90.0
     return _fold(180.0 - direction if against else -direction)
+
+
+def _untwisted(texts: list, align: Alignment) -> bool:
+    """Whether every one of ``texts`` stands as a labeler poses it through no
+    twist on ``align``, the design it was lettered from."""
+    posed = [t for t in texts if t.anchor.get("station") is not None]
+    if not posed:
+        return True
+    for t in posed:
+        rec = t.anchor
+        dist = min(max(float(rec["station"]) - float(align.begin_station), 0.0), align.length)
+        direction = float(align.direction_at(dist))
+        side = rec.get("side") if rec.get("side") in ("left", "right") else "left"
+        want, _h, _v = label_pose(direction, side, rec.get("rotation") or "along", 0.0)
+        if abs(_fold(float(t.rotation_deg) - want)) > UNTWISTED_DEG:
+            return False
+    return True
 
 
 def _fold(angle_deg: float) -> float:

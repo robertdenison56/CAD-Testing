@@ -266,3 +266,43 @@ def test_a_set_lettered_through_a_twist_before_the_record_carried_it_keeps_readi
     flat = [e for e in s2.doc.model_entities.values()
             if isinstance(e, Text) and e.anchor and e.anchor.get("kind") == "station"]
     assert flat and all(abs(n.rotation_deg + 86.0) < 0.1 for n in flat)
+
+
+def test_an_untwisted_set_laid_out_again_stays_untwisted():
+    """A set lettered through no twist records none.  Until 2026-11-12 its twist
+    was guessed off a station number's pose all the same, and the guess (the
+    twist that keeps that number level) laid a curve point's label out upside
+    down after a restation: seed 15015's "194+97.76 BC" came back at 136.9
+    degrees.  No twist now stands when no twist poses every label as it is."""
+    from roaddraft.tasks.generator import generate_task
+    from roaddraft.tasks.reference import reference_solution, session_for_task
+    from roaddraft.verify.legibility import reads_upside_down
+    task = generate_task(15015, curves=3, task_type="annotate-sheet")
+    s = session_for_task(task)
+    reference_solution(task, s)
+
+    def poses():
+        return sorted((e.anchor["kind"], e.anchor["ref"], round(e.rotation_deg, 6))
+                      for e in s.doc.model_entities.values()
+                      if isinstance(e, Text) and e.anchor and e.anchor.get("kind") != "mc")
+
+    lettered = poses()
+    begin = task.brief.design["alignments"]["ALIGN-1"]["begin_station"]
+    r = s.execute("modify_alignment", {"name": "ALIGN-1",
+                                       "changes": {"begin_station": begin + 25.0}})
+    assert r["ok"] and "stationing set laid out again" in r["message"], r
+    assert not [e.content for e in s.doc.model_entities.values()
+                if isinstance(e, Text) and reads_upside_down(e.rotation_deg)]
+    # laid out again, the set is the one stationing lettered fresh on the restationed line
+    from roaddraft.tasks.reference import phase_commands
+    fresh = session_for_task(task)
+    assert fresh.execute("modify_alignment", {"name": "ALIGN-1",
+                                              "changes": {"begin_station": begin + 25.0}})["ok"]
+    for name, params in phase_commands(task, ["stationing"]):
+        assert fresh.execute(name, params)["ok"]
+    stationing = ("tick", "station", "pc", "pt")
+    assert [p for p in poses() if p[0] in stationing] == sorted(
+        (e.anchor["kind"], e.anchor["ref"], round(e.rotation_deg, 6))
+        for e in fresh.doc.model_entities.values()
+        if isinstance(e, Text) and e.anchor and e.anchor.get("kind") in stationing)
+    assert len(lettered) > 10

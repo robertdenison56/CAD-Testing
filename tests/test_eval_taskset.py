@@ -216,14 +216,113 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
     training set is in a set a model is ever scored on, dev sets included."""
     assert tasksets.train_overlap() == []
     assert not set(tasksets.TRAIN_NAMES) & set(tasksets.NAMES)
-    train, hard = (tasksets.load(n) for n in tasksets.TRAIN_NAMES)
+    assert tasksets.TRAIN_NAMES == ("d1-train", "d1-train-hard", "d1-train-twist",
+                                    "d1-train-crowd", "d1-train-revise")
+    train, hard, *_rest = (tasksets.load(n) for n in tasksets.TRAIN_NAMES)
     assert [t["seed"] for t in train["tasks"]] == list(tasksets.TRAIN_SEEDS)
     kept = [s for s in tasksets.TRAIN_HARD_SEEDS if s not in hard["skipped_seeds"]]
     assert [t["seed"] for t in hard["tasks"]] == kept and len(kept) >= 0.9 * len(tasksets.TRAIN_HARD_SEEDS)
     assert {t["task_type"] for t in train["tasks"]} == set(tasksets.SEEDED_TYPES)
     assert {t["task_type"] for t in hard["tasks"]} == set(tasksets.HARD_SEEDED_TYPES)
     eval_seeds = {t["seed"] for n in tasksets.NAMES for t in tasksets.load(n)["tasks"] if "seed" in t}
-    assert not eval_seeds & (set(tasksets.TRAIN_SEEDS) | set(tasksets.TRAIN_HARD_SEEDS))
+    assert not eval_seeds & (set(tasksets.TRAIN_SEEDS) | set(tasksets.TRAIN_HARD_SEEDS)
+                             | set(tasksets.TRAIN_TWIST_SEEDS) | set(tasksets.TRAIN_CROWD_SEEDS)
+                             | set(tasksets.TRAIN_REVISE_SEEDS))
+
+
+def test_the_twisted_training_set_is_every_seed_twisted_over_the_types_a_twist_changes():
+    """``d1-train-twist`` (2026-11-11): seeds of its own, every entry marked
+    twisted and no entry of any other set, each type at every curve count."""
+    from collections import Counter
+    twisted = tasksets.load("d1-train-twist")["tasks"]
+    assert [t["seed"] for t in twisted] == list(tasksets.TRAIN_TWIST_SEEDS)
+    assert all(t["twist"] is True for t in twisted)
+    for name in tasksets.NAMES + ("d1-train", "d1-train-hard"):
+        assert not any("twist" in t for t in tasksets.load(name)["tasks"]), name
+    assert {t["task_type"] for t in twisted} == set(tasksets.TWIST_TYPES)
+    assert tasksets.TWIST_TYPES == ("annotate-base", "annotate-sheet", "bearings",
+                                    "curve-callouts", "curve-table", "plan-sheet",
+                                    "sheet-setup", "stationing", "title-block")
+    per_type = Counter(t["task_type"] for t in twisted)
+    assert max(per_type.values()) - min(per_type.values()) <= 1
+    # nine types and three curve counts: the count steps on a turn of the types, so a
+    # type is not stuck with one
+    for ttype in tasksets.TWIST_TYPES:
+        curves = Counter(t["curves"] for t in twisted if t["task_type"] == ttype)
+        assert set(curves) == {1, 2, 3} and max(curves.values()) - min(curves.values()) <= 1
+    assert [tasksets.twist_dials(i)["curves"] for i in (0, 9, 18)] == [1, 2, 3]
+    # the entry rebuilds twisted, and plain when the key is taken off
+    entry = twisted[0]
+    task = tasksets.task_from_entry(entry)
+    assert task.brief.deliverable["view_rotation"]
+    plain = {k: v for k, v in entry.items() if k != "twist"}
+    assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
+
+
+def test_the_crowded_training_set_is_every_seed_crowded_over_the_types_that_letter_a_set_up_sheet():
+    """``d1-train-crowd`` (2026-11-12): seeds of its own, every entry marked
+    crowded and no entry of any other set, one sheet each, half of them
+    through a turned viewport, each type at every curve count."""
+    from collections import Counter
+    from roaddraft.tasks.crowd import CROWD_TYPES
+    manifest = tasksets.load("d1-train-crowd")
+    crowded = manifest["tasks"]
+    kept = [s for s in tasksets.TRAIN_CROWD_SEEDS if s not in manifest["skipped_seeds"]]
+    assert [t["seed"] for t in crowded] == kept and len(kept) >= 0.95 * len(tasksets.TRAIN_CROWD_SEEDS)
+    assert all(t["crowd"] is True and t["sheets"] == 1 for t in crowded)
+    for name in tasksets.NAMES + ("d1-train", "d1-train-hard", "d1-train-twist",
+                                  "d1-train-revise"):
+        assert not any("crowd" in t for t in tasksets.load(name)["tasks"]), name
+    assert {t["task_type"] for t in crowded} == set(CROWD_TYPES)
+    assert CROWD_TYPES == ("annotate-base", "annotate-sheet", "bearings", "curve-callouts",
+                           "stationing")
+    turned = sum(1 for t in crowded if t.get("twist"))
+    assert abs(turned - len(crowded) / 2) <= 5
+    for ttype in CROWD_TYPES:
+        assert {t["curves"] for t in crowded if t["task_type"] == ttype} == {1, 2, 3}
+    assert [tasksets.crowd_dials(i)["task_type"] for i in range(5)] == list(CROWD_TYPES)
+    # a seed whose sheet cannot be crowded for its type took the next type, and says so
+    dialed = [t for t in crowded if "dialed" in t]
+    assert all(t["dialed"]["task_type"] != t["task_type"] for t in dialed)
+    assert len(dialed) < 0.1 * len(crowded)
+    # the entry rebuilds crowded, and plain when the key is taken off
+    entry = crowded[0]
+    task = tasksets.task_from_entry(entry)
+    assert task.brief.deliverable["crowd"]["alignment"]["name"] == "ALIGN-2"
+    plain = {k: v for k, v in entry.items() if k != "crowd"}
+    assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
+
+
+def test_the_revised_training_set_meets_every_kind_with_every_type_count_and_twist():
+    """``d1-train-revise`` (2026-11-12): seeds of its own, every entry marked with
+    its kind of change and no entry of any other set, one sheet and no equation,
+    every kind of change on both types at every curve count and both ways
+    round."""
+    from collections import Counter
+    from roaddraft.tasks.revise import KINDS, REVISE_TYPES
+    manifest = tasksets.load("d1-train-revise")
+    revised = manifest["tasks"]
+    kept = [s for s in tasksets.TRAIN_REVISE_SEEDS if s not in manifest["skipped_seeds"]]
+    assert [t["seed"] for t in revised] == kept and len(kept) >= 0.95 * len(tasksets.TRAIN_REVISE_SEEDS)
+    assert all(t["revise"] in KINDS and t["sheets"] == 1 and not t["equations"] for t in revised)
+    for name in tasksets.NAMES + ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd"):
+        assert not any("revise" in t for t in tasksets.load(name)["tasks"]), name
+    per_type = Counter(t["task_type"] for t in revised)
+    assert set(per_type) == set(REVISE_TYPES) and min(per_type.values()) >= 0.95 * 300
+    combos = Counter((t["revise"], t["task_type"], t["curves"], bool(t.get("twist")))
+                     for t in revised)
+    assert len(combos) == 3 * 2 * 3 * 2  # every kind, type, curve count and twist
+    # a kind the seed's line cannot take took the next one, and says so
+    dialed = [t for t in revised if "dialed" in t]
+    assert all(t["dialed"]["revise"] != t["revise"] for t in dialed)
+    assert len(dialed) < 0.1 * len(revised)
+    assert [tasksets.revise_dials(i)["revise"] for i in range(3)] == list(KINDS)
+    # the entry rebuilds revised, and plain when the key is taken off
+    entry = revised[0]
+    task = tasksets.task_from_entry(entry)
+    assert task.brief.deliverable["revision"]["kind"] == entry["revise"]
+    plain = {k: v for k, v in entry.items() if k != "revise"}
+    assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
 
 
 def test_shared_reports_an_id_a_seed_and_a_task_that_is_not_seeded():
@@ -240,8 +339,9 @@ def test_shared_reports_an_id_a_seed_and_a_task_that_is_not_seeded():
 
 
 def test_the_training_manifests_are_on_the_current_spec_and_rebuild_to_their_ids():
-    """A sample, not the whole set (1,500 tasks take two minutes to rebuild):
-    ``python -m roaddraft.eval taskset d1-train d1-train-hard`` checks them all."""
+    """A sample, not the whole set (2,100 tasks take three minutes to rebuild):
+    ``python -m roaddraft.eval taskset d1-train d1-train-hard d1-train-twist
+    d1-train-crowd d1-train-revise`` checks them all."""
     from roaddraft.tasks.brief import GENERATOR_VERSION
     from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
     for name in tasksets.TRAIN_NAMES:

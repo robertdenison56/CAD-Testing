@@ -10,6 +10,24 @@ seed always yields byte-identical briefs, truths and task ids.  The fit loop
 shrinks the design deterministically (no new draws) until every sheet's
 share of it fits the plan window.
 
+A task can be *twisted* (``twist``, 2026-11-11): its sheets look at the model
+through viewports turned alike, and the road is turned under them the other
+way, so the paper layout is the untwisted task's.  The model lettering then
+has to be made to read through the twist and the north arrow turned to north.
+The untwisted task is the default and its id is what it always was.
+
+A task can be *crowded* (``crowd``, 2026-11-12; ``tasks.crowd``): its sheet
+already carries a second lettered line and notes on the paper, set where the
+default poses of the asked labels land, so the drafter has to look at what its
+lettering fell on and set it again clear.  The uncrowded task is the default
+and its id is what it always was.
+
+A task can be *revised* (``revise``, 2026-11-12; ``tasks.revise``): its sheet is
+handed over finished, after the designer has changed the design under it (a
+radius, a PI, the stationing), so the drafter has to take off what the change
+left behind, letter it again and restation the notes that cite the line.  The
+unrevised task is the default and its id is what it always was.
+
 A task also has a *type* (``tasks.types``): the phases of the drawing it
 starts with and the ones it asks for.  The starting document is the design
 plus the given phases drafted by the reference solution, so a drafter joins
@@ -120,6 +138,42 @@ WIDTH_STEP_FT = 5.0
 ALIGNMENT_NAME = "ALIGN-1"
 PROFILE_NAME = "PROF-1"
 SHEET_NAMES = ["C-101", "C-102", "C-103", "C-104"]
+#: the twist dial (2026-11-11, Robert: "Twist dial first"): a twisted task's sheets look at
+#: the model through viewports turned alike, the way three ``d1-real`` tasks in four do and
+#: every ``p17`` pilot does, so its model lettering wants ``view_rotation`` to read upright
+#: as plotted and its north arrow is turned to north.  The seed's own twist is drawn from
+#: a stream of its own, so the seed's road, stationing and paper layout are those of its
+#: untwisted task (to the hundredth of a foot its PIs are rounded to): the road is turned
+#: under the sheet by the twist and the viewport turned back.  A twist under
+#: ``TWIST_MIN_DEG`` either way is not drawn: lettering reads the same through it, so it
+#: would teach nothing
+TWIST_MIN_DEG = 10.0
+
+
+def seed_twist(seed: int) -> float:
+    """The viewport twist of ``seed``'s twisted task, in (-180, 180] to the
+    hundredth of a degree, at least ``TWIST_MIN_DEG`` from none."""
+    rng = random.Random(f"twist:{int(seed)}")
+    t = round(rng.uniform(TWIST_MIN_DEG, 360.0 - TWIST_MIN_DEG), 2)
+    return round(t - 360.0, 2) if t > 180.0 else t
+
+
+def _about(p: Sequence[float], origin: Sequence[float], deg: float) -> List[float]:
+    """``p`` turned ``deg`` counter-clockwise about ``origin``."""
+    q = geo.rotate_point([p[0] - origin[0], p[1] - origin[1]], deg)
+    return [origin[0] + q[0], origin[1] + q[1]]
+
+
+def _laid(align: Alignment, turn: float) -> Alignment:
+    """``align`` as a viewport twisted ``turn`` shows it: the same line turned
+    about its BEGIN, so the layout rules (which fit a road to an untwisted
+    window) run on it as they stand.  ``align`` itself when there is no twist."""
+    if not turn:
+        return align
+    origin = align.pis[0].point
+    pis = [PI(_about(pi.point, origin, turn), pi.radius) for pi in align.pis]
+    return Alignment(name=align.name, elements=compile_pis(pis), pis=pis, source="pis",
+                     begin_station=align.begin_station, equations=list(align.equations))
 
 
 def _round2(v: float) -> float:
@@ -178,26 +232,33 @@ def _fits_window(bb, fpi: float, pad: float = PAD_FT) -> bool:
 VIEWPORT_MARGIN_IN = 0.25
 
 
-def _label_boxes(align: Alignment, fpi: float) -> List[Tuple[float, tuple]]:
+def _label_boxes(align: Alignment, fpi: float, turn: float = 0.0) -> List[Tuple[float, tuple]]:
     """``(distance from BEGIN, model bbox)`` of every label the finished
     drawing carries, placed as the ground truth places them (the spec's
     offsets at this scale): station numbers, curve points, equations,
-    bearings and the curve bubbles."""
+    bearings and the curve bubbles.  Under a viewport twisted ``turn`` the
+    labels are lettered to read through it, as the truth letters them, and
+    each box is the label's as that view shows it (``_laid``'s frame)."""
     spec = DRAFTING_SPEC_V1
+    origin = align.pis[0].point if turn else None
     height = _round2(spec["text"]["label_height_in"] * fpi)
+    view = {"view_rotation": turn} if turn else {}
     plan = stationing_plan(align, interval=float(spec["stationing"]["interval_ft"]),
                            tick_half=_round2(spec["stationing"]["tick_half_len_in"] * fpi),
                            label_offset=_round2(spec["stationing"]["label_offset_in"] * fpi),
                            lettering=spec["stationing"]["format"],
                            station_side=spec["stationing"]["label_side"],
-                           point_offset=_round2(spec["labels"]["pc_pt"]["label_offset_in"] * fpi))
+                           point_offset=_round2(spec["labels"]["pc_pt"]["label_offset_in"] * fpi),
+                           **view)
     specs: List[LabelSpec] = plan.labels()
     for n in range(1, len(align.tangents()) + 1):
         specs.append(compile_label(align, resolve_anchor(align, parse_anchor(f"T-{n}")), "bearing",
-                                   label_offset=_round2(spec["labels"]["bearing"]["label_offset_in"] * fpi)))
+                                   label_offset=_round2(spec["labels"]["bearing"]["label_offset_in"] * fpi),
+                                   **view))
     for n in range(1, len(align.curves()) + 1):
         specs.append(compile_label(align, resolve_anchor(align, parse_anchor(f"MC-{n}")), "mc",
-                                   label_offset=_round2(spec["labels"]["mc"]["label_offset_in"] * fpi)))
+                                   label_offset=_round2(spec["labels"]["mc"]["label_offset_in"] * fpi),
+                                   **view))
     begin = float(align.begin_station)
     out = []
     for s in specs:
@@ -206,9 +267,13 @@ def _label_boxes(align: Alignment, fpi: float) -> List[Tuple[float, tuple]]:
         y0 = {"middle": -h / 2.0, "top": -h}.get(s.valign, 0.0)
         corners = [[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]]
         pts = [geo.translate_point(geo.rotate_point(c, s.rotation_deg), s.position) for c in corners]
+        at = s.position
+        if turn:  # the label and its bubble as the twisted view shows them
+            pts = [_about(p, origin, turn) for p in pts]
+            at = _about(at, origin, turn)
         if s.kind == "mc":  # the bubble round the number
             r = 2.0 * height
-            pts += [[s.position[0] - r, s.position[1] - r], [s.position[0] + r, s.position[1] + r]]
+            pts += [[at[0] - r, at[1] - r], [at[0] + r, at[1] + r]]
         out.append((float(s.station) - begin, tuple(geo.bbox_of_points(pts))))
     return out
 
@@ -294,11 +359,14 @@ def _match_options(align: Alignment, n_sheets: int) -> List[List[float]]:
     return [chosen] if all(b > a for a, b in zip(chosen, chosen[1:])) else []
 
 
-def _fits(align: Alignment, n_sheets: int) -> Optional[Tuple[int, List[float]]]:
+def _fits(align: Alignment, n_sheets: int, design: Optional[Alignment] = None,
+          turn: float = 0.0) -> Optional[Tuple[int, List[float]]]:
     """``(feet_per_inch, match_dists)`` at the smallest allowed scale that
     shows every sheet's share of the alignment in the plan window, breaking
     the alignment at the legal match line nearest the even split that lets
-    every share fit."""
+    every share fit.  Under a twist ``align`` is the line as the sheets show
+    it (``_laid``) and ``design`` the line itself, whose labels are boxed
+    through the twist ``turn``."""
     options = _match_options(align, n_sheets) if n_sheets > 1 else [[]]
     if not options:
         return None
@@ -308,7 +376,7 @@ def _fits(align: Alignment, n_sheets: int) -> Optional[Tuple[int, List[float]]]:
             if _fits_window(bb, fpi):
                 return int(fpi), []
             continue
-        labels = _label_boxes(align, fpi)
+        labels = _label_boxes(design or align, fpi, turn)
         for matches in options:
             bounds = [0.0] + matches + [align.length]
             boxes = [_sheet_box(align, bounds[i], bounds[i + 1], fpi, labels)
@@ -331,7 +399,9 @@ def _curve_table_position(align: Alignment, curves: Sequence[int], sheet: Sheet,
                           avoid: Sequence[tuple] = ()) -> List[float]:
     """First candidate corner (bottom-right, top-right, bottom-left, top-left)
     whose table rect clears the drawn alignment (mapped to paper, padded 1 in),
-    the north arrow and the ``avoid`` rects; fallback bottom-right."""
+    the north arrow and the ``avoid`` rects; fallback bottom-right.  Through a
+    twisted viewport the alignment shown is what falls inside its rect on the
+    paper, and the north arrow is the turned one."""
     w, h = _table_size(align, curves, columns, text_height)
     ua = sheet.usable_area()
     x0, y0, x1, y1 = (ua[0] + CORNER_INSET_IN, ua[1] + CORNER_INSET_IN,
@@ -339,13 +409,20 @@ def _curve_table_position(align: Alignment, curves: Sequence[int], sheet: Sheet,
     candidates = [[x1 - w, y0 + h], [x1 - w, y1], [x0, y0 + h], [x0, y1]]
     t = geo.ViewportTransform(viewport["center_paper"], viewport["model_center"],
                               viewport["feet_per_inch"], viewport.get("rotation_deg", 0.0))
-    visible = t.visible_model_bbox(viewport["width_in"], viewport["height_in"])
-    shown = [p for p in segment_points(align, 0.0, align.length)
-             if geo.bbox_contains(visible, (p[0], p[1], p[0], p[1]))]
+    turn = float(viewport.get("rotation_deg", 0.0))
+    if turn:
+        cx, cy = viewport["center_paper"]
+        hw, hh = viewport["width_in"] / 2.0, viewport["height_in"] / 2.0
+        shown = [p for p in segment_points(align, 0.0, align.length)
+                 if abs((q := t.to_paper(p))[0] - cx) <= hw and abs(q[1] - cy) <= hh]
+    else:
+        visible = t.visible_model_bbox(viewport["width_in"], viewport["height_in"])
+        shown = [p for p in segment_points(align, 0.0, align.length)
+                 if geo.bbox_contains(visible, (p[0], p[1], p[0], p[1]))]
     obstacles = []
     if shown:
         obstacles.append(geo.bbox_expand(geo.bbox_of_points([t.to_paper(p) for p in shown]), 1.0))
-    obstacles.append(_north_arrow_rect())
+    obstacles.append(_north_arrow_rect(turned=bool(turn)))
     obstacles.extend(geo.bbox_expand(r, 0.25) for r in avoid)
     for cand in candidates:
         rect = (cand[0], cand[1] - h, cand[0] + w, cand[1])
@@ -360,9 +437,14 @@ MATCH_LABEL_POSES = (("perpendicular", MATCH_LABEL_OFFSET_IN), ("perpendicular",
                      ("along", 2.4))
 
 
-def _north_arrow_rect() -> Tuple[float, float, float, float]:
+def _north_arrow_rect(turned: bool = False) -> Tuple[float, float, float, float]:
+    """The paper the north arrow takes; ``turned``, the square that holds it at
+    any turn about its insertion point (the block reaches 1.65 units from it,
+    the N over the circle)."""
     na = DRAFTING_SPEC_V1["sheet"]["north_arrow"]
     px, py, sc = na["position"][0], na["position"][1], na["scale"]
+    if turned:
+        return (px - 1.8 * sc, py - 1.8 * sc, px + 1.8 * sc, py + 1.8 * sc)
     return (px - 1.2 * sc, py - 1.2 * sc, px + 1.2 * sc, py + 1.8 * sc)
 
 
@@ -384,7 +466,7 @@ def _match_layout(align: Alignment, station_text: str, label: str, viewport: dic
     that stays inside the usable area and clear of the north arrow."""
     ua = sheet.usable_area()
     inner = (ua[0] + 0.1, ua[1] + 0.1, ua[2] - 0.1, ua[3] - 0.1)
-    na = _north_arrow_rect()
+    na = _north_arrow_rect(turned=bool(viewport.get("rotation_deg")))
     first = None
     for rotation, offset in MATCH_LABEL_POSES:
         for side in ("right", "left"):
@@ -438,6 +520,16 @@ def _profile(rng: random.Random, align: Alignment, v_mph: int) -> Profile:
     return profile
 
 
+#: the project's people and date, which every seeded document carries in its meta
+#: under the title block's own field names (Robert, 2026-11-11: "do 3", put the names
+#: and date in the document).  Until then nothing a drafter could read gave them, so a
+#: title block drafted from a vague prompt had them made up or left blank; the vague
+#: prompt still does not state them.  No generator bump: the task's payload always held
+#: them (``project``), so ids, manifests and the truth are unchanged, and only the
+#: starting document differs from what runs before this date were handed
+DOCUMENT_PEOPLE = ("designed_by", "drawn_by", "checked_by", "date")
+
+
 def _baseline(design: dict, project: dict, task_id: str, v_mph: int, county: str,
               agency: str) -> Document:
     doc = Document.new(project["name"])
@@ -445,21 +537,57 @@ def _baseline(design: dict, project: dict, task_id: str, v_mph: int, county: str
                                         "profiles": design["profiles"]})
     doc.meta.update(task_id=task_id, spec_version=SPEC_VERSION, design_speed_mph=v_mph,
                     description=f"{project['name']} — {county}, {agency}")
+    doc.meta.update({key: project[key] for key in DOCUMENT_PEOPLE})
     return doc
 
 
 def generate_task(seed: int, curves: Optional[int] = None, equations: bool = False,
                   design_speed_mph: Optional[int] = None, level: str = "D1",
-                  task_type: str = DEFAULT_TYPE, sheets: int = 1) -> Task:
+                  task_type: str = DEFAULT_TYPE, sheets: int = 1, twist=False,
+                  crowd: bool = False, revise=None) -> Task:
     """Generate a deterministic D1 task from ``seed``.
 
     ``task_type`` names what the drafter starts with and is asked for
     (``tasks.TASK_TYPES``); ``sheets`` (1 or 2) is how many plan sheets the
-    alignment is laid out on, with a match line between them."""
+    alignment is laid out on, with a match line between them.  ``twist``
+    turns the sheets' viewports: ``True`` for the seed's own twist
+    (``seed_twist``), or the degrees.  The untwisted task is the default, and
+    is what it was before the dial existed, id and all.  ``crowd`` hands the
+    task over on a sheet already worked on (``tasks.crowd``): a second
+    lettered line and notes on the paper, on the default poses of labels the
+    task asks for.  The uncrowded task is the default, id and all.  ``revise``
+    hands over the finished sheet after the designer has changed its design
+    (``tasks.revise``): a kind of ``tasks.revise.KINDS``, or True for the
+    seed's own pick.  The unrevised task is the default, id and all."""
     ttype: TaskType = _task_type(task_type) if isinstance(task_type, str) else task_type
     n_sheets = int(sheets)
     if n_sheets < 1 or n_sheets > len(SHEET_NAMES):
         raise ValueError(f"sheets must be 1..{len(SHEET_NAMES)}")
+    if crowd:
+        from roaddraft.tasks.crowd import fits as _crowd_fits
+        why = _crowd_fits(ttype, n_sheets)
+        if why:
+            raise ValueError(why)
+    if revise:
+        from roaddraft.tasks.revise import fits as _revise_fits
+        why = ("a task is crowded or revised, not both" if crowd
+               else _revise_fits(ttype, n_sheets, equations))
+        if why:
+            raise ValueError(why)
+    turn = 0.0
+    if twist:
+        turn = seed_twist(seed) if twist is True else round(float(twist), 2)
+        turn = round((turn + 180.0) % 360.0 - 180.0, 2)
+        turn = 180.0 if turn == -180.0 else turn
+    if turn:
+        shown = ttype.shown()
+        if "sheet" not in shown:
+            raise ValueError(f"a {ttype.name} task has no sheet, so nothing to twist")
+        if "widths" in shown:
+            # a dimension's text reads upright in the model and place_dimension has no
+            # view_rotation, so through a twist it can plot upside down however it is placed
+            raise ValueError(f"a {ttype.name} task carries width dimensions, whose text "
+                             f"cannot be lettered to read through a twisted viewport")
     rng = random.Random(int(seed))
     v_mph = int(design_speed_mph) if design_speed_mph else rng.choice(SPEEDS)
     n = rng.choice(CURVE_COUNTS) if curves is None else int(curves)
@@ -486,10 +614,13 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     warnings: List[str] = []
     rotated = False
     for attempt in range(FIT_ATTEMPTS + 1):
-        pis = _build_pis(x0, y0, d0, radii, deltas, turns, extras)
+        # ``d0`` is the way the line starts across the sheet; a twisted task's road is
+        # turned under the sheet by the twist, and ``laid`` is the road as the sheet shows it
+        pis = _build_pis(x0, y0, d0 - turn if turn else d0, radii, deltas, turns, extras)
         elements = compile_pis(pis)
         align = Alignment(name=ALIGNMENT_NAME, elements=elements, pis=pis, source="pis")
-        fit = _fits(align, n_sheets)
+        laid = _laid(align, turn)
+        fit = _fits(laid, n_sheets, align, turn)
         if fit is not None:
             break
         if attempt == FIT_ATTEMPTS:
@@ -502,7 +633,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
             # a two-sheet layout is long: lay the BEGIN-END chord along the sheet
             # before shrinking anything, or the match line runs out of tangent
             rotated = True
-            chord = direction_of(pis[0].point, pis[-1].point)
+            chord = direction_of(laid.pis[0].point, laid.pis[-1].point)
             d0 = (d0 - chord) % 360.0
             continue
         k_extra, k_radius = SHRINK.get(n_sheets, SHRINK[2])
@@ -515,7 +646,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         deltas = [max(_delta_floor(r), math.floor(d * 0.85 * 2.0) / 2.0)
                   for d, r in zip(deltas, radii)]
         if attempt >= 4:  # lay the BEGIN-END chord along the sheet, then its diagonal
-            chord = direction_of(pis[0].point, pis[-1].point)
+            chord = direction_of(laid.pis[0].point, laid.pis[-1].point)
             d0 = (d0 - chord) % 360.0
             if attempt >= DIAGONAL_ATTEMPT:
                 fit_w, fit_h = DRAFTING_SPEC_V1["sheet"]["fit_window_in"]
@@ -546,6 +677,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
             warnings.append("no station equation: the longest tangent has no even station "
                             "50 ft clear of both ends")
     align.equations = build_equations(begin_station, align.length, eq_items)
+    laid = _laid(align, turn)  # with the stationing, for the match lines' labels
 
     profile = _profile(rng, align, v_mph)
 
@@ -589,7 +721,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                          f"width; use another seed for a {ttype.name} task")
     label_boxes: List[Tuple[float, tuple]] = []
     if n_sheets > 1:
-        label_boxes = _label_boxes(align, fpi)
+        label_boxes = _label_boxes(align, fpi, turn)
         if "widths" in ttype.shown():  # the width dimensions' text shows on these sheets
             label_boxes += _dimension_boxes(align, half_width, width_dims, fpi)
     sheet_dicts: List[dict] = []
@@ -598,7 +730,9 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         sheet = Sheet(id=f"SH-{i + 1:03d}", name=name, size=size, width_in=width,
                       height_in=height)
         lo, hi = bounds[i], bounds[i + 1]
-        bb = geo.bbox_of_points(segment_points(align, lo, hi))
+        if turn:  # the turned line is the same length to the last bit, not past it
+            hi = min(hi, laid.length)
+        bb = geo.bbox_of_points(segment_points(laid, lo, hi))
         viewport = {"center_paper": list(sheet_spec["viewport"]["center_paper"]),
                     "width_in": sheet_spec["viewport"]["width_in"],
                     "height_in": sheet_spec["viewport"]["height_in"],
@@ -609,11 +743,18 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
             # a viewport sized round this sheet's share and its labels, grown so no
             # label of the other share is cut by its edge: the nearest thing to a
             # viewport clipped at the match line
-            padded = _sheet_box(align, lo, hi, fpi, label_boxes)
+            padded = _sheet_box(laid, lo, hi, fpi, label_boxes)
             viewport["model_center"] = [_round2((padded[0] + padded[2]) / 2.0),
                                         _round2((padded[1] + padded[3]) / 2.0)]
             viewport["width_in"] = _round2((padded[2] - padded[0]) / fpi)
             viewport["height_in"] = _round2((padded[3] - padded[1]) / fpi)
+        if turn:
+            # the window was fitted on the line as the sheet shows it: the viewport looks
+            # at the same place on the road itself, turned back by the twist
+            centre = _about(viewport["model_center"], align.pis[0].point, -turn)
+            viewport["model_center"] = [_round2(centre[0]), _round2(centre[1])]
+            viewport["rotation_deg"] = turn
+        lo, hi = bounds[i], bounds[i + 1]
         on_sheet = [k + 1 for k, c in enumerate(align.curves())
                     if c.start_dist < hi - 1e-6 and c.end_dist > lo + 1e-6]
         matches, label_rects = [], []
@@ -641,6 +782,14 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                 "sheet_number": name, "total_sheets": str(n_sheets), "designed_by": "RD",
                 "drawn_by": "AGENT", "checked_by": "RD", "date": date, "scale": scale_text},
             "matches": matches})
+        if turn:
+            # the arrow stays where the spec puts it, turned to north as the sheet shows
+            # it; and a task that lays the sheet out must turn its viewport this much
+            na = sheet_spec["north_arrow"]
+            sheet_dicts[-1]["north_arrow"] = {"position": list(na["position"]),
+                                              "scale": na["scale"], "rotation_deg": turn}
+            if "sheet" in ttype.asks:
+                sheet_dicts[-1]["twist_deg"] = turn
     deliverable = {
         "task_type": ttype.name, "sheets": sheet_dicts, "feet_per_inch": float(fpi),
         "pavement": {"half_width_ft": half_width, "offsets_ft": [-half_width, half_width],
@@ -664,6 +813,8 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     }
     if align.equations:
         deliverable["required_label_kinds"].append("equation")
+    if turn:  # model lettering reads upright through the twist (truth and reference)
+        deliverable["view_rotation"] = turn
     if ttype.basefile:
         deliverable["basefile"] = f"{route.replace(' ', '')}-base{INTERCHANGE_EXT}"
     design = {"design_speed_mph": v_mph,
@@ -700,6 +851,12 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     drafted = sorted((p for p in ttype.given if p != "design"), key=PHASE_ORDER.index)
     if drafted:
         task.baseline = _draft(task, drafted, seed).to_dict()
+    if crowd:
+        from roaddraft.tasks.crowd import crowded
+        task = crowded(task, seed)
+    if revise:
+        from roaddraft.tasks.revise import revised
+        task = revised(task, seed, revise)
     return task
 
 
@@ -769,4 +926,4 @@ def _width_station(lo: float, hi: float, avoid: List[float], fpi: float,
 
 
 __all__ = ["generate_task", "segment_points", "ALIGNMENT_NAME", "PROFILE_NAME", "SPEEDS",
-           "CURVE_COUNTS", "SHEET_NAMES"]
+           "CURVE_COUNTS", "SHEET_NAMES", "DOCUMENT_PEOPLE", "seed_twist", "TWIST_MIN_DEG"]

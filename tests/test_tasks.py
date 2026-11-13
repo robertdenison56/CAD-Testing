@@ -14,7 +14,8 @@ from roaddraft.document import dimgeom
 from roaddraft.document.document import Document
 from roaddraft.document.entities import Dimension, Line, Text
 from roaddraft.tasks.brief import GENERATOR_VERSION, GroundTruth, Task, TaskBrief, compute_task_id
-from roaddraft.tasks.generator import PAD_FT, generate_task
+from roaddraft.tasks.generator import (DOCUMENT_PEOPLE, PAD_FT, TWIST_MIN_DEG, generate_task,
+                                       seed_twist)
 from roaddraft.tasks.ground_truth import compute_ground_truth, match_truth
 from roaddraft.tasks.reference import check_replay, reference_solution, session_for_task
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
@@ -255,6 +256,21 @@ def test_baseline_has_design_no_entities_no_sheets():
     assert doc.design.fingerprint() == task.truth.design_fingerprint
 
 
+def test_the_document_carries_who_designed_drew_and_checked_it_and_its_date():
+    # under the title block's own field names, so a title block the prompt does not spell
+    # out can be filled from what the document says (Robert, 2026-11-11); the base drawing
+    # of a basefile type carries them too.  The task's payload always held them, so the id
+    # is the one the manifests froze
+    for ttype in ("title-block", "plan-sheet", "stationing", "annotate-base"):
+        task = generate_task(1000, task_type=ttype)
+        fields = task.brief.deliverable["sheets"][0]["title_block_fields"]
+        for doc in [task.baseline] + list(task.files.values()):
+            assert {k: doc["meta"][k] for k in DOCUMENT_PEOPLE} == {
+                k: fields[k] for k in DOCUMENT_PEOPLE}
+        assert not any(fields[k] in task.brief.prompts["vague"] for k in ("date",))
+    assert DOCUMENT_PEOPLE == ("designed_by", "drawn_by", "checked_by", "date")
+
+
 def test_generator_options_curves_and_speed():
     # a pinned design speed is never stepped down to fit; three 55 mph curves need two
     # sheets at the plan scales in use, and asking for them on one is an error, not a
@@ -268,6 +284,143 @@ def test_generator_options_curves_and_speed():
         generate_task(5, curves=3, design_speed_mph=55)
     with pytest.raises(ValueError):
         generate_task(5, curves=0)
+
+
+# ------------------------------------------------------------ the twist dial (2026-11-11)
+
+
+def _paper(task, dist: float, sheet: int = 0):
+    """Where the point ``dist`` along the task's line falls on a sheet's paper."""
+    align = Alignment.from_dict(task.brief.design["alignments"]["ALIGN-1"])
+    vp = task.brief.deliverable["sheets"][sheet]["viewport"]
+    t = geo.ViewportTransform(vp["center_paper"], vp["model_center"], vp["feet_per_inch"],
+                              vp.get("rotation_deg", 0.0))
+    return t.to_paper(align.point_at(min(dist, align.length)))
+
+
+def test_the_twist_dial_leaves_the_untwisted_task_as_it_was():
+    """Off is the default and adds nothing to the task: no key, no turn, the
+    same id.  (The manifests' own check holds every board set to its ids.)"""
+    for kwargs in ({"task_type": "stationing"}, {"task_type": "plan-sheet", "sheets": 2},
+                   {"task_type": "pavement", "curves": 2, "equations": True}):
+        plain = generate_task(1000, **kwargs)
+        for off in (False, None, 0, 0.0, 360.0):
+            assert generate_task(1000, twist=off, **kwargs).task_id == plain.task_id
+        D = plain.brief.deliverable
+        assert "view_rotation" not in D
+        assert all(sh["viewport"]["rotation_deg"] == 0.0 and "north_arrow" not in sh
+                   and "twist_deg" not in sh for sh in D["sheets"])
+        assert "turned" not in plain.brief.prompts["explicit"]
+
+
+def test_a_seeds_twist_is_its_own_and_never_slight():
+    twists = [seed_twist(seed) for seed in range(13000, 13600)]
+    assert twists == [seed_twist(seed) for seed in range(13000, 13600)]
+    assert all(TWIST_MIN_DEG <= abs(t) <= 180.0 and round(t, 2) == t for t in twists)
+    assert min(twists) < -150.0 and max(twists) > 150.0 and len(set(twists)) > 590
+    assert seed_twist(13001) == 62.48  # the stream is the seed's, not the process's
+
+
+@pytest.mark.parametrize("ttype, sheets", [("annotate-sheet", 1), ("stationing", 2),
+                                           ("sheet-setup", 2), ("plan-sheet", 1)])
+def test_a_twisted_task_turns_the_road_under_the_same_sheet(ttype, sheets):
+    """The seed's road, stationing and paper layout are its untwisted task's,
+    to the hundredth of a foot its PIs are rounded to: the road is turned under
+    the sheet and the viewport turned back, so every point of the line plots
+    where it did."""
+    seed = 13001
+    plain = generate_task(seed, curves=2, task_type=ttype, sheets=sheets)
+    turned = generate_task(seed, curves=2, task_type=ttype, sheets=sheets, twist=True)
+    twist = seed_twist(seed)
+    assert turned.task_id != plain.task_id
+    P, T = plain.brief.deliverable, turned.brief.deliverable
+    assert T["view_rotation"] == twist and T["feet_per_inch"] == P["feet_per_inch"]
+    for a, b in zip(P["sheets"], T["sheets"]):
+        assert b["viewport"]["rotation_deg"] == twist
+        assert b["viewport"]["center_paper"] == a["viewport"]["center_paper"]
+        # a two-sheet viewport is sized round its lettering, and the turned road's bearings
+        # read differently (other letters, other widths): the same frame to a few hundredths
+        assert [b["viewport"][k] for k in ("width_in", "height_in")] == pytest.approx(
+            [a["viewport"][k] for k in ("width_in", "height_in")], abs=0.05)
+        assert b["station_range"] == pytest.approx(a["station_range"], abs=0.05)
+        assert [m["station"] for m in b["matches"]] == [m["station"] for m in a["matches"]]
+        assert b["north_arrow"] == {"position": [31.6, 19.2], "scale": 0.9, "rotation_deg": twist}
+        # only a task that lays the sheet out is held to the viewport's turn
+        assert (b.get("twist_deg") == twist) == ("sheet" in TASK_TYPES[ttype].asks)
+    length = Alignment.from_dict(plain.brief.design["alignments"]["ALIGN-1"]).length
+    for i in range(sheets):
+        for k in range(11):
+            p, q = _paper(plain, length * k / 10.0, i), _paper(turned, length * k / 10.0, i)
+            assert geo.distance(p, q) < 0.01, (i, k, p, q)
+    # the road itself is turned by the twist, the other way
+    a0 = Alignment.from_dict(plain.brief.design["alignments"]["ALIGN-1"]).elements[0]
+    a1 = Alignment.from_dict(turned.brief.design["alignments"]["ALIGN-1"]).elements[0]
+    assert (a0.direction_deg - a1.direction_deg - twist + 180.0) % 360.0 - 180.0 == pytest.approx(
+        0.0, abs=0.01)
+
+
+@pytest.mark.parametrize("ttype, sheets, curves", [("annotate-sheet", 2, 3), ("stationing", 1, 1),
+                                                   ("title-block", 2, 2), ("sheet-setup", 2, 2),
+                                                   ("plan-sheet", 1, 2), ("annotate-base", 1, 3),
+                                                   ("curve-table", 1, 2), ("bearings", 2, 2)])
+def test_the_reference_scores_100_on_a_twisted_task_and_the_start_scores_0(ttype, sheets, curves):
+    from roaddraft.verify import verify
+    task = generate_task(13010 + curves, curves=curves, task_type=ttype, sheets=sheets,
+                         equations=bool(curves % 2), twist=True)
+    for level in ("explicit", "vague"):
+        session = session_for_task(task)
+        assert verify(session.doc, task.truth, prompt_level=level).rubric_score == 0.0
+        reference_solution(task, session)
+        report = verify(session.doc, task.truth, prompt_level=level)
+        assert report.rubric_score == 100.0, [(c.id, c.credit) for c in report.in_scope()]
+
+
+def test_lettering_that_ignores_the_twist_reads_upside_down_and_loses_for_it():
+    """What the dial is for: on a sheet turned half a turn, lettering made to
+    read in the model plots upside down (D1-08), and an arrow left pointing up
+    the sheet is not pointing north (D1-11)."""
+    from roaddraft.tasks.reference import solution_commands
+    from roaddraft.verify import verify
+    task = generate_task(13002, curves=2, task_type="annotate-sheet", twist=180.0)
+    assert task.brief.deliverable["view_rotation"] == 180.0
+    session = session_for_task(task)
+    for name, params in solution_commands(task):
+        params = {k: v for k, v in params.items() if k != "view_rotation"}
+        if name == "insert_block":
+            params.pop("rotation_deg", None)
+        assert session.execute(name, params)["ok"]
+    report = verify(session.doc, task.truth, prompt_level="vague")
+    lost = {c.id: c for c in report.in_scope() if c.credit < 1.0}
+    assert set(lost) == {"D1-08", "D1-11"}
+    assert {f.code for f in lost["D1-08"].findings} == {"upside_down"}
+    assert lost["D1-11"].credit == 0.5 and report.rubric_score < 95.0
+
+
+def test_the_twist_dial_refuses_a_task_it_cannot_twist():
+    for ttype in ("draw-alignment", "layer-setup", "create-alignment"):
+        with pytest.raises(ValueError, match="no sheet"):
+            generate_task(13000, task_type=ttype, twist=True)
+    # a dimension's text cannot be lettered to read through a twisted viewport
+    for ttype in ("pavement-widths", "pavement", "plan-sheet-pavement"):
+        with pytest.raises(ValueError, match="width dimensions"):
+            generate_task(13000, curves=2, task_type=ttype, twist=True)
+    assert generate_task(13000, task_type="pavement-edges", twist=True).brief.deliverable[
+        "view_rotation"] == seed_twist(13000)
+
+
+def test_a_twisted_prompt_gives_the_turn_where_the_layout_is_asked_and_leaves_it_to_be_seen_otherwise():
+    twist = f"{seed_twist(13001):.2f}°"
+    lettered = generate_task(13001, curves=2, task_type="stationing", twist=True).brief.prompts
+    assert f"viewport is turned {twist}" in lettered["explicit"]
+    assert "read upright on the plotted sheet" in lettered["explicit"]
+    assert lettered["vague"] == "Station ALIGN-1."  # the drafter has to look at the sheet
+    for ttype in ("sheet-setup", "plan-sheet"):
+        prompts = generate_task(13001, curves=2, task_type=ttype, twist=True).brief.prompts
+        assert f"turned {twist}" in prompts["explicit"]
+        assert prompts["vague"].endswith(f", the viewport turned {twist}.")
+    titled = generate_task(13001, curves=2, task_type="title-block", twist=True).brief.prompts
+    assert f"turned {twist} to point to true north" in titled["explicit"]
+    assert "turned" not in titled["vague"]
 
 
 def test_every_real_type_sits_in_one_question_group():
@@ -288,3 +441,248 @@ def test_every_real_type_sits_in_one_question_group():
     assert not any(ty in REAL_GROUP_OF for ty in TASK_TYPES), "the seeded types are not grouped"
     with pytest.raises(ValueError, match="REAL_GROUPS"):
         real_group("plan-sheet")
+
+
+# ------------------------------------------------------------ the crowd dial (2026-11-12)
+
+CROWDED = [("annotate-sheet", 3, True), ("stationing", 1, False), ("bearings", 2, True),
+           ("curve-callouts", 2, False), ("annotate-base", 1, True)]
+
+
+def _crowded(ttype, curves, twist, seed=14100):
+    return generate_task(seed + curves, curves=curves, task_type=ttype, twist=twist, crowd=True)
+
+
+def test_the_crowd_dial_leaves_the_uncrowded_task_as_it_was():
+    """Off is the default and adds nothing to the task: no key, no pose, no
+    list of what was handed over, the same id and prompts."""
+    for kwargs in ({"task_type": "stationing"}, {"task_type": "annotate-base", "curves": 2},
+                   {"task_type": "annotate-sheet", "curves": 2, "twist": True}):
+        plain = generate_task(1000, **kwargs)
+        assert generate_task(1000, crowd=False, **kwargs).task_id == plain.task_id
+        D = plain.brief.deliverable
+        assert "crowd" not in D and "label_poses" not in D
+        assert not any("given_entities" in sh for sh in plain.truth.sheets)
+        assert "crowded" not in plain.brief.prompts["vague"]
+        assert "ALIGN-2" not in plain.brief.prompts["explicit"]
+
+
+@pytest.mark.parametrize("ttype, curves, twist", CROWDED)
+def test_a_crowded_task_is_the_seeds_own_road_on_a_sheet_already_worked_on(ttype, curves, twist):
+    from roaddraft.document.document import Document
+    from roaddraft.tasks.crowd import CROWD_NAME, NOTE_LAYER
+    seed = 14100 + curves
+    plain = generate_task(seed, curves=curves, task_type=ttype, twist=twist)
+    task = _crowded(ttype, curves, twist)
+    assert task.task_id != plain.task_id
+    assert task.task_id == _crowded(ttype, curves, twist).task_id  # the seed's own crowd
+    assert task.brief.design == plain.brief.design
+    P, D = plain.brief.deliverable, task.brief.deliverable
+    assert {k: v for k, v in D.items() if k not in ("crowd", "label_poses")} == P
+    crowd = D["crowd"]
+    assert crowd["alignment"]["name"] == CROWD_NAME and 1 <= len(crowd["notes"]) <= 2
+    assert D["label_poses"]  # something has to move for the reference to clear it
+    # the second line is in the design the sheet shows, drawn and lettered; the notes on the paper
+    doc = Document.from_dict(task.baseline)
+    holder = (Document.from_dict(task.files[D["basefile"]]) if ttype == "annotate-base" else doc)
+    assert CROWD_NAME in holder.design.alignments
+    assert list(holder.design.alignments)[0] == "ALIGN-1"
+    lettered = [e for e in doc.model_entities.values()
+                if (e.anchor or {}).get("alignment", "").endswith(CROWD_NAME)]
+    assert {e.anchor["kind"] for e in lettered} >= {"station", "bearing", "tick"}
+    sheet = doc.sheet_by_ref("C-101")
+    notes = [e for e in sheet.entities.values() if e.layer == NOTE_LAYER]
+    assert sorted(e.content for e in notes) == sorted(n["content"] for n in crowd["notes"])
+    # everything handed over is listed, so only new work is charged for sitting on it
+    given = set(doc.model_entities) | set(sheet.entities)
+    assert all(set(sh["given_entities"]) == given for sh in task.truth.sheets)
+    assert doc.meta["task_id"] == task.task_id
+    # and the prompts say so, at each level in its own words
+    assert "The sheet is crowded; keep everything already on it." in task.brief.prompts["vague"]
+    assert f"another line, {CROWD_NAME}, across ALIGN-1" in task.brief.prompts["explicit"]
+    assert "ALIGN-1" in task.brief.prompts["vague"]  # with two lines the request names its own
+
+
+@pytest.mark.parametrize("ttype, curves, twist", CROWDED)
+def test_the_default_poses_land_on_the_crowd_and_the_truths_poses_clear_it(ttype, curves, twist):
+    """What the dial is for: the engine's default poses put a label on the
+    second line's lettering and one on each note (D1-08), and the reference,
+    with the truth's poses, scores 100 at both levels from a start that
+    scores 0."""
+    import copy
+    from roaddraft.tasks.brief import Task
+    from roaddraft.verify import verify
+    task = _crowded(ttype, curves, twist)
+    for level in ("explicit", "vague"):
+        session = session_for_task(task)
+        assert verify(session.doc, task.truth, prompt_level=level).rubric_score == 0.0
+        reference_solution(task, session)
+        report = verify(session.doc, task.truth, prompt_level=level)
+        assert report.rubric_score == 100.0, [(c.id, c.credit) for c in report.in_scope()]
+    brief = copy.deepcopy(task.brief)
+    del brief.deliverable["label_poses"]
+    blind = Task(brief=brief, truth=task.truth, baseline=task.baseline, files=task.files)
+    session = session_for_task(blind)
+    reference_solution(blind, session)
+    report = verify(session.doc, task.truth)
+    lost = {c.id: c for c in report.in_scope() if c.credit < 1.0}
+    assert set(lost) == {"D1-08"} and {f.code for f in lost["D1-08"].findings} == {"overlap"}
+    given = set(task.truth.sheets[0]["given_entities"])
+    pairs = [f.entity_ids for f in lost["D1-08"].findings]
+    assert all(any(i in given for i in pair) and any(i not in given for i in pair)
+               for pair in pairs)
+    assert len(pairs) >= 1 + len(task.brief.deliverable["crowd"]["notes"])
+
+
+def test_the_crowd_dial_refuses_a_task_it_cannot_crowd():
+    for ttype in ("plan-sheet", "sheet-setup", "curve-table", "title-block", "draw-alignment"):
+        with pytest.raises(ValueError, match="crowd dial fits"):
+            generate_task(14000, task_type=ttype, crowd=True)
+    with pytest.raises(ValueError, match="one sheet"):
+        generate_task(14000, task_type="stationing", sheets=2, crowd=True)
+
+
+# ------------------------------------------------------------ the revision dial (2026-11-12)
+
+
+def _revised_entry(ttype: str, kind: str, twist: bool = False):
+    from roaddraft.eval import taskset as tasksets
+    return next(e for e in tasksets.load("d1-train-revise")["tasks"]
+                if e["task_type"] == ttype and e["revise"] == kind
+                and bool(e.get("twist")) == twist and "dialed" not in e)
+
+
+REVISED = [("annotate-base", "radius", False), ("annotate-base", "pi", True),
+           ("annotate-base", "station", False), ("annotate-sheet", "radius", True),
+           ("annotate-sheet", "pi", False), ("annotate-sheet", "station", True)]
+
+
+def _revised(ttype, kind, twist):
+    e = _revised_entry(ttype, kind, twist)
+    return (generate_task(e["seed"], curves=e["curves"], task_type=ttype, twist=twist),
+            generate_task(e["seed"], curves=e["curves"], task_type=ttype, twist=twist,
+                          revise=kind))
+
+
+def test_the_revision_dial_leaves_the_unrevised_task_as_it_was():
+    for kwargs in ({"task_type": "annotate-base", "curves": 2},
+                   {"task_type": "annotate-sheet", "curves": 3, "twist": True}):
+        plain = generate_task(1000, **kwargs)
+        assert generate_task(1000, revise=None, **kwargs).task_id == plain.task_id
+        assert generate_task(1000, revise=False, **kwargs).task_id == plain.task_id
+        assert "revision" not in plain.brief.deliverable
+        assert "revised" not in plain.brief.prompts["explicit"]
+
+
+@pytest.mark.parametrize("ttype, kind, twist", REVISED)
+def test_a_revised_task_is_the_finished_sheet_with_its_design_changed_under_it(ttype, kind, twist):
+    from roaddraft.tasks.revise import station_text
+    plain, task = _revised(ttype, kind, twist)
+    assert task.task_id != plain.task_id
+    R = task.brief.deliverable["revision"]
+    assert R["kind"] == kind
+    old = Alignment.from_dict(plain.brief.design["alignments"]["ALIGN-1"])
+    new = Alignment.from_dict(task.brief.design["alignments"]["ALIGN-1"])
+    if kind == "station":
+        assert new.begin_station == old.begin_station + R["by"]
+        assert [p.point for p in new.pis] == [p.point for p in old.pis]
+        assert R["to"] == station_text(new.begin_station)
+    elif kind == "radius":
+        assert new.begin_station == old.begin_station
+        assert new.curves()[R["curve"] - 1].radius == R["to"]
+        assert old.curves()[R["curve"] - 1].radius == R["from"]
+        assert [p.point for p in new.pis] == [p.point for p in old.pis]
+    else:
+        moved = [i for i, (a, b) in enumerate(zip(old.pis, new.pis)) if a.point != b.point]
+        assert len(moved) == 1 and [p.radius for p in new.pis] == [p.radius for p in old.pis]
+    # in a base drawing the designer has made the change, its linework redrawn to it; in this
+    # file's own design the change is the drafter's to make, and the design is graded
+    doc = Document.from_dict(task.baseline)
+    scope = set(task.truth.scope)
+    assert "revision" in scope
+    if ttype == "annotate-base":
+        base = Document.from_dict(task.files[task.brief.deliverable["basefile"]])
+        assert base.design.alignments["ALIGN-1"].to_dict() == new.to_dict()
+        assert not doc.design.alignments
+        assert not R["by_drafter"] and not {"design", "linework"} & scope
+    else:
+        assert doc.design.alignments["ALIGN-1"].to_dict() == old.to_dict()
+        assert R["by_drafter"] and {"design", "linework"} <= scope and R["stale"] == []
+    # the lettering is the old design's, and the notes cite the old stations
+    sheet = doc.sheet_by_ref("C-101")
+    assert all(i in doc.model_entities or i in sheet.entities for i in R["stale"])
+    if ttype == "annotate-base":
+        assert ("TB-001" in R["stale"]) == (kind != "station")
+    assert 1 <= len(R["notes"]) <= 2
+    for note in R["notes"]:
+        assert sheet.entities[note["id"]].content == note["before"]
+    if kind != "pi" or len(new.curves()) > 1:
+        assert R["notes"][0]["after"] != R["notes"][0]["before"]
+    # the prompts: the change at both levels, the notes only where the conventions are stated
+    said = (f"radius is now {R['to']:g}'" if kind == "radius" else
+            f"has moved {abs(R['by']):.2f} ft" if kind == "pi" else
+            f"restationed to begin at {R['to']}")
+    for level in ("explicit", "vague"):
+        assert said in task.brief.prompts[level]
+        assert ("Make the change" in task.brief.prompts[level]) == (ttype == "annotate-sheet")
+    assert "restationed" in task.brief.prompts["explicit"]
+    assert "note" not in task.brief.prompts["vague"]
+
+
+@pytest.mark.parametrize("ttype, kind, twist", REVISED)
+def test_the_reference_takes_off_the_old_lettering_and_restations_the_notes(ttype, kind, twist):
+    from roaddraft.tasks.revise import left_stale
+    from roaddraft.verify import verify
+    _plain, task = _revised(ttype, kind, twist)
+    start = session_for_task(task)
+    assert verify(start.doc, task.truth, prompt_level="vague").effective_score < 100.0
+    R = task.brief.deliverable["revision"]
+    if R["stale"] or any(n["after"] != n["before"] for n in R["notes"]):
+        assert left_stale(task, start.doc)
+    for level in ("explicit", "vague"):
+        session = session_for_task(task)
+        reference_solution(task, session)
+        report = verify(session.doc, task.truth, prompt_level=level)
+        assert report.rubric_score == 100.0, [(c.id, c.credit) for c in report.in_scope()]
+        assert left_stale(task, session.doc) == []
+
+
+def test_lettering_again_beside_the_old_or_leaving_a_note_is_left_stale():
+    """What the keep rule's leg sees: the line lettered again with what was there
+    left on, or every note left as it read."""
+    import copy
+    from roaddraft.tasks.reference import solution_commands
+    from roaddraft.tasks.revise import left_stale
+    _plain, task = _revised("annotate-base", "radius", False)
+    commands = solution_commands(task)
+    for drop in ("delete_entities", "modify_entity"):
+        session = session_for_task(task)
+        for name, params in commands:
+            if name != drop:
+                assert session.execute(name, copy.deepcopy(params))["ok"]
+        left = left_stale(task, session.doc)
+        R = task.brief.deliverable["revision"]
+        if drop == "delete_entities":
+            assert set(R["stale"]) <= set(left)
+        else:
+            assert [n["id"] for n in R["notes"] if n["after"] != n["before"]] == left
+
+
+def test_where_the_drafter_makes_the_change_the_old_design_loses_on_the_design_itself():
+    from roaddraft.verify import verify
+    _plain, task = _revised("annotate-sheet", "radius", True)
+    report = verify(session_for_task(task).doc, task.truth, prompt_level="vague")
+    lost = {c.id for c in report.in_scope() if c.credit < 1.0}
+    assert {"D1-15", "D1-01"} <= lost  # the design and the centerline drawn from it
+
+
+def test_the_revision_dial_refuses_what_it_cannot_revise():
+    for ttype in ("plan-sheet", "stationing", "curve-table"):
+        with pytest.raises(ValueError, match="revision dial fits"):
+            generate_task(15000, task_type=ttype, revise="radius")
+    with pytest.raises(ValueError, match="one sheet"):
+        generate_task(15000, task_type="annotate-base", sheets=2, revise="radius")
+    with pytest.raises(ValueError, match="station equation"):
+        generate_task(15000, task_type="annotate-base", equations=True, revise="station")
+    with pytest.raises(ValueError, match="not both"):
+        generate_task(15000, task_type="annotate-base", crowd=True, revise="station")

@@ -49,6 +49,31 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   fine-tuning.  Not in ``NAMES``: no board ranks them and the default
   ``taskset`` check leaves them alone (name them to check or write them).
   ``train_overlap`` is the tripwire between them and every eval set.
+- ``d1-train-twist`` (2026-11-11, Robert: "Twist dial first"): a third training
+  set, seeds 13000-13599 on ``d1-test``'s dials, every sheet looked at through
+  viewports turned the seed's own twist (``tasks.generator.seed_twist``), over
+  the nine types whose work a twist changes (``TWIST_TYPES``).  The seeded
+  counterpart of the twisted sample sheets (three ``d1-real`` tasks in four)
+  and of the ``p17`` pilots, none of which can be trained on.  An entry
+  carries ``"twist": true``; no other set's entry has the key.
+- ``d1-train-crowd`` (2026-11-12, Robert: "Clearing step"): a fourth training
+  set, seeds 14000-14599, every sheet handed over already worked on
+  (``tasks.crowd``): a second lettered line across the first and a note or two
+  on the paper, on the default poses of labels the task asks for.  Over the
+  five types that letter the model on a sheet already set up (``CROWD_TYPES``),
+  one sheet each, half of them through a turned viewport.  The seeded
+  counterpart of the crowded pilots (``p04``).  An entry carries
+  ``"crowd": true``; a seed whose sheet cannot be crowded so that the reference
+  clears it is left out and named under ``skipped_seeds``.
+- ``d1-train-revise`` (2026-11-12, plan §8 build 4): a fifth training set, seeds
+  15000-15599, every sheet handed over finished after the designer changed its
+  design (``tasks.revise``): a curve's radius, a PI moved, or the line
+  restationed, with notes on the paper that cite the line.  Over the two types
+  that letter a whole line on a sheet set up (``REVISE_TYPES``), one sheet each,
+  no station equation, half of them through a turned viewport.  The seeded
+  counterpart of the redline pilots (``p11``).  An entry carries
+  ``"revise": <kind>``; a seed its kind cannot revise takes the next kind and
+  says so under ``dialed``.
 
 The prompt level is a run dimension, not a task-set one.  A test regenerates
 each manifest and asserts identical task ids: a changed spec or generator
@@ -112,9 +137,27 @@ HARD_SHEETS = (2, 3)
 #: the training sets (2026-11-10): seeded tasks on seeds no eval set draws, ``d1-train`` on
 #: ``d1-test``'s dials and ``d1-train-hard`` on ``d1-test-hard``'s.  Kept out of ``NAMES``:
 #: every set there is held out of training, and nothing here is ever run for a score.
-TRAIN_NAMES = ("d1-train", "d1-train-hard")
+TRAIN_NAMES = ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd", "d1-train-revise")
 TRAIN_SEEDS = range(10000, 11200)
 TRAIN_HARD_SEEDS = range(12000, 12300)
+#: ``d1-train-twist`` (2026-11-11): twisted sheets on seeds of their own, over the seeded
+#: types whose work a twist changes: the model lettering read through it, the north arrow
+#: turned to north, the viewport laid out at it.  Left out: the three types with no sheet,
+#: the two with width dimensions (a dimension's text cannot be lettered through a twist;
+#: the generator refuses them), and ``pavement-edges`` and ``attach-reference``, whose work
+#: is the same on a twisted sheet
+TRAIN_TWIST_SEEDS = range(13000, 13600)
+TWIST_TYPES = tuple(sorted(("stationing", "bearings", "curve-callouts", "curve-table",
+                            "title-block", "sheet-setup", "annotate-sheet", "plan-sheet",
+                            "annotate-base")))
+
+
+#: ``d1-train-crowd`` (2026-11-12): crowded sheets on seeds of their own, over the types
+#: that letter the model on a sheet already set up (``tasks.crowd.CROWD_TYPES``)
+TRAIN_CROWD_SEEDS = range(14000, 14600)
+#: ``d1-train-revise`` (2026-11-12): finished sheets whose design has since changed, on seeds
+#: of their own, over the types that letter a whole line on a sheet set up
+TRAIN_REVISE_SEEDS = range(15000, 15600)
 
 
 def dials(index: int) -> dict:
@@ -127,29 +170,119 @@ def dials(index: int) -> dict:
             "task_type": SEEDED_TYPES[index % len(SEEDED_TYPES)]}
 
 
-def make_task(seed: int, curves: int, equations: bool, task_type: str, sheets: int) -> Task:
+def make_task(seed: int, curves: int, equations: bool, task_type: str, sheets: int,
+              twist: bool = False, crowd: bool = False, revise=None) -> Task:
     return generate_task(seed, curves=curves, equations=equations, task_type=task_type,
-                         sheets=sheets)
+                         sheets=sheets, twist=twist, crowd=crowd, revise=revise)
 
 
-def _entry(seed: int, index: int) -> dict:
+def revise_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-train-revise``: the kind of
+    change cycling through its three, the type through its two every three
+    tasks, the curve count every six and the twist every eighteen, so every
+    kind meets every type, curve count and twist; one sheet, no equation."""
+    from roaddraft.tasks.revise import KINDS, REVISE_TYPES
+    return {"revise": KINDS[index % len(KINDS)],
+            "task_type": REVISE_TYPES[(index // len(KINDS)) % len(REVISE_TYPES)],
+            "curves": CURVES[(index // (len(KINDS) * len(REVISE_TYPES))) % len(CURVES)],
+            "twist": bool((index // (len(KINDS) * len(REVISE_TYPES) * len(CURVES))) % 2),
+            "equations": False, "sheets": 1}
+
+
+def _revise_entry(seed: int, index: int) -> dict:
+    """The ``index``-th entry of ``d1-train-revise``.  A kind of change the
+    seed's line cannot take takes the next kind; ``RuntimeError`` when none can."""
+    from roaddraft.tasks.revise import KINDS
+    d = revise_dials(index)
+    start = KINDS.index(d["revise"])
+    for k in range(len(KINDS)):
+        kind = KINDS[(start + k) % len(KINDS)]
+        try:
+            task = make_task(seed, d["curves"], False, d["task_type"], 1, d["twist"],
+                             revise=kind)
+        except (ValueError, AssertionError):
+            continue
+        entry = {"seed": seed, "curves": d["curves"], "equations": False,
+                 "task_type": d["task_type"], "sheets": 1, "task_id": task.task_id,
+                 "revise": kind}
+        if d["twist"]:
+            entry["twist"] = True
+        if kind != d["revise"]:
+            entry["dialed"] = {"revise": d["revise"]}
+        return entry
+    raise RuntimeError(f"seed {seed}: no revised task generates")
+
+
+def crowd_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-train-crowd``: one sheet, the
+    type cycling through the five crowded types and the curve count through
+    its three (five and three share no factor, so every type draws every
+    count), the equation flipping every three, and the viewport turned on
+    every other round of the types."""
+    from roaddraft.tasks.crowd import CROWD_TYPES
+    return {"curves": CURVES[index % len(CURVES)],
+            "equations": bool((index // len(CURVES)) % 2), "sheets": 1,
+            "task_type": CROWD_TYPES[index % len(CROWD_TYPES)],
+            "twist": bool((index // len(CROWD_TYPES)) % 2)}
+
+
+def _crowd_entry(seed: int, index: int) -> dict:
+    """The ``index``-th entry of ``d1-train-crowd``.  A type the seed's sheet
+    cannot be crowded for takes the next in the cycle; ``RuntimeError`` when
+    none can."""
+    from roaddraft.tasks.crowd import CROWD_TYPES
+    d = crowd_dials(index)
+    start = CROWD_TYPES.index(d["task_type"])
+    for k in range(len(CROWD_TYPES)):
+        ttype = CROWD_TYPES[(start + k) % len(CROWD_TYPES)]
+        try:
+            task = make_task(seed, d["curves"], d["equations"], ttype, 1, d["twist"], crowd=True)
+        except (ValueError, AssertionError):
+            continue
+        entry = {"seed": seed, "curves": d["curves"], "equations": d["equations"],
+                 "task_type": ttype, "sheets": 1, "task_id": task.task_id, "crowd": True}
+        if d["twist"]:
+            entry["twist"] = True
+        if ttype != d["task_type"]:
+            entry["dialed"] = {"task_type": d["task_type"], "sheets": 1}
+        return entry
+    raise RuntimeError(f"seed {seed}: no crowded task generates")
+
+
+def twist_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-train-twist``: ``d1-test``'s,
+    with the type cycling through ``TWIST_TYPES``.  That cycle is nine long and
+    the curve counts' three, so the curve count steps on one each time round
+    the types, or a type would always draw the same number of curves."""
     d = dials(index)
+    d["task_type"] = TWIST_TYPES[index % len(TWIST_TYPES)]
+    d["curves"] = CURVES[(index + index // len(TWIST_TYPES)) % len(CURVES)]
+    return d
+
+
+def _entry(seed: int, index: int, twist: bool = False) -> dict:
+    """The ``index``-th entry of a set on ``d1-test``'s dials; ``twist`` for a
+    twisted task on ``twist_dials`` (the entry then says so)."""
+    d = twist_dials(index) if twist else dials(index)
+    types = TWIST_TYPES if twist else SEEDED_TYPES
     # a type the seed cannot make (a widths task with no dimensionable tangent)
     # takes the next type in the cycle, so every seed stays in the set
-    start = SEEDED_TYPES.index(d["task_type"])
+    start = types.index(d["task_type"])
     # a seed the generator cannot lay out on two sheets (its own assertion) takes
     # one sheet, so every seed stays in the set; the entry records the fallback
     for sheets in ((d["sheets"], 1) if d["sheets"] != 1 else (1,)):
-        for k in range(len(SEEDED_TYPES)):
-            ttype = SEEDED_TYPES[(start + k) % len(SEEDED_TYPES)]
+        for k in range(len(types)):
+            ttype = types[(start + k) % len(types)]
             try:
-                task = make_task(seed, d["curves"], d["equations"], ttype, sheets)
+                task = make_task(seed, d["curves"], d["equations"], ttype, sheets, twist)
             except ValueError:
                 continue
             except AssertionError:
                 break
             entry = {"seed": seed, "curves": d["curves"], "equations": d["equations"],
                      "task_type": ttype, "sheets": sheets, "task_id": task.task_id}
+            if twist:
+                entry["twist"] = True
             if ttype != d["task_type"] or sheets != d["sheets"]:
                 entry["dialed"] = {"task_type": d["task_type"], "sheets": d["sheets"]}
             return entry
@@ -448,6 +581,34 @@ def build(name: str) -> dict:
                 "tasks": manifest["tasks"][:VARIANCE_SIZE]}
     elif name == "d1-train":
         seeds = TRAIN_SEEDS
+    elif name == "d1-train-twist":
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1),
+                "tasks": [_entry(seed, i, twist=True)
+                          for i, seed in enumerate(TRAIN_TWIST_SEEDS)]}
+    elif name == "d1-train-crowd":
+        tasks, skipped = [], []
+        for i, seed in enumerate(TRAIN_CROWD_SEEDS):
+            try:
+                tasks.append(_crowd_entry(seed, i))
+            except RuntimeError:
+                skipped.append(seed)
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
+                "tasks": tasks}
+    elif name == "d1-train-revise":
+        tasks, skipped = [], []
+        for i, seed in enumerate(TRAIN_REVISE_SEEDS):
+            try:
+                tasks.append(_revise_entry(seed, i))
+            except RuntimeError:
+                skipped.append(seed)
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
+                "tasks": tasks}
     elif name == "d1-test-hard":
         return {"taskset": name, "generator_version": GENERATOR_VERSION,
                 "spec_version": DRAFTING_SPEC_V1["version"],
@@ -581,8 +742,10 @@ def train_overlap(root=None) -> List[str]:
     for name, manifest in trains.items():
         for other in NAMES:
             problems += shared(manifest, load(other, root))
-    first, second = (trains[n] for n in TRAIN_NAMES)
-    problems += shared(first, second)
+    names = list(trains)
+    for i, first in enumerate(names):  # every pair of training sets, once
+        for second in names[i + 1:]:
+            problems += shared(trains[first], trains[second])
     return problems
 
 
@@ -606,7 +769,8 @@ def task_from_entry(entry: dict, strict: bool = True, level: str = "explicit") -
                              "python -m roaddraft.eval taskset --write")
         return task
     task = make_task(entry["seed"], entry["curves"], entry["equations"], entry["task_type"],
-                     entry["sheets"])
+                     entry["sheets"], bool(entry.get("twist")), bool(entry.get("crowd")),
+                     entry.get("revise"))
     if strict and task.task_id != entry["task_id"]:
         raise ValueError(f"task id of seed {entry['seed']} ({entry['task_type']}, "
                          f"{entry['sheets']} sheet) is {task.task_id}, the manifest says "
@@ -634,4 +798,5 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "manifest_path", "write", "load", "check", "task_from_entry", "entries", "HARD_NAMES",
            "HARD_SEEDS", "HARD_SEEDED_TYPES", "hard_dials", "JOB_CATALOG", "REAL_HARD_SIZE",
            "REAL_HARD_FILL", "build_real_hard", "TRAIN_NAMES", "TRAIN_SEEDS", "TRAIN_HARD_SEEDS",
-           "shared", "train_overlap"]
+           "TRAIN_TWIST_SEEDS", "TWIST_TYPES", "twist_dials", "TRAIN_CROWD_SEEDS", "crowd_dials",
+           "TRAIN_REVISE_SEEDS", "revise_dials", "shared", "train_overlap"]

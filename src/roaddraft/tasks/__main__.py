@@ -1,4 +1,4 @@
-"""``python -m roaddraft.tasks SEED [--out DIR] [--type T] [--sheets N] [--curves N] [--equations] [--speed V]``
+"""``python -m roaddraft.tasks SEED [--out DIR] [--type T] [--sheets N] [--curves N] [--equations] [--speed V] [--twist [DEG]] [--crowd] [--revise [KIND]]``
 
 Generates a D1 task, runs the reference solution on its starting document,
 and writes ``<task_id>.brief.json``, ``.truth.json``, ``.journal.jsonl``,
@@ -63,15 +63,33 @@ def main(argv=None) -> int:
     parser.add_argument("--curves", type=int, default=None, help="number of curves (1-3)")
     parser.add_argument("--equations", action="store_true", help="add a station equation")
     parser.add_argument("--speed", type=int, default=None, help="design speed (35..55 mph)")
+    parser.add_argument("--twist", nargs="?", const=True, default=False, type=float,
+                        help="turn the sheets' viewports: the seed's own twist, or DEG degrees")
+    parser.add_argument("--crowd", action="store_true",
+                        help="hand the task over on a sheet already worked on: a second "
+                             "lettered line and notes on the paper (tasks.crowd)")
+    parser.add_argument("--revise", nargs="?", const=True, default=None,
+                        choices=[True, "radius", "pi", "station"],
+                        help="hand the task over finished after its design has changed: the "
+                             "seed's own kind of change, or KIND (tasks.revise)")
     parser.add_argument("--no-render", action="store_true", help="skip the PNG render")
     ns = parser.parse_args(argv)
     task = generate_task(ns.seed, curves=ns.curves, equations=ns.equations,
-                         design_speed_mph=ns.speed, task_type=ns.type, sheets=ns.sheets)
+                         design_speed_mph=ns.speed, task_type=ns.type, sheets=ns.sheets,
+                         twist=ns.twist, crowd=ns.crowd, revise=ns.revise)
     report = write_task(task, ns.out, render=not ns.no_render)
     print(f"task {report['task_id']} ({ns.type}, {ns.sheets} sheet(s)): "
           f"{task.brief.project['name']}, {task.truth.counts['curves']} curve(s), "
           f"{task.truth.counts['tangents']} tangents, {task.truth.counts['equations']} "
-          f"equation(s), 1\"={task.brief.deliverable['feet_per_inch']:.0f}'")
+          f"equation(s), 1\"={task.brief.deliverable['feet_per_inch']:.0f}'"
+          + (f", viewports turned {task.brief.deliverable['view_rotation']:.2f}°"
+             if task.brief.deliverable.get("view_rotation") else "")
+          + (f", crowded ({len(task.brief.deliverable['crowd']['notes'])} note(s) and "
+             f"{task.brief.deliverable['crowd']['alignment']['name']})"
+             if task.brief.deliverable.get("crowd") else "")
+          + (f", revised ({task.brief.deliverable['revision']['kind']}, "
+             f"{len(task.brief.deliverable['revision']['notes'])} note(s) to restation)"
+             if task.brief.deliverable.get("revision") else ""))
     for key, path in report["paths"].items():
         print(f"  {key:9s} {path}")
     print(f"  reference: {report['commands']} commands, replay "

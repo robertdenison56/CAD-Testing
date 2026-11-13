@@ -90,6 +90,40 @@ class _Words:
         self.source = self.D.get("source") or {}  # a real plan sheet's provenance
         self.ref_name = self.D.get("design_reference") or self.S.get("reference", {}).get(
             "name", "BASE")
+        # a twisted layout (the seeded generator's twist dial, 2026-11-11): the turn of its
+        # viewports.  A real sheet's twist has its own words (``_real_reading``)
+        self.twist = float(self.D.get("view_rotation") or 0.0)
+        self.twisted = abs(self.twist) > 1e-6 and not self.source
+
+    # -- a twisted layout: nothing at all on an untwisted one
+    def turned(self) -> str:
+        """The viewports' turn, said where a viewport is named."""
+        return f" turned {self.twist:.2f}°" if self.twisted else ""
+
+    def turned_views(self) -> str:
+        """The turn a vague layout prompt still gives: it is part of the layout asked for,
+        as the published twist is on a real sheet."""
+        if not self.twisted:
+            return ""
+        return f", the viewport{'s' if self.many else ''} turned {self.twist:.2f}°"
+
+    def reading(self, stated: bool = False) -> str:
+        """What the twist asks of the model lettering; ``stated`` when the prompt has
+        already given the viewports' turn."""
+        if not self.twisted:
+            return ""
+        sheets = "sheets" if self.many else "sheet"
+        if stated:
+            return f" Letter model-space labels to read upright on the plotted {sheets}."
+        views = "viewports are" if self.many else "viewport is"
+        return (f" The {views} turned {self.twist:.2f}°, so letter model-space labels to read "
+                f"upright on the plotted {sheets}.")
+
+    def lettered(self) -> str:
+        """The lettering a sheet-setup task is handed, already made for the twist."""
+        if not self.twisted:
+            return ""
+        return f" The model is lettered to read upright through a view turned {self.twist:.2f}°."
 
     # -- nouns
     @property
@@ -169,7 +203,8 @@ class _Words:
         block = self.S["sheet"]["north_arrow"]["block"]
         on = f" on {self.layer('symbols')}" if "symbols" in self.layers else ""
         where = "each sheet" if self.many else "the sheet"
-        return f"Put the {block} block in the upper right of {where}{on}"
+        north = f", turned {self.twist:.2f}° to point to true north" if self.twisted else ""
+        return f"Put the {block} block in the upper right of {where}{on}{north}"
 
     def title(self) -> str:
         fields = [sh["title_block_fields"] for sh in self.sheets]
@@ -194,8 +229,9 @@ class _Words:
 
     def viewports(self) -> str:
         if not self.many:
-            return f"one viewport at {self.scale} showing all of {self.A}"
-        return f"a viewport at {self.scale} on each sheet showing its part of {self.A}"
+            return f"one viewport at {self.scale}{self.turned()} showing all of {self.A}"
+        return (f"a viewport at {self.scale}{self.turned()} on each sheet showing its part of "
+                f"{self.A}")
 
     def match_line(self) -> str:
         m = self.match
@@ -332,18 +368,20 @@ def _stationing(w: _Words, explicit: bool) -> str:
     shows = "show" if w.many else "shows"
     return (f"Working in model space where {w.sheet_list} {shows} it, "
             f"{w.stationing(w.A, 'station')}. {_sentences([w.curve_points(), w.lettering()])}"
-            f"{w.done()}")
+            f"{w.done()}{w.reading()}")
 
 
 def _callouts(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"{w.callouts(f' of {w.A}')}, in {w.label_h} text on {w.layer('labels')}.{w.done()}"
+        return (f"{w.callouts(f' of {w.A}')}, in {w.label_h} text on {w.layer('labels')}."
+                f"{w.done()}{w.reading()}")
     return f"Number the curves on {w.A}."
 
 
 def _bearings(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"{w.bearings(f' of {w.A}')}, in {w.label_h} text on {w.layer('labels')}.{w.done()}"
+        return (f"{w.bearings(f' of {w.A}')}, in {w.label_h} text on {w.layer('labels')}."
+                f"{w.done()}{w.reading()}")
     return f"Add bearings to {w.A}."
 
 
@@ -365,35 +403,42 @@ def _title_block(w: _Words, explicit: bool) -> str:
 def _sheet_setup(w: _Words, explicit: bool) -> str:
     if not explicit:
         verb = "Set up plan " + w.sheet_list
-        return f"{verb} for {w.A}{w.breaking()}."
+        return f"{verb} for {w.A}{w.breaking()}{w.turned_views()}."
     if not w.many:
-        return f"Set up plan {w.sheet_list}, {w.size}, with {w.viewports()}.{w.done()}"
+        return (f"Set up plan {w.sheet_list}, {w.size}, with {w.viewports()}.{w.done()}"
+                f"{w.lettered()}")
     return (f"Lay out {w.A} on {_COUNT.get(len(w.sheets), len(w.sheets))} {w.size} plan sheets, "
-            f"{w.sheet_list[7:]}, at {w.scale}{w.breaking()}, with a viewport on each sheet "
-            f"showing its part of the line. {w.match_line()}.{w.done()}")
+            f"{w.sheet_list[7:]}, at {w.scale}{w.breaking()}, with a viewport on each sheet"
+            f"{w.turned()} showing its part of the line. {w.match_line()}.{w.done()}"
+            f"{w.lettered()}")
 
 
 def _annotate_sheet(w: _Words, explicit: bool) -> str:
     is_are = "are" if w.many else "is"
+    crowded = bool(w.D.get("crowd"))  # (the crowd dial: the sheet is not blank, the line is)
     if not explicit:
+        if crowded:
+            return f"Nothing of {w.A} is annotated on {w.sheet_list} yet. Annotate it."
         return f"{w.Sheet_list} {is_are} blank. Annotate {'them' if w.many else 'it'}."
     match = w.match_words()
     them = "them" if w.many else "it"
     views = "viewports" if w.many else "a viewport"
-    return (f"{w.Sheet_list} {is_are} set up with {views} on {w.A} at {w.scale}{match}, and the "
-            f"centerline is drawn, but nothing is annotated yet. Annotate {them} fully:\n"
+    nothing = f"nothing of {w.A} is annotated yet" if crowded else "nothing is annotated yet"
+    return (f"{w.Sheet_list} {is_are} set up with {views} on {w.A} at {w.scale}{w.turned()}"
+            f"{match}, and the centerline is drawn, but {nothing}."
+            f"{w.reading(stated=True)} Annotate {them} fully:\n"
             f"{_bullets(_alignment_data(w, 'the line') + [w.north(), 'Fill in the title block' + ('s' if w.many else '') + ': ' + w.title()])}")
 
 
 def _plan_sheet(w: _Words, explicit: bool) -> str:
     if not explicit:
-        return f"Draft plan {w.sheet_list} for {w.A}{w.breaking()}."
+        return f"Draft plan {w.sheet_list} for {w.A}{w.breaking()}{w.turned_views()}."
     setup = f"Set up {w.viewports()}" + (f". {w.match_line()}" if w.match else "")
     items = ([setup, w.linework()] + _alignment_data(w, "it")
              + [w.north(), "Fill in the title block" + ("s" if w.many else "") + ": " + w.title()])
     return (f"Draft plan {w.sheet_list} for {w.A} on the {w.P['name']} project ({w.P['agency']}, "
-            f"{w.P['county']}): {w.size} at {w.scale}{w.breaking()}. {w.A} is already in the "
-            f"design.\n{_bullets(items)}")
+            f"{w.P['county']}): {w.size} at {w.scale}{w.breaking()}{w.turned_views()}. {w.A} is "
+            f"already in the design.{w.reading(stated=True)}\n{_bullets(items)}")
 
 
 # -- the harder whole-sheet jobs (types.HARD_TASK_TYPES, the d1-test-hard set)
@@ -421,26 +466,27 @@ def _plan_sheet_pavement(w: _Words, explicit: bool) -> str:
 def _create_plan_sheet(w: _Words, explicit: bool) -> str:
     if not explicit:
         return (f"{w.A} {w.geometry()}. Create it, then draft plan {w.sheet_list} for it"
-                f"{w.breaking()}.")
+                f"{w.breaking()}{w.turned_views()}.")
     items = _plan_sheet_items(w, [w.linework()])
     return (f"{w.A} is not in the design yet: it {w.geometry()}. Coordinates are northing and "
             f"easting in US survey feet. Create it in the design from the PIs and the curve "
             f"radius at each, then draft plan {w.sheet_list} for it on the {w.P['name']} project "
-            f"({w.P['agency']}, {w.P['county']}): {w.size} at {w.scale}{w.breaking()}.\n"
-            f"{_bullets(items)}")
+            f"({w.P['agency']}, {w.P['county']}): {w.size} at {w.scale}{w.breaking()}"
+            f"{w.turned_views()}.{w.reading(stated=True)}\n{_bullets(items)}")
 
 
 def _base_plan_sheet(w: _Words, explicit: bool) -> str:
     ref = w.ref_name
     if not explicit:
         return (f"The base drawing is attached as {ref}. Draft plan {w.sheet_list} for {w.A} in "
-                f"this file{w.breaking()}.")
+                f"this file{w.breaking()}{w.turned_views()}.")
     items = _plan_sheet_items(w, [])
     return (f"This sheet file has no sheets yet. The base drawing {w.basefile} is attached as "
             f"{ref} and carries {w.A}'s design, centerline and pavement edges; {w.A} lives in the "
             f"base, not in this file, so reach it as {ref}:{w.A}. Draft plan {w.sheet_list} for it "
             f"on the {w.P['name']} project ({w.P['agency']}, {w.P['county']}): {w.size} at "
-            f"{w.scale}{w.breaking()}.\n{_bullets(items)}")
+            f"{w.scale}{w.breaking()}{w.turned_views()}.{w.reading(stated=True)}\n"
+            f"{_bullets(items)}")
 
 
 # -- plan prep
@@ -479,8 +525,8 @@ def _annotate_base(w: _Words, explicit: bool) -> str:
                 f"{w.sheet_list}.")
     return (f"{w.Sheet_list} and {'their viewports' if w.many else 'its viewport'} on {w.A} are "
             f"set up in this file, and the base drawing {w.basefile} is attached as {ref}. {w.A} "
-            f"lives in the base, not in this file, so reach it as {ref}:{w.A}. Letter its "
-            f"alignment data here:\n{_bullets(_alignment_data(w, 'it'))}")
+            f"lives in the base, not in this file, so reach it as {ref}:{w.A}.{w.reading()} Letter "
+            f"its alignment data here:\n{_bullets(_alignment_data(w, 'it'))}")
 
 
 def _attach_reference(w: _Words, explicit: bool) -> str:
@@ -853,7 +899,73 @@ def prompt(brief: TaskBrief, level: str) -> str:
     if level not in LEVELS:
         raise ValueError(f"unknown prompt level {level!r}; levels: {', '.join(LEVELS)}")
     w = _Words(brief)
-    return PROMPTS[w.type.name](w, level == "explicit")
+    if w.D.get("revision"):  # the revision dial: a finished sheet, its design since changed
+        return _revision(w, level == "explicit")
+    text = PROMPTS[w.type.name](w, level == "explicit")
+    crowd = _crowd(w, level == "explicit")
+    if crowd:
+        text += ("\n" if "\n" in text else " ") + crowd
+    return text
+
+
+def _revision_words(w: _Words) -> str:
+    """The change itself, as the designer reports it (both levels: it is the redline)."""
+    R = w.D["revision"]
+    if R["kind"] == "radius":
+        return (f"curve {R['curve']}'s radius is now {R['to']:g}' (it was {R['from']:g}'), every "
+                f"PI held")
+    if R["kind"] == "pi":
+        way = "ahead" if R["by"] > 0 else "back"
+        return (f"the PI of curve {R['curve']} has moved {abs(R['by']):.2f} ft {way} along its back "
+                f"tangent, its radius and every other PI held")
+    return f"{w.A} is restationed to begin at {R['to']} (it began at {R['from']}), its geometry held"
+
+
+def _revision(w: _Words, explicit: bool) -> str:
+    """A revised task's prompt (the generator's revision dial, ``tasks.revise``).
+    The vague words name the sheet, where the line lives and the change, and no
+    more: the notes that cite the line are the knock-on edit nobody names, as on
+    the redline pilots (``p11``)."""
+    change = _revision_words(w)
+    if w.type.design_referenced:
+        where = (f"{w.A} lives in the base drawing attached as {w.ref_name}, and {w.sheet_list} "
+                 f"letters it through the reference as {w.ref_name}:{w.A}. The designer has revised "
+                 f"{w.A} there and redrawn its linework: {change}.")
+    else:  # the design lives in this file, so the change is the drafter's to make
+        where = (f"{w.Sheet_list} is lettered for {w.A}, whose design lives in this file. The "
+                 f"designer has revised it: {change}.")
+    if not explicit:
+        if not w.type.design_referenced:
+            return f"{where} Make the change and bring {w.sheet_list} up to date."
+        return f"{where} Bring {w.sheet_list} up to date."
+    make = ("" if w.type.design_referenced else
+            f" Make the change in this file's design and redraw {w.A}'s centerline to it, on "
+            f"{w.layer('alignment')}.")
+    return (f"{where}{make} Bring {w.sheet_list} up to date with the revised design.{w.reading()} "
+            f"Whatever the change touches is lettered again with the design's own labels, the "
+            f"office's way:\n{_bullets(_alignment_data(w, 'the line'))}\nNothing lettered from "
+            f"before the change may be left, and a note on the sheet that cites a station of "
+            f"{w.A} must cite the same point of the line, restationed. Keep everything else as "
+            f"it is.")
+
+
+def _crowd(w: _Words, explicit: bool) -> str:
+    """What a crowded task (the generator's crowd dial, ``tasks.crowd``) adds to
+    its prompt: nothing at all on an uncrowded one.  The vague words are the
+    crowded pilots' (``p04``)."""
+    crowd = w.D.get("crowd")
+    if not crowd:
+        return ""
+    if not explicit:
+        return "The sheet is crowded; keep everything already on it."
+    name = crowd["alignment"].get("name") or "ALIGN-2"
+    n = len(crowd["notes"])
+    notes = "a note" if n == 1 else f"{_COUNT.get(n, n)} notes"
+    return (f"The sheet is not empty: it already shows another line, {name}, across {w.A} with "
+            f"its own lettering, and {notes} lettered on the paper. Keep all of it. Nothing you "
+            f"add may sit on other lettering as plotted: where a label would, set that label "
+            f"again on the other side of the line or further off it, with the design's own "
+            f"label, rather than dragging it off its anchor.")
 
 
 def render_prompts(brief: TaskBrief) -> Dict[str, str]:

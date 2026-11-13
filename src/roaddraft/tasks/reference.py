@@ -235,8 +235,31 @@ def reference_commands(task: Task) -> List[tuple]:
 
 def solution_commands(task: Task) -> List[tuple]:
     """What the reference drafter does on the task's starting document: the
-    phases the task asks for (plus the layers when they are not given)."""
-    ttype = task_type(task.brief.deliverable.get("task_type", "plan-sheet"))
+    phases the task asks for (plus the layers when they are not given).  On a
+    revised task (the generator's revision dial, ``tasks.revise``) the start is
+    a finished sheet: what was lettered from the old design comes off, the
+    phases the change leaves behind are lettered again, and each note citing
+    the line reads its restationed text."""
+    D = task.brief.deliverable
+    ttype = task_type(D.get("task_type", "plan-sheet"))
+    revision = D.get("revision")
+    if revision:
+        from roaddraft.tasks.revise import STALE_PHASES
+        notes = [("modify_entity", {"id": n["id"], "changes": {"content": n["after"]}})
+                 for n in revision["notes"] if n["after"] != n["before"]]
+        if revision.get("by_drafter"):
+            # the design is this file's: change it, the centerline redrawn and the labels
+            # following it (modify_alignment does both for a document's own line)
+            A = task.brief.alignment_name
+            new = Alignment.from_dict(task.brief.design["alignments"][A])
+            changes = ({"begin_station": revision["to"]} if revision["kind"] == "station" else
+                       {"pis": [list(p.point) + ([float(p.radius)] if p.radius else [])
+                                for p in new.pis]})
+            return ([_meta(task), ("modify_alignment", {"name": A, "changes": changes,
+                                                        "redraw": True})] + notes)
+        return ([_meta(task), ("delete_entities", {"ids": list(revision["stale"])})] + notes
+                + phase_commands(task, [p for p in ttype.solution_phases()
+                                        if p in STALE_PHASES[revision["kind"]]]))
     return [_meta(task)] + phase_commands(task, ttype.solution_phases())
 
 

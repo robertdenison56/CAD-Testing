@@ -42,6 +42,13 @@ COMMANDS = frozenset({
 })
 #: commands shown only when the task asks for the design (scope ``design``)
 DESIGN_COMMANDS = frozenset({"create_alignment"})
+#: what a revised task's truth carries in its scope beside its groups (the generator's
+#: revision dial, ``tasks.revise``, 2026-11-12, Robert: "Yes, revision only"); no check grades
+#: it (the verifier reads only ``tasks.types.GROUPS``), it only opens ``REVISION_COMMANDS``
+REVISION_SCOPE = "revision"
+#: commands shown only on a revised task: changing a line's design, and bringing what was
+#: lettered from it up to date.  No other task's tool list, nor its digest, has them
+REVISION_COMMANDS = frozenset({"modify_alignment", "update_labels"})
 #: queries every task may call
 QUERIES = frozenset({
     "list_alignments", "get_design_data", "station_to_xy", "xy_to_station", "resolve_anchor",
@@ -82,6 +89,8 @@ def allowed_names(mode: str, scope: Iterable[str] = ()) -> Set[str]:
     names = set(COMMANDS) | set(QUERIES) | set(HARNESS_TOOLS)
     if "design" in set(scope):
         names |= DESIGN_COMMANDS
+    if REVISION_SCOPE in set(scope):
+        names |= REVISION_COMMANDS
     if mode != "single":
         names |= RENDER_QUERIES
     else:
@@ -172,6 +181,7 @@ def repair_params(params: Optional[dict], schema: Optional[dict]) -> Tuple[dict,
     return params, repairs
 
 
-__all__ = ["MODES", "DIALECTS", "COMMANDS", "DESIGN_COMMANDS", "QUERIES", "RENDER_QUERIES",
+__all__ = ["MODES", "DIALECTS", "COMMANDS", "DESIGN_COMMANDS", "REVISION_SCOPE", "REVISION_COMMANDS",
+           "QUERIES", "RENDER_QUERIES",
            "HARNESS_TOOLS", "allowed_names", "is_allowed", "tool_definitions", "shape_params",
            "repair_params"]

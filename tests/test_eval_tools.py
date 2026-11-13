@@ -36,6 +36,21 @@ def test_create_alignment_only_when_the_design_is_the_task():
     assert "create_alignment" not in tools.allowed_names("single", ["linework"])
 
 
+def test_modify_alignment_and_update_labels_only_on_a_revised_task():
+    """Robert, 2026-11-12: "Yes, revision only". A revised task's scope carries the
+    revision mark beside its groups; no other task's list, nor its digest, moves."""
+    for mode in tools.MODES:
+        plain = tools.allowed_names(mode, ["design", "linework", "ticks"])
+        revised = tools.allowed_names(mode, ["design", "linework", "ticks", tools.REVISION_SCOPE])
+        assert revised - plain == tools.REVISION_COMMANDS == {"modify_alignment", "update_labels"}
+    task = generate_task(15021, curves=1, task_type="annotate-sheet", revise="radius")
+    assert tools.REVISION_SCOPE in task.truth.scope
+    allowed = tools.allowed_names("single", task.truth.scope)
+    assert {c for c, _ in solution_commands(task)} <= allowed
+    for name in sorted(TASK_TYPES):
+        assert tools.REVISION_SCOPE not in generate_task(3, task_type=name).truth.scope
+
+
 def test_render_and_run_check_follow_the_mode():
     single = tools.allowed_names("single")
     assert "run_check" not in single and "render_sheet" not in single
