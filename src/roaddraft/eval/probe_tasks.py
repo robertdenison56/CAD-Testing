@@ -53,6 +53,11 @@ from roaddraft.probes.base import Probe, Result
 
 #: the task set of the harder-task pilots (docs/Probes_Pilots.md)
 PILOT_SET = "hard-pilots"
+#: the validation set (2026-11-13, training plan §8): pilot families set on the sample sheets
+#: no held-out pilot or real-sheet set uses (``probes/pilot_dev.py``); for choosing a
+#: checkpoint only, never trained on, never reported
+DEV_SET = "pilot-dev"
+SETS = (PILOT_SET, DEV_SET)
 #: a probe task's id: ``PR-<probe id>-<hash of its task text>``, so a changed
 #: prompt is a new task and the manifest's tripwire sees it
 ID_PREFIX = "PR-"
@@ -133,10 +138,34 @@ def pilots() -> List[Probe]:
     return sorted(PILOT_PROBES, key=lambda p: (int(family(p)[1:]), p.id))
 
 
+def dev_probes() -> List[Probe]:
+    """``pilot-dev``'s instances, by family as the pilots are, then by id."""
+    from roaddraft.probes.pilot_dev import PROBES
+    return sorted(PROBES, key=lambda p: (int(family(p)[1:]), p.id))
+
+
+def probes_of(name: str) -> List[Probe]:
+    """The probes of probe set ``name``."""
+    if name == PILOT_SET:
+        return pilots()
+    if name == DEV_SET:
+        return dev_probes()
+    raise ValueError(f"unknown probe task set {name!r}; sets: {', '.join(SETS)}")
+
+
+def set_of(probe: Probe) -> str:
+    """The probe set ``probe`` belongs to."""
+    from roaddraft.probes.pilot_dev import BY_ID
+    return DEV_SET if probe.id in BY_ID and BY_ID[probe.id] is probe else PILOT_SET
+
+
 def by_id(probe_id: str) -> Probe:
     for p in pilots():
         if p.id == probe_id:
             return p
+    from roaddraft.probes.pilot_dev import BY_ID
+    if probe_id in BY_ID:
+        return BY_ID[probe_id]
     from roaddraft.probes import tasks
     return tasks.get(probe_id)
 
@@ -158,10 +187,15 @@ def current_ids(probes: Optional[Sequence[Probe]] = None, level: str = "explicit
                      if level in levels_of(p))
 
 
-def check_sources() -> List[Path]:
-    """The files the pilot checks live in: the pilot package, one module per family."""
+def check_sources(name: str = PILOT_SET) -> List[Path]:
+    """The files the pilot checks live in: the pilot package, one module per family;
+    for ``pilot-dev``, its own module beside them (it reuses the families' checks)."""
     import roaddraft.probes.pilot as pilot_pkg
-    return sorted(Path(pilot_pkg.__file__).parent.glob("*.py"))
+    paths = sorted(Path(pilot_pkg.__file__).parent.glob("*.py"))
+    if name == DEV_SET:
+        import roaddraft.probes.pilot_dev as dev
+        paths.append(Path(dev.__file__))
+    return paths
 
 
 def check_version(paths: Optional[Sequence[Path]] = None) -> str:
@@ -274,6 +308,8 @@ class ProbeReport:
     detail: str
     items: List[Tuple[str, bool]] = field(default_factory=list)
     touched: bool = True
+    #: the check hash of the probe's set (``check_version``); empty: the pilots'
+    verifier_version: str = ""
 
     @property
     def scope(self) -> Tuple[int, int]:
@@ -303,7 +339,8 @@ class ProbeReport:
                 "items_done": done, "items_asked": asked,
                 "effective_score": self.effective_score, "rubric_score": self.rubric_score,
                 "hard_failed": self.hard_failed, "spec_version": SPEC_VERSION,
-                "spec_hash": spec_hash(), "verifier_version": check_version(),
+                "spec_hash": spec_hash(),
+                "verifier_version": self.verifier_version or check_version(),
                 "checks": [{"id": CHECK_ID, "name": "the probe's own check", "weight": 100,
                             "credit": round(done / asked, 4) if asked else 0.0,
                             "in_scope": True, "findings": [],
@@ -326,7 +363,7 @@ def grade(probe: Probe, project: Path, touched: bool = True, level: str = "expli
     # already satisfies (a clean control's "no false alarms")
     items = list(result.items) if touched else [(n, False) for n, _d in result.items]
     return ProbeReport(probe.id, passed, result.detail if touched else "no engine calls",
-                       items, touched)
+                       items, touched, check_version(check_sources(set_of(probe))))
 
 
 def _changed_files(project: Path, probe: Probe) -> List[Path]:
@@ -468,8 +505,9 @@ class ProbeEpisode(Episode):
                 "task_type": self.task.task_type, "sheets": 1, "seed": None,
                 "probe": self.probe.id, "start": self.probe.start,
                 "spec_version": SPEC_VERSION, "spec_hash": spec_hash(),
-                "generator_version": generator_version(),
-                "verifier_version": check_version(), "harness_version": HARNESS_VERSION,
+                "generator_version": generator_version(probes_of(set_of(self.probe))),
+                "verifier_version": check_version(check_sources(set_of(self.probe))),
+                "harness_version": HARNESS_VERSION,
                 **prompt_fields(self.brief_text, self.config.system_extra),
                 "git_commit": pins.get("commit"),
                 "dirty": pins.get("dirty"),
@@ -632,7 +670,7 @@ class ProbeOracleAgent(_QueueAgent):
         self.queue = [ToolCall(n, p) for n, p in oracle_calls(task.probe)]
 
 
-__all__ = ["PILOT_SET", "FAMILIES", "BUDGETS", "ProbeTask", "ProbeReport", "ProbeEpisode",
+__all__ = ["PILOT_SET", "DEV_SET", "SETS", "dev_probes", "probes_of", "set_of", "FAMILIES", "BUDGETS", "ProbeTask", "ProbeReport", "ProbeEpisode",
            "ProbeOracleAgent", "EpisodeServer", "pilots", "by_id", "entry", "task_id",
            "task_type", "brief_text", "levels_of", "generator_version", "current_ids", "check_sources",
            "check_version", "task_from_entry", "grade",

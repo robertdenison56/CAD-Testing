@@ -41,6 +41,12 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   run as probe tasks (``eval/probe_tasks.py``): each its own start project on a
   sample sheet, the MCP server's tools, graded pass or fail by its own check.
   Ranked on its own board.  Too few instances per family to spare a dev split.
+- ``pilot-dev`` (2026-11-13, ``RoadDraft_Training_Plan.md`` §8 and decision 7):
+  that dev split, built apart: instances of the ``p17``, ``p04``, ``p05`` and
+  ``p11`` families on the nine sample sheets no pilot, no real-sheet set and no
+  dev set uses (``probes/pilot_dev.py``, outside the pilot package, so the
+  held-out set does not move).  Run like ``hard-pilots``; for choosing a
+  checkpoint only, like ``d1-real-dev``: never trained on, not on the board.
 
 - ``d1-train``, ``d1-train-hard`` (2026-11-10, ``RoadDraft_Training_Plan.md``):
   the training sets, seeds 10000-11199 on ``d1-test``'s dials and seeds
@@ -128,7 +134,7 @@ SEEDED_NAMES = ("d1-dev", "d1-test", "d1-variance")
 #: the sets on the redrafted sample plan sheets
 REAL_NAMES = ("d1-real", "d1-real-dev")
 #: the sets of probe tasks, each graded by its probe's own check (eval/probe_tasks.py)
-PROBE_NAMES = ("hard-pilots",)
+PROBE_NAMES = ("hard-pilots", "pilot-dev")
 #: the harder sets (2026-11-03): whole-sheet jobs on the seeded generator, and the whole job
 #: plus the heaviest whole-line tasks on the redrafted sheets; each ranked on its own board
 HARD_NAMES = ("d1-test-hard", "d1-real-hard")
@@ -517,7 +523,7 @@ def current_generator(name: Optional[str]) -> str:
         return REAL_GENERATOR_VERSION
     if name is not None and is_probe(name):
         from roaddraft.eval import probe_tasks
-        return probe_tasks.generator_version()
+        return probe_tasks.generator_version(probe_tasks.probes_of(name))
     return GENERATOR_VERSION
 
 
@@ -527,7 +533,7 @@ def current_verifier(name: Optional[str]) -> str:
     (``probe_tasks.check_version``), since a pilot is graded by its own check."""
     if name is not None and is_probe(name):
         from roaddraft.eval import probe_tasks
-        return probe_tasks.check_version()
+        return probe_tasks.check_version(probe_tasks.check_sources(name))
     from roaddraft.verify import VERIFIER_VERSION
     return VERIFIER_VERSION
 
@@ -543,16 +549,26 @@ def default_budgets(name: Optional[str]):
 
 
 def build_probes(name: str) -> dict:
-    """A probe set's manifest: every pilot, in the brainstorm's order."""
+    """A probe set's manifest: every pilot, in the brainstorm's order (``pilot-dev``:
+    its instances, family by family, each with the sheet it is set on)."""
     from roaddraft.eval import probe_tasks
-    if name != probe_tasks.PILOT_SET:
+    if name not in probe_tasks.SETS:
         raise ValueError(f"unknown probe task set {name!r}; sets: {', '.join(PROBE_NAMES)}")
-    probes = probe_tasks.pilots()
-    return {"taskset": name, "generator_version": probe_tasks.generator_version(probes),
-            "spec_version": DRAFTING_SPEC_V1["version"], "spec_hash": spec_hash(DRAFTING_SPEC_V1),
-            "source": "src/roaddraft/probes/pilot (docs/Probes_Pilots.md)",
-            "grading": "each probe's own check, pass = 100, fail = 0",
-            "tasks": [probe_tasks.entry(p) for p in probes]}
+    probes = probe_tasks.probes_of(name)
+    manifest = {"taskset": name, "generator_version": probe_tasks.generator_version(probes),
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1),
+                "source": "src/roaddraft/probes/pilot (docs/Probes_Pilots.md)",
+                "grading": "each probe's own check, pass = 100, fail = 0",
+                "tasks": [probe_tasks.entry(p) for p in probes]}
+    if name == probe_tasks.DEV_SET:
+        from roaddraft.probes.pilot_dev import sheet_of
+        manifest["source"] = ("src/roaddraft/probes/pilot_dev.py (the pilot families' builders "
+                              "and checks on the clean sample sheets)")
+        manifest["use"] = "checkpoint selection only: never trained on, never reported"
+        for row in manifest["tasks"]:
+            row["sheet_id"] = sheet_of(row["probe"])
+    return manifest
 
 
 def _h(text: str) -> str:

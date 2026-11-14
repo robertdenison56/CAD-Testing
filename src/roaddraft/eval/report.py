@@ -643,8 +643,9 @@ def set_ids(taskset: str, levels: Iterable[str] = ("explicit",)) -> set:
     level)."""
     from roaddraft.eval.taskset import is_probe, load
     if is_probe(taskset):
-        from roaddraft.eval.probe_tasks import current_ids
-        return set().union(*(current_ids(level=lv) for lv in (set(levels) or {"explicit"})))
+        from roaddraft.eval.probe_tasks import current_ids, probes_of
+        probes = probes_of(taskset)
+        return set().union(*(current_ids(probes, level=lv) for lv in (set(levels) or {"explicit"})))
     return {r["task_id"] for r in load(taskset)["tasks"]}
 
 

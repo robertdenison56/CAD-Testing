@@ -117,6 +117,15 @@ listed on the board, not ranked (the first local row, Qwen3.5-9B on the 24 text-
 .venv/bin/python -m roaddraft.eval run --taskset hard-pilots --model MODEL [--samples 3]
 ```
 
+**`pilot-dev`** (2026-11-13, training plan §8 and decision 7) is the pilots' validation split,
+built apart: 19 instances of p17, p04, p05 and p11 on the nine sample sheets with an alignment
+that no pilot, real-sheet set or dev set uses, registered in `src/roaddraft/probes/pilot_dev.py`
+(outside this package, so the 112 and their hashes do not move; the module docstring says what
+each sheet could and could not carry). For choosing a checkpoint only: never trained on, not on the
+board. It runs the same way, `--taskset pilot-dev`, and
+`python -m roaddraft.probes.pilot_dev selftest` checks every instance's scripted solution and
+naive answers.
+
 ## What the first model run found (2026-10-23)
 
 GPT-6-Astra (Codex, medium) ran six pilots before the ChatGPT Plus usage limit stopped the run;

@@ -994,6 +994,9 @@ labels were measured by their true sizes (2026-11-12, night). Build 4 followed t
 
 **A validation set on real sheets.** `pilot-dev`: `p17`, `p04`, `p05` and `p11` instances on the 9 clean
 sheets, registered outside the pilot package. For choosing a checkpoint only, like `d1-real-dev`.
+**Built 2026-11-13** (`src/roaddraft/probes/pilot_dev.py`, `benchmarks/tasksets/pilot-dev.json`): 19
+instances, 6 `p17`, 2 `p04`, 6 `p05`, 5 `p11`, every one of the 9 sheets used; what each sheet could not
+carry, and where an instance is weaker than its held-out counterparts, is in the module's docstring.
 
 **One thing the base rerun will show first.** Of the 59.8 points the best row loses on the pilots, 9.8 are
 `annotate_stationing` failing and never working, on the tool surface the board's rows ran. Main has had the
