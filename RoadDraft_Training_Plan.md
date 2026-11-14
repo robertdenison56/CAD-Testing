@@ -819,6 +819,20 @@ again on the pin (decision 3): `faults inject`, then `conversations convert`.
     I recommend the second, in the same cut as a new pin if decision 3 goes that way, and the first until
     then. **Decided 2026-11-13: the second, in the pin's cut.** The corners are the verifier's own
     footprint (`verify.legibility.text_quad`) taken to the paper; the clearing step is rebuilt on them.
+    **Built 2026-11-13.** `find_entities` gives a text row `paper_corners`: with `visible_on`, a model
+    text's lettering seen through the viewport the row names (its height over the feet per inch, turned
+    by the twist), and a sheet's own text where it stands; they match `sheet_items`' footprints to the
+    rounding (5e-5 in) on six crowded tasks, one twisted and with lettering read through a base drawing.
+    The tool definitions move (`9db020d9` to `cd5e8a86`), the instructions do not. The clearing step
+    (`grounded._clear`, 690 lines to 295) now asks nothing of the engine past the two listings: two
+    footprints are apart when their boxes are, or when the places of their corners along a side of
+    either do not overlap, each place a corner's x times the side's run in x plus its y times its run
+    in y. The comparison is written to the corners' ten-thousandths: at thousandths, a BC label 0.006
+    in into a station number was rounded apart along its tenth-inch side. `FULL_ROWS` went 25 to 20,
+    since rows with corners ran past the 30,000-character cut. `d1-train-crowd`: 599 of 600 kept a
+    level (was 592; the one left was not kept before either), and on the 592 kept both ways the median
+    calls went 58 to 28 (34,893 to 15,485 in all), turns 21 to 16, the shown work 16% shorter and the
+    results 15%. Every other training set keeps what it kept: 3,291 of 3,297 a level in all.
 11. **Letting a seeded revision task make the change itself** (2026-11-12, build 4). **Decided 2026-11-12:
     "Yes, revision only".** `modify_alignment` and `update_labels` are shown only on a revised task's list
     (its scope carries a `revision` mark), and where the design lives in the sheet file the drafter makes

@@ -132,6 +132,26 @@ def _anchor_matches(anchor, wanted: dict) -> bool:
     return True
 
 
+def _paper_corners(owner, text, viewport=None) -> List[List[float]]:
+    """The four corners of a text's lettering on the paper, in inches,
+    counter-clockwise from the lower left as it reads: the footprint the
+    verifier judges legibility by (``verify.legibility.text_quad``).  A model
+    text is seen through ``viewport``, its height over the feet per inch and
+    turned by the twist; a sheet's own text is where it stands."""
+    from roaddraft.verify.legibility import text_quad
+    style = owner.text_styles.get(text.style)
+    width_factor = style.width_factor if style else 1.0
+    if viewport is None:
+        quad = text_quad(text.position, text.content, text.height, text.rotation_deg,
+                         text.halign, text.valign, width_factor)
+    else:
+        quad = text_quad(viewport.transform().to_paper(text.position), text.content,
+                         text.height / float(viewport.feet_per_inch),
+                         text.rotation_deg + float(viewport.rotation_deg),
+                         text.halign, text.valign, width_factor)
+    return [[round(v, 4) for v in corner] for corner in quad]
+
+
 QUERIES = {
     "get_document_state": {
         "description": "Document state. detail='summary' (default) for counts and "
@@ -161,7 +181,9 @@ QUERIES = {
                        "row carries a point that is ON the entity, ready to pass to "
                        "place_callout as target_entity or target.",
         "schema": obj({
-            "space": {**NSTR, "description": "space to search (default 'model')"},
+            "space": {**NSTR, "description": "space to search (default 'model'); in a "
+                                             "sheet, each text row carries paper_corners "
+                                             "as visible_on gives them"},
             "layer": {"description": "layer name, or a list of them"},
             "type": {"description": "line|polyline|arc|circle|text|blockref|table|"
                                     "dimension|point|hatch, or a list"},
@@ -180,7 +202,11 @@ QUERIES = {
                                           "sheet's viewports actually show. Each row then "
                                           "also carries sheet_point -- the middle of the "
                                           "part shown, in paper inches -- and the "
-                                          "viewport it is seen through"},
+                                          "viewport it is seen through; a text row also "
+                                          "carries paper_corners, the four corners of its "
+                                          "lettering on that sheet in inches, "
+                                          "counter-clockwise from the lower left as it "
+                                          "reads: the footprint legibility is judged by"},
             "include_references": {"type": "boolean",
                                    "description": "search attachments too (default true)"},
             "detail": {"type": "string", "enum": ["summary", "full"],
@@ -858,6 +884,11 @@ class Session:
                 seen = self._entity_on_sheet(shown_on, owner, entity, "mid")
                 if seen is not None:
                     row.update(seen[0])
+                    if entity.TYPE == "text":
+                        row["paper_corners"] = _paper_corners(
+                            owner, entity, shown_on.viewport_by_id(seen[0]["viewport"]))
+            elif space_key != "model" and entity.TYPE == "text":
+                row["paper_corners"] = _paper_corners(owner, entity)
             if entity.anchor:
                 row["anchor"] = dict(entity.anchor)
             content = getattr(entity, "content", None)

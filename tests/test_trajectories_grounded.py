@@ -616,7 +616,7 @@ def test_a_grounded_reference_on_a_crowded_sheet_scores_100_with_nothing_ungroun
 
 
 def test_a_label_that_lands_on_other_lettering_is_read_back_and_set_again_clear():
-    """The step itself: the new lettering is read back with its boxes, the
+    """The step itself: the new lettering is read back with its corners, the
     paper's own lettering beside it, and a label that meets something is
     deleted and placed again by the same labeler on the other side of its
     line or further off, then read back again."""
@@ -655,19 +655,35 @@ def test_a_label_that_lands_on_other_lettering_is_read_back_and_set_again_clear(
     assert set(start.sheet_by_ref("C-101").entities) <= set(after.sheet_by_ref("C-101").entities)
 
 
-def test_two_boxes_that_meet_are_measured_along_and_across_the_line():
-    """A box round lettering at an angle is mostly empty: where two meet, the
-    one's corners are put in the terms of the other's line, and the longer
-    label is the one taken from its record."""
+def test_two_footprints_whose_boxes_meet_are_compared_along_their_sides():
+    """Training plan decision 10 (2026-11-13): the listing gives each text the
+    corners of its lettering on the paper, so the comparison is arithmetic on
+    them and nothing else: where the boxes round two footprints' corners meet,
+    the places of the corners along each side are worked out by products and
+    sums.  No corner is taken to the model or the paper by a query any more."""
     _task_, episode, _result = _kept_crowded("bearings", "vague")
-    measured = [c for c, _r in _pairs(episode) if c["name"] == "xy_to_station"]
-    assert measured and len(measured) % 4 == 0  # a box's four corners at a time
-    said = " ".join(turn["assistant"]["text"] for turn in episode.turns)
-    assert "apart across the line" in said or "apart along the line" in said or \
-        "they overlap both ways" in said
-    # a label's length is bounded from its box, or measured from it and its tangent's run
-    # where a bound leaves the two meeting (2026-11-12), never guessed
-    assert "no longer than" in said or "reads along its tangent, so it is" in said
+    pairs = _pairs(episode)
+    names = [c["name"] for c, _r in pairs]
+    assert not {"xy_to_station", "model_to_sheet", "sheet_to_model"} & set(names)
+    read = [r for c, r in pairs if c["name"] == "find_entities" and "visible_on" in c["params"]]
+    assert read and all("paper_corners" in row for r in read for row in r["entities"])
+    said = _words(episode)
+    assert "along the side of" in said and "the boxes round their corners meet" in said
+    sums = grounded.worked_sums(said)
+    assert sums and all(right for _operands, _stated, right in sums)
+
+
+@pytest.mark.parametrize("task_id", [
+    "D1-014044-8bf2d1f16618",  # a second line's bearing across this one's (2026-11-12)
+    "D1-014010-ca12f07b244d",  # a BC label 0.006 in into a station number: a tenth-inch side
+])
+def test_where_footprints_meet_by_a_hair_the_drafter_sees_it(task_id):
+    # thousandths of an inch rounded the second away on the side a text's height is;
+    # the comparison is written to the corners' own ten-thousandths
+    task = next(tasksets.task_from_entry(e) for e in tasksets.entries("d1-train-crowd")
+                if e["task_id"] == task_id)
+    row = grounded.record_task(task, "vague")
+    assert row["kept"], (row["error"], row["lost"], row["ungrounded"])
 
 
 def test_a_line_alone_on_its_sheet_is_not_read_back():
@@ -699,32 +715,6 @@ def test_the_default_poses_alone_lose_on_a_crowded_sheet():
     lost = {c.id for c in result.report.in_scope() if c.credit < 1.0}
     assert lost == {"D1-08"}
 
-
-
-def test_a_meet_found_by_boxes_alone_is_measured_by_true_sizes_before_a_label_moves():
-    """2026-11-12, the crowded bearings: a second line's bearing across this one's.
-    By boxes the two meet wherever the label goes; measured by their true sizes
-    (the length from the box, the height and the tangent's run, the corners by
-    arithmetic along the label's own tangent) they clear, and every true length
-    said is the engine's own."""
-    import re
-    from roaddraft.core import geometry as geo
-    task = next(tasksets.task_from_entry(e) for e in tasksets.entries("d1-train-crowd")
-                if e["task_id"] == "D1-014044-8bf2d1f16618")
-    episode = _run(task, "vague")
-    said = _words(episode)
-    assert "Those meets rest on boxes" in said and "The true corners of" in said
-    lengths = re.findall(r"(TX-\d+)(?:(?!TX-).)*?it reads (?:along|square to) its tangent, so it "
-                         r"is (?:(?!TX-).)*? = ([\d.]+) ft long", said)
-    assert lengths
-    # each text as it was read (a label set again is gone from the finished drawing)
-    read = {row["id"]: row["entity"] for _c, r in _pairs(episode)
-            for row in r.get("entities") or [] if row.get("entity")}
-    for tid, length in lengths:
-        e = read[tid]
-        assert abs(float(length) - geo.text_size(e["content"], e["height"])[0]) < 0.01, tid
-    row = grounded.record_task(task, "vague")
-    assert row["kept"], (row["error"], row["lost"], row["ungrounded"])
 
 
 # ------------------------------------------------------------ a revised design (2026-11-12)

@@ -211,7 +211,7 @@ CLEAR_MOVES = ((True, 0), (False, CLEAR_STEPS[0]), (True, CLEAR_STEPS[0]),
 _TIMES = {2: "twice", 3: "three times", 4: "four times", 6: "six times"}
 #: the rows it asks for at a time when it wants each text whole: a whole row runs to about
 #: 1,100 characters and a result is cut at 30,000
-FULL_ROWS = 25
+FULL_ROWS = 20
 
 
 class NotCovered(Exception):
@@ -1160,40 +1160,29 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
     that go when it does (a curve number takes its bubble and leader along).
     The engine sets one line's lettering clear of itself and of nothing else,
     so each new label is compared with the lettering that is not its line's.
-    The engine reports a text by its box on the model's axes and no other
-    way, so the comparison goes in three steps, each only for what the one
-    before could not settle:
+    The listing of what a sheet shows gives each text the four corners of its
+    lettering on the paper (``paper_corners``, the footprint legibility is
+    judged by); a table or a symbol on the paper is its box.  Two footprints
+    are rectangles, and two rectangles are apart when the places of their
+    corners along some side of one of them do not overlap.  So:
 
-    1. *The boxes as they stand.*  Two texts whose boxes in the model do not
-       meet do not meet.  For something on the paper, a label near enough to
-       reach it (no further from its point than the width plus the height of
-       its box) has the corners of its box taken to the paper by the engine,
-       and that box is compared with the other's.
-    2. *Along and across a line.*  A box round lettering that runs at an angle
-       is mostly empty, so two boxes that meet settle nothing.  A line's label
-       is known exactly in its own line's terms from its record: it lies along
-       the line from its offset to its offset plus its height (or square to
-       it, at its station).  The other thing's corners are put in the same
-       terms by ``xy_to_station`` -- the longer label is the one taken from
-       its record -- and the two are compared across the line and then along
-       it.  Something on the paper has its corners taken to the model first.
-       Where they meet only by a loose measure, each label along or square to
-       a tangent is measured by its true size (``measure_exactly``): its
-       length from its box, its height and the tangent's run (a box round
-       lettering at an angle is up to two fifths longer than the text), and
-       the other's true corners by arithmetic along its own tangent, put in
-       the first one's terms by ``xy_to_station`` (no ``station_to_xy``, so no
-       display station past an equation).
-    3. *What is left meets.*
+    1. *The boxes round the corners*, along the paper's own axes: two
+       footprints whose boxes do not meet do not meet.  A footprint that
+       stands square to the paper (a note, a table) is its own box, so its
+       sides are settled here.
+    2. *Along each side* of a footprint that is turned.  A side runs from one
+       corner to the next, and a point's place along it is the point's x times
+       the run in x plus its y times the run in y: products and sums, nothing
+       else.  The footprint the side is of spans the places of the side's two
+       ends; the other spans the places of its four corners.
+    3. *Apart along no side*: the two meet.
 
-    A label that meets something is deleted and placed again by the same
-    labeler on the other side of its line, then further off by twice and four
-    times its text height (``CLEAR_MOVES``), read back and compared again, now
-    with its own line's lettering on that side as well.  Returns ``{"carry",
-    "done"}``."""
-    view0 = sheet["viewports"][0]
-    scale = float(view0["feet_per_inch"])
-    twist = float(view0.get("rotation_deg") or 0.0)
+    Nothing is asked of the engine for it: the corners came with the
+    listing, and the engine names no collision.  A label that meets something
+    is deleted and placed again by the same labeler on the other side of its
+    line, then further off by multiples of its text height (``CLEAR_MOVES``),
+    read back with its corners and compared again, now with its own line's
+    lettering on that side as well.  Returns ``{"carry", "done"}``."""
     shown_q = {"visible_on": name, "type": "text", "detail": "full", "limit": FULL_ROWS}
     paper_q = {"space": name, "type": ["text", "table", "blockref"], "detail": "full",
                "limit": FULL_ROWS}
@@ -1206,8 +1195,8 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
         (lead + " " if lead else "")
         + f"{alignment} is not alone on {name}: {_and(there)}. The engine sets a line's "
         "lettering clear of itself, not of anything else, so read back where the new labels "
-        f"fell: every text {name} shows from the model, each with its box, and what is drawn "
-        "on the paper.", calls)
+        f"fell: every text {name} shows from the model, each with the corners of its lettering "
+        "on the paper, and what is drawn on the paper.", calls)
     _ok(results, calls)
     shown: List[dict] = list(results[0]["entities"])
     paper: List[dict] = list(results[1]["entities"])
@@ -1222,7 +1211,7 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
             rows.extend(result["entities"])
             more.append((query, rows, result.get("more")))
     by_id: Dict[str, dict] = {row["id"]: row for row in shown}
-    on_paper: Dict[str, dict] = {row["id"]: row for row in paper}
+    paper_rows = {id(row) for row in paper}
     mine = [row["id"] for row in shown if row["id"] in groups]
     if not mine:
         raise NotCovered(f"{name} shows none of the new lettering")
@@ -1233,10 +1222,8 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
     tried = {i: 0 for i in mine}
     root: Dict[str, str] = {i: i for i in mine}
     moved: set = set()
-    #: a thing's corners in a line's terms, by (its id, the line): (stations, offsets), the
-    #: offsets negative on the left; and a paper item's corners in the model
-    in_terms: Dict[tuple, Optional[tuple]] = {}
-    taken_back: Dict[str, List[List[float]]] = {}
+    #: the comparisons worked out since the last turn, said at the head of the next one
+    said: List[str] = []
 
     def line_of(row: dict) -> Optional[str]:
         on = (row.get("anchor") or {}).get("alignment")
@@ -1247,20 +1234,13 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
     def same_line(row: dict) -> bool:
         return line_of(row) == alignment
 
-    def exact(row: dict) -> bool:
-        """A line's label whose place its record gives in the line's own terms."""
-        anchor = row.get("anchor") or {}
-        return (line_of(row) is not None and anchor.get("rotation") in ("along", "perpendicular")
-                and anchor.get("side") in _OTHER_SIDE and anchor.get("label_offset") is not None
-                and anchor.get("station") is not None)
-
     def what(row: dict) -> str:
         anchor = row.get("anchor") or {}
         word = _LABEL_WORDS.get(anchor.get("kind"), "the label")
         return f"{word} at {anchor.get('ref')}, {row['id']}"
 
     def whose(row: dict) -> str:
-        if row["id"] in on_paper:
+        if id(row) in paper_rows:
             return f"{_PAPER_WORDS.get(row['type'], 'the item')} {row['id']} on the paper"
         anchor = row.get("anchor") or {}
         if same_line(row):
@@ -1269,39 +1249,103 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
         return (f"{on}'s {_LABEL_WORDS.get(anchor.get('kind'), 'the lettering')[4:]} "
                 f"{row['id']}" if on else f"the text {row['id']} in the model")
 
+    def n4(value: float) -> str:
+        """A number in the comparison as written: to the ten-thousandth, the
+        corners' own places (a footprint's short side is a tenth of an inch, so
+        thousandths would round a shallow overlap away)."""
+        return f"{float(value):.4f}".rstrip("0").rstrip(".")
+
+    def r4(value: float) -> float:
+        return float(n4(value))
+
+    def footprint(row: dict) -> List[List[float]]:
+        """A row's footprint on the paper as written: a text's corners, or the box of
+        a table or a symbol."""
+        if row.get("paper_corners"):
+            out = [[r4(x), r4(y)] for x, y in row["paper_corners"]]
+        else:
+            x0, y0, x1, y1 = (r4(v) for v in row["bbox"])
+            out = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+        if any(v < 0 for c in out for v in c):
+            raise NotCovered(f"{row['id']} reaches past the edge of {name}")
+        return out
+
+    def box_of(q: Sequence[Sequence[float]]) -> tuple:
+        return (min(c[0] for c in q), min(c[1] for c in q),
+                max(c[0] for c in q), max(c[1] for c in q))
+
     def box_words(box: Sequence[float]) -> str:
-        return f"x {_n(box[0])} to {_n(box[2])} and y {_n(box[1])} to {_n(box[3])}"
+        return f"x {n4(box[0])} to {n4(box[2])} and y {n4(box[1])} to {n4(box[3])}"
 
-    def sides(box: Sequence[float]) -> tuple:
-        """A model box's two sides as written, and the sums that find them."""
-        x0, y0, x1, y1 = (_r(v) for v in box)
-        w, h = round(x1 - x0, 3), round(y1 - y0, 3)
-        return w, h, f"{_n(x1)} - {_n(x0)} = {_n(w)} ft by {_n(y1)} - {_n(y0)} = {_n(h)} ft"
+    def square(q: Sequence[Sequence[float]]) -> bool:
+        """A footprint that stands square to the paper: its own box."""
+        return len({c[0] for c in q}) <= 2 and len({c[1] for c in q}) <= 2
 
-    def reach(row: dict) -> tuple:
-        """How far a label can reach from its point on the paper: ``(inches, the sums)``."""
-        w, h, said = sides(row["bbox"])
-        total = round(w + h, 3)
-        inches = round(total / _r(scale), 3)
-        return inches, (f"{said}, {_n(w)} + {_n(h)} = {_n(total)} ft, which is {_n(total)} / "
-                        f"{_n(scale)} = {_n(inches)} in on the paper")
+    def point(c: Sequence[float]) -> str:
+        return f"({n4(c[0])}, {n4(c[1])})"
 
-    def near(i: str) -> List[dict]:
-        """What is on the paper within label ``i``'s reach of its point."""
+    def place(c: Sequence[float], dx: float, dy: float) -> tuple:
+        """A point's place along a run of ``dx`` in x and ``dy`` in y: ``(the
+        place, the sum)``, the products of like sign added and the rest taken off."""
+        terms = [(v * d, f"{n4(v)} * {n4(abs(d))}") for v, d in ((c[0], dx), (c[1], dy)) if d]
+        value = r4(sum(t for t, _w in terms))
+        plus = [w for t, w in terms if t >= 0]
+        minus = [w for t, w in terms if t < 0]
+        words = " + ".join(plus) if plus else "0"
+        if minus:
+            words += " - " + " - ".join(minus)
+        return value, f"{words} = {n4(value)}"
+
+    def side(p0: Sequence[float], p1: Sequence[float], q_words: str,
+             other: Sequence[Sequence[float]], other_words: str) -> tuple:
+        """Compare two footprints along the side of the first from ``p0`` to
+        ``p1``: ``(apart, the words)``."""
+        dx, dy = r4(p1[0] - p0[0]), r4(p1[1] - p0[1])
+        if not dx and not dy:
+            return False, ""
+        a0, w0 = place(p0, dx, dy)
+        a1, w1 = place(p1, dx, dy)
+        lo, hi = min(a0, a1), max(a0, a1)
+        at = [place(c, dx, dy) for c in other]
+        o_lo, o_hi = min(v for v, _w in at), max(v for v, _w in at)
+        apart = hi <= o_lo or o_hi <= lo
+        return apart, (
+            f"along the side of {q_words} from {point(p0)} to {point(p1)}, a run of "
+            f"{n4(p1[0])} - {n4(p0[0])} = {n4(dx)} in x and {n4(p1[1])} - {n4(p0[1])} = "
+            f"{n4(dy)} in y, it spans {w0} to {w1}, and the corners of {other_words} fall at "
+            + ", ".join(w for _v, w in at)
+            + (": clear of it" if apart else ": within its span"))
+
+    def compare(i: str, other: dict) -> Optional[str]:
+        """None when label ``i`` and ``other`` are apart (said when it took more
+        than their boxes), else the words for how they meet."""
         row = by_id[i]
-        r = reach(row)[0]
-        x, y = row["sheet_point"]
-        return [p for p in paper
-                if p["bbox"][0] - r <= x <= p["bbox"][2] + r
-                and p["bbox"][1] - r <= y <= p["bbox"][3] + r]
-
-    def corners(box: Sequence[float], all_four: bool = True) -> List[List[float]]:
-        x0, y0, x1, y1 = box
-        return ([[x0, y0], [x1, y0], [x1, y1], [x0, y1]] if all_four
-                else [[x0, y0], [x1, y1]])
+        a, b = footprint(row), footprint(other)
+        ba, bb = box_of(a), box_of(b)
+        if not _meet(ba, bb):
+            return None
+        head = (f"{what(row)[0].upper() + what(row)[1:]} takes {box_words(ba)} on the paper "
+                f"and {whose(other)} takes {box_words(bb)}: the boxes round their corners meet")
+        steps = []
+        for q, r, qw, rw in ((a, b, what(row), whose(other)), (b, a, whose(other), what(row))):
+            if square(q):
+                continue
+            for p0, p1 in ((q[0], q[1]), (q[0], q[3])):
+                apart, words = side(p0, p1, qw, r, rw)
+                if not words:
+                    continue
+                steps.append(words)
+                if apart:
+                    said.append(f"{head}; {'; '.join(steps)}. The two do not meet.")
+                    return None
+        if not steps:
+            return (f"{head}, and both stand square to the paper, so the boxes are the "
+                    "footprints and the two meet")
+        return f"{head}; {'; '.join(steps)}: apart along no side, so the two meet"
 
     def partners(i: str) -> List[dict]:
-        """The model lettering label ``i``'s box meets, of what it is compared with."""
+        """What label ``i`` is compared with: the lettering in the model that is not
+        its line's, and what is on the paper."""
         row, out = by_id[i], []
         for other in by_id.values():
             if other["id"] == i:
@@ -1313,464 +1357,34 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
                     continue
                 if (other.get("anchor") or {}).get("side") != row["anchor"]["side"]:
                     continue
-            if _meet(row["bbox"], other["bbox"]):
-                out.append(other)
-        return out
+            out.append(other)
+        return out + paper
 
-    def measured(a: dict, b: dict) -> Optional[tuple]:
-        """Which of two things that may meet is taken from its record, in its own
-        line's terms, and which by its corners: ``(the first, the second, the
-        line)``, the longer line label first; None when neither is one."""
-        pick = [r for r in (a, b) if r["id"] in by_id and exact(r)]
-        if not pick:
-            return None
-        x = max(pick, key=lambda r: sum(sides(r["bbox"])[:2]))
-        return x, (b if x is a else a), line_of(x)
-
-    def record_terms(row: dict) -> tuple:
-        """A line label in its own line's terms, from its record: ``(across,
-        along, the words for across, the words for along)``, each a (low, high)
-        pair, across negative on the left.  Its length is its true one where
-        it has been measured (``true_len``), else no more than its box's two
-        sides less its height."""
-        anchor = row["anchor"]
-        h, off, at = _r(row["entity"]["height"]), _r(anchor["label_offset"]), _r(anchor["station"])
-        side = anchor["side"]
-        if row["id"] in true_len:
-            long, long_words = true_len[row["id"]]
-            exact_len = True
-        else:
-            w, t, said = sides(row["bbox"])
-            long = round(w + t - h, 3)  # no text is longer than its box's two sides less its height
-            long_words = f"its box is {said}, so it is no longer than {_n(w)} + {_n(t)} - {_n(h)} = {_n(long)} ft"
-            exact_len = False
-        if anchor["rotation"] == "along":
-            far = round(off + h, 3)
-            half = round(long / 2.0, 3)
-            lo, hi = round(at - half, 3), round(at + half, 3)
-            across_words = (f"{what(row)} lies along {line_of(row)} on its {side}, from "
-                            f"{_n(off)} ft off it to {_n(off)} + {_n(h)} = {_n(far)} ft off")
-            along_words = (f"{long_words}, {_n(long)} / 2 = {_n(half)} ft each way "
-                           f"from {_n(at)}: {_n(at)} - {_n(half)} = {_n(lo)} to {_n(at)} + "
-                           f"{_n(half)} = {_n(hi)} along the line")
-        else:
-            far = round(off + long, 3)
-            mid = exact_len and row["entity"].get("valign") == "middle"
-            r = round(h / 2.0, 3) if mid else h
-            lo, hi = round(at - r, 3), round(at + r, 3)
-            across_words = (f"{what(row)} stands square to {line_of(row)} on its {side}; "
-                            f"{long_words} and runs from {_n(off)} ft off the line to "
-                            f"{'' if exact_len else 'no further than '}{_n(off)} + {_n(long)} = "
-                            f"{_n(far)} ft off")
-            along_words = (f"it is centred on {_n(at)}, {_n(h)} / 2 = {_n(r)} ft each way: "
-                           f"{_n(at)} - {_n(r)} = {_n(lo)} to {_n(at)} + {_n(r)} = {_n(hi)} along "
-                           "the line" if mid else
-                           f"it keeps within its height of {_n(at)}: {_n(at)} - {_n(h)} = "
-                           f"{_n(lo)} to {_n(at)} + {_n(h)} = {_n(hi)} along the line")
-        across = (-far, -off) if side == "left" else (off, far)
-        return across, (lo, hi), across_words, along_words
-
-    def off_words(lo: float, hi: float) -> str:
-        if hi <= 0:
-            return f"{_n(-hi)} to {_n(-lo)} ft off it on the left"
-        if lo >= 0:
-            return f"{_n(lo)} to {_n(hi)} ft off it on the right"
-        return f"{_n(-lo)} ft off it on the left to {_n(hi)} ft off on the right"
-
-    def settle(x: dict, y: dict, line: str) -> Optional[str]:
-        """Compare ``x``, from its record, with ``y``, by its corners in ``line``'s
-        terms (its true corners where they were worked out): None when they are
-        apart, else the words for how they meet."""
-        terms = in_terms.get((y["id"], line, "true"), in_terms.get((y["id"], line)))
-        if terms is None:
-            return (f"{whose(y)} has a corner past the end of {line}, so the two cannot be "
-                    f"told apart along it and {what(x)} is taken to meet it")
-        (s_lo, s_hi), (o_lo, o_hi) = terms
-        across, along, across_words, along_words = record_terms(x)
-        corners_at = (f"The {'true ' if (y['id'], line, 'true') in in_terms else ''}corners of "
-                      f"{whose(y)} fall {off_words(o_lo, o_hi)}, between {_n(s_lo)} and "
-                      f"{_n(s_hi)} along it")
-        if across[1] < o_lo or o_hi < across[0]:
-            cleared.append(f"{across_words[0].upper() + across_words[1:]}. {corners_at}: apart "
-                           "across the line, so the two do not meet.")
-            return None
-        if along[1] < s_lo or s_hi < along[0]:
-            cleared.append(f"{across_words[0].upper() + across_words[1:]}, and {along_words}. "
-                           f"{corners_at}: apart along the line, so the two do not meet.")
-            return None
-        return (f"{across_words}, and {along_words}. {corners_at}: they overlap both ways, so "
-                f"the two meet")
-
-    #: what a comparison along and across a line found clear, said at the head of the next turn
-    cleared: List[str] = []
-    #: each line's tangents, read when a label on one is first measured by its true size
-    tangents_of: Dict[str, List[dict]] = {}
-    #: a label's true length, worked out from its box, its height and its tangent's run
-    true_len: Dict[str, tuple] = {}
-
-    def tangent_at(row: dict) -> Optional[dict]:
-        """The tangent of its own line a line label stands on, where its line's
-        tangents have been read."""
-        st = float((row.get("anchor") or {}).get("station"))
-        return next((t for t in tangents_of.get(line_of(row), [])
-                     if float(t["start_station"]) - 1e-6 <= st <= float(t["end_station"]) + 1e-6),
-                    None)
-
-    def loose(row: dict) -> bool:
-        """A line label whose size is only bounded by its box: one that runs along
-        or square to its line, not yet measured."""
-        return (row["id"] in by_id and exact(row) and row["id"] not in true_len
-                and (row.get("anchor") or {}).get("rotation") in ("along", "perpendicular"))
-
-    def refinable(x: dict, y: dict, line: str) -> bool:
-        """A meet that rests on a loose measure: the label taken from its record is
-        only bounded by its box, or the other's corners are its box's and it is a
-        line label that can be measured instead."""
-        return (loose(x) or (loose(y) and (y["id"], line, "true") not in in_terms))
-
-    def run_of(t: dict) -> dict:
-        (x0, y0), (x1, y1) = t["start"], t["end"]
-        dx, dx_w = _apart_words(x1, x0)
-        dy, dy_w = _apart_words(y1, y0)
-        return {"dx": dx, "dy": dy, "east": _r(x1) >= _r(x0), "north": _r(y1) >= _r(y0),
-                "len": _r(t["length"]), "x0": _r(x0), "y0": _r(y0), "t0": _r(t["start_station"]),
-                "words": (f"{t['ref']} of {t['alignment']} runs {_n(t['length'])} ft from x "
-                          f"{_n(x0)}, y {_n(y0)} to x {_n(x1)}, y {_n(y1)}: {dx_w} ft "
-                          f"{'east' if _r(x1) >= _r(x0) else 'west'} and {dy_w} ft "
-                          f"{'north' if _r(y1) >= _r(y0) else 'south'}")}
-
-    def length_of(row: dict, r: dict) -> tuple:
-        """A label's true length from its box, its height and its tangent's run:
-        along the tangent its box is its length times the run's share of each
-        axis plus its height times the other's; square to it, the other way
-        round.  ``(length, the words)``."""
-        h = _r(row["entity"]["height"])
-        w, t, said = sides(row["bbox"])
-        along = row["anchor"]["rotation"] == "along"
-        wide = r["dx"] >= r["dy"]
-        if along:
-            side_, other, div = (w, r["dy"], r["dx"]) if wide else (t, r["dx"], r["dy"])
-        else:
-            side_, other, div = (t, r["dy"], r["dx"]) if wide else (w, r["dx"], r["dy"])
-        num = round(side_ * r["len"] - h * other, 3)
-        length = round(num / div, 3)
-        return length, (f"its box is {said} and it is {_n(h)} ft high, and it reads "
-                        f"{'along' if along else 'square to'} its tangent, so it is "
-                        f"{_n(side_)} * {_n(r['len'])} - {_n(h)} * {_n(other)} = {_n(num)} and "
-                        f"{_n(num)} / {_n(div)} = {_n(length)} ft long")
-
-    def point_words(r: dict, a: float, o: float) -> tuple:
-        """The model point ``a`` ft along a tangent from its start and ``o`` ft off
-        it (right positive): ``([x, y], the sums)``."""
-        a, o = _r(a), _r(o)
-        sx = 1 if r["east"] else -1
-        sy = 1 if r["north"] else -1
-        # along the run, and off it to the right: (dy, -dx) of the run, in the run's own signs
-        x = round(r["x0"] + sx * a * r["dx"] / r["len"] + sy * o * r["dy"] / r["len"], 3)
-        y = round(r["y0"] + sy * a * r["dy"] / r["len"] - sx * o * r["dx"] / r["len"], 3)
-
-        def term(sign: float, v: float, d: float) -> str:
-            return f" {'+' if sign * v >= 0 else '-'} {_n(abs(v))} * {_n(d)} / {_n(r['len'])}"
-        xw = f"x {_n(r['x0'])}{term(sx, a, r['dx'])}{term(sy, o, r['dy'])} = {_n(x)}"
-        yw = f"y {_n(r['y0'])}{term(sy, a, r['dy'])}{term(-sx, o, r['dx'])} = {_n(y)}"
-        return [x, y], f"{xw} and {yw}"
-
-    def project_words(r: dict, pt: Sequence[float]) -> tuple:
-        """A model point in a tangent's terms, by arithmetic along its run:
-        ``(station, offset right positive, the sums)``."""
-        ax, ax_w = _apart_words(pt[0], r["x0"])
-        ay, ay_w = _apart_words(pt[1], r["y0"])
-        gx = (1 if _r(pt[0]) >= r["x0"] else -1) * (1 if r["east"] else -1)
-        gy = (1 if _r(pt[1]) >= r["y0"] else -1) * (1 if r["north"] else -1)
-        # along the run: the point's offsets from the start, each times the run's share
-        s = round(r["t0"] + gx * ax * r["dx"] / r["len"] + gy * ay * r["dy"] / r["len"], 3)
-        cx, cy = (1 if r["east"] else -1), (1 if r["north"] else -1)
-        sx, sy = (1 if _r(pt[0]) >= r["x0"] else -1), (1 if _r(pt[1]) >= r["y0"] else -1)
-        # right normal of the run (dy, -dx): offset = dX * dy - dY * dx, over the length
-        t1 = sx * cy * ax * r["dy"] / r["len"]
-        t2 = -sy * cx * ay * r["dx"] / r["len"]
-        o = round(t1 + t2, 3)
-
-        def term(sign: float, a: float, d: float, first: bool) -> str:
-            mark = ("- " if sign < 0 else "") if first else (" - " if sign < 0 else " + ")
-            return f"{mark}{_n(a)} * {_n(d)} / {_n(r['len'])}"
-        s_w = (f"{_n(r['t0'])}{term(gx, ax, r['dx'], False)}{term(gy, ay, r['dy'], False)} = "
-               f"{_n(s)}")
-        if sx * cy >= 0:
-            o_w = f"{_n(ax)} * {_n(r['dy'])} / {_n(r['len'])}{term(-sy * cx, ay, r['dx'], False)}"
-        elif -sy * cx >= 0:
-            o_w = f"{_n(ay)} * {_n(r['dx'])} / {_n(r['len'])}{term(sx * cy, ax, r['dy'], False)}"
-        else:
-            o_w = (f"0 - {_n(ax)} * {_n(r['dy'])} / {_n(r['len'])} - {_n(ay)} * {_n(r['dx'])} / "
-                   f"{_n(r['len'])}")
-        return s, o, (f"{ax_w} and {ay_w} from its start, so {s_w} along it and {o_w} = "
-                      f"{_n(o)} off it")
-
-    def measure_exactly(meets: Sequence[tuple]) -> Generator[Turn, List[dict], None]:
-        """Measure the labels of meets that rest on a loose measure by their true
-        sizes: each label's length from its box, its height and its tangent's
-        run, and the other label's true corners worked out along its own
-        tangent and put in the first one's line's terms."""
-        lines = sorted({line_of(r) for _i, x, y, _l in meets for r in (x, y)
-                        if loose(r)} - set(tangents_of))
-        if lines:
-            calls = [_q("get_design_data", kind="tangents", alignment=ln) for ln in lines]
-            results = yield Turn(
-                " ".join(cleared + [
-                    "Those meets rest on boxes, which are loose round lettering at an angle: a "
-                    "label along or square to a tangent is its own length, worked out from its "
-                    "box, its height and the tangent's run. Read the tangents of "
-                    f"{_and(lines)}."]), calls)
-            del cleared[:]
-            _ok(results, calls)
-            for ln, result in zip(lines, results):
-                tangents_of[ln] = result["rows"]
-        said: List[str] = []
-        runs_said: set = set()
-
-        def run_words(t: dict) -> str:
-            key = (t["alignment"], t["ref"])
-            if key in runs_said:
-                return ""
-            runs_said.add(key)
-            return run_of(t)["words"] + ". "
-
-        for _i, x, y, _line in meets:
-            for row in (x, y):
-                if not loose(row):
-                    continue
-                t = tangent_at(row)
-                if t is None:
-                    continue
-                length, words = length_of(row, run_of(t))
-                true_len[row["id"]] = (length, words)
-        # the other label's true corners, along its own tangent
-        calls, asked = [], []
-        for _i, x, y, line in meets:
-            key = (y["id"], line, "true")
-            if key in in_terms or key in asked or y["id"] not in true_len:
-                continue
-            t = tangent_at(y)
-            r = run_of(t)
-            anchor, ent = y["anchor"], y["entity"]
-            h = _r(ent["height"])
-            st, off = _r(anchor["station"]), _r(anchor["label_offset"])
-            length = true_len[y["id"]][0]
-            sign = -1.0 if anchor["side"] == "left" else 1.0
-            if anchor["rotation"] == "along":
-                rr = round(length / 2.0, 3)
-                reach_w = f"{_n(length)} / 2 = {_n(rr)} ft each way of its station"
-                far = round(off + h, 3)
-                far_w = f"{_n(off)} + {_n(h)} = {_n(far)}"
-            else:
-                rr = round(h / 2.0, 3) if ent.get("valign") == "middle" else h
-                reach_w = (f"{_n(h)} / 2 = {_n(rr)} ft each way of its station"
-                           if ent.get("valign") == "middle" else
-                           f"within its height, {_n(h)} ft, of its station")
-                far = round(off + length, 3)
-                far_w = f"{_n(off)} + {_n(length)} = {_n(far)}"
-            spans = [round(st - rr - r["t0"], 3), round(st + rr - r["t0"], 3)]
-            offs = [round(sign * off, 3), round(sign * far, 3)]
-            pts, sums = [], []
-            for a in spans:
-                for o in offs:
-                    pt, w = point_words(r, a, o)
-                    pts.append(pt)
-                    sums.append(w)
-            # where the other label's corners fall on the tangent the first one stands on,
-            # they are put in its terms by arithmetic along that tangent, not by a query
-            tx = tangent_at(x) if line_of(x) == line else None
-            onto = None
-            if tx is not None:
-                rx = run_of(tx)
-                onto = [project_words(rx, pt) for pt in pts]
-                if not all(_r(tx["start_station"]) <= s <= _r(tx["end_station"])
-                           for s, _o, _w in onto):
-                    onto = None
-            said.append(
-                f"{run_words(t)}{whose(y)[0].upper()}{whose(y)[1:]}: {true_len[y['id']][1]}. "
-                f"It stands {reach_w}, from {_n(off)} to {far_w} ft off its line on the "
-                f"{anchor['side']}: its true corners are {_n(st)} - {_n(rr)} - {_n(r['t0'])} = "
-                f"{_n(spans[0])} and {_n(st)} + {_n(rr)} - {_n(r['t0'])} = {_n(spans[1])} ft "
-                f"along {t['ref']} from its start and {_n(off)} and {_n(far)} ft off it, at "
-                + "; ".join(sums) + ".")
-            if onto is not None:
-                words = run_words(tx)
-                said.append((words + " " if words else "")
-                            + f"Those corners fall on {tx['ref']} of {line}: each lies "
-                            + "; ".join(w for _s, _o, w in onto) + ".")
-                in_terms[key] = ((min(s for s, _o, _w in onto), max(s for s, _o, _w in onto)),
-                                 (min(o for _s, o, _w in onto), max(o for _s, o, _w in onto)))
-                continue
-            asked.append(key)
-            calls += [_q("xy_to_station", alignment=line, point=pt) for pt in pts]
-        # the run of each tangent a label measured stands on, said before its length is used
-        for _i, x, y, _line in meets:
-            for row in (x, y):
-                if row["id"] in true_len and tangent_at(row) is not None:
-                    words = run_words(tangent_at(row))
-                    if words:
-                        said.insert(0, words.strip())
-        if calls:
-            results = yield Turn(
-                " ".join(cleared + said + ["Put those corners in the terms of the other's line."]),
-                calls)
-            del cleared[:]
-            # a corner past the end of the line does not project: the pair is taken to meet
-            for k, key in enumerate(asked):
-                got = results[4 * k:4 * k + 4]
-                in_terms[key] = (None if not all(r.get("ok") for r in got) else
-                                 ((min(g["station"] for g in got), max(g["station"] for g in got)),
-                                  (min(g["offset"] for g in got), max(g["offset"] for g in got))))
-        elif said:
-            cleared.extend(said)
-
-    def check(ids: Sequence[str], opening: str) -> Generator[Turn, List[dict], Dict[str, str]]:
+    def check(ids: Sequence[str]) -> Dict[str, str]:
         """Compare each of ``ids`` with what it could sit on: ``{id: why it has to
-        move}``.  Takes a turn for each step the boxes as they stand do not settle."""
+        move}``, the comparisons said in ``said``."""
         bad: Dict[str, str] = {}
-        pairs = [(i, other) for i in ids for other in partners(i)]
-        close = {i: items for i in ids for items in [near(i)] if items}
-        # -- the boxes as they stand, and what they leave open
-        calls, says, asked = [], [], []
-        open_pairs = []
-        for i, other in pairs:
-            found = measured(by_id[i], other)
-            if found is None:
-                bad.setdefault(i, f"{what(by_id[i])} takes {box_words(by_id[i]['bbox'])} in "
-                                  f"the model and {whose(other)} takes "
-                                  f"{box_words(other['bbox'])}: the boxes meet, and neither is "
-                                  "a line's label to measure along its line, so the two are "
-                                  "taken to meet")
-                continue
-            x, y, line = found
-            open_pairs.append((i, x, y, line))
-            if (y["id"], line) not in in_terms and (y["id"], line) not in asked:
-                asked.append((y["id"], line))
-                calls += [_q("xy_to_station", alignment=line, point=c)
-                          for c in corners(y["bbox"])]
-        mapped = [i for i in close if i not in bad]
-        for i in mapped:
-            calls += [_q("model_to_sheet", sheet=name, point=c)
-                      for c in corners(by_id[i]["bbox"], all_four=bool(twist))]
-        if open_pairs:
-            says.append(
-                "In the model the boxes meet of "
-                + "; of ".join(f"{what(by_id[i])} and {whose(o)}"
-                               for i, o in pairs if i not in bad)
-                + ". That settles nothing where the lettering runs at an "
-                "angle, so put the corners of the one in the terms of the other's line: how far "
-                "along it and how far off.")
-        elif not bad:
-            says.append("No box of the new lettering meets another's in the model.")
-        if mapped:
-            says.append(
-                "Against what is on the paper it takes the label's own place there. A label "
-                "reaches no further from its point than the width plus the height of its box. "
-                + " ".join(f"{what(by_id[i])[0].upper() + what(by_id[i])[1:]}: its box is "
-                           f"{reach(by_id[i])[1]}, and its point is that near "
-                           f"{_and([p['id'] for p in close[i]])}." for i in mapped)
-                + f" Take the corners of {'those boxes' if len(mapped) > 1 else 'that box'} to "
-                "the paper" + (", all four, since the view is turned and the box with it."
-                               if twist else "."))
-        results: List[dict] = []
-        if calls:
-            results = yield Turn(opening + " " + " ".join(says), calls)
-        n = 0
-        for key in asked:
-            got = results[n:n + 4]
-            n += 4
-            in_terms[key] = (None if not all(r.get("ok") for r in got) else
-                             ((min(r["station"] for r in got), max(r["station"] for r in got)),
-                              (min(r["offset"] for r in got), max(r["offset"] for r in got))))
-        per = 4 if twist else 2
-        on_paper_pairs = []
-        for i in mapped:
-            got = results[n:n + per]
-            n += per
-            if not all(r.get("ok") for r in got):
-                raise NotCovered(f"{name} does not show where the box of {what(by_id[i])} falls")
-            pts = _sheet_points(got)
-            box = (min(q[0] for q in pts), min(q[1] for q in pts),
-                   max(q[0] for q in pts), max(q[1] for q in pts))
-            for item in close[i]:
-                if _meet(box, item["bbox"]):
-                    on_paper_pairs.append((i, item, box))
-        #: pairs found to meet on a loose measure: measured by their true sizes first
-        loose_meets: List[tuple] = []
-        for i, x, y, line in open_pairs:
-            if i not in bad:
-                why = settle(x, y, line)
-                if why and refinable(x, y, line):
-                    loose_meets.append((i, x, y, line))
-                elif why:
+        closer = False
+        before = len(said)
+        for i in ids:
+            for other in partners(i):
+                closer = closer or bool(_meet(box_of(footprint(by_id[i])),
+                                              box_of(footprint(other))))
+                why = compare(i, other)
+                if why:
                     bad[i] = why
-        # -- a label whose place on the paper meets something there: the same comparison,
-        # with that thing's corners taken to the model first
-        on_paper_pairs = [(i, item, box) for i, item, box in on_paper_pairs if i not in bad]
-        loose = [(i, item, box) for i, item, box in on_paper_pairs if not exact(by_id[i])]
-        for i, item, box in loose:
-            bad.setdefault(i, f"{what(by_id[i])} comes out on the paper at {box_words(box)} "
-                              f"and {whose(item)} takes {box_words(item['bbox'])}: the boxes "
-                              "meet")
-        tight = [(i, item, box) for i, item, box in on_paper_pairs if i not in bad]
-        if tight:
-            back = [item for item in {item["id"]: item for _i, item, _b in tight}.values()
-                    if item["id"] not in taken_back]
-            if back:
-                calls = [_q("sheet_to_model", sheet=name, point=c)
-                         for item in back for c in corners(item["bbox"])]
-                results = yield Turn(
-                    " ".join(cleared + [
-                        "On the paper "
-                        + _and([f"{what(by_id[i])} comes out at {box_words(box)}, "
-                                f"where {whose(item)} takes {box_words(item['bbox'])}"
-                                for i, item, box in tight])
-                        + ": the boxes meet there too. To measure along and across the line, "
-                        f"take the corners of {_and([item['id'] for item in back])} to the "
-                        "model."]), calls)
-                del cleared[:]
-                _ok(results, calls)
-                for k, item in enumerate(back):
-                    taken_back[item["id"]] = [list(r["point"]) for r in results[4 * k:4 * k + 4]]
-            ask = [(item, line_of(by_id[i])) for i, item, _b in tight
-                   if (item["id"], line_of(by_id[i])) not in in_terms]
-            ask = list({(item["id"], line): (item, line) for item, line in ask}.values())
-            if ask:
-                calls = [_q("xy_to_station", alignment=line, point=c)
-                         for item, line in ask for c in taken_back[item["id"]]]
-                results = yield Turn(
-                    " ".join(cleared + ["Now where those corners fall along the line and off "
-                                        "it."]), calls)
-                del cleared[:]
-                for k, (item, line) in enumerate(ask):
-                    got = results[4 * k:4 * k + 4]
-                    in_terms[(item["id"], line)] = (
-                        None if not all(r.get("ok") for r in got) else
-                        ((min(r["station"] for r in got), max(r["station"] for r in got)),
-                         (min(r["offset"] for r in got), max(r["offset"] for r in got))))
-            for i, item, _box in tight:
-                if i not in bad:
-                    why = settle(by_id[i], item, line_of(by_id[i]))
-                    if why and refinable(by_id[i], item, line_of(by_id[i])):
-                        loose_meets.append((i, by_id[i], item, line_of(by_id[i])))
-                    elif why:
-                        bad[i] = why
-        if loose_meets:
-            yield from measure_exactly(loose_meets)
-            for i, x, y, line in loose_meets:
-                if i not in bad:
-                    why = settle(x, y, line)
-                    if why:
-                        bad[i] = why
+                    break
+        said.insert(before, (
+            f"Every pair on {name} is apart by the boxes round their corners, but where those "
+            "meet; there the two are compared along their sides." if closer else
+            f"No box round the corners of the new lettering meets another's on {name}."))
         return bad
 
-    bad = yield from check(mine, "Compare the new lettering with what was there, first by the "
-                                 "boxes as they stand.")
+    bad = check(mine)
     count = 0
     while bad:
-        calls, says, placing = [], list(cleared), []
-        del cleared[:]
+        calls, says, placing = [], list(said), []
+        del said[:]
         for i, why in bad.items():
             row, anchor = by_id[i], by_id[i]["anchor"]
             k = tried[root[i]]
@@ -1779,18 +1393,18 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
             tried[root[i]] = k + 1
             side0, off0 = first[root[i]]
             across, times = CLEAR_MOVES[k]
-            side = _OTHER_SIDE[side0] if across else side0
+            to = _OTHER_SIDE[side0] if across else side0
             h = _r(row["entity"]["height"])
             off = round(_r(off0) + h * times, 3)
-            where = (f"on the other side of the line, its {side}" if across
-                     else f"back on its own side, the {side}")
+            where = (f"on the other side of the line, its {to}" if across
+                     else f"back on its own side, the {to}")
             far = (f"the same {_n(off0)} ft off it" if not times else
                    f"further off it by {_TIMES[times]} its height: "
                    f"{_n(off0)} + {_n(h)} * {times} = {_n(off)} ft")
             says.append(f"{why[0].upper() + why[1:]}. Delete it and set the same label again "
                         f"{where}, {far}.")
             params = {"space": "model", "alignment": alignment, "anchor": anchor["ref"],
-                      "kind": anchor["kind"], "side": side, "label_offset": off, "layer": anno,
+                      "kind": anchor["kind"], "side": to, "label_offset": off, "layer": anno,
                       **view}
             if anchor["kind"] in ("station", "pc", "pt", "pcc", "prc"):
                 params["content"] = row["content"]  # the stationing's own lettering of it
@@ -1814,7 +1428,8 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
                     limit=FULL_ROWS)]
         results = yield Turn(
             f"Read {'it' if len(placing) == 1 else 'them'} back where "
-            f"{'it now sits' if len(placing) == 1 else 'they now sit'}.", calls)
+            f"{'it now sits' if len(placing) == 1 else 'they now sit'}, with "
+            f"{'its' if len(placing) == 1 else 'their'} corners.", calls)
         _ok(results, calls)
         fresh = []
         for i, made in again.items():
@@ -1826,9 +1441,8 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
             moved.add(row["id"])
             fresh.append(row["id"])
         count += len(placing)
-        bad = yield from check(fresh, "Compare again, now with its own line's lettering on that "
-                                      "side as well.")
-    tail = " ".join(cleared)
+        bad = check(fresh)
+    tail = " ".join(said)
     if count:
         carry = ((tail + " " if tail else "")
                  + f"{_s(len(moved), 'label')} set again, and nothing {alignment} was given "

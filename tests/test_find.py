@@ -127,6 +127,37 @@ def test_paging_and_detail(tmp_path):
     assert full["entity"]["type"] == full["type"] and len(full["bbox"]) == 4
 
 
+@pytest.mark.parametrize("twist", [0.0, 37.5])
+def test_a_text_row_carries_the_corners_its_legibility_is_judged_by(tmp_path, twist):
+    # Training plan decision 10 (2026-11-13): a drafter that cannot look at a plot
+    # was told a text only by its box on the model's axes; each text row of what a
+    # sheet shows now carries its lettering's four corners on that paper, the very
+    # footprint D1-08 judges, and a sheet's own text its corners where it stands
+    from roaddraft.tasks.ground_truth import GroundTruth
+    from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
+    from roaddraft.verify import legibility
+    from roaddraft.verify.context import Context
+    s = project(tmp_path)
+    vp = s.query("get_sheet_state", {"sheet": "C-101"})["sheet"]["viewports"][0]["id"]
+    s.execute("modify_viewport", {"sheet": "C-101", "viewport_id": vp,
+                                  "changes": {"rotation_deg": twist}})
+    s.execute("annotate_stationing", {"space": "model", "alignment": "DESIGN:SR-100"})
+    s.execute("place_text", {"space": "C-101", "position": [17.0, 20.0],
+                             "content": "ROADWAY PLAN", "height": 0.25, "rotation_deg": 12.0})
+    shown = find(s, visible_on="C-101", type="text", limit=500)["entities"]
+    own = find(s, space="C-101", type="text")["entities"]
+    assert shown and own and all(len(row["paper_corners"]) == 4 for row in shown + own)
+    assert all("paper_corners" not in row for row in find(s, type="text", limit=500)["entities"])
+    truth = GroundTruth.from_dict({"task_id": "find", "design_fingerprint": "",
+                                   "sheets": [{"name": "C-101"}]})
+    ctx = Context.build(s.doc, truth, DRAFTING_SPEC_V1, "vague")
+    judged = {it.entity_id: it.quad for sv in ctx.sheets for it in legibility.sheet_items(ctx, sv)}
+    for row in shown + own:
+        quad = judged[row["id"]]
+        assert all(abs(a - b) <= 6e-5 for p, q in zip(quad, row["paper_corners"])
+                   for a, b in zip(p, q)), row["id"]
+
+
 def test_find_can_ignore_references_and_names_a_bad_space(tmp_path):
     s = project(tmp_path)
     assert find(s, include_references=False)["total"] == 0   # the host owns nothing
