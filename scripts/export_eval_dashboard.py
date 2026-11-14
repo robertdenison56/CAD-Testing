@@ -14,6 +14,8 @@ logs beside it), and writes
                               the verifier marked down, in the checks' own words; ``order``
                               is the row's place on the board (vague ranking first)
     OUT_DIR/eval_checks.json  the verifier's checks, id and full name
+    OUT_DIR/eval_overall.json one row per model: its overall score (the weighted mean of its five
+                              set scores, ``report.OVERALL_WEIGHTS``) and each set's score
 
 Errored episodes are left out, as the report leaves them out.  Each cell's mean
 is checked against the summary's ``by_task_type``; a mismatch stops the export,
@@ -337,7 +339,24 @@ def main(argv=None) -> int:
                 "draft": "–", "letter": "–", "sheet": "–", "notes": "–", "job": "–", "passed": "",
             })
 
+    # the overall score (Robert, 2026-11-13): one row per model, the weighted mean of its five set scores
+    overall = []
+    ov = (lb.get("overall") or {}).get("vague") or {"ranked": [], "partial": [], "weights": {}}
+    for o in ov["ranked"] + ov["partial"]:
+        run_id = next(iter(o["sets"].values()))["run_id"]
+        row = {"key": "|".join(f"{k}={o['key'].get(k)}" for k in ("model", "provider", "effort", "mode")),
+               "rank": str(o["rank"]) if o.get("rank") else "", "name": model_name(o["key"], run_id),
+               "effort": o.get("effort") or "–", "overall": f1(o["overall"]),
+               "pm": "–" if o["half_width"] is None else f"± {o['half_width']:.1f}",
+               "sets": f"{o['n_sets']} of {len(ov['sets'])}", "as_of": as_of,
+               "missing": ", ".join(o.get("missing") or [])}
+        for set_id in SETS:
+            c = o["sets"].get(set_id)
+            row[set_id.replace("-", "_")] = "–" if not c else f1(c["effective_mean"]) + (" †" if c["text_only"] else "")
+        overall.append(row)
+
     args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "eval_overall.json").write_text(json.dumps(overall, ensure_ascii=False))
     (args.out / "eval_board.json").write_text(json.dumps(board, ensure_ascii=False))
     (args.out / "eval_grid.json").write_text(json.dumps(grid, ensure_ascii=False))
     (args.out / "eval_checks.json").write_text(json.dumps(
