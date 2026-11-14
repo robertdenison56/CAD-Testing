@@ -1346,11 +1346,104 @@ def board(summaries: Sequence[dict]) -> dict:
                         "reference": ref, "groups": group_columns(main_one["ranked"] + ref),
                         "other_prompts": other}
     main = boards[LEADERBOARD_SET]
+    lvs = [None] if all(n in ONE_PROMPT_SETS for n in LEADERBOARD_SETS) else list(BOARD_LEVELS)
     return {"report_version": REPORT_VERSION, "leaderboard_set": LEADERBOARD_SET,
             "leaderboard_sets": list(LEADERBOARD_SETS),
+            "overall": {lv or "": overall(boards, lv) for lv in lvs},
             "headline": main["headline"], "ranked": main["ranked"],
             "reference": main["reference"], "boards": boards, "others": others,
             "groups": [{"key": k, "name": n, "types": list(ts)} for k, n, ts in REAL_GROUPS]}
+
+
+def _set_ranking(one: dict, level: Optional[str]) -> List[dict]:
+    """A set's ranked rows at ``level`` (its focus ranking or one of ``other_prompts``)."""
+    if one.get("prompt") == level:
+        return one.get("ranked") or []
+    return ((one.get("other_prompts") or {}).get(level) or {}).get("ranked") or []
+
+
+#: each set's weight in the overall score (Robert, 2026-11-13: the real sheets and the hard pilots
+#: count for more than the seeded sheets)
+OVERALL_WEIGHTS = {"d1-test": 1.0, "d1-real": 2.0, "hard-pilots": 2.0, "d1-test-hard": 1.0,
+                   "d1-real-hard": 2.0}
+
+
+def overall(boards: Dict[str, dict], level: Optional[str]) -> dict:
+    """One score per model across every leaderboard set at ``level`` (Robert, 2026-11-13): the mean of its
+    full-set effective scores weighted by ``OVERALL_WEIGHTS``, ± the sets' 95% half-widths combined
+    with the same weights (root-sum-square, the sets being independent draws).  A model ranks only with a
+    full-set row on every set; cost-subset rows are other tasks and do not count.  A model short of a set is
+    listed in ``partial`` with the sets it has and no overall score."""
+    rows: Dict[str, dict] = {}
+    for name in LEADERBOARD_SETS:
+        for r in _set_ranking(boards.get(name) or {}, level):
+            k = json.dumps(r["key"], sort_keys=True)
+            o = rows.setdefault(k, {"key": r["key"], "label": None, "effort": r.get("effort"), "sets": {}})
+            if not r.get("text_only") and o["label"] is None:
+                o["label"] = r["label"]
+            o["sets"][name] = {"effective_mean": r["effective_mean"], "half_width": r.get("half_width"),
+                               "rank": r.get("rank"), "run_id": r["run_id"],
+                               "text_only": bool(r.get("text_only"))}
+    ranked, partial = [], []
+    w = [OVERALL_WEIGHTS.get(s, 1.0) for s in LEADERBOARD_SETS]
+    W = sum(w)
+    for o in rows.values():
+        o["label"] = o["label"] or group_label(o["key"])
+        o["n_sets"] = len(o["sets"])
+        cells = [o["sets"].get(s) for s in LEADERBOARD_SETS]
+        if all(c and c["effective_mean"] is not None for c in cells):
+            o["overall"] = _r(sum(wi * c["effective_mean"] for wi, c in zip(w, cells)) / W)
+            hws = [c["half_width"] for c in cells]
+            o["half_width"] = (None if any(h is None for h in hws)
+                               else _r(math.sqrt(sum((wi * h) ** 2 for wi, h in zip(w, hws))) / W))
+            ranked.append(o)
+        else:
+            o["overall"], o["half_width"] = None, None
+            o["missing"] = [s for s in LEADERBOARD_SETS if s not in o["sets"]]
+            partial.append(o)
+    ranked.sort(key=lambda o: (-o["overall"], o["label"]))
+    for i, o in enumerate(ranked):
+        o["rank"] = i + 1
+    partial.sort(key=lambda o: (-o["n_sets"], o["label"]))
+    return {"sets": list(LEADERBOARD_SETS), "weights": dict(zip(LEADERBOARD_SETS, w)),
+            "ranked": ranked, "partial": partial}
+
+
+def _overall_md(ov: dict, level: Optional[str], readme: bool) -> List[str]:
+    """The overall table at the head of a board: one score per model over every set."""
+    sets = ov["sets"]
+    prompt = f", {level} prompt" if level else ""
+    L = [f"{'###' if readme else '##'} Overall: every set{prompt}", ""]
+    if ov["ranked"]:
+        b = ov["ranked"][0]
+        hw = f" ± {_f(b['half_width'])}" if b["half_width"] is not None else ""
+        L += [f"**Best model overall {b['overall']:.1f}/100{hw} ({b['label']}), the weighted mean of "
+              f"its {len(sets)} set scores.**", ""]
+    else:
+        L += [f"No model has a full-set run on all {len(sets)} sets yet.", ""]
+    wt = ov.get("weights") or {}
+    head = "".join(f" `{s}` ×{wt.get(s, 1.0):g} |" for s in sets)
+    L += ["| # | Model · mode · prompt | Effort | Overall | ± |" + head + " Sets |",
+          "|---:|---|---|---:|---:|" + "---:|" * len(sets) + "---:|"]
+
+    def cell(c: Optional[dict]) -> str:
+        if not c:
+            return "–"
+        return _f(c["effective_mean"]) + (" †" if c["text_only"] else "")
+
+    for o in ov["ranked"] + ov["partial"]:
+        score = f"**{_f(o['overall'])}**" if o["overall"] is not None else "–"
+        L.append(f"| {o.get('rank', '')} | {o['label']} | {o.get('effort') or '–'} | {score} "
+                 f"| {_f(o['half_width'])} |" + "".join(f" {cell(o['sets'].get(s))} |" for s in sets)
+                 + f" {o['n_sets']} of {len(sets)} |")
+    L += ["", f"Overall = the weighted mean of the model's effective scores on the {len(sets)} sets below, "
+          "each set's weight beside its name (Robert, 2026-11-13: the real plan sheets and the hard pilots "
+          "count double the seeded sheets); ± is the sets' 95% half-widths combined with the same weights "
+          "(root-sum-square). A model ranks "
+          "here only with a full-set run on every set; cost-subset runs are other tasks and do not count, so "
+          "a model short of a set is listed unranked with the sets it has. † a text-only `hard-pilots` row, "
+          "scored on its text pilots alone."]
+    return L
 
 
 def rescore_on(g: dict, ids: Sequence[str]) -> Optional[dict]:
@@ -1535,6 +1628,9 @@ def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> 
     else:
         L += [_board_files_line(level, readme), "",
               "![Effective score by model on each eval set](benchmarks/runs/leaderboard.svg)", ""]
+    ov = (b.get("overall") or {}).get(level)
+    if ov and (ov["ranked"] or ov["partial"]):
+        L += _overall_md(ov, level, readme) + [""]
     boards = view.get("boards") or {LEADERBOARD_SET: {"title": SET_TITLES[LEADERBOARD_SET],
                                                        "headline": b["headline"],
                                                        "ranked": b["ranked"],
@@ -1590,8 +1686,9 @@ def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> 
               "drafted, the sheet file lettered through its base drawing); `d1-real-hard` is 100 "
               "tasks on the redrafted sheets, every whole job (a sheet drafted from its base files "
               "or annotated from blank, construction callouts included) and the heaviest "
-              "whole-line tasks `d1-real` did not draw. A model's rows on different sets are not "
-              "averaged.",
+              "whole-line tasks `d1-real` did not draw. Within a set the rows rank on that set "
+              "alone; the overall table at the top is the one place a model's sets are averaged, the "
+              "real sheets and the hard pilots weighted double.",
               "", "Each prompt level is its own board (Robert, 2026-11-08): this file ranks the "
               + ("vague-prompt runs (the request in a sentence, the way a PE would ask for it; what belongs on "
                  "the sheet is the drafter's to know), the main board and its focus"

@@ -544,3 +544,27 @@ def test_a_hard_pilots_run_on_the_text_pilots_alone_is_text_only_not_partial():
         assert "text_only" not in part and run_partial(part, 0, 0)                      # some pages, not all
         assert "text_only" not in coverage("hard-pilots", sorted(ids), subset)           # a whole run
     assert image_ids("d1-test") == set() and "text_only" not in coverage("d1-test", [])
+
+
+def test_overall_is_the_mean_over_every_set_and_ranks_only_complete_models():
+    # Robert, 2026-11-13: one overall score on top of the vague board
+    sums = []
+    for i, name in enumerate(R.LEADERBOARD_SETS):
+        rows = [_fake_row("claude-a", "anthropic", 50.0 + 10 * i)]
+        if name != "hard-pilots":
+            rows.append(_fake_row("claude-b", "anthropic", 90.0))
+        rows.append(_fake_row("claude-c", "anthropic", 70.0, level="explicit"))
+        sums.append(_fake_summary(f"r-{name}", rows, taskset=name))
+    b = R.board(sums)
+    ov = b["overall"]["vague"]
+    # scores 50..90 over the sets in order, weights 1, 2, 2, 1, 2 (real sheets and hard pilots double)
+    want = round((50 + 2 * 60 + 2 * 70 + 80 + 2 * 90) / 8, 2)
+    assert [(o["label"], o["rank"], o["overall"]) for o in ov["ranked"]] == [("claude-a · single · vague", 1, want)]
+    assert ov["ranked"][0]["half_width"] == round((3 * 36.0 + 2 * 9.0) ** 0.5 / 8, 2)
+    assert [(o["label"], o["missing"]) for o in ov["partial"]] == [("claude-b · single · vague", ["hard-pilots"])]
+    assert [o["overall"] for o in b["overall"]["explicit"]["ranked"]] == [70.0]
+    md = R.render_board(b)
+    assert md.index("## Overall: every set, vague prompt") < md.index("## `d1-test`")
+    assert f"**Best model overall {want:.1f}/100" in md and "| 4 of 5 |" in md and "`d1-real` ×2" in md
+    assert "## Overall: every set, explicit prompt" in R.render_board(b, level="explicit")
+    assert "### Overall: every set, vague prompt" in R.render_board(b, readme=True)

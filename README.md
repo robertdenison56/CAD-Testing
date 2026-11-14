@@ -21,6 +21,29 @@ Vague prompts only: the request in a sentence, the board's focus. Every other pr
 
 ![Effective score by model on each eval set](benchmarks/runs/leaderboard.svg)
 
+### Overall: every set, vague prompt
+
+**Best model overall 74.8/100 ± 2.2 (claude-opus-5-5 (medium) via claude-code · single · vague), the weighted mean of its 5 set scores.**
+
+| # | Model · mode · prompt | Effort | Overall | ± | `d1-test` ×1 | `d1-real` ×2 | `hard-pilots` ×2 | `d1-test-hard` ×1 | `d1-real-hard` ×2 | Sets |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **74.8** | 2.2 | 95.5 | 86.7 | 40.2 | 93.7 | 77.6 | 5 of 5 |
+| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **71.0** | 2.0 | 92.8 | 90.5 | 28.6 | 92.9 | 72.1 | 5 of 5 |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **53.8** | 1.9 | 76.0 | 75.1 | 24.1 | 54.5 | 50.8 | 5 of 5 |
+| 4 | gpt-6-luna (medium) via codex · single · vague | medium | **46.3** | 1.7 | 76.1 | 71.8 | 2.7 | 43.2 | 51.0 | 5 of 5 |
+| 5 | qwen/qwen3.5-9b · single · vague | default | **32.5** | 1.7 | 62.6 | 59.6 | 0.9 | 9.4 | 33.5 | 5 of 5 |
+|  | google/gemma-4-12b · single · vague | thinking on | – | – | 67.2 | 59.0 | – | 3.0 | 37.5 | 4 of 5 |
+|  | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | – | – | 76.3 | – | 8.0 | – | – | 2 of 5 |
+|  | google/gemma-4-31B-it · single · vague | thinking on | – | – | 80.1 | – | 1.8 | – | – | 2 of 5 |
+|  | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | – | – | 64.0 | – | 2.7 | – | – | 2 of 5 |
+|  | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | thinking on | – | – | 82.4 | – | 4.5 | – | – | 2 of 5 |
+|  | openai/gpt-oss-120b · single · vague | medium (default) | – | – | 70.3 | – | 3.4 † | – | – | 2 of 5 |
+|  | zai-org/glm-4.6v-flash · single · vague | default | – | – | 25.2 | 13.6 | – | – | – | 2 of 5 |
+|  | glm-5.3 · single · vague | default | – | – | 66.5 | – | – | – | – | 1 of 5 |
+|  | google/gemma-4-26B-A4B-it · single · vague | thinking on | – | – | – | – | 0.9 | – | – | 1 of 5 |
+
+Overall = the weighted mean of the model's effective scores on the 5 sets below, each set's weight beside its name (Robert, 2026-11-13: the real plan sheets and the hard pilots count double the seeded sheets); ± is the sets' 95% half-widths combined with the same weights (root-sum-square). A model ranks here only with a full-set run on every set; cost-subset runs are other tasks and do not count, so a model short of a set is listed unranked with the sets it has. † a text-only `hard-pilots` row, scored on its text pilots alone.
+
 ### `d1-test`: seeded sheets
 
 **Best model 95.5/100 on d1-test with the vague prompt (claude-opus-5-5 (medium) via claude-code · single · vague, 95% CI 93.6–96.9, hard-fail 0%).**

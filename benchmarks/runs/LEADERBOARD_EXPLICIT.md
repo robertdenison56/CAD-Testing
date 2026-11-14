@@ -4,6 +4,30 @@ The benchmark board: every published run on the eval sets, scored by the verifie
 
 The explicit-prompt runs, ranked on their own: a score at the explicit level is not comparable with one at the vague level, which is the main board's focus: [the main board](LEADERBOARD.md).
 
+## Overall: every set, explicit prompt
+
+**Best model overall 82.5/100 ± 1.6 (gpt-6.1-terra (medium) via codex · single · explicit), the weighted mean of its 5 set scores.**
+
+| # | Model · mode · prompt | Effort | Overall | ± | `d1-test` ×1 | `d1-real` ×2 | `hard-pilots` ×2 | `d1-test-hard` ×1 | `d1-real-hard` ×2 | Sets |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | gpt-6.1-terra (medium) via codex · single · explicit | medium | **82.5** | 1.6 | 96.2 | 95.4 | 40.2 | 98.5 | 97.1 | 5 of 5 |
+| 2 | claude-sonnet-5-5 (medium) via claude-code · single · explicit | medium | **74.2** | 2.1 | 88.3 | 89.9 | 33.0 | 90.8 | 84.5 | 5 of 5 |
+| 3 | gpt-6-luna (medium) via codex · single · explicit | medium | **61.8** | 2.1 | 91.3 | 84.3 | 5.4 | 56.3 | 83.7 | 5 of 5 |
+|  | claude-opus-5-5 (medium) via claude-code · single · explicit | medium | – | – | – | – | 61.6 | 98.5 | 96.1 | 3 of 5 |
+|  | gpt-6-luna (medium) via codex · self_correct · explicit | medium | – | – | 94.8 | 84.5 | 7.1 | – | – | 3 of 5 |
+|  | gpt-6-luna (medium) via codex · vision · explicit | medium | – | – | 93.7 | 84.9 | 4.5 | – | – | 3 of 5 |
+|  | gpt-6.1-terra (medium) via codex · self_correct · explicit | medium | – | – | 100.0 | 99.8 | 50.9 | – | – | 3 of 5 |
+|  | qwen/qwen3.5-9b · single · explicit | default | – | – | 74.0 | 70.8 | 2.7 | – | – | 3 of 5 |
+|  | claude-opus-5-5 (medium) via claude-code · self_correct · explicit | medium | – | – | 100.0 | 100.0 | – | – | – | 2 of 5 |
+|  | claude-sonnet-5-5 (medium) via claude-code · self_correct · explicit | medium | – | – | 91.7 | 92.1 | – | – | – | 2 of 5 |
+|  | google/gemma-4-12b · single · explicit | thinking on | – | – | 64.5 | 68.6 | – | – | – | 2 of 5 |
+|  | claude-opus-5-5 (medium) via claude-code · vision · explicit | medium | – | – | 100.0 | – | – | – | – | 1 of 5 |
+|  | claude-sonnet-5-5 (medium) via claude-code · vision · explicit | medium | – | – | 92.9 | – | – | – | – | 1 of 5 |
+|  | gpt-6.1-terra (medium) via codex · vision · explicit | medium | – | – | 100.0 | – | – | – | – | 1 of 5 |
+|  | zai-org/glm-4.6v-flash · single · explicit | default | – | – | – | 19.6 | – | – | – | 1 of 5 |
+
+Overall = the weighted mean of the model's effective scores on the 5 sets below, each set's weight beside its name (Robert, 2026-11-13: the real plan sheets and the hard pilots count double the seeded sheets); ± is the sets' 95% half-widths combined with the same weights (root-sum-square). A model ranks here only with a full-set run on every set; cost-subset runs are other tasks and do not count, so a model short of a set is listed unranked with the sets it has. † a text-only `hard-pilots` row, scored on its text pilots alone.
+
 ## `d1-test`: seeded sheets
 
 **Best model 100.0/100 on d1-test with the explicit prompt (claude-opus-5-5 (medium) via claude-code · vision · explicit, 95% CI 100.0–100.0, hard-fail 0%).**
@@ -83,7 +107,7 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 
 Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`); Job = the whole job (`real-sheet-job`, `real-annotate-job`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
 
-Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded generator (one synthetic centerline per task); `d1-real` is 100 held-out tasks on the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), 25 in each of four question groups (draft linework, letter alignment data, produce the sheet, notes and dimensions), each group a column beside the blended score; `hard-pilots` is the 112 harder-task pilots on the sample sheets, each graded pass (100) or fail (0) by its own check, with the share of its items done as the rubric column; `d1-test-hard` is 100 held-out seeded whole-sheet jobs (three to five curves on two or three sheets, a station equation on one in five: the plan sheet with its pavement, the alignment created from stated geometry and then drafted, the sheet file lettered through its base drawing); `d1-real-hard` is 100 tasks on the redrafted sheets, every whole job (a sheet drafted from its base files or annotated from blank, construction callouts included) and the heaviest whole-line tasks `d1-real` did not draw. A model's rows on different sets are not averaged.
+Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded generator (one synthetic centerline per task); `d1-real` is 100 held-out tasks on the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), 25 in each of four question groups (draft linework, letter alignment data, produce the sheet, notes and dimensions), each group a column beside the blended score; `hard-pilots` is the 112 harder-task pilots on the sample sheets, each graded pass (100) or fail (0) by its own check, with the share of its items done as the rubric column; `d1-test-hard` is 100 held-out seeded whole-sheet jobs (three to five curves on two or three sheets, a station equation on one in five: the plan sheet with its pavement, the alignment created from stated geometry and then drafted, the sheet file lettered through its base drawing); `d1-real-hard` is 100 tasks on the redrafted sheets, every whole job (a sheet drafted from its base files or annotated from blank, construction callouts included) and the heaviest whole-line tasks `d1-real` did not draw. Within a set the rows rank on that set alone; the overall table at the top is the one place a model's sets are averaged, the real sheets and the hard pilots weighted double.
 
 Each prompt level is its own board (Robert, 2026-11-08): this file ranks the explicit-prompt runs (the full brief, stating every standard the task is graded on); a score at one prompt level is not comparable with a score at the other. Every task has both prompts: a pilot's vague brief keeps what the drafter cannot know (the files, lines, stations and data given) and leaves its drafting standards to the drafter, graded by the lenient rules where the brief no longer states them.
 
