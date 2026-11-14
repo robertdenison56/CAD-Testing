@@ -32,6 +32,8 @@ def write_task(task, out_dir, render: bool = True) -> dict:
             ("save_journal", {"path": str(out / f"{tid}.journal.jsonl")}, "journal"),
             ("save_document", {"path": str(out / f"{tid}.rdoc.json")}, "document"),
             ("export_landxml", {"path": str(out / f"{tid}.xml")}, "landxml")):
+        if key == "landxml" and not session.doc.design.alignments:
+            continue  # a sheet file whose design lives in its base drawing has none to export
         result = session.query(query, params)
         if not result["ok"]:
             raise SystemExit(f"{query} failed: {result['error']['message']}")
@@ -69,9 +71,12 @@ def main(argv=None) -> int:
                         help="hand the task over on a sheet already worked on: a second "
                              "lettered line and notes on the paper (tasks.crowd)")
     parser.add_argument("--revise", nargs="?", const=True, default=None,
-                        choices=[True, "radius", "pi", "station"],
+                        choices=[True, "radius", "pi", "station", "base-radius", "base-pi",
+                                 "base-station"],
                         help="hand the task over finished after its design has changed: the "
-                             "seed's own kind of change, or KIND (tasks.revise)")
+                             "seed's own kind of change, or KIND (tasks.revise); base-KIND "
+                             "leaves the change for the drafter to make in the base drawing "
+                             "(--type annotate-base)")
     parser.add_argument("--no-render", action="store_true", help="skip the PNG render")
     ns = parser.parse_args(argv)
     task = generate_task(ns.seed, curves=ns.curves, equations=ns.equations,

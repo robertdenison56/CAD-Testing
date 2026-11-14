@@ -8,7 +8,9 @@ show whether a model takes the semantic path when the coordinate path
 exists.  ``create_alignment`` is shown only when creating the design is the
 task (scope ``design``); ``render_sheet`` / ``render_model`` only in the
 self-correct and vision modes.  Three tools are the harness's own:
-``get_task_brief``, ``run_check`` and ``submit``.
+``get_task_brief``, ``run_check`` and ``submit``.  A fourth, ``open_document``,
+is shown with ``reload_references`` only on a revised task whose design the
+drafter changes in a base drawing (``BASE_COMMANDS``).
 
 Tool definitions come straight from the session manifest: ``params_schema``
 is the input schema (every schema is a closed object with a ``required``
@@ -19,6 +21,8 @@ from __future__ import annotations
 
 import json
 from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+from roaddraft.tasks.types import BASE_SCOPE
 
 
 MODES = ("single", "self_correct", "vision")
@@ -49,6 +53,15 @@ REVISION_SCOPE = "revision"
 #: commands shown only on a revised task: changing a line's design, and bringing what was
 #: lettered from it up to date.  No other task's tool list, nor its digest, has them
 REVISION_COMMANDS = frozenset({"modify_alignment", "update_labels"})
+#: tools shown only on a revised task whose design the drafter changes in the base drawing
+#: the sheet file references (its scope carries ``BASE_SCOPE`` beside the revision mark;
+#: ``tasks.revise.BASE_KINDS``, 2026-11-13, Robert: "allow them, in the pin's cut"): opening
+#: another document of the task, and reading a base drawing again once it has changed.
+#: ``open_document`` is the harness's own (``DOCUMENT_TOOLS``): an episode holds the document
+#: it was handed and switches to the base drawing and back; ``reload_references`` is the
+#: engine's command.  No other task's tool list, nor its digest, has them: neither of the
+#: two earlier revision flavours carries ``BASE_SCOPE``
+BASE_COMMANDS = frozenset({"open_document", "reload_references"})
 #: queries every task may call
 QUERIES = frozenset({
     "list_alignments", "get_design_data", "station_to_xy", "xy_to_station", "resolve_anchor",
@@ -60,8 +73,26 @@ QUERIES = frozenset({
 #: queries shown in the self-correct and vision modes
 RENDER_QUERIES = frozenset({"render_sheet", "render_model"})
 HARNESS_TOOLS = ("get_task_brief", "run_check", "submit")
+#: the harness's tools that are shown only where a scope opens them (``BASE_COMMANDS``)
+DOCUMENT_TOOLS = ("open_document",)
 
 HARNESS_DEFINITIONS = {
+    "open_document": {
+        "description": ("Open another document of this task as the working document: the base "
+                        "drawing a sheet file references (list_references gives its path), or "
+                        "the file you were handed again (get_document_state names the open "
+                        "file, 'document'). Every tool then reads and changes the open "
+                        "document, and each change is saved to its file as it is made. A sheet "
+                        "file keeps the copy of a base drawing it has already read: back in it, "
+                        "reload_references reads the base drawing again as it now stands. The "
+                        "file you were handed is the one that gets graded, so go back to it "
+                        "before you submit."),
+        "input_schema": {"type": "object",
+                         "properties": {"path": {"type": "string", "minLength": 1,
+                                                 "description": "the document's path, relative "
+                                                                "to the folder of the file you "
+                                                                "were handed"}},
+                         "required": ["path"], "additionalProperties": False}},
     "get_task_brief": {
         "description": "The task text again: the rules and the request, as first given.",
         "input_schema": {"type": "object", "properties": {}, "required": [],
@@ -91,6 +122,8 @@ def allowed_names(mode: str, scope: Iterable[str] = ()) -> Set[str]:
         names |= DESIGN_COMMANDS
     if REVISION_SCOPE in set(scope):
         names |= REVISION_COMMANDS
+        if BASE_SCOPE in set(scope):
+            names |= BASE_COMMANDS
     if mode != "single":
         names |= RENDER_QUERIES
     else:
@@ -121,7 +154,7 @@ def tool_definitions(manifest: dict, mode: str, scope: Iterable[str] = ()) -> Li
                 defs.append({"name": entry["name"], "kind": entry.get("kind", kind[:-1]),
                              "description": _describe(entry),
                              "input_schema": entry["params_schema"]})
-    for name in HARNESS_TOOLS:
+    for name in HARNESS_TOOLS + DOCUMENT_TOOLS:
         if name in allowed:
             defs.append({"name": name, "kind": "harness", **HARNESS_DEFINITIONS[name]})
     return sorted(defs, key=lambda d: d["name"])
@@ -182,6 +215,6 @@ def repair_params(params: Optional[dict], schema: Optional[dict]) -> Tuple[dict,
 
 
 __all__ = ["MODES", "DIALECTS", "COMMANDS", "DESIGN_COMMANDS", "REVISION_SCOPE", "REVISION_COMMANDS",
-           "QUERIES", "RENDER_QUERIES",
-           "HARNESS_TOOLS", "allowed_names", "is_allowed", "tool_definitions", "shape_params",
-           "repair_params"]
+           "BASE_SCOPE", "BASE_COMMANDS", "QUERIES", "RENDER_QUERIES",
+           "HARNESS_TOOLS", "DOCUMENT_TOOLS", "allowed_names", "is_allowed", "tool_definitions",
+           "shape_params", "repair_params"]

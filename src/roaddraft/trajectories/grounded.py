@@ -115,6 +115,22 @@ note is restationed from its own point before and after (``_revise_own``).  The
 keep rule's fourth leg is ``tasks.revise.left_stale``: nothing lettered from the
 old design left, every note restationed.
 
+Where the task leaves the change to the drafter in the base drawing itself
+(``tasks.revise.BASE_KINDS``, 2026-11-13; the tool list then has
+``open_document`` and ``reload_references``), the drafter goes where the design
+lives (``_revise_base``): while the line is still the old one it reads where
+each note's station lies, and the base drawing's file from the reference;
+opens the base drawing; changes the line there with its centerline redrawn,
+and redraws the pavement edges it finds drawn from it, at their own offsets on
+their own level; goes back to the file it was handed; reloads the reference;
+and then, as where the designer made the change, takes off what was lettered
+from the old design and letters the line again, each note restationed from
+where its own point now falls.  It does not hand the old lettering to
+``update_labels``: through a reference that re-poses each label from its own
+record, and over ``d1-train-revise-base`` it left 49 of 300 sheets short (a
+restationed set stopped short of the new stations on 35, labels turned upside
+down on 14).
+
 The pavement width is dimensioned square across each tangent (the width
 phase, 2026-11-12, the last phase of the seeded types; ``_widths``), between
 the two pavement edges at one station: ``place_dimension`` takes each edge and
@@ -266,6 +282,8 @@ _SIZE = re.compile(r"\b(ANSI|ARCH) ([A-E])\b")
 _REVISED = (("radius", re.compile(r"curve (\d+)'s radius is now (\d+(?:\.\d+)?)'")),
             ("pi", re.compile(r"the PI of curve (\d+) has moved (\d+(?:\.\d+)?) ft (ahead|back)")),
             ("station", re.compile(rf"is restationed to begin at ({_ST}) \(it began at ({_ST})\)")))
+#: a revision the task leaves for the drafter to make in the base drawing that holds the design
+_IN_BASE = re.compile(r"Make the change in the base drawing")
 
 
 def request_of(text: str) -> str:
@@ -1781,6 +1799,215 @@ def _revise_own(revision: dict, alignment: str, sheet_name: str, sheet: dict,
     return {"done": done, "carry": " ".join(says)}
 
 
+def _revise_base(revision: dict, alignment: str, sheet_name: str, sheet: dict,
+                 document: Optional[str], kinds: Sequence[str],
+                 lead: str) -> Generator[Turn, List[dict], dict]:
+    """Make the designer's change where the design lives, in the base drawing
+    the sheet file references, then take off what the sheet file lettered from
+    the old design and restation its notes, before the line is lettered again.
+
+    The line is ``REF:NAME`` here and ``NAME`` in its own file.  While it is
+    still the old one, ``station_to_xy`` reads where each note's station lies,
+    and ``list_references`` gives the base drawing's file.  ``open_document``
+    switches the tools to that file: ``modify_alignment`` changes the line
+    there and redraws its centerline (a PI moved along its back tangent is
+    worked out from ``measure`` of that leg, as in ``_revise_own``); the
+    pavement edges drawn from it are redrawn by ``draw_offset`` with
+    ``replace``, at the offsets and on the level they were found on.  Back in
+    the handed file (``document``, the name ``get_document_state`` gave),
+    ``reload_references`` reads the base drawing again; then the revised line's
+    ``kinds`` of design data are read through the reference, each note's point
+    is taken to the revised line, and everything the model holds anchored to
+    the line comes off (the curve table too, on a change of the geometry).
+    Returns ``{"deleted", "done", "rows"}``."""
+    kind = revision["kind"]
+    geometry = kind != "station"
+    ref_name, line = alignment.split(":", 1)
+    if not document:
+        raise NotCovered("the document names no file of its own to come back to")
+    notes = []
+    for eid, e in (sheet.get("entities") or {}).items():
+        content = str(e.get("content") or "")
+        if e.get("type") != "text" or (e.get("anchor") or {}).get("kind"):
+            continue
+        cited = _STATION.findall(content)
+        if len(cited) == 1:
+            notes.append({"id": eid, "content": content,
+                          "written": f"{cited[0][0]}+{cited[0][1]}"})
+    # -- in the sheet file, while the line is the old one
+    calls = [_q("list_references")]
+    calls += [_q("station_to_xy", alignment=alignment, station=n["written"]) for n in notes]
+    change = revision["said"] if geometry else f"{line} {revision['said']}"
+    results = yield Turn(
+        (lead + " " if lead else "")
+        + f"{line}'s design lives in the base drawing attached as {ref_name}, and the change is "
+        f"to be made there: {change}. Find that drawing's file"
+        + (", and, while the line is still the old one, read where the station each note on "
+           f"{sheet_name} cites lies on it: " + _and([f"{n['id']}, \"{n['content']}\""
+                                                     for n in notes]) + "." if notes else "."),
+        calls)
+    _ok(results, calls)
+    attached = [r for r in results[0].get("references") or [] if r.get("name") == ref_name]
+    if not attached:
+        raise NotCovered(f"no reference named {ref_name} is attached")
+    base = attached[0]["path"]
+    points = [list(r["point"]) for r in results[1:]]
+    # -- the base drawing
+    calls = [_q("open_document", path=base)]
+    results = yield Turn(f"{ref_name} is {base}. Open it: the tools then work on the base "
+                         "drawing, and each change is saved to its file.", calls)
+    _ok(results, calls)
+    if line not in ((results[0].get("state") or {}).get("summary") or {}).get("alignments", []):
+        raise NotCovered(f"{base} holds no alignment {line}")
+    calls = [_q("get_design_data", kind="alignments", alignment=line)]
+    if geometry:
+        calls.append(_q("find_entities", anchor={"alignment": line, "kind": "offset"}))
+    results = yield Turn(
+        f"This is where {line} lives. Read it as it stands"
+        + (", and what was drawn from it beside its centerline: a change of the geometry leaves "
+           "that linework on the old line until it is drawn again." if geometry else "."), calls)
+    _ok(results, calls)
+    pis = results[0]["rows"][0]["pis"]
+    rows = [list(p["point"]) + ([p["radius"]] if p.get("radius") else []) for p in pis]
+    curves = [i for i, r in enumerate(rows) if len(r) > 2]
+    #: the offset linework drawn from the line, by the level it is on
+    edges: Dict[str, List[float]] = {}
+    if geometry:
+        if results[1].get("more"):
+            raise NotCovered("more offset linework than one read lists")
+        for row in results[1]["entities"]:
+            offsets = edges.setdefault(row["layer"], [])
+            if row["anchor"]["offset"] not in offsets:
+                offsets.append(row["anchor"]["offset"])
+    says: List[str] = []
+    if kind == "station":
+        changes = {"begin_station": revision["begins"]}
+        says.append(f"The geometry holds; only the stationing changes: it begins at "
+                    f"{revision['begins']}. No line moves, so nothing is drawn again.")
+    elif kind == "radius":
+        k = curves[revision["curve"] - 1]
+        rows[k] = rows[k][:2] + [revision["radius"]]
+        changes = {"pis": rows}
+        says.append(f"Every PI holds its place; curve {revision['curve']}'s PI, the row at "
+                    f"{_n(rows[k][0])}, {_n(rows[k][1])}, takes R = {_n(revision['radius'])}.")
+    else:
+        k = curves[revision["curve"] - 1]
+        back, pi = rows[k - 1], rows[k]
+        calls = [_q("measure", **{"from": back[:2], "to": pi[:2]})]
+        results = yield Turn(
+            f"Curve {revision['curve']}'s PI is at {_n(pi[0])}, {_n(pi[1])}, and its back "
+            f"tangent runs from the PI before it, at {_n(back[0])}, {_n(back[1])}. Measure that "
+            "leg for its length and how far it runs each way.", calls)
+        _ok(results, calls)
+        leg = results[0]
+        dist = _r(leg["distance"])
+        by = _r(revision["by"])
+        signed = by if revision["ahead"] else -by
+        moved, work = [], []
+        for axis, d in (("x", leg["dx"]), ("y", leg["dy"])):
+            a, b = _r(pi[0 if axis == "x" else 1]), abs(_r(d))
+            ahead = _r(d) * signed >= 0
+            value = _r(a + b / dist * by if ahead else a - b / dist * by)
+            moved.append(value)
+            work.append(f"{_n(a)} {'+' if ahead else '-'} {_n(b)} / {_n(dist)} * {_n(by)} = "
+                        f"{_n(value)}")
+        rows[k] = moved + rows[k][2:]
+        changes = {"pis": rows}
+        says.append(f"The leg is {_n(dist)} ft long. Moving the PI {_n(by)} ft "
+                    f"{'ahead' if revision['ahead'] else 'back'} along it takes each coordinate "
+                    f"that far along the leg: {work[0]} and {work[1]}. Its radius and every "
+                    "other PI hold.")
+    calls = [_q("modify_alignment", name=line, changes=changes, redraw=True)]
+    for level, offsets in edges.items():
+        calls.append(_q("draw_offset", alignment=line, offsets=sorted(offsets), layer=level,
+                        replace=True))
+    if edges:
+        def sides(offsets: Sequence[float]) -> str:
+            return _and([f"{_n(abs(o))} ft {'left' if o < 0 else 'right'}" for o in sorted(offsets)])
+
+        says.append(
+            f"Change {line}, its centerline redrawn, and draw again what was offset from it: "
+            + _and([f"the lines {sides(offsets)} on {level}" for level, offsets in edges.items()])
+            + ", in place of the old.")
+    else:
+        says.append(f"Change {line}" + (", its centerline redrawn." if geometry else "."))
+    results = yield Turn(" ".join(says), calls)
+    _ok(results, calls)
+    # -- back in the file handed over
+    calls = [_q("open_document", path=document)]
+    results = yield Turn(
+        f"The base drawing holds the revised line"
+        + (", its linework drawn to it" if geometry else "") + f". Go back to {document}, the "
+        f"sheet file this task handed over: the lettering to bring up to date is there.", calls)
+    _ok(results, calls)
+    told = any("reload_references" in str(w) for w in results[0].get("warnings") or [])
+    query = {"anchor": {"alignment": alignment}, "include_references": False, "limit": 50}
+    calls = [_q("reload_references")]
+    calls += [_q("get_design_data", kind=k, alignment=alignment) for k in kinds]
+    calls += [_q("xy_to_station", alignment=alignment, point=p) for p in points]
+    calls.append(_q("find_entities", **query))
+    if geometry:
+        calls.append(_q("find_entities", space=sheet_name, type="table",
+                        anchor={"alignment": alignment}))
+    results = yield Turn(
+        (f"This file still holds the copy of {ref_name} it read before the change, as the result "
+         f"says. " if told else f"This file read {ref_name} before the change. ")
+        + f"Reload it, then read the revised line through it"
+        + (f": its {_and(list(kinds))}" if kinds else "")
+        + (f"{',' if kinds else ':'} where each note's point now falls" if notes else "")
+        + f"{',' if kinds or notes else ':'} and what was lettered from the old design, which "
+        f"is everything the model holds anchored to {alignment}"
+        + (f", and its curve table on {sheet_name}." if geometry else "."), calls)
+    _ok(results, calls)
+    read = {k: r["rows"] for k, r in zip(kinds, results[1:])}
+    at = results[1 + len(kinds):1 + len(kinds) + len(notes)]
+    found = results[1 + len(kinds) + len(notes)]
+    tables = [row["id"] for row in results[-1]["entities"]] if geometry else []
+    lettered = list(found["entities"])
+    more = found.get("more")
+    while more:
+        calls = [_q("find_entities", **query, start=more["start"])]
+        results = yield Turn("The list runs on: read the rest of it.", calls)
+        _ok(results, calls)
+        lettered += results[0]["entities"]
+        more = results[0].get("more")
+    lettered = [row for row in lettered if row["anchor"].get("kind") not in LINEWORK_KINDS]
+    if not lettered:
+        raise NotCovered(f"nothing in the model is lettered from {alignment}")
+    changed, says = [], []
+    for n, r in zip(notes, at):
+        if abs(float(r.get("offset") or 0.0)) > ON_LINE_FT:
+            raise NotCovered(f"the point {n['written']} cites is off the revised line")
+        text = n["content"].replace(n["written"], _station_text(r["station"]))
+        if text == n["content"]:
+            says.append(f"{n['id']}'s point is at {_n(r['station'])}: it stays as it reads.")
+        else:
+            says.append(f"{n['id']}'s point is now at {_n(r['station'])}: restation it to that, "
+                        "to the hundredth.")
+            changed.append(_q("modify_entity", id=n["id"], changes={"content": text}))
+    ids = [row["id"] for row in lettered] + tables
+    calls = [_q("delete_entities", ids=ids)] + changed
+    results = yield Turn(
+        " ".join(says + [
+            f"The lettering was made from the old line, and a label read through a reference "
+            f"does not follow its base drawing. Take all of it off"
+            + (f" and the curve table {tables[0]}" if tables else "")
+            + (", and restation the note" + ("s" if len(changed) > 1 else "") if changed else "")
+            + f"; {alignment} is lettered again below, from the revised design."]), calls)
+    _ok(results, calls)
+    kept_notes = [n["id"] for n in notes if n["id"] not in {c.params["id"] for c in changed}]
+    done = (f"made the designer's change to {line} in the base drawing {base}"
+            + (", its centerline" + (" and pavement edges" if edges else "") + " redrawn"
+               if geometry else "")
+            + f", reloaded {ref_name} in the sheet file, took off what was lettered from "
+            f"{alignment} before the change"
+            + (f" and restationed the note{'s' if len(changed) > 1 else ''} citing it ("
+               + _and([c.params["id"] for c in changed]) + ")" if changed else "")
+            + (f"; {_and(kept_notes)} kept {'its' if len(kept_notes) == 1 else 'their'} "
+               f"station" if kept_notes else ""))
+    return {"deleted": ids, "done": done, "rows": read}
+
+
 # ------------------------------------------------------------ the width dimensions
 
 #: a width stated at a station on a tangent: ``47+50.00 on T-1``
@@ -2599,6 +2826,10 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
     #: how far the sheets' viewports are turned: model lettering is read through it
     twist = 0.0
     widths = "widths" in todo
+    #: a revision left for the drafter to make in the base drawing: the line's tangents and
+    #: curves are read after the change, not before it
+    in_base = bool(revision and alignment and ":" in alignment and _IN_BASE.search(request))
+    later: List[str] = []
     if lettering or sheet_work or widths:
         if not sheets:
             raise NotCovered("no sheet to read the plan scale from")
@@ -2606,6 +2837,8 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
         kinds = [kind for kind in (["tangents"] if "bearings" in lettering or widths else []) + (
             ["curves"] if "callouts" in lettering or "table" in sheet_work else [])
             if kind not in rows]
+        if in_base:
+            later, kinds = kinds, []
         calls = [_q("get_sheet_state", sheet=name) for name in read]
         calls += [_q("get_design_data", kind=kind, alignment=alignment) for kind in kinds]
         if not read:
@@ -2668,8 +2901,14 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
         if not lettering or len(sheets) != 1:
             raise NotCovered("a revision on anything but one sheet lettered from the line")
         lead, carry = carry, ""
-        cleared = yield from _revise(revision, alignment, sheets[0], state[sheets[0]],
-                                     rows.get("curves") or [], lead)
+        if in_base:
+            # the change is the drafter's to make, in the base drawing that holds the design
+            cleared = yield from _revise_base(revision, alignment, sheets[0], state[sheets[0]],
+                                              summary.get("document"), later, lead)
+            rows.update(cleared["rows"])
+        else:
+            cleared = yield from _revise(revision, alignment, sheets[0], state[sheets[0]],
+                                         rows.get("curves") or [], lead)
         gone = set(cleared["deleted"])
         state[sheets[0]] = {**state[sheets[0]], "entities": {
             eid: e for eid, e in (state[sheets[0]].get("entities") or {}).items()

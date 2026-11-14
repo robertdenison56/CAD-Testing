@@ -26,6 +26,12 @@ eval plan's section 3.4 table, with these readings made precise:
 - Per-sheet checks (D1-00, D1-06, D1-10, D1-11) average over the deliverable
   sheets; D1-08 adds up overlaps across them.  With two sheets D1-00 also
   wants the match line drawn at the break and labelled on each sheet.
+- D1-15, D1-01 and D1-12 read the design, its centerline and its pavement
+  edges in the document under test.  Only a truth whose scope carries
+  ``tasks.types.BASE_SCOPE`` (2026-11-13: a revision the drafter makes in the
+  base drawing a sheet file references) has them read in that base drawing
+  instead, through the reference (``context.design_home``); every other truth
+  is scored as it was.
 """
 from __future__ import annotations
 
@@ -42,7 +48,7 @@ from roaddraft.design.errors import DesignError
 from roaddraft.document import dimgeom
 from roaddraft.document.entities import BlockRef, Dimension, Entity, Line, Polyline, Table, Text
 from roaddraft.tasks.types import GROUP_LAYER_ROLE
-from roaddraft.verify.context import Context, SheetView, rect_inside
+from roaddraft.verify.context import Context, SheetView, design_home, rect_inside
 from roaddraft.verify.geometry import (
     LineworkResult, TickMatch, crosses_at, match_edges, match_linework, match_ticks, pieces_of,
     same_piece,
@@ -368,7 +374,12 @@ def analyze(ctx: Context) -> Analysis:
     tol = float(ctx.tol["position_model_ft"])
     # what the drafter was handed (a real sheet's base file) earns no linework credit
     handed = {i for sh in ctx.truth.sheets for i in sh.get("given_entities") or ()}
-    drawn = [e for e in model if e.id not in handed]
+    # the design's own linework is looked for where the design lives: in this document, or,
+    # on a truth marked ``BASE_SCOPE``, in the base drawing the sheet file references
+    home = design_home(ctx.doc, ctx.truth)
+    lines = model if home is ctx.doc else (list(home.model_entities.values())
+                                           if home is not None else [])
+    drawn = [e for e in lines if e.id not in handed]
     linework = (match_linework(ctx.alignment, drawn, ctx.layers["alignment"], tol)
                 if ctx.alignment is not None else None)
     lo, hi = ctx.lenient["tick_length_in"]
@@ -392,7 +403,7 @@ def analyze(ctx: Context) -> Analysis:
             tm.unanchored = hm.hits[0]
     edges = None
     if ctx.truth.edges and ctx.alignment is not None and ctx.asks("edges"):
-        edges = match_edges(ctx.alignment, ctx.truth.edges, model, ctx.layers["edges"], tol)
+        edges = match_edges(ctx.alignment, ctx.truth.edges, lines, ctx.layers["edges"], tol)
     return Analysis(ctx=ctx, labels=index_labels(ctx), linework=linework, ticks=ticks,
                     tables=analyze_tables(ctx), edges=edges,
                     dimensions=analyze_dimensions(ctx) if ctx.asks("widths") else [],
@@ -1146,7 +1157,9 @@ def check_alignment_created(a: Analysis) -> Result:  # D1-15
     name, want = ctx.alignment_name, ctx.alignment
     if want is None:
         return 0.0, [Finding("missing", note="the truth has no alignment")]
-    have = ctx.doc.design.alignments.get(name)
+    # where the design lives: this document, or the base drawing (a truth marked BASE_SCOPE)
+    home = design_home(ctx.doc, ctx.truth)
+    have = home.design.alignments.get(name) if home is not None else None
     if have is None:
         return 0.0, [Finding("missing", anchor={"alignment": name, "ref": name, "kind": "alignment"},
                              note="no alignment of this name in the design")]

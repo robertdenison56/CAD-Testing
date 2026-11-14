@@ -941,9 +941,18 @@ def _revision(w: _Words, explicit: bool) -> str:
     """A revised task's prompt (the generator's revision dial, ``tasks.revise``).
     The vague words name the sheet, where the line lives and the change, and no
     more: the notes that cite the line are the knock-on edit nobody names, as on
-    the redline pilots (``p11``)."""
+    the redline pilots (``p11``).  Where the change is the drafter's to make,
+    they say so and where (this file, or the base drawing), and not how: the
+    explicit words alone name the base drawing's file, its linework to redraw
+    and the reference to reload."""
     change = _revision_words(w)
-    if w.type.design_referenced:
+    # the change left for the drafter to make in the base drawing (tasks.revise.BASE_KINDS)
+    in_base = w.type.design_referenced and bool(w.D["revision"].get("by_drafter"))
+    if in_base:
+        where = (f"{w.A} lives in the base drawing attached as {w.ref_name}, and {w.sheet_list} "
+                 f"letters it through the reference as {w.ref_name}:{w.A}. The designer has revised "
+                 f"it: {change}.")
+    elif w.type.design_referenced:
         where = (f"{w.A} lives in the base drawing attached as {w.ref_name}, and {w.sheet_list} "
                  f"letters it through the reference as {w.ref_name}:{w.A}. The designer has revised "
                  f"{w.A} there and redrawn its linework: {change}.")
@@ -951,12 +960,21 @@ def _revision(w: _Words, explicit: bool) -> str:
         where = (f"{w.Sheet_list} is lettered for {w.A}, whose design lives in this file. The "
                  f"designer has revised it: {change}.")
     if not explicit:
+        if in_base:
+            return (f"{where} Make the change in the base drawing and bring {w.sheet_list} up to "
+                    f"date.")
         if not w.type.design_referenced:
             return f"{where} Make the change and bring {w.sheet_list} up to date."
         return f"{where} Bring {w.sheet_list} up to date."
-    make = ("" if w.type.design_referenced else
-            f" Make the change in this file's design and redraw {w.A}'s centerline to it, on "
-            f"{w.layer('alignment')}.")
+    if in_base:
+        make = (f" Make the change in the base drawing, {w.basefile}: open it, change {w.A}'s "
+                f"design there and redraw its centerline to it on {w.layer('alignment')} and its "
+                f"pavement edges on {w.pave.get('layer') or w.layer('edges')}; then come back to "
+                f"this file and reload the reference.")
+    else:
+        make = ("" if w.type.design_referenced else
+                f" Make the change in this file's design and redraw {w.A}'s centerline to it, on "
+                f"{w.layer('alignment')}.")
     return (f"{where}{make} Bring {w.sheet_list} up to date with the revised design.{w.reading()} "
             f"Whatever the change touches is lettered again with the design's own labels, the "
             f"office's way:\n{_bullets(_alignment_data(w, 'the line'))}\nNothing lettered from "

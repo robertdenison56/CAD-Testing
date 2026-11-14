@@ -846,6 +846,139 @@ def test_where_the_design_lives_in_the_file_the_drafter_makes_the_change_and_the
         assert episode.result if hasattr(episode, "result") else True
 
 
+# ------------------------- the change made in the base drawing (2026-11-13)
+
+
+def _base_revised(kind: str, twist: bool = False, n: int = 0):
+    rows = [e for e in tasksets.load("d1-train-revise-base")["tasks"]
+            if e["revise"] == kind and bool(e.get("twist")) == twist and "dialed" not in e]
+    return tasksets.task_from_entry(rows[n])
+
+
+@pytest.mark.parametrize("kind", ["base-radius", "base-pi", "base-station"])
+@pytest.mark.parametrize("level", ["vague", "explicit"])
+def test_a_grounded_reference_makes_the_change_in_the_base_drawing_and_is_kept(kind, level):
+    """Robert, 2026-11-13: "allow them, in the pin's cut". The recording scores
+    100 with nothing ungrounded and nothing lettered from the old design left,
+    well inside the step budget."""
+    row = grounded.record_task(_base_revised(kind, twist=level == "explicit"), level)
+    assert row["termination"] == "submit", row["error"]
+    assert row["ungrounded"] == [] and row["left_stale"] == [] and row["twist_ignored"] == []
+    assert row["effective"] == 100.0 and row["kept"]
+    assert row["steps"] <= 60
+
+
+def test_only_a_task_that_says_so_has_the_change_made_in_the_base_drawing():
+    """The drafter goes to the base drawing on the task's word, not on where the
+    design lives: where the designer has made the change it is not made again."""
+    based = _base_revised("base-radius")
+    for level in ("vague", "explicit"):
+        assert grounded._IN_BASE.search(based.brief.prompts[level])
+        for ttype in ("annotate-base", "annotate-sheet"):
+            assert not grounded._IN_BASE.search(_revised(ttype, "radius").brief.prompts[level])
+    names = [c["name"] for c, _r in _pairs(_run(_revised("annotate-base", "radius"), "vague"))]
+    assert not {"open_document", "reload_references", "modify_alignment"} & set(names)
+
+
+def test_the_drafter_changes_the_line_in_the_base_drawing_then_reloads_and_letters_again():
+    """The route: each note's point read while the line is the old one, and the
+    base drawing's file from the reference; the base drawing opened, the line
+    changed there with its centerline redrawn and the pavement edges drawn
+    again at the offsets and on the level they were found on; the handed file
+    opened again and the reference reloaded before anything is read through it;
+    the old lettering taken off and the line lettered again, each note
+    restationed from where its own point now falls.  Never update_labels."""
+    import json
+    from pathlib import Path
+    for kind in ("base-radius", "base-pi", "base-station"):
+        task = _base_revised(kind)
+        D = task.brief.deliverable
+        R = D["revision"]
+        geometry = R["kind"] != "station"
+        episode = _run(task, "vague")
+        pairs = _pairs(episode)
+        names = [c["name"] for c, _r in pairs]
+        opened = [(i, c["params"]["path"]) for i, (c, _r) in enumerate(pairs)
+                  if c["name"] == "open_document"]
+        assert [p for _i, p in opened] == [D["basefile"], f"{task.task_id}.rdoc.json"]
+        there, back = opened[0][0], opened[1][0]
+        # before the change: the reference's file, and where each note's station lies
+        assert names.index("list_references") < there
+        before = [i for i, n in enumerate(names) if n == "station_to_xy"]
+        assert len(before) == len(R["notes"]) and max(before) < there
+        # in the base drawing: the line by its own name, changed to the revised design
+        made = [(i, c["params"]) for i, (c, _r) in enumerate(pairs) if c["name"] == "modify_alignment"]
+        assert len(made) == 1 and there < made[0][0] < back
+        assert made[0][1]["name"] == "ALIGN-1" and made[0][1]["redraw"] is True
+        new = task.brief.design["alignments"]["ALIGN-1"]
+        if geometry:  # the PIs as the drafter worked them out are the revised design's, to the bit
+            assert made[0][1]["changes"]["pis"] == [
+                list(p["point"]) + ([p["radius"]] if p.get("radius") else []) for p in new["pis"]]
+        else:
+            assert made[0][1]["changes"] == {"begin_station": R["to"]}
+        edges = [(i, c["params"]) for i, (c, _r) in enumerate(pairs) if c["name"] == "draw_offset"]
+        assert len(edges) == (1 if geometry else 0)
+        if geometry:
+            assert made[0][0] < edges[0][0] < back
+            assert edges[0][1] == {"alignment": "ALIGN-1", "layer": D["pavement"]["layer"],
+                                   "offsets": sorted(D["pavement"]["offsets_ft"]), "replace": True}
+            # (the offsets and the level were read off the edges as drawn, before the change)
+            found = next(i for i, (c, _r) in enumerate(pairs) if c["name"] == "find_entities"
+                         and c["params"].get("anchor") == {"alignment": "ALIGN-1", "kind": "offset"})
+            assert there < found < made[0][0]
+        # the base drawing's file holds the revised design, its linework drawn to it
+        saved = json.loads((Path(episode.root.real) / D["basefile"]).read_text())
+        assert saved["design"]["alignments"]["ALIGN-1"] == new
+        # back in the handed file: reloaded first, then read, taken off and lettered again
+        reload = names.index("reload_references")
+        assert back < reload
+        assert not any(n in ("get_design_data", "xy_to_station", "find_entities", "delete_entities")
+                       for n in names[back:reload])
+        assert "update_labels" not in names
+        after = [i for i, n in enumerate(names) if n == "xy_to_station"]
+        assert len(after) == len(R["notes"]) and min(after) > reload
+        gone = next(c for c, _r in pairs if c["name"] == "delete_entities")["params"]["ids"]
+        assert sorted(gone) == sorted(R["stale"])
+        restationed = {c["params"]["id"]: c["params"]["changes"]["content"]
+                       for c, _r in pairs if c["name"] == "modify_entity"}
+        assert restationed == {n["id"]: n["after"] for n in R["notes"] if n["after"] != n["before"]}
+        assert names.index("delete_entities") < names.index("annotate_stationing")
+        assert ("place_curve_table" in names) == geometry
+        # the tangents and curves it letters from are the revised line's, read after the reload
+        rows = [i for i, (c, _r) in enumerate(pairs) if c["name"] == "get_design_data"
+                and c["params"].get("alignment") == "BASE:ALIGN-1"]
+        assert rows and min(rows) > reload
+        # what was done in the base drawing is in the journal block, and replays to the score
+        assert [v["document"] for v in episode.opened] == [D["basefile"]]
+        assert [e["name"] for e in episode.opened[0]["entries"]] == (
+            ["modify_alignment"] + (["draw_offset"] if geometry else []))
+
+
+def test_a_recording_made_in_the_base_drawing_converts_from_its_journal_block(tmp_path):
+    """The episode file alone rebuilds the episode, the base drawing's commands
+    included: the converter re-scores it 100 and keeps it."""
+    from roaddraft.eval.trajectory import read_episode, reverify
+    from roaddraft.trajectories import conversations as cv
+    task = _base_revised("base-pi")
+    row = grounded.record_task(task, "vague", out_root=tmp_path)
+    assert row["kept"]
+    block = read_episode(row["path"])["journal"]
+    assert [v["document"] for v in block["opened"]] == [task.brief.deliverable["basefile"]]
+    assert reverify(row["path"]).effective_score == 100.0
+    example = cv.convert(row["path"], "d1-train-revise-base")
+    assert example.drop is None, (example.drop, example.detail)
+    names = {t["name"] for t in example.tools}
+    assert {"open_document", "reload_references", "modify_alignment"} <= names
+    # without what was done in the base drawing the block would not rebuild the sheet
+    from roaddraft.eval.trajectory import replay_journal
+    from roaddraft.tasks.brief import GroundTruth
+    from roaddraft.verify import verify
+    bare = {k: v for k, v in block.items() if k != "opened"}
+    lost = verify(replay_journal(bare).doc, GroundTruth.from_dict(block["truth"]),
+                  prompt_level="vague")
+    assert lost.effective_score < 100.0
+
+
 # ------------------------------------------------------------ the width dimensions
 
 

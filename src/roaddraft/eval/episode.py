@@ -26,11 +26,27 @@ render -- must resolve, links followed, inside it (document/confine.py), so
 the reference solutions, other tasks' files and the trajectories that carry
 the truth are out of reach; the truth itself is never written there.  The
 agent is shown the folder's paths relative to it, never where it is.
+
+One task type lets the agent work in a second document (2026-11-13: a
+revision made in the base drawing a sheet file references; its scope opens
+``open_document``, ``eval.tools.BASE_COMMANDS``).  The episode keeps the
+session on the document it handed over, which is the one graded, and opens
+the other beside it: ``open_document`` reaches only the handed document, by
+its own name, and the files the task ships, inside the folder.  While another
+document is open every tool runs on it, and each command that changes it is
+written to its file, so the sheet file reads it back with
+``reload_references``.  ``submit`` while another document is open is refused
+with the way back, since nothing of that document is the answer.  At the end
+the handed document is graded as a reader opening it would find it: its
+references read from the files as they then stand.  What was done to the
+other document is kept in the journal block (``opened``), so the block still
+rebuilds the episode.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import time
@@ -41,15 +57,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from roaddraft.api.session import Session
 from roaddraft.document import confine
-from roaddraft.document.fileformat import INTERCHANGE_EXT
+from roaddraft.document.fileformat import INTERCHANGE_EXT, write_document
 from roaddraft.eval import prices
 from roaddraft.eval.agents import Agent, AgentRefusal, Submit, ToolCall
 from roaddraft.eval.budget import Budgets, BudgetState
 from roaddraft.eval.prompts import SystemExtra
 from roaddraft.eval.providers.base import LimitReached
 from roaddraft.eval.tools import (
-    DIALECTS, HARNESS_TOOLS, MODES, RENDER_QUERIES, allowed_names, repair_params, shape_params,
-    tool_definitions,
+    DIALECTS, DOCUMENT_TOOLS, HARNESS_DEFINITIONS, HARNESS_TOOLS, MODES, RENDER_QUERIES,
+    allowed_names, repair_params, shape_params, tool_definitions,
 )
 from roaddraft.eval.trajectory import TrajectoryWriter, episode_path
 from roaddraft.tasks.brief import Task
@@ -70,6 +86,9 @@ INVALID = ("invalid_params", "unknown_command")
 RESULT_CAP = 30000
 #: ``get_document_state`` summary keys the per-turn state keeps
 STATE_KEYS = ("meta", "model", "sheets", "layers", "counts", "references", "design")
+#: the error type of a ``submit`` called while another document than the handed one is open:
+#: the call is answered with the way back and the episode goes on
+WRONG_DOCUMENT = "wrong_document"
 
 
 @dataclass(frozen=True)
@@ -210,6 +229,15 @@ class Episode:
         self.out_root = out_root
         self.pins = pins
         self.session: Optional[Session] = None
+        #: another document of the task, open in place of the one handed over (``open_document``):
+        #: its session and its file name; None while the handed document is the open one
+        self.other: Optional[Session] = None
+        self.other_name: Optional[str] = None
+        #: what was done to other documents, in order, for the journal block: the file, how
+        #: many commands the handed document had taken when it was opened, its own commands
+        self.opened: List[dict] = []
+        #: the copies of other documents the handed one had read before they were changed
+        self._outdated: List[tuple] = []
         #: the episode folder every tool's file access is held to (``reset``)
         self.root: Optional[confine.Root] = None
         self.state = BudgetState()
@@ -269,9 +297,15 @@ class Episode:
         relative path the agent gives resolves."""
         return value if self.root is None else self.root.show(value, base=self.root.real)
 
+    @property
+    def desk(self) -> Session:
+        """The session the tools run on: the handed document's, unless another
+        document of the task is open in its place."""
+        return self.other if self.other is not None else self.session
+
     def state_summary(self) -> dict:
         with confine.held(self.root):
-            result = self.session.query("get_document_state", {"detail": "summary"})
+            result = self.desk.query("get_document_state", {"detail": "summary"})
         summary = self._shown(result.get("summary") or {})
         return {k: summary[k] for k in STATE_KEYS if k in summary}
 
@@ -327,16 +361,21 @@ class Episode:
                             f"{call.name!r} is not a tool of this episode", hint)
         elif name in HARNESS_TOOLS:
             result = self._shown(self._harness_tool(name, params))
+        elif name in DOCUMENT_TOOLS:
+            result = self._shown(self._open_document(params))
         else:
             shaped, notes = shape_params(name, params)
             shaped, repairs = repair_params(shaped, self._schemas.get(name))
             if name in RENDER_QUERIES and self.config.mode == "vision":
                 shaped = dict(shaped, include_base64=True)
+            desk = self.desk
             with confine.held(self.root):
                 if name in RENDER_QUERIES or name in self.session_queries():
-                    result = self.session.query(name, shaped)
+                    result = desk.query(name, shaped)
                 else:
-                    result = self.session.execute(name, shaped)
+                    result = desk.execute(name, shaped)
+                    if desk is self.other and result.get("ok"):
+                        self._save_other()
             result = self._shown(result)
             if (notes or repairs) and isinstance(result, dict):
                 result = dict(result)
@@ -359,7 +398,91 @@ class Episode:
             self._query_names = {q["name"] for q in self.session.manifest()["queries"]}
         return self._query_names
 
+    # ------------------------------------------------- another document of the task
+
+    @property
+    def handed_name(self) -> str:
+        """The file name of the document the task hands over."""
+        return Path(self.session.doc._path).name
+
+    def _documents(self) -> str:
+        """The task's documents, by name, for an ``open_document`` that missed."""
+        def tag(name: str, handed: bool) -> str:
+            notes = (["handed to you"] if handed else []) + (
+                ["open now"] if name == (self.other_name or self.handed_name) else [])
+            return name + (f" ({', '.join(notes)})" if notes else "")
+        names = [tag(self.handed_name, True)] + [tag(n, False) for n in sorted(self.task.files)]
+        return "the documents of this task: " + ", ".join(names)
+
+    def _open_document(self, params: dict) -> dict:
+        """``open_document``: switch the tools to another document of the task,
+        or back to the one handed over.  Only those can be opened: the handed
+        document by its own name, and the files the task ships, each inside the
+        episode folder (a path that leads out of it is refused as every other
+        tool refuses it)."""
+        name = "open_document"
+        path = params.get("path")
+        if not isinstance(path, str) or not path.strip() or set(params) - {"path"}:
+            spec = HARNESS_DEFINITIONS[name]["input_schema"]
+            return {"ok": False, "name": name, "warnings": [], "error": {
+                "type": "invalid_params", "message": "open_document takes the path of a document "
+                "file, and nothing else", "valid_params_schema": spec,
+                "example": {"path": self.handed_name}}}
+        folder = Path(self.root.given)
+        target = Path(path).expanduser()
+        target = target if target.is_absolute() else folder / target
+        if not self.root.contains(target):
+            refused = confine.OutsideRoot(path)
+            return _error(name, "command_failed", f"cannot open {path}: {refused}", refused.hint)
+        real = os.path.realpath(target)
+        handed = os.path.realpath(self.session.doc._path)
+        shipped = {os.path.realpath(folder / n): n for n in self.task.files}
+        if real != handed and real not in shipped:
+            return _error(name, "command_failed", f"no such document: {path}", self._documents())
+        warnings: List[str] = []
+        if real == handed:
+            self._leave_other()
+            stale = [ref.name for ref in self.session.doc.references.values()
+                     if any(self.session.doc._ref_cache.get(ref.id) is hit
+                            for hit in self._outdated)]
+            warnings += [f"{ref} has changed since this file read it; reload_references reads "
+                         f"it again as it now stands" for ref in stale]
+        elif shipped[real] != self.other_name:
+            self._leave_other()
+            other = Session.load(folder / shipped[real], out_dir=self.session.out_dir)
+            other.base_dir = self.session.base_dir
+            self.other, self.other_name = other, shipped[real]
+            self.opened.append({"document": self.other_name, "at": len(self.session.bus.journal),
+                                "entries": other.bus.journal})
+        with confine.held(self.root):
+            state = self.desk.query("get_document_state", {})
+        return {"ok": True, "name": name, "opened": self.other_name or self.handed_name,
+                "graded": self.handed_name, "state": state, "warnings": warnings}
+
+    def _leave_other(self) -> None:
+        """Put the other document away: its file already holds every change."""
+        if self.other is not None and not self.other.bus.journal:
+            self.opened.pop()  # opened and left as it was: nothing to keep
+        self.other, self.other_name = None, None
+
+    def _save_other(self) -> None:
+        """Write the other document to its file after a command changed it, as
+        the MCP server's autosave does, and note which copies of it the handed
+        document read before the change: those are out of date until it reloads."""
+        path = write_document(self.other.doc._path, self.other.doc.to_dict())
+        real = os.path.realpath(path)
+        for hit in self.session.doc._ref_cache.values():
+            if os.path.realpath(hit[0]) == real and not any(hit is seen for seen in self._outdated):
+                self._outdated.append(hit)
+
     def _harness_tool(self, name: str, params: dict) -> dict:
+        if name == "submit" and self.other is not None:
+            # nothing of the other document is the answer: say which one is, and the way back
+            return _error(name, WRONG_DOCUMENT,
+                          f"{self.other_name} is the open document, and the task grades "
+                          f"{self.handed_name}, the file you were handed",
+                          f"open_document {self.handed_name} first; reload_references there reads "
+                          f"{self.other_name} as it now stands; finish that file, then submit")
         if name == "get_task_brief":
             return {"ok": True, "name": name, "brief": self.brief_text}
         if name == "run_check":
@@ -369,7 +492,19 @@ class Episode:
                 return _error(name, "budget_exhausted",
                               f"run_check has been used {self.state.run_check_uses} times, its budget")
             self.state.note_check()
-            report = verify(self.session.doc, self.task.truth, prompt_level=self.config.level)
+            # graded as submit would grade it: where another document was changed, the handed
+            # one's references read from the files as they stand (and its own copies kept)
+            doc = self.session.doc
+            changed = any(visit["entries"] for visit in self.opened)
+            copies = dict(doc._ref_cache) if changed else {}
+            if changed:
+                doc._ref_cache.clear()
+            try:
+                report = verify(doc, self.task.truth, prompt_level=self.config.level)
+            finally:
+                if changed:
+                    doc._ref_cache.clear()
+                    doc._ref_cache.update(copies)
             view = report.agent_view()
             return {"ok": True, "name": name,
                     "budget_remaining": self.budgets.run_checks - self.state.run_check_uses, **view}
@@ -472,6 +607,8 @@ class Episode:
                 for call in calls:
                     if call.name == "submit":
                         results.append(self.execute(call))
+                        if (results[-1].get("error") or {}).get("type") == WRONG_DOCUMENT:
+                            continue  # another document is open: answered, and the episode goes on
                         submitted = True
                         break
                     tripped = self.state.tripped(self.budgets)
@@ -543,7 +680,17 @@ class Episode:
         """Grade the episode: the report (``effective_score``, ``rubric_score``,
         ``hard_failed``, ``to_dict``) and the records written before the end
         record -- the journal that re-scores it, the verify report, the audit.
-        A probe task (``eval/probe_tasks.py``) grades with its own check."""
+        A probe task (``eval/probe_tasks.py``) grades with its own check.
+
+        What is graded is the document handed over, whichever is open at the
+        end.  Where the episode changed another document, the handed one is
+        read as a reader opening it would find it, its references from the
+        files as they now stand, and the journal block keeps what was done to
+        the other (``opened``), which ``trajectory.replay_journal`` replays."""
+        opened = [{**visit, "entries": list(visit["entries"])} for visit in self.opened
+                  if visit["entries"]]
+        if opened:
+            self.session.doc._ref_cache.clear()
         report = verify(self.session.doc, self.task.truth, journal=self.session.bus.journal,
                         prompt_level=self.config.level)
         audit = audit_journal(self.session.bus.journal, self.session.doc)
@@ -551,6 +698,8 @@ class Episode:
                    "entries": list(self.session.bus.journal),
                    "truth": self.task.truth.to_dict(),
                    "document_name": f"{self.task.task_id}.rdoc.json"}
+        if opened:
+            journal["opened"] = opened
         if self.task.files:
             journal["files"] = self.task.files
         return report, [journal, {"type": "verify", **report.to_dict()}, {"type": "audit", **audit}]

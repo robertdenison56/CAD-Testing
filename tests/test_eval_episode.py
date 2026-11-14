@@ -11,10 +11,12 @@ import pytest
 
 from roaddraft.eval import taskset as tasksets
 from roaddraft.eval.agents import Agent, AgentRefusal, NullAgent, OracleAgent, ReplayAgent, ScriptedAgent, Submit, ToolCall
+from roaddraft.eval.agents import calls_from_commands
 from roaddraft.eval.budget import Budgets
 from roaddraft.eval.episode import Episode, EpisodeConfig, run_episode
-from roaddraft.eval.trajectory import read_episode
+from roaddraft.eval.trajectory import read_episode, replay_journal, reverify
 from roaddraft.tasks.generator import generate_task
+from roaddraft.tasks.reference import solution_commands
 
 DEV = tasksets.load("d1-dev")["tasks"]
 
@@ -261,3 +263,191 @@ def test_a_scoring_failure_still_writes_the_end_record(tmp_path, monkeypatch, ca
     rec = read_episode(r.path)
     assert rec["end"]["termination"] == "error" and rec["end"]["effective_score"] == 0.0 and rec["verify"] is None
     assert "verifier boom" in capsys.readouterr().err
+
+
+# ---------------------------- a revision made in the base drawing (open_document)
+
+#: the checks such a task reads in the base drawing: the design, its centerline, its edges
+BASE_CHECKS = ("D1-01", "D1-12", "D1-15")
+
+
+@pytest.fixture(scope="module")
+def base_task():
+    """A curve's radius changed by the drafter in the base drawing the sheet file references."""
+    return generate_task(18000, curves=1, task_type="annotate-base", revise="base-radius")
+
+
+@pytest.fixture(scope="module")
+def station():
+    """The same flavour, a restation: nothing moves, so the base drawing's edges stay."""
+    return generate_task(18002, curves=2, task_type="annotate-base", revise="base-station")
+
+
+class _Turns(Agent):
+    """Plays the given turns, a list of calls each, then stops without calling submit."""
+    name = "turns"
+
+    def __init__(self, *turns):
+        self.script = [list(turn) for turn in turns]
+
+    def act(self, obs):
+        return self.script.pop(0) if self.script else Submit()
+
+
+def _halves(task):
+    """The reference solution up to its last command in the base drawing, and from the
+    open_document that goes back to the sheet file on; and the two file names."""
+    commands = solution_commands(task)
+    back = max(i for i, (name, _) in enumerate(commands) if name == "open_document")
+    assert commands[back][1]["path"] == f"{task.task_id}.rdoc.json"
+    return commands[:back], commands[back:], task.brief.deliverable["basefile"], commands[back][1]["path"]
+
+
+def _desk(task):
+    ep = Episode(task, NullAgent(), EpisodeConfig(mode="single"))
+    ep.reset()
+    return ep
+
+
+def _credits(result):
+    return {c.id: c.credit for c in result.report.in_scope()}
+
+
+def test_oracle_scores_100_and_null_0_on_a_revision_made_in_the_base_drawing(base_task, station, tmp_path):
+    for task in (base_task, station):
+        in_base, _, base_name, _ = _halves(task)
+        for level in ("explicit", "vague"):
+            config = EpisodeConfig(level=level)
+            r = run_episode(task, OracleAgent(), config, out_root=tmp_path)
+            assert r.termination == "submit" and r.faults == 0, (task.task_id, level, r.error)
+            assert r.effective_score == 100.0 and not r.report.hard_failed, (task.task_id, level)
+            assert run_episode(task, NullAgent(), config).effective_score == 0.0
+            # the file alone re-scores it: what was done in the base drawing is in its journal block
+            assert reverify(r.path).effective_score == 100.0
+            visit, = read_episode(r.path)["journal"]["opened"]
+            assert visit["document"] == base_name
+            done = [e["name"] for e in visit["entries"]]
+            assert done[0] == "modify_alignment" and done == [name for name, _ in in_base[2:]]
+            assert visit["at"] == 1   # the handed document had taken its set_meta, and no more
+
+
+def test_submit_with_the_base_drawing_open_is_refused_with_the_way_back_and_the_episode_goes_on(
+        base_task, station, tmp_path):
+    for task in (base_task, station):
+        in_base, rest, base_name, handed = _halves(task)
+
+        def early():
+            return calls_from_commands(in_base) + [ToolCall("submit", {})]
+
+        def late():
+            return calls_from_commands(rest) + [ToolCall("submit", {"note": "done"})]
+
+        r = run_episode(task, _Turns(early(), late()), out_root=tmp_path)
+        assert r.termination == "submit" and r.turns == 2 and r.effective_score == 100.0
+        # the refused submit is a step and a fault, like any call that failed
+        assert r.steps == len(in_base) + len(rest) + 2 and r.faults == 1
+        first, second = read_episode(r.path)["turns"]
+        refused = first["results"][-1]
+        assert refused["ok"] is False and refused["error"]["type"] == "wrong_document"
+        assert base_name in refused["error"]["message"] and handed in refused["error"]["message"]
+        assert "open_document" in refused["error"]["hint"]
+        assert "reload_references" in refused["error"]["hint"]
+        assert first["assistant"]["submit"] is False and second["assistant"]["submit"] is True
+        assert second["results"][-1] == {"ok": True, "name": "submit", "message": "submitted"}
+        # in one turn the calls after the refused submit still run, and the next submit ends it
+        r = run_episode(task, _Turns(early() + late() + [ToolCall("create_layer", {"name": "never"})]))
+        assert r.termination == "submit" and r.turns == 1 and r.effective_score == 100.0
+        assert r.steps == len(in_base) + len(rest) + 2 and r.faults == 1
+
+
+def test_an_episode_that_ends_in_the_base_drawing_is_graded_on_the_sheet_file_as_it_now_reads(
+        base_task, station):
+    for task in (base_task, station):
+        in_base, _, _, _ = _halves(task)
+        idle = _credits(run_episode(task, NullAgent()))
+        assert idle["D1-15"] < 1.0
+        # the sheet file reads the base drawing first, so it holds a copy of the old design
+        read = ToolCall("list_alignments", {"include_references": True})
+        r = run_episode(task, _Turns([read] + calls_from_commands(in_base)))
+        assert r.termination == "submit" and r.error is None
+        assert r.report.task_id == task.task_id and r.effective_score < 100.0
+        credit = _credits(r)
+        # the design, the centerline and the edges are read in the base drawing's file as it
+        # now stands, not in the copy the sheet file had
+        assert all(credit[check] == 1.0 for check in BASE_CHECKS), credit
+        # the lettering is the sheet file's, still the old design's: every other check stands
+        # where it does when nothing is done
+        assert credit["D1-04"] < 1.0 and credit["D1-05"] < 1.0
+        assert ({k: v for k, v in credit.items() if k not in BASE_CHECKS}
+                == {k: v for k, v in idle.items() if k not in BASE_CHECKS})
+
+
+def test_the_whole_solution_then_the_base_drawing_left_open_still_scores_100(base_task, station, tmp_path):
+    for task in (base_task, station):
+        in_base, rest, base_name, _ = _halves(task)
+        again = ToolCall("open_document", {"path": base_name})
+        r = run_episode(task, _Turns(calls_from_commands(in_base + rest) + [again]), out_root=tmp_path)
+        assert r.termination == "submit" and r.faults == 0 and r.steps == len(in_base) + len(rest) + 1
+        assert r.effective_score == 100.0 and not r.report.hard_failed
+        # the last visit changed nothing, and the block keeps only the one that did
+        assert len(read_episode(r.path)["journal"]["opened"]) == 1
+        assert reverify(r.path).effective_score == 100.0
+
+
+def test_back_in_the_sheet_file_a_changed_base_drawing_is_flagged_until_it_is_reloaded(base_task):
+    in_base, _, base_name, handed = _halves(base_task)
+    change = next(ToolCall(name, dict(params)) for name, params in in_base if name == "modify_alignment")
+    read = ToolCall("list_alignments", {"include_references": True})
+    ep = _desk(base_task)
+    old = ep.execute(read)["alignments"][0]   # the sheet file reads the base drawing
+    assert ep.execute(ToolCall("open_document", {"path": base_name}))["warnings"] == []
+    assert ep.execute(change)["ok"] is True
+    back = ep.execute(ToolCall("open_document", {"path": handed}))
+    warning, = back["warnings"]
+    assert "has changed since this file read it" in warning and "reload_references" in warning
+    assert ep.execute(read)["alignments"][0] == old   # its copy is still the old design
+    assert ep.execute(ToolCall("reload_references", {}))["ok"] is True
+    assert ep.execute(read)["alignments"][0] != old
+    there = ep.execute(ToolCall("open_document", {"path": base_name}))
+    again = ep.execute(ToolCall("open_document", {"path": handed}))
+    assert there["ok"] and again["ok"] and there["warnings"] == [] and again["warnings"] == []
+    assert [visit["document"] for visit in ep.opened] == [base_name] and ep.state.faults == 0
+    # the warning is for a copy the sheet file had read: one that never read it has none
+    ep = _desk(base_task)
+    ep.execute(ToolCall("open_document", {"path": base_name}))
+    assert ep.execute(change)["ok"] is True
+    assert ep.execute(ToolCall("open_document", {"path": handed}))["warnings"] == []
+
+
+def test_a_base_drawing_opened_and_left_as_it_was_leaves_no_record(base_task):
+    _, _, base_name, handed = _halves(base_task)
+    ep = _desk(base_task)
+    assert ep.execute(ToolCall("open_document", {"path": base_name}))["ok"] is True
+    assert ep.execute(ToolCall("list_alignments", {}))["count"] == 1   # a query changes nothing
+    back = ep.execute(ToolCall("open_document", {"path": handed}))
+    assert back["ok"] is True and back["warnings"] == []
+    assert ep.opened == [] and ep.other is None
+    _, records = ep.finish()
+    assert records[0]["type"] == "journal" and "opened" not in records[0]
+
+
+def test_replay_journal_rebuilds_the_document_of_an_episode_that_changed_the_base_drawing(
+        base_task, station, tmp_path):
+    for task in (base_task, station):
+        base_name = task.brief.deliverable["basefile"]
+        ep = Episode(task, OracleAgent(), EpisodeConfig(), out_root=tmp_path)
+        journal = read_episode(ep.run().path)["journal"]
+        assert journal["opened"]
+        replayed = replay_journal(journal)
+        assert replayed.doc.to_dict() == ep.session.doc.to_dict()
+        # the base drawing it rebuilt beside the document is the one the episode left
+        rebuilt = json.loads((Path(replayed.doc._path).parent / base_name).read_text())
+        assert rebuilt == json.loads((Path(ep.root.real) / base_name).read_text())
+        assert rebuilt != task.files[base_name]
+    # the old path: a block with no other document replays as it always has, with files or none
+    for task in (generate_task(1), generate_task(7, task_type="attach-reference")):
+        ep = Episode(task, OracleAgent(), EpisodeConfig(), out_root=tmp_path)
+        r = ep.run()
+        journal = read_episode(r.path)["journal"]
+        assert r.effective_score == 100.0 and "opened" not in journal
+        assert replay_journal(journal).doc.to_dict() == ep.session.doc.to_dict()

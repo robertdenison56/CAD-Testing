@@ -24,6 +24,15 @@ designer has changed its design:
   drafter's to make (2026-11-12, Robert: "Yes, revision only"): the start keeps
   the old design, and the truth grades the design (D1-15) and the centerline
   drawn from it (D1-01) beside the lettering;
+- on ``annotate-base`` again, by one of ``BASE_KINDS`` (2026-11-13, Robert:
+  "allow them, in the pin's cut"), the change is the drafter's to make where
+  the design lives: the base drawing is handed over on the old design, with
+  its old centerline and pavement edges.  The drafter opens it, changes the
+  line there, redraws its linework, goes back to the sheet file and reads the
+  base drawing again, then takes off the old lettering and letters the line
+  again.  The truth grades the design, the centerline and the pavement edges
+  in the base drawing (D1-15, D1-01, D1-12, read through the reference)
+  beside the lettering;
 - one or two notes lettered on the paper, each citing a station of the line
   (``CONFORM STA 147+40.00``), the first of them at a point the change
   restations where the line has one (a one-curve line whose PI moves keeps
@@ -46,9 +55,12 @@ plus how far past it the note is, is the note's new station.
 
 A revised truth's scope carries ``eval.tools.REVISION_SCOPE`` beside its
 groups, which puts ``modify_alignment`` and ``update_labels`` on the drafter's
-tool list.  No other task has it, so no other task's list moves.  A PI is moved
-by the arithmetic a drafter does from ``measure`` (``moved_pi``), so a drafter
-who works it out lands on the revised design exactly.
+tool list.  No other task has it, so no other task's list moves.  A truth of
+one of ``BASE_KINDS`` carries ``tasks.types.BASE_SCOPE`` as well, which adds
+``open_document`` and ``reload_references`` (``eval.tools.BASE_COMMANDS``) and
+tells the verifier where the design is graded; neither earlier flavour has it.
+A PI is moved by the arithmetic a drafter does from ``measure`` (``moved_pi``),
+so a drafter who works it out lands on the revised design exactly.
 
 The revision is drawn from a stream of its own (``revise:<seed>``) and the
 unrevised task's id is what it always was.  Equations are refused: what a
@@ -74,6 +86,11 @@ from roaddraft.tasks.types import task_type
 #: the types the dial fits: a sheet set up and lettered, the lettering asked for
 REVISE_TYPES = ("annotate-base", "annotate-sheet")
 KINDS = ("radius", "pi", "station")
+#: the same three changes, left for the drafter to make in the base drawing that holds the
+#: design (``annotate-base`` only): what ``revise=`` takes for that flavour, and what a
+#: manifest entry of it carries.  The brief's ``revision`` still names its kind of ``KINDS``
+BASE_PREFIX = "base-"
+BASE_KINDS = tuple(BASE_PREFIX + kind for kind in KINDS)
 #: what the labelers letter in the model from an alignment (a curve number's bubble and
 #: leader go with it); the curve table is on the sheet
 LETTERING_KINDS = ("tick", "station", "pc", "pt", "pcc", "prc", "equation", "bearing", "mc",
@@ -350,22 +367,29 @@ def _brief(task: Task, design: dict, D: dict):
     return brief
 
 
-def _truth(brief, own: bool):
+def _truth(brief, own: bool, in_base: bool = False):
     """The revised design's truth.  Its scope carries ``REVISION_SCOPE``, which
     puts ``modify_alignment`` and ``update_labels`` on the drafter's tool list;
     where the drafter makes the change, the design itself and its drawn
-    centerline are graded too (D1-15, D1-01)."""
+    centerline are graded too (D1-15, D1-01).  Where the drafter makes it in
+    the base drawing (``in_base``), the pavement edges drawn there are graded
+    as well (D1-12), and the scope carries ``BASE_SCOPE``: the three are read
+    in the base drawing, and ``open_document`` and ``reload_references`` join
+    the tool list."""
     from roaddraft.eval.tools import REVISION_SCOPE
-    from roaddraft.tasks.types import GROUPS
+    from roaddraft.tasks.types import BASE_SCOPE, GROUPS
     truth = compute_ground_truth(brief)
-    want = set(truth.scope) | ({"design", "linework"} if own else set())
-    truth.scope = [g for g in GROUPS if g in want] + [REVISION_SCOPE]
+    want = (set(truth.scope) | ({"design", "linework"} if own else set())
+            | ({"edges"} if in_base else set()))
+    truth.scope = ([g for g in GROUPS if g in want] + [REVISION_SCOPE]
+                   + ([BASE_SCOPE] if in_base else []))
     return truth
 
 
-def _attempt(task: Task, rng: random.Random, kind: str, finished, stale: List[str]
-             ) -> Optional[Task]:
-    """One try at revising ``task``: the revised task, or None."""
+def _attempt(task: Task, rng: random.Random, kind: str, finished, stale: List[str],
+             in_base: bool = False) -> Optional[Task]:
+    """One try at revising ``task``: the revised task, or None.  ``in_base``:
+    the change is left for the drafter to make in the base drawing."""
     from roaddraft.api.session import Session
     from roaddraft.document.document import Document
     from roaddraft.tasks.reference import session_for_task
@@ -393,7 +417,16 @@ def _attempt(task: Task, rng: random.Random, kind: str, finished, stale: List[st
     sheet_doc = Document.from_dict(copy.deepcopy(finished.doc.to_dict()))
     geometry = kind != "station"
     # -- the design changed where it lives, its linework redrawn to it
+    handed_base = None
     if ttype.design_referenced:
+        if in_base:
+            # the change is the drafter's to make there: the base drawing is handed over as
+            # it was, on the old design with its old linework (its profile gone, as the
+            # revised design has none).  The notes below are still placed against the
+            # revised base drawing, which is what the finished sheet shows
+            kept = Document.from_dict(copy.deepcopy(files[D0["basefile"]]))
+            kept.design.profiles.clear()
+            handed_base = kept.to_dict()
         base = Document.from_dict(files[D0["basefile"]])
         base.design.alignments[name] = new
         base.design.profiles.clear()
@@ -413,11 +446,13 @@ def _attempt(task: Task, rng: random.Random, kind: str, finished, stale: List[st
         # as the revised design has none
         sheet_doc.design.profiles.clear()
         alignment = name
-    own = not ttype.design_referenced
+    own = in_base or not ttype.design_referenced
+    # in this file the labels follow the change; through a reference they do not, so what
+    # was lettered from the old design comes off, whoever changed the base drawing
     D["revision"] = {**change, "alignment": alignment, "by_drafter": own,
-                     "stale": [] if own else list(stale), "notes": []}
+                     "stale": [] if own and not in_base else list(stale), "notes": []}
     brief = _brief(task, design, D)
-    truth = _truth(brief, own)
+    truth = _truth(brief, own, in_base)
     plain = Task(brief=brief, truth=truth, baseline=sheet_doc.to_dict(), files=files)
     # -- the notes that cite the line, placed where the drafter can restation them
     session = session_for_task(plain)
@@ -460,8 +495,10 @@ def _attempt(task: Task, rng: random.Random, kind: str, finished, stale: List[st
         return None
     D["revision"]["notes"] = notes
     brief = _brief(task, design, D)
-    truth = _truth(brief, own)
+    truth = _truth(brief, own, in_base)
     session.doc.meta.update(task_id=brief.task_id)
+    if handed_base is not None:
+        files[D0["basefile"]] = handed_base
     if ttype.design_referenced and "task_id" in (files[D0["basefile"]].get("meta") or {}):
         files[D0["basefile"]]["meta"]["task_id"] = brief.task_id
     return Task(brief=brief, truth=truth, baseline=session.doc.to_dict(), files=files)
@@ -500,20 +537,28 @@ def left_stale(task: Task, doc) -> List[str]:
 
 def revised(task: Task, seed: int, kind=True) -> Task:
     """``task``'s finished sheet after the designer has changed its design:
-    ``kind`` of ``KINDS`` (True: the seed's own pick).  Raises ``ValueError``
-    when no revision of the seed's line keeps it lettered cleanly."""
+    ``kind`` of ``KINDS`` (True: the seed's own pick), or of ``BASE_KINDS`` for
+    the same change left to the drafter to make in the base drawing.  Raises
+    ``ValueError`` when no revision of the seed's line keeps it lettered
+    cleanly."""
     D = task.brief.deliverable
     ttype = task_type(D["task_type"])
     rng = random.Random(f"revise:{int(seed)}")
     if kind is True:
         kind = rng.choice(KINDS)
+    in_base = kind in BASE_KINDS
+    if in_base:
+        kind = kind[len(BASE_PREFIX):]
     if kind not in KINDS:
-        raise ValueError(f"unknown revision {kind!r}; kinds: {', '.join(KINDS)}")
+        raise ValueError(f"unknown revision {kind!r}; kinds: {', '.join(KINDS + BASE_KINDS)}")
     why = fits(ttype, len(D["sheets"]),
                bool(Alignment.from_dict(task.brief.design["alignments"][
                    task.brief.alignment_name]).equations))
     if why:
         raise ValueError(why)
+    if in_base and not ttype.design_referenced:
+        raise ValueError(f"a {ttype.name} task keeps its design in its own file; a change made "
+                         f"in the base drawing ({', '.join(BASE_KINDS)}) fits annotate-base")
     finished = _finished(task)
     name = task.brief.alignment_name
     S = task.brief.drafting_spec
@@ -521,7 +566,7 @@ def revised(task: Task, seed: int, kind=True) -> Task:
                  if ttype.design_referenced else name)
     stale = _stale(finished, alignment, D["sheets"][0]["name"], kind)
     for _attempt_n in range(ATTEMPTS):
-        made = _attempt(task, rng, kind, finished, stale)
+        made = _attempt(task, rng, kind, finished, stale, in_base)
         if made is None:
             continue
         before, after, left = _scores(made)
@@ -531,5 +576,5 @@ def revised(task: Task, seed: int, kind=True) -> Task:
                      f"reference letters cleanly in {ATTEMPTS} tries")
 
 
-__all__ = ["REVISE_TYPES", "KINDS", "LETTERING_KINDS", "STALE_PHASES", "NOTE_LAYER",
+__all__ = ["REVISE_TYPES", "KINDS", "BASE_KINDS", "LETTERING_KINDS", "STALE_PHASES", "NOTE_LAYER",
            "station_text", "moved_pi", "fits", "revised", "left_stale"]

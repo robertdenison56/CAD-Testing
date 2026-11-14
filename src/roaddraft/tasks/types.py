@@ -137,6 +137,14 @@ def _layout_but(*phases) -> List[str]:
 LAYOUT_GROUPS = tuple(g for p, gs in PHASES if p in LAYOUT_PHASES for g in gs if g != "layers")
 #: groups an agent may add to the design: creating these is the task, not tampering
 DESIGN_GROUPS = ("design",)
+#: a mark a truth's scope may carry beside its groups (the revision dial's base-drawing
+#: flavour, ``tasks.revise.BASE_KINDS``, 2026-11-13): the design the task asks the drafter to
+#: change lives in the base drawing the sheet file references, so the design (D1-15), the
+#: centerline drawn from it (D1-01) and the pavement edges (D1-12) are graded there, read
+#: through the reference.  No group, so no check is in play for it; a truth without it is
+#: graded as it always was.  ``eval.tools`` reads it too: with the revision mark it puts
+#: ``open_document`` and ``reload_references`` on the drafter's tool list
+BASE_SCOPE = "base"
 
 TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
     # -- the layout sheet, one phase at a time
@@ -356,7 +364,7 @@ def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str
 
 
 __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "LAYOUT_GROUPS",
-           "DESIGN_GROUPS",
+           "DESIGN_GROUPS", "BASE_SCOPE",
            "MODEL_PHASES", "LABEL_GROUPS", "CHECK_GROUPS", "GROUP_LAYER_ROLE", "TaskType",
            "TASK_TYPES", "REAL_TASK_TYPES", "HARD_TASK_TYPES", "REAL_JOB_TYPES", "REAL_SHEET_PHASES",
            "DEFAULT_TYPE", "task_type",

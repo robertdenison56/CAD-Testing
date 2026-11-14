@@ -23,7 +23,7 @@ from roaddraft.eval.providers.fake import turn
 from roaddraft.eval.trajectory import read_episode
 from roaddraft.tasks.generator import generate_task
 from roaddraft.tasks.real import build_real_task
-from roaddraft.tasks.reference import reference_solution, session_for_task
+from roaddraft.tasks.reference import reference_solution, session_for_task, solution_commands
 
 REFUSED = "is outside the folder this session may read and write"
 
@@ -233,3 +233,160 @@ def test_the_root_is_held_only_for_the_tool_call():
     agent = Peek()
     run_episode(generate_task(1), agent)
     assert agent.seen == [None, None] and confine.current() is None
+
+
+# ------------------------------------ another document of the task: open_document
+
+@pytest.fixture(scope="module")
+def base_task():
+    """A revision the drafter makes in the base drawing the sheet file references: the
+    one task whose episode opens another document (``eval.tools.BASE_COMMANDS``)."""
+    return generate_task(18000, curves=1, task_type="annotate-base", revise="base-radius")
+
+
+@pytest.fixture(scope="module")
+def base_answer(base_task, tmp_path_factory):
+    """Loadable documents outside every episode folder: the task's base file as it is
+    handed over, and the sheet file of the reference solution."""
+    folder = tmp_path_factory.mktemp("outside-base")
+    (base_name, base), = base_task.files.items()
+    (folder / base_name).write_text(json.dumps(base))
+    solved = session_for_task(base_task)
+    reference_solution(base_task, solved)
+    saved = solved.query("save_document", {"path": str(folder / "answer.rdoc.json")})
+    assert saved["ok"], saved
+    return folder
+
+
+def _open(ep, path):
+    return ep.execute(ToolCall("open_document", {"path": path}))
+
+
+def _folder_unnamed(ep, *shown):
+    text = json.dumps(shown)
+    assert ep.root.real not in text and ep.root.given not in text
+    assert "roaddraft-episode-" not in text
+
+
+def test_open_document_outside_the_folder_is_refused_and_nothing_opens(base_task, base_answer):
+    ep = _episode(base_task, mode="single")
+    folder = Path(ep.root.real)
+    handed = f"{base_task.task_id}.rdoc.json"
+    (base_name, _), = base_task.files.items()
+    up = os.path.relpath(base_answer / "answer.rdoc.json", ep.root.real)
+    assert up.startswith("..")
+    (folder / "linked.rdoc.json").symlink_to(base_answer / "answer.rdoc.json")
+    (folder / "away").symlink_to(base_answer, target_is_directory=True)
+    for given in (str(base_answer / "answer.rdoc.json"),          # absolute
+                  str(base_answer / base_name),                   # the base drawing's name, elsewhere
+                  up, f"renders/../{up}", "renders/../../x",      # through '..'
+                  "linked.rdoc.json",                             # a link to a file outside
+                  "away/answer.rdoc.json", f"away/{base_name}"):  # a link to the folder outside
+        result = _open(ep, given)
+        _refused(result, given)
+        assert ep.other is None and ep.other_name is None and ep.opened == []
+        text = json.dumps(result)
+        assert "roaddraft-episode-" not in text
+        assert str(base_answer) not in text.replace(given, "")
+    # the handed document is still the open one
+    assert ep.desk is ep.session
+    state = ep.execute(ToolCall("get_document_state", {}))
+    assert state["ok"] and state["summary"]["document"] == handed
+
+
+def test_inside_the_folder_only_the_tasks_own_documents_open(base_task):
+    ep = _episode(base_task, mode="single")
+    folder = Path(ep.root.real)
+    handed = f"{base_task.task_id}.rdoc.json"
+    (base_name, _), = base_task.files.items()
+    # loadable and inside, and not a document of the task: a copy, and the name in a subfolder
+    (folder / "copy.rdoc.json").write_text((folder / base_name).read_text())
+    (folder / "sub").mkdir()
+    (folder / "sub" / base_name).write_text((folder / base_name).read_text())
+    for given in ("copy.rdoc.json", f"sub/{base_name}", "nope.rdoc.json"):
+        result = _open(ep, given)
+        assert result["ok"] is False, result
+        assert result["error"]["message"] == f"no such document: {given}"
+        assert handed in result["error"]["hint"] and base_name in result["error"]["hint"]
+        assert ep.other is None and ep.opened == []
+        _folder_unnamed(ep, result)
+
+
+def test_the_base_drawing_opens_by_its_relative_name_and_so_does_the_handed_file_again(base_task):
+    ep = _episode(base_task, mode="single")
+    handed = f"{base_task.task_id}.rdoc.json"
+    (base_name, _), = base_task.files.items()
+    assert ep.execute(ToolCall("list_alignments", {}))["count"] == 0   # the design is not this file's
+    there = _open(ep, base_name)
+    assert there["ok"] is True, there
+    assert there["opened"] == base_name and there["graded"] == handed
+    assert there["state"]["summary"]["document"] == base_name
+    assert ep.other_name == base_name and ep.desk is ep.other
+    # every tool now answers for the base drawing, which holds the line as its own design
+    assert ep.execute(ToolCall("get_document_state", {}))["summary"]["document"] == base_name
+    listed = ep.execute(ToolCall("list_alignments", {}))
+    assert [a["name"] for a in listed["alignments"]] == [base_task.brief.alignment_name]
+    back = _open(ep, handed)
+    assert back["ok"] is True and back["opened"] == back["graded"] == handed
+    assert back["state"]["summary"]["document"] == handed
+    assert ep.other is None and ep.desk is ep.session
+    assert ep.execute(ToolCall("list_alignments", {}))["count"] == 0
+    _folder_unnamed(ep, there, listed, back, ep.state_summary())
+    assert ep.state.faults == 0
+
+
+def test_open_document_is_no_tool_of_a_task_whose_scope_does_not_open_it(task):
+    designer = generate_task(15000, curves=1, task_type="annotate-base", revise="radius")
+    for other in (task, designer):   # each ships a base file, and neither carries both marks
+        ep = _episode(other, mode="single")
+        (name, _), = other.files.items()
+        for call in (ToolCall("open_document", {"path": name}), ToolCall("reload_references", {})):
+            result = ep.execute(call)
+            assert result["ok"] is False and result["error"]["type"] == "unknown_command"
+            assert "is not a tool of this episode" in result["error"]["message"]
+        assert ep.other is None and ep.opened == []
+
+
+def test_a_change_in_the_base_drawing_is_written_to_its_file_in_the_folder_and_nowhere_else(
+        base_task, base_answer, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)   # a stray write would land in the working directory
+    ep = _episode(base_task, mode="single")
+    folder = Path(ep.root.real)
+    (base_name, _), = base_task.files.items()
+    shipped = json.dumps(base_task.files[base_name], sort_keys=True)
+    outside = (base_answer / base_name).read_text()
+    revision = base_task.brief.deliverable["revision"]   # a curve's radius, 'from' to 'to'
+    change = dict(next(p for c, p in solution_commands(base_task) if c == "modify_alignment"))
+
+    def radii():
+        saved = json.loads((folder / base_name).read_text())
+        return [pi["radius"] for pi in saved["design"]["alignments"][change["name"]]["pis"]]
+
+    assert revision["from"] in radii() and revision["to"] not in radii()
+    assert _open(ep, base_name)["ok"] is True
+    # a query, and a command the engine refuses, write nothing
+    before = (folder / base_name).read_text()
+    assert ep.execute(ToolCall("list_alignments", {}))["ok"] is True
+    assert ep.execute(ToolCall("modify_alignment", dict(change, name="NO-SUCH-LINE")))["ok"] is False
+    assert (folder / base_name).read_text() == before
+    done = ep.execute(ToolCall("modify_alignment", change))
+    assert done["ok"] is True, done
+    assert revision["to"] in radii() and revision["from"] not in radii()
+    # the base file is the only file there, as it was: no sheet file, no journal, no copy
+    assert sorted(p.name for p in folder.iterdir() if p.name != "renders") == sorted(base_task.files)
+    assert [p for p in folder.rglob("*") if p.is_file()] == [folder / base_name]
+    assert list(tmp_path.iterdir()) == []
+    assert (base_answer / base_name).read_text() == outside
+    assert json.dumps(base_task.files[base_name], sort_keys=True) == shipped
+    _folder_unnamed(ep, done)
+
+
+def test_the_trajectory_of_an_episode_that_opened_the_base_drawing_names_no_folder(
+        base_task, tmp_path):
+    r = run_episode(base_task, OracleAgent(), out_root=tmp_path)
+    assert r.effective_score == 100.0 and r.faults == 0
+    text = Path(r.path).read_text()
+    assert "roaddraft-episode-" not in text and os.getcwd() not in text
+    first = read_episode(r.path)["turns"][0]
+    opened = [x for x in first["results"] if x["name"] == "open_document"]
+    assert [x["opened"] for x in opened] == [next(iter(base_task.files)), f"{base_task.task_id}.rdoc.json"]

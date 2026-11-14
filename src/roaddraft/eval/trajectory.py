@@ -72,10 +72,18 @@ def is_complete(path) -> bool:
 
 def replay_journal(journal: dict, out_dir=None) -> Session:
     """A session rebuilt from a trajectory's journal block: the baseline
-    document, the task's files written beside it, the entries re-executed."""
+    document, the task's files written beside it, the entries re-executed.
+
+    A block may carry ``opened`` (an episode that changed another document of
+    its task, such as the base drawing a sheet file references): each is that
+    file's own commands and how many of the handed document's entries came
+    before it was opened.  They are replayed in the file at that point and
+    written back, and at the end the session's document reads its references
+    from the files as they then stand, as the episode graded it."""
     doc = Document.from_dict(journal["baseline"])
     session = Session(_document=doc, out_dir=out_dir)
     files = journal.get("files") or {}
+    folder = None
     if files:
         if out_dir is None:
             session._task_dir = tempfile.TemporaryDirectory(prefix="roaddraft-replay-")
@@ -85,11 +93,37 @@ def replay_journal(journal: dict, out_dir=None) -> Session:
         for name, content in files.items():
             (folder / name).write_text(json.dumps(content))
         session.doc._path = folder / journal.get("document_name", "replay.rdoc.json")
-    for entry in journal.get("entries", []):
+    entries = list(journal.get("entries", []))
+    opened = [v for v in journal.get("opened") or [] if int(v["at"]) <= len(entries)]
+    changed = bool(opened)
+    for i in range(len(entries) + 1):
+        while opened and int(opened[0]["at"]) <= i:
+            _replay_opened(folder, opened.pop(0))
+        if i == len(entries):
+            break
+        entry = entries[i]
         result = session.execute(entry["name"], entry.get("params") or {})
         if not result.get("ok"):
             raise RuntimeError(f"replay: {entry['name']} failed: {result['error']['message']}")
+    if changed:
+        session.doc._ref_cache.clear()
     return session
+
+
+def _replay_opened(folder: Optional[Path], visit: dict) -> None:
+    """Replay what an episode did to another document of its task, in that
+    document's file, and write it back."""
+    from roaddraft.document.fileformat import write_document
+    if folder is None:
+        raise RuntimeError(f"replay: {visit['document']} was opened, and the block ships no files")
+    path = folder / visit["document"]
+    other = Session.load(path)
+    for entry in visit.get("entries") or []:
+        result = other.execute(entry["name"], entry.get("params") or {})
+        if not result.get("ok"):
+            raise RuntimeError(f"replay: {entry['name']} in {visit['document']} failed: "
+                               f"{result['error']['message']}")
+    write_document(path, other.doc.to_dict())
 
 
 def reverify(path, level: Optional[str] = None):

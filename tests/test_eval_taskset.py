@@ -218,7 +218,7 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
     assert not set(tasksets.TRAIN_NAMES) & set(tasksets.NAMES)
     assert tasksets.TRAIN_NAMES == ("d1-train", "d1-train-hard", "d1-train-twist",
                                     "d1-train-crowd", "d1-train-revise",
-                                    "d1-train-twist-widths")
+                                    "d1-train-twist-widths", "d1-train-revise-base")
     train, hard, *_rest = (tasksets.load(n) for n in tasksets.TRAIN_NAMES)
     assert [t["seed"] for t in train["tasks"]] == list(tasksets.TRAIN_SEEDS)
     kept = [s for s in tasksets.TRAIN_HARD_SEEDS if s not in hard["skipped_seeds"]]
@@ -230,6 +230,7 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
                              | set(tasksets.TRAIN_TWIST_SEEDS) | set(tasksets.TRAIN_CROWD_SEEDS)
                              | set(tasksets.TRAIN_REVISE_SEEDS)
                              | set(tasksets.TRAIN_TWIST_WIDTH_SEEDS))
+    assert not eval_seeds & set(tasksets.TRAIN_REVISE_BASE_SEEDS)
 
 
 def test_the_twisted_training_set_is_every_seed_twisted_over_the_types_a_twist_changes():
@@ -359,6 +360,48 @@ def test_the_revised_training_set_meets_every_kind_with_every_type_count_and_twi
     entry = revised[0]
     task = tasksets.task_from_entry(entry)
     assert task.brief.deliverable["revision"]["kind"] == entry["revise"]
+    plain = {k: v for k, v in entry.items() if k != "revise"}
+    assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
+
+
+def test_the_base_drawing_revision_set_meets_every_kind_with_every_curve_count_and_twist():
+    """``d1-train-revise-base`` (2026-11-13): seeds of its own, every entry a
+    change left for the drafter to make in the base drawing (``BASE_KINDS``),
+    ``annotate-base`` on one sheet with no equation, every kind at every curve
+    count both ways round; no entry of any other set is one."""
+    from collections import Counter
+    from roaddraft.eval.tools import BASE_SCOPE, REVISION_SCOPE
+    from roaddraft.tasks.revise import BASE_KINDS, KINDS
+    assert tasksets.TRAIN_REVISE_BASE_SEEDS == range(18000, 18300)
+    manifest = tasksets.load("d1-train-revise-base")
+    based = manifest["tasks"]
+    kept = [s for s in tasksets.TRAIN_REVISE_BASE_SEEDS if s not in manifest["skipped_seeds"]]
+    assert [t["seed"] for t in based] == kept and len(kept) >= 0.95 * len(tasksets.TRAIN_REVISE_BASE_SEEDS)
+    assert all(t["revise"] in BASE_KINDS and t["task_type"] == "annotate-base"
+               and t["sheets"] == 1 and not t["equations"] for t in based)
+    for name in tasksets.NAMES + tuple(n for n in tasksets.TRAIN_NAMES
+                                       if n != "d1-train-revise-base"):
+        assert not any(t.get("revise") in BASE_KINDS for t in tasksets.load(name)["tasks"]), name
+    combos = Counter((t["revise"], t["curves"], bool(t.get("twist"))) for t in based)
+    assert len(combos) == 3 * 3 * 2  # every kind, curve count and twist
+    turned = sum(1 for t in based if t.get("twist"))
+    assert abs(turned - len(based) / 2) <= 5
+    # a kind the seed's line cannot take took the next one, and says so
+    dialed = [t for t in based if "dialed" in t]
+    assert all(t["dialed"]["revise"] != t["revise"] for t in dialed)
+    assert len(dialed) < 0.1 * len(based)
+    assert [tasksets.revise_base_dials(i)["revise"] for i in range(3)] == list(BASE_KINDS)
+    assert [tasksets.revise_base_dials(i)["curves"] for i in (0, 3, 6)] == [1, 2, 3]
+    assert [tasksets.revise_base_dials(i)["twist"] for i in (0, 9, 18)] == [False, True, False]
+    # the entry rebuilds as the change left to the drafter, the base drawing still old; with
+    # the plain kind it is the designer's change, another task
+    entry = based[0]
+    task = tasksets.task_from_entry(entry)
+    R = task.brief.deliverable["revision"]
+    assert R["by_drafter"] and R["alignment"] == "BASE:ALIGN-1" and R["kind"] in KINDS
+    assert task.truth.scope[-2:] == [REVISION_SCOPE, BASE_SCOPE]
+    designers = dict(entry, revise=R["kind"])
+    assert tasksets.task_from_entry(designers, strict=False).task_id != entry["task_id"]
     plain = {k: v for k, v in entry.items() if k != "revise"}
     assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
 

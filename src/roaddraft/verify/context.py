@@ -17,7 +17,7 @@ from roaddraft.document.document import Document
 from roaddraft.document.references import reference_alignments
 from roaddraft.document.sheets import Sheet, Viewport
 from roaddraft.tasks.brief import GroundTruth
-from roaddraft.tasks.types import GROUPS
+from roaddraft.tasks.types import BASE_SCOPE, GROUPS
 
 Rect = Tuple[float, float, float, float]
 
@@ -86,6 +86,25 @@ def given_design(doc: Document, truth: GroundTruth) -> DesignModel:
             if profile.alignment == name:
                 model.profiles[pname] = profile
     return model
+
+
+def design_home(doc: Document, truth: GroundTruth) -> Optional[Document]:
+    """The document the truth's design, the centerline drawn from it and its
+    pavement edges are graded in (D1-15, D1-01, D1-12): ``doc`` itself, as
+    always.  Only on a truth whose scope carries ``BASE_SCOPE`` (the revision
+    dial's base-drawing flavour: the design is the drafter's to change where it
+    lives, in the base drawing the sheet file references) is it that base
+    drawing, read through the reference at identity that holds the truth's
+    line -- or None when no attached reference does, and then nothing of the
+    three is there to credit.  The sheet file's own design is not looked at on
+    such a truth: a line created in it is not the base drawing's, changed."""
+    if BASE_SCOPE not in (truth.scope or ()):
+        return doc
+    names = truth_alignments(truth)
+    for _ref, base, align, placement in reference_alignments(doc):
+        if names and align.name == names[0] and placement.is_identity:
+            return base
+    return None
 
 
 def alignment_samples(align: Alignment) -> List[List[float]]:
@@ -308,6 +327,6 @@ class Context:
 
 
 __all__ = ["Context", "SheetView", "ViewportView", "given_design", "design_sources",
-           "truth_alignments",
+           "design_home", "truth_alignments",
            "alignment_samples", "segment_samples", "rect_contains", "rect_inside",
            "rect_intersection"]

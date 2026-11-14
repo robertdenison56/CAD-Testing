@@ -747,3 +747,193 @@ def test_the_revision_dial_refuses_what_it_cannot_revise():
         generate_task(15000, task_type="annotate-base", equations=True, revise="station")
     with pytest.raises(ValueError, match="not both"):
         generate_task(15000, task_type="annotate-base", crowd=True, revise="station")
+
+
+# ------------------------- the change left to the drafter in the base drawing (2026-11-13)
+
+
+def _base_revised(kind: str, twist: bool = False):
+    """``(the plain task, the one revised by ``kind`` of BASE_KINDS)`` on a seed of
+    ``d1-train-revise-base`` that took its own kind."""
+    from roaddraft.eval import taskset as tasksets
+    e = next(e for e in tasksets.load("d1-train-revise-base")["tasks"]
+             if e["revise"] == kind and bool(e.get("twist")) == twist and "dialed" not in e)
+    return (generate_task(e["seed"], curves=e["curves"], task_type="annotate-base", twist=twist),
+            generate_task(e["seed"], curves=e["curves"], task_type="annotate-base", twist=twist,
+                          revise=kind))
+
+
+BASE_REVISED = [("base-radius", False), ("base-pi", True), ("base-station", False)]
+
+
+@pytest.mark.parametrize("kind, twist", BASE_REVISED)
+def test_a_revision_left_to_the_drafter_hands_over_the_base_drawing_on_the_old_design(kind, twist):
+    """Robert, 2026-11-13: "allow them, in the pin's cut". The third flavour of
+    the dial: the design lives in the base drawing and the change is the
+    drafter's to make there, so the base drawing arrives as it was."""
+    from roaddraft.tasks.revise import BASE_KINDS
+    assert BASE_KINDS == ("base-radius", "base-pi", "base-station")
+    plain, task = _base_revised(kind, twist)
+    D = task.brief.deliverable
+    R = D["revision"]
+    assert task.task_id != plain.task_id
+    assert R["kind"] == kind[len("base-"):] and R["by_drafter"] and R["alignment"] == "BASE:ALIGN-1"
+    old = plain.brief.design["alignments"]["ALIGN-1"]
+    new = task.brief.design["alignments"]["ALIGN-1"]
+    assert old != new
+    # the base drawing: the old design and the linework drawn from it, the profile gone
+    before = Document.from_dict(plain.files[D["basefile"]])
+    base = Document.from_dict(task.files[D["basefile"]])
+    assert base.design.alignments["ALIGN-1"].to_dict() == old
+    assert not base.design.profiles
+    assert {i: e.to_dict() for i, e in base.model_entities.items()} == {
+        i: e.to_dict() for i, e in before.model_entities.items()}
+    assert base.meta["task_id"] == task.task_id
+    # the sheet file: no design of its own, lettered from the old design, the notes on the paper
+    doc = Document.from_dict(task.baseline)
+    sheet = doc.sheet_by_ref("C-101")
+    assert not doc.design.alignments
+    assert R["stale"] and all(i in doc.model_entities or i in sheet.entities for i in R["stale"])
+    assert ("TB-001" in R["stale"]) == (R["kind"] != "station")
+    assert 1 <= len(R["notes"]) <= 2
+    assert all(sheet.entities[n["id"]].content == n["before"] for n in R["notes"])
+    # the truth grades the design, its centerline and its pavement edges, and says where
+    assert task.truth.scope[-2:] == ["revision", "base"]
+    assert {"design", "linework", "edges", "ticks", "table"} <= set(task.truth.scope)
+    assert task.truth.edges and task.truth.elements
+    # the prompts: the change at both levels, made in the base drawing; the method only
+    # where the conventions are stated
+    said = (f"radius is now {R['to']:g}'" if R["kind"] == "radius" else
+            f"has moved {abs(R['by']):.2f} ft" if R["kind"] == "pi" else
+            f"restationed to begin at {R['to']}")
+    for level in ("explicit", "vague"):
+        assert said in task.brief.prompts[level]
+        assert "Make the change in the base drawing" in task.brief.prompts[level]
+    vague = task.brief.prompts["vague"]
+    assert vague.endswith("Make the change in the base drawing and bring sheet C-101 up to date.")
+    assert not any(word in vague for word in ("note", "open", "reload", "redraw", D["basefile"]))
+    explicit = task.brief.prompts["explicit"]
+    assert D["basefile"] in explicit and "reload the reference" in explicit
+    assert "pavement edges" in explicit and "restationed" in explicit
+
+
+def test_the_two_earlier_flavours_carry_no_base_mark_and_read_as_they_did():
+    for ttype, kind, twist in (("annotate-base", "radius", False),
+                               ("annotate-sheet", "station", True)):
+        _plain, task = _revised(ttype, kind, twist)
+        assert "base" not in task.truth.scope and task.truth.scope[-1] == "revision"
+        for level in ("explicit", "vague"):
+            assert "in the base drawing and" not in task.brief.prompts[level]
+            assert "reload" not in task.brief.prompts[level]
+
+
+@pytest.mark.parametrize("kind, twist", BASE_REVISED)
+def test_the_reference_changes_the_base_drawing_reloads_it_and_letters_the_sheet_again(kind, twist):
+    from roaddraft.tasks.reference import document_name, solution_commands
+    from roaddraft.tasks.revise import left_stale
+    from roaddraft.verify import verify
+    _plain, task = _base_revised(kind, twist)
+    D = task.brief.deliverable
+    geometry = D["revision"]["kind"] != "station"
+    names = [n for n, _ in solution_commands(task)]
+    head = (["set_meta", "open_document", "modify_alignment"] + (["draw_offset"] if geometry else [])
+            + ["open_document", "reload_references", "delete_entities"])
+    assert names[:len(head)] == head
+    opened = [p["path"] for n, p in solution_commands(task) if n == "open_document"]
+    assert opened == [D["basefile"], document_name(task)]
+    assert document_name(task) == f"{task.task_id}.rdoc.json"
+    # the untouched start scores nothing: the base drawing's design is not the revised one
+    for level in ("explicit", "vague"):
+        untouched = session_for_task(task)  # (kept: its folder holds the base drawing)
+        start = verify(untouched.doc, task.truth, prompt_level=level)
+        assert start.effective_score == 0.0 and start.hard_failed
+        assert "D1-15" in {c.id for c in start.in_scope() if c.credit < 1.0}
+    for level in ("explicit", "vague"):
+        session = session_for_task(task)
+        reference_solution(task, session)
+        report = verify(session.doc, task.truth, prompt_level=level)
+        assert report.rubric_score == 100.0, [(c.id, c.credit) for c in report.in_scope()]
+        assert {"D1-15", "D1-01", "D1-12"} <= {c.id for c in report.in_scope()}
+        assert left_stale(task, session.doc) == []
+        # the change was made in the base drawing's own file, beside the sheet file
+        saved = json.loads((Path(session.doc._path).parent / D["basefile"]).read_text())
+        assert saved["design"]["alignments"]["ALIGN-1"] == task.brief.design["alignments"]["ALIGN-1"]
+        assert not session.doc.design.alignments
+
+
+def _graded(task, commands, level="vague"):
+    """The result of ``commands`` run through an episode on ``task``, and each
+    graded check's credit."""
+    from roaddraft.eval.agents import ReplayAgent
+    from roaddraft.eval.episode import EpisodeConfig, run_episode
+    result = run_episode(task, ReplayAgent([{"name": n, "params": p} for n, p in commands]),
+                         EpisodeConfig(level=level))
+    return result, {c.id: c.credit for c in result.report.in_scope()}
+
+
+def test_the_base_drawings_design_centerline_and_edges_are_graded_through_the_reference():
+    """What the verifier reads in the base drawing on a truth marked for it: the
+    design (D1-15), the centerline drawn from it (D1-01) and the pavement edges
+    (D1-12).  Each left undone loses on its own check."""
+    import copy
+    from roaddraft.tasks.reference import solution_commands
+    _plain, task = _base_revised("base-radius")
+    commands = solution_commands(task)
+    whole, credits = _graded(task, commands)
+    assert whole.effective_score == 100.0 and credits["D1-15"] == credits["D1-01"] == 1.0
+    # the edges left on the old line
+    _r, credits = _graded(task, [c for c in commands if c[0] != "draw_offset"])
+    assert credits["D1-15"] == 1.0 and credits["D1-01"] == 1.0 and credits["D1-12"] < 1.0
+    # the centerline left on the old line too
+    plain = [(n, {**copy.deepcopy(p), "redraw": False} if n == "modify_alignment" else p)
+             for n, p in commands if n != "draw_offset"]
+    _r, credits = _graded(task, plain)
+    assert credits["D1-15"] == 1.0 and credits["D1-01"] < 1.0 and credits["D1-12"] < 1.0
+    # the base drawing never changed, the sheet lettered again all the same: the design is
+    # wrong where it lives, which is a hard fail
+    first = next(i for i, c in enumerate(commands) if c[0] == "open_document")
+    last = next(i for i, c in enumerate(commands) if c[0] == "reload_references")
+    untouched, credits = _graded(task, commands[:first] + commands[last + 1:])
+    assert credits["D1-15"] < 1.0 and untouched.effective_score == 0.0
+    # a line of the same name made in the sheet file is not the base drawing's, changed
+    new = task.brief.design["alignments"]["ALIGN-1"]
+    made = ("create_alignment", {"name": "ALIGN-1", "begin_station": new["begin_station"],
+                                 "pis": [list(p["point"]) + ([p["radius"]] if p["radius"] else [])
+                                         for p in new["pis"]]})
+    here, credits = _graded(task, [commands[0], made])
+    assert credits["D1-15"] < 1.0 and here.effective_score == 0.0
+
+
+def test_a_truth_without_the_base_mark_is_graded_in_its_own_document():
+    """The verifier's change is gated on the mark: every other truth has its
+    design and linework read where they always were."""
+    from roaddraft.tasks.types import BASE_SCOPE
+    from roaddraft.verify import verify
+    from roaddraft.verify.context import design_home
+    assert BASE_SCOPE == "base"
+    for task in (generate_task(1000, task_type="annotate-base", curves=2),
+                 generate_task(3, task_type="create-alignment"),
+                 _revised("annotate-base", "radius", False)[1],
+                 _revised("annotate-sheet", "radius", True)[1]):
+        doc = session_for_task(task).doc
+        assert BASE_SCOPE not in task.truth.scope
+        assert design_home(doc, task.truth) is doc
+    _plain, task = _base_revised("base-station")
+    session = session_for_task(task)
+    home = design_home(session.doc, task.truth)
+    assert home is not session.doc and list(home.design.alignments) == ["ALIGN-1"]
+    # with the reference gone there is no home: nothing to credit, and no crash
+    assert session.execute("detach_reference", {"name": "BASE"})["ok"]
+    assert design_home(session.doc, task.truth) is None
+    report = verify(session.doc, task.truth, prompt_level="vague")
+    credits = {c.id: c.credit for c in report.in_scope()}
+    assert credits["D1-15"] == credits["D1-01"] == credits["D1-12"] == 0.0
+
+
+def test_the_base_drawing_flavour_fits_only_a_task_whose_design_lives_in_one():
+    with pytest.raises(ValueError, match="fits annotate-base"):
+        generate_task(18000, task_type="annotate-sheet", curves=1, revise="base-radius")
+    with pytest.raises(ValueError, match="unknown revision"):
+        generate_task(18000, task_type="annotate-base", curves=1, revise="base-twist")
+    with pytest.raises(ValueError, match="one sheet"):
+        generate_task(18000, task_type="annotate-base", sheets=2, revise="base-radius")

@@ -19,7 +19,7 @@ from roaddraft.api.session import Session
 from roaddraft.design.horizontal import Alignment
 from roaddraft.design.labels import DEFAULT_VALIGN
 from roaddraft.document.document import Document
-from roaddraft.document.fileformat import INTERCHANGE_EXT
+from roaddraft.document.fileformat import INTERCHANGE_EXT, write_document
 from roaddraft.tasks.brief import Task
 from roaddraft.tasks.types import PHASE_ORDER, task_type  # noqa: F401
 
@@ -240,7 +240,12 @@ def solution_commands(task: Task) -> List[tuple]:
     revised task (the generator's revision dial, ``tasks.revise``) the start is
     a finished sheet: what was lettered from the old design comes off, the
     phases the change leaves behind are lettered again, and each note citing
-    the line reads its restationed text."""
+    the line reads its restationed text.  Where the change is left to the
+    drafter in the base drawing, the list carries ``open_document`` twice: the
+    base drawing, where the line is changed and its linework redrawn, and the
+    sheet file again (``document_name``), where the base drawing is reloaded.
+    That one is the episode's tool, not a bus command; ``reference_solution``
+    reads it the same way."""
     D = task.brief.deliverable
     ttype = task_type(D.get("task_type", "plan-sheet"))
     revision = D.get("revision")
@@ -248,32 +253,64 @@ def solution_commands(task: Task) -> List[tuple]:
         from roaddraft.tasks.revise import STALE_PHASES
         notes = [("modify_entity", {"id": n["id"], "changes": {"content": n["after"]}})
                  for n in revision["notes"] if n["after"] != n["before"]]
+        change: List[tuple] = []
         if revision.get("by_drafter"):
-            # the design is this file's: change it, the centerline redrawn and the labels
-            # following it (modify_alignment does both for a document's own line)
+            # the design is the drafter's to change: the centerline redrawn with it
             A = task.brief.alignment_name
             new = Alignment.from_dict(task.brief.design["alignments"][A])
             changes = ({"begin_station": revision["to"]} if revision["kind"] == "station" else
                        {"pis": [list(p.point) + ([float(p.radius)] if p.radius else [])
                                 for p in new.pis]})
-            return ([_meta(task), ("modify_alignment", {"name": A, "changes": changes,
-                                                        "redraw": True})] + notes)
-        return ([_meta(task), ("delete_entities", {"ids": list(revision["stale"])})] + notes
+            change = [("modify_alignment", {"name": A, "changes": changes, "redraw": True})]
+            if not ttype.design_referenced:
+                # this file's own line: its labels follow it (modify_alignment does both)
+                return [_meta(task)] + change + notes
+            # the base drawing's line (tasks.revise.BASE_KINDS): changed there, its pavement
+            # edges redrawn too, then back in the sheet file the base drawing is read again
+            if revision["kind"] != "station":
+                pave = D["pavement"]
+                change.append(("draw_offset", {"alignment": A, "offsets": list(pave["offsets_ft"]),
+                                               "layer": pave["layer"], "replace": True}))
+            change = ([("open_document", {"path": D["basefile"]})] + change
+                      + [("open_document", {"path": document_name(task)}),
+                         ("reload_references", {})])
+        return ([_meta(task)] + change
+                + [("delete_entities", {"ids": list(revision["stale"])})] + notes
                 + phase_commands(task, [p for p in ttype.solution_phases()
                                         if p in STALE_PHASES[revision["kind"]]]))
     return [_meta(task)] + phase_commands(task, ttype.solution_phases())
 
 
+def document_name(task: Task) -> str:
+    """The file name a task's own document goes by beside the files it ships
+    (``session_for_task``, and an episode's folder)."""
+    return f"{task.task_id}{INTERCHANGE_EXT}"
+
+
 def reference_solution(task: Task, session: Session) -> List[dict]:
     """Execute the solution commands; returns the journal.  Raises
     ``RuntimeError`` on any non-ok result (warnings are collected on
-    ``session.reference_warnings``)."""
+    ``session.reference_warnings``).  An ``open_document`` in the list (a
+    revision made in the base drawing) switches to that file of the task,
+    loaded from beside ``session``'s document and written back after every
+    command, or back to ``session`` by its own name; the journal returned is
+    ``session``'s, the document the task hands over."""
     warnings: List[str] = []
+    current = session
     for name, params in solution_commands(task):
-        result = session.execute(name, params)
+        if name == "open_document":
+            home = Path(session.doc._path)
+            if params["path"] == home.name:
+                current = session
+            else:
+                current = Session.load(home.parent / params["path"], out_dir=session.out_dir)
+            continue
+        result = current.execute(name, params)
         if not result["ok"]:
             raise RuntimeError(f"reference solution: {name} failed: "
                                f"{result['error']['message']} ({result['error'].get('hint')})")
+        if current is not session:
+            write_document(current.doc._path, current.doc.to_dict())
         warnings.extend(f"{name}: {w}" for w in result.get("warnings", []))
     session.reference_warnings = warnings
     return session.bus.journal
@@ -291,4 +328,4 @@ def check_replay(session: Session, path) -> bool:
 
 
 __all__ = ["session_for_task", "phase_commands", "reference_commands", "solution_commands",
-           "reference_solution", "check_replay"]
+           "document_name", "reference_solution", "check_replay"]

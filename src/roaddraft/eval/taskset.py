@@ -74,7 +74,6 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   counterpart of the redline pilots (``p11``).  An entry carries
   ``"revise": <kind>``; a seed its kind cannot revise takes the next kind and
   says so under ``dialed``.
-
 - ``d1-train-twist-widths`` (2026-11-13, plan decision 9): a sixth training
   set, seeds 16000-16299, the three types that dimension the pavement width
   (``TWIST_WIDTH_TYPES``) through viewports turned the seed's own twist.  A
@@ -83,6 +82,14 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   before that and keeps its nine types and its ids.  The two types handed a
   sheet are on ``d1-test``'s dials and the whole plan on ``d1-test-hard``'s.
   An entry carries ``"twist": true``.
+- ``d1-train-revise-base`` (2026-11-13, plan §6 decision 11's leftover): a seventh
+  training set, seeds 18000-18299, the same three changes left for the drafter to make where the
+  design lives, in the base drawing the sheet file references
+  (``tasks.revise.BASE_KINDS``): the base drawing is handed over on the old
+  design, and the episode's tool list gains ``open_document`` and
+  ``reload_references``.  ``annotate-base`` only, one sheet, no station
+  equation, every kind at every curve count, half through a turned viewport.
+  An entry carries ``"revise": "base-<kind>"``.
 
 The prompt level is a run dimension, not a task-set one.  A test regenerates
 each manifest and asserts identical task ids: a changed spec or generator
@@ -147,7 +154,7 @@ HARD_SHEETS = (2, 3)
 #: ``d1-test``'s dials and ``d1-train-hard`` on ``d1-test-hard``'s.  Kept out of ``NAMES``:
 #: every set there is held out of training, and nothing here is ever run for a score.
 TRAIN_NAMES = ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd", "d1-train-revise",
-               "d1-train-twist-widths")
+               "d1-train-twist-widths", "d1-train-revise-base")
 TRAIN_SEEDS = range(10000, 11200)
 TRAIN_HARD_SEEDS = range(12000, 12300)
 #: ``d1-train-twist`` (2026-11-11): twisted sheets on seeds of their own, over the seeded
@@ -174,6 +181,9 @@ TRAIN_REVISE_SEEDS = range(15000, 15600)
 #: through the viewport's twist since plan decision 9)
 TRAIN_TWIST_WIDTH_SEEDS = range(16000, 16300)
 TWIST_WIDTH_TYPES = ("pavement", "pavement-widths", "plan-sheet-pavement")
+#: ``d1-train-revise-base`` (2026-11-13): the same changes, left for the drafter to make in
+#: the base drawing that holds the design, on seeds of their own
+TRAIN_REVISE_BASE_SEEDS = range(18000, 18300)
 
 
 def dials(index: int) -> dict:
@@ -213,6 +223,42 @@ def _revise_entry(seed: int, index: int) -> dict:
     start = KINDS.index(d["revise"])
     for k in range(len(KINDS)):
         kind = KINDS[(start + k) % len(KINDS)]
+        try:
+            task = make_task(seed, d["curves"], False, d["task_type"], 1, d["twist"],
+                             revise=kind)
+        except (ValueError, AssertionError):
+            continue
+        entry = {"seed": seed, "curves": d["curves"], "equations": False,
+                 "task_type": d["task_type"], "sheets": 1, "task_id": task.task_id,
+                 "revise": kind}
+        if d["twist"]:
+            entry["twist"] = True
+        if kind != d["revise"]:
+            entry["dialed"] = {"revise": d["revise"]}
+        return entry
+    raise RuntimeError(f"seed {seed}: no revised task generates")
+
+
+def revise_base_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-train-revise-base``: the kind of
+    change cycling through the three of ``tasks.revise.BASE_KINDS``, the curve
+    count every three tasks and the twist every nine, so every kind meets every
+    curve count both ways round; ``annotate-base``, one sheet, no equation."""
+    from roaddraft.tasks.revise import BASE_KINDS
+    return {"revise": BASE_KINDS[index % len(BASE_KINDS)], "task_type": "annotate-base",
+            "curves": CURVES[(index // len(BASE_KINDS)) % len(CURVES)],
+            "twist": bool((index // (len(BASE_KINDS) * len(CURVES))) % 2),
+            "equations": False, "sheets": 1}
+
+
+def _revise_base_entry(seed: int, index: int) -> dict:
+    """The ``index``-th entry of ``d1-train-revise-base``.  A kind of change the
+    seed's line cannot take takes the next kind; ``RuntimeError`` when none can."""
+    from roaddraft.tasks.revise import BASE_KINDS
+    d = revise_base_dials(index)
+    start = BASE_KINDS.index(d["revise"])
+    for k in range(len(BASE_KINDS)):
+        kind = BASE_KINDS[(start + k) % len(BASE_KINDS)]
         try:
             task = make_task(seed, d["curves"], False, d["task_type"], 1, d["twist"],
                              revise=kind)
@@ -675,6 +721,17 @@ def build(name: str) -> dict:
                 "spec_version": DRAFTING_SPEC_V1["version"],
                 "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
                 "tasks": tasks}
+    elif name == "d1-train-revise-base":
+        tasks, skipped = [], []
+        for i, seed in enumerate(TRAIN_REVISE_BASE_SEEDS):
+            try:
+                tasks.append(_revise_base_entry(seed, i))
+            except RuntimeError:
+                skipped.append(seed)
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
+                "tasks": tasks}
     elif name == "d1-test-hard":
         return {"taskset": name, "generator_version": GENERATOR_VERSION,
                 "spec_version": DRAFTING_SPEC_V1["version"],
@@ -866,4 +923,5 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "REAL_HARD_FILL", "build_real_hard", "TRAIN_NAMES", "TRAIN_SEEDS", "TRAIN_HARD_SEEDS",
            "TRAIN_TWIST_SEEDS", "TWIST_TYPES", "twist_dials", "TRAIN_CROWD_SEEDS", "crowd_dials",
            "TRAIN_REVISE_SEEDS", "revise_dials", "TRAIN_TWIST_WIDTH_SEEDS", "TWIST_WIDTH_TYPES",
-           "twist_width_dials", "shared", "train_overlap"]
+           "twist_width_dials", "TRAIN_REVISE_BASE_SEEDS", "revise_base_dials", "shared",
+           "train_overlap"]
