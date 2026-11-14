@@ -60,7 +60,7 @@ from roaddraft.tasks.ground_truth import compute_ground_truth
 from roaddraft.tasks.prompts import render_prompts
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, SPEC_VERSION, spec_hash, spec_subset
 from roaddraft.tasks.standards import max_grade, min_k, min_radius
-from roaddraft.tasks.types import DEFAULT_TYPE, PHASE_ORDER, TaskType
+from roaddraft.tasks.types import DEFAULT_TYPE, OPEN_BREAKS, PHASE_ORDER, TaskType
 from roaddraft.tasks.types import task_type as _task_type
 
 SPEEDS = [35, 40, 45, 50, 55]
@@ -867,6 +867,9 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     if revise:
         from roaddraft.tasks.revise import revised
         task = revised(task, seed, revise)
+    if OPEN_BREAKS in ttype.asks:  # the count and the breaks are the drafter's (tasks.breaks)
+        from roaddraft.tasks.breaks import opened
+        task = opened(task, seed)
     return task
 
 

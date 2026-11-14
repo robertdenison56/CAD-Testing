@@ -208,6 +208,24 @@ HARD_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
           "drawing", basefile=["linework", "edges"], owns_design=False),
 )}
 
+#: what a task's ``asks`` and its truth's scope carry, beside the groups, when the sheet
+#: breaks are the drafter's to choose (``tasks.breaks``).  No group and no phase: the D1
+#: checks never read it, it only sends the truth to ``verify.breaks``
+OPEN_BREAKS = "breaks"
+
+#: the training-only seeded types (2026-11-13, training plan section 6 decision 8): a whole
+#: plan sheet job whose prompt gives the line, the scale and the first sheet's number and
+#: leaves the number of sheets and the stations they break at to the drafter, which is what
+#: the ``p05`` pilots ask and no held-out seeded task does.  A registry of its own: kept out
+#: of ``TASK_TYPES`` and ``HARD_TASK_TYPES`` so the seeded sets' type cycles
+#: (``eval.taskset.SEEDED_TYPES``, ``HARD_SEEDED_TYPES``) and so every held-out task id
+#: stay as they are, and out of the frozen spec's ``task_types``; ``task_type`` finds it
+TRAIN_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
+    _type("plan-sheet-breaks", list(LAYOUT_GROUPS) + [OPEN_BREAKS], [],
+          "draft the plan sheets from the design at the scale given, the number of sheets and "
+          "the breaks between them left to the drafter"),
+)}
+
 DEFAULT_TYPE = "plan-sheet"
 
 #: phases a real plan sheet supplies (its base files, sheet, north arrow and title block)
@@ -345,11 +363,11 @@ def task_type(name: str) -> TaskType:
         return REAL_TASK_TYPES[name]
     except KeyError:
         pass
-    for extra in (HARD_TASK_TYPES, REAL_JOB_TYPES):
+    for extra in (HARD_TASK_TYPES, REAL_JOB_TYPES, TRAIN_TASK_TYPES):
         if name in extra:
             return extra[name]
     raise ValueError(f"unknown task type {name!r}; types: "
-                     f"{', '.join(list(TASK_TYPES) + list(REAL_TASK_TYPES) + list(HARD_TASK_TYPES) + list(REAL_JOB_TYPES))}")
+                     f"{', '.join(list(TASK_TYPES) + list(REAL_TASK_TYPES) + list(HARD_TASK_TYPES) + list(REAL_JOB_TYPES) + list(TRAIN_TASK_TYPES))}")
 
 
 def checks_in_scope(scope, check_ids, check_groups: Optional[Dict[str, Tuple[str, ...]]] = None
@@ -367,6 +385,7 @@ __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "L
            "DESIGN_GROUPS", "BASE_SCOPE",
            "MODEL_PHASES", "LABEL_GROUPS", "CHECK_GROUPS", "GROUP_LAYER_ROLE", "TaskType",
            "TASK_TYPES", "REAL_TASK_TYPES", "HARD_TASK_TYPES", "REAL_JOB_TYPES", "REAL_SHEET_PHASES",
+           "TRAIN_TASK_TYPES", "OPEN_BREAKS",
            "DEFAULT_TYPE", "task_type",
            "REAL_GROUPS", "D1_REAL_GROUPS", "REAL_GROUP_OF", "REAL_GROUP_NAMES", "REAL_GROUP_ORDER",
            "real_group",

@@ -218,7 +218,8 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
     assert not set(tasksets.TRAIN_NAMES) & set(tasksets.NAMES)
     assert tasksets.TRAIN_NAMES == ("d1-train", "d1-train-hard", "d1-train-twist",
                                     "d1-train-crowd", "d1-train-revise",
-                                    "d1-train-twist-widths", "d1-train-revise-base")
+                                    "d1-train-twist-widths", "d1-train-revise-base",
+                                    "d1-train-breaks")
     train, hard, *_rest = (tasksets.load(n) for n in tasksets.TRAIN_NAMES)
     assert [t["seed"] for t in train["tasks"]] == list(tasksets.TRAIN_SEEDS)
     kept = [s for s in tasksets.TRAIN_HARD_SEEDS if s not in hard["skipped_seeds"]]
@@ -231,6 +232,7 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
                              | set(tasksets.TRAIN_REVISE_SEEDS)
                              | set(tasksets.TRAIN_TWIST_WIDTH_SEEDS))
     assert not eval_seeds & set(tasksets.TRAIN_REVISE_BASE_SEEDS)
+    assert not eval_seeds & set(tasksets.TRAIN_BREAKS_SEEDS)
 
 
 def test_the_twisted_training_set_is_every_seed_twisted_over_the_types_a_twist_changes():
@@ -403,6 +405,47 @@ def test_the_base_drawing_revision_set_meets_every_kind_with_every_curve_count_a
     designers = dict(entry, revise=R["kind"])
     assert tasksets.task_from_entry(designers, strict=False).task_id != entry["task_id"]
     plain = {k: v for k, v in entry.items() if k != "revise"}
+    assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
+
+
+def test_the_breaks_training_set_leaves_the_layout_open_on_one_to_three_sheets():
+    """``d1-train-breaks`` (2026-11-13, plan section 6 decision 8): seeds of its
+    own, every task of the one training-only type and no task of that type in
+    any other set; lines that take one, two and three sheets at one to four
+    curves, half of them through turned viewports, no station equation."""
+    from collections import Counter
+    from roaddraft.tasks import breaks
+    from roaddraft.tasks.types import OPEN_BREAKS
+    manifest = tasksets.load("d1-train-breaks")
+    opened = manifest["tasks"]
+    kept = [s for s in tasksets.TRAIN_BREAKS_SEEDS if s not in manifest["skipped_seeds"]]
+    assert [t["seed"] for t in opened] == kept and len(kept) >= 0.95 * len(tasksets.TRAIN_BREAKS_SEEDS)
+    assert tasksets.TRAIN_BREAKS_SEEDS == range(17000, 17300)
+    assert all(t["task_type"] == breaks.TYPE and not t["equations"] for t in opened)
+    for name in tasksets.NAMES + tuple(n for n in tasksets.TRAIN_NAMES if n != "d1-train-breaks"):
+        assert not any(t.get("task_type") == breaks.TYPE for t in tasksets.load(name)["tasks"]), name
+    sheets = Counter(t["sheets"] for t in opened)
+    assert set(sheets) == {1, 2, 3} and min(sheets.values()) >= 0.15 * len(opened)
+    assert sheets[2] + sheets[3] >= 0.7 * len(opened)  # most of them have a break to choose
+    combos = Counter((t["sheets"], t["curves"], bool(t.get("twist"))) for t in opened)
+    # every sheet count at every curve count, turned and not; but four curves on three
+    # sheets, which runs the drafter to the edge of the step budget
+    assert set(combos) == {(s, c, w) for s in (1, 2, 3) for c in (1, 2, 3, 4) for w in (False, True)
+                           if (s, c) != (3, 4)}
+    turned = sum(1 for t in opened if t.get("twist"))
+    assert abs(turned - len(opened) / 2) <= 5
+    assert [tasksets.breaks_dials(i)["sheets"] for i in range(5)] == [2, 3, 2, 3, 1]
+    assert [tasksets.breaks_dials(i)["curves"] for i in range(4)] == [1, 2, 3, 3]
+    assert tasksets.breaks_dials(7)["curves"] == 4 and tasksets.breaks_dials(7)["sheets"] == 2
+    # a line the generator lays on more sheets than carry it took another count, and says so
+    dialed = [t for t in opened if "dialed" in t]
+    assert all(t["dialed"]["sheets"] != t["sheets"] for t in dialed)
+    assert len(dialed) < 0.1 * len(opened)
+    # the entry rebuilds with the mark that leaves its breaks open, and the sheets it names
+    entry = next(t for t in opened if t["sheets"] == 3)
+    task = tasksets.task_from_entry(entry)
+    assert OPEN_BREAKS in task.truth.scope and len(task.truth.sheets) == 3
+    plain = {**entry, "task_type": "plan-sheet"}
     assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
 
 

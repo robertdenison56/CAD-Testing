@@ -90,6 +90,14 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   ``reload_references``.  ``annotate-base`` only, one sheet, no station
   equation, every kind at every curve count, half through a turned viewport.
   An entry carries ``"revise": "base-<kind>"``.
+- ``d1-train-breaks`` (2026-11-13, plan §6 decision 8): a training set of the
+  one training-only type, ``plan-sheet-breaks`` (``tasks.breaks``), seeds
+  17000-17299: the whole plan sheet job with the number of sheets and the
+  breaks between them left to the drafter, graded by ``verify.breaks``.  Lines
+  that take one, two or three sheets, one to four curves (three at most on
+  three sheets), half of them through turned viewports, no station equation.
+  The seeded counterpart of the sheet break pilots (``p05``).  A seed whose line the generator lays on more sheets
+  than carry it takes another sheet count and says so under ``dialed``.
 
 The prompt level is a run dimension, not a task-set one.  A test regenerates
 each manifest and asserts identical task ids: a changed spec or generator
@@ -155,6 +163,9 @@ HARD_SHEETS = (2, 3)
 #: every set there is held out of training, and nothing here is ever run for a score.
 TRAIN_NAMES = ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd", "d1-train-revise",
                "d1-train-twist-widths", "d1-train-revise-base")
+#: ... and the set of the training-only type (2026-11-13), last, on a line of its own so that
+#: a name added to the tuple above merges without touching it
+TRAIN_NAMES += ("d1-train-breaks",)
 TRAIN_SEEDS = range(10000, 11200)
 TRAIN_HARD_SEEDS = range(12000, 12300)
 #: ``d1-train-twist`` (2026-11-11): twisted sheets on seeds of their own, over the seeded
@@ -184,6 +195,13 @@ TWIST_WIDTH_TYPES = ("pavement", "pavement-widths", "plan-sheet-pavement")
 #: ``d1-train-revise-base`` (2026-11-13): the same changes, left for the drafter to make in
 #: the base drawing that holds the design, on seeds of their own
 TRAIN_REVISE_BASE_SEEDS = range(18000, 18300)
+#: ``d1-train-breaks`` (2026-11-13): the sheet count and the breaks left to the drafter
+#: (``tasks.breaks``), on seeds of their own
+TRAIN_BREAKS_SEEDS = range(17000, 17300)
+#: the sheet counts its lines are stretched for, in the order dialed: two tasks in five take
+#: two sheets, two take three, one takes one (no break is a right answer too)
+BREAKS_SHEETS = (2, 3, 2, 3, 1)
+BREAKS_CURVES = (1, 2, 3, 4)
 
 
 def dials(index: int) -> dict:
@@ -273,6 +291,49 @@ def _revise_base_entry(seed: int, index: int) -> dict:
             entry["dialed"] = {"revise": d["revise"]}
         return entry
     raise RuntimeError(f"seed {seed}: no revised task generates")
+
+
+def breaks_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-train-breaks``: the sheet
+    count the line is stretched for cycling through ``BREAKS_SHEETS`` and the
+    curve count through ``BREAKS_CURVES`` (five and four share no factor, so
+    every sheet count draws every curve count), the viewports turned on every
+    other round of the curve counts (so every sheet count meets every curve
+    count both ways round); no station equation.  A line for three sheets
+    carries three curves at most: the whole plan of four curves on three sheets
+    takes the grounded drafter up to 149 of an episode's 150 calls."""
+    from roaddraft.tasks.breaks import TYPE
+    sheets = BREAKS_SHEETS[index % len(BREAKS_SHEETS)]
+    curves = BREAKS_CURVES[index % len(BREAKS_CURVES)]
+    return {"sheets": sheets, "curves": min(curves, 3) if sheets == 3 else curves,
+            "twist": bool((index // len(BREAKS_CURVES)) % 2),
+            "equations": False, "task_type": TYPE}
+
+
+def _breaks_entry(seed: int, index: int) -> dict:
+    """The ``index``-th entry of ``d1-train-breaks``.  A line the generator
+    cannot lay on the sheets dialed, or lays on more sheets than carry it (its
+    own breaks would then fail the count, ``tasks.breaks.opened``), takes the
+    next sheet count down, then the ones above; ``RuntimeError`` when none does."""
+    d = breaks_dials(index)
+    counts = sorted(set(BREAKS_SHEETS))
+    order = [d["sheets"]] + [n for n in reversed(counts) if n < d["sheets"]] + [
+        n for n in counts if n > d["sheets"]]
+    for sheets in order:
+        if sheets == 3 and d["curves"] > 3:
+            continue  # (the budget: see breaks_dials)
+        try:
+            task = make_task(seed, d["curves"], False, d["task_type"], sheets, d["twist"])
+        except (ValueError, AssertionError):
+            continue
+        entry = {"seed": seed, "curves": d["curves"], "equations": False,
+                 "task_type": d["task_type"], "sheets": sheets, "task_id": task.task_id}
+        if d["twist"]:
+            entry["twist"] = True
+        if sheets != d["sheets"]:
+            entry["dialed"] = {"sheets": d["sheets"]}
+        return entry
+    raise RuntimeError(f"seed {seed}: no {d['task_type']} task generates")
 
 
 def crowd_dials(index: int) -> dict:
@@ -750,6 +811,18 @@ def build(name: str) -> dict:
                 "spec_version": DRAFTING_SPEC_V1["version"],
                 "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
                 "tasks": tasks}
+    elif name == "d1-train-breaks":
+        # (a seed no sheet count makes a task of is left out and named, as above)
+        tasks, skipped = [], []
+        for i, seed in enumerate(TRAIN_BREAKS_SEEDS):
+            try:
+                tasks.append(_breaks_entry(seed, i))
+            except RuntimeError:
+                skipped.append(seed)
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
+                "tasks": tasks}
     else:
         raise ValueError(f"unknown task set {name!r}; sets: {', '.join(NAMES + TRAIN_NAMES)}")
     tasks = [_entry(seed, i) for i, seed in enumerate(seeds)]
@@ -924,4 +997,4 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "TRAIN_TWIST_SEEDS", "TWIST_TYPES", "twist_dials", "TRAIN_CROWD_SEEDS", "crowd_dials",
            "TRAIN_REVISE_SEEDS", "revise_dials", "TRAIN_TWIST_WIDTH_SEEDS", "TWIST_WIDTH_TYPES",
            "twist_width_dials", "TRAIN_REVISE_BASE_SEEDS", "revise_base_dials", "shared",
-           "train_overlap"]
+           "train_overlap", "TRAIN_BREAKS_SEEDS", "breaks_dials"]

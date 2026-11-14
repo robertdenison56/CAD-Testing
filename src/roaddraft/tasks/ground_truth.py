@@ -26,7 +26,7 @@ from roaddraft.document.document import Document
 from roaddraft.document.entities import Text
 from roaddraft.tasks.brief import GroundTruth, TaskBrief
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
-from roaddraft.tasks.types import GROUPS, task_type
+from roaddraft.tasks.types import GROUPS, OPEN_BREAKS, task_type
 
 
 #: what a real plan sheet's deliverable adds to its truth sheet (tasks.real): its border,
@@ -45,6 +45,52 @@ def _label_row(spec: LabelSpec, layer: str, height: float) -> dict:
             "rotation_deg": float(spec.rotation_deg), "halign": spec.halign,
             "valign": spec.valign, "layer": layer, "height": float(height), "required": True,
             **({"view_rotation": float(spec.view_rotation)} if spec.view_rotation else {})}
+
+
+def sheet_rows(align: Alignment, D: dict, S: dict, name: str) -> Tuple[List[dict], List[dict], set]:
+    """``(curve tables, sheets, match stations)`` of a truth, from the sheets a
+    deliverable lists: each sheet's viewport, stretch, title block and match
+    lines, and the curve table of each sheet that shows a curve.  Its own
+    function so that a layout whose breaks the drafter chose (``tasks.breaks``)
+    is given its truth by the same derivation as the generator's own."""
+    layers = S["layers"]
+    table_anchor = {"alignment": name, "ref": "CURVES", "kind": "curve_table"}
+    curve_tables: List[dict] = []
+    sheets: List[dict] = []
+    match_stations = set()
+    for sh in D["sheets"]:
+        if sh["curves"]:  # a sheet that shows no curve carries no curve table
+            headers, rows, widths = curve_table_rows(align, D["curve_table_columns"],
+                                                     curves=sh["curves"])
+            curve_tables.append({
+                "sheet": sh["name"], "curves": list(sh["curves"]),
+                "columns": list(D["curve_table_columns"]), "headers": headers, "rows": rows,
+                "widths": widths, "position": list(sh["curve_table_position"]),
+                "text_height": float(D["text_heights"]["sheet_table_in"]),
+                "title": S["curve_table"]["title"], "layer": layers["tables"],
+                "anchor": dict(table_anchor)})
+        matches = []
+        for m in sh.get("matches", []):
+            half = float(m["half_width_ft"])
+            matches.append({
+                "station": float(m["station"]), "station_text": m["station_text"],
+                "start": align.station_to_xy(m["station"], -half)[0],
+                "end": align.station_to_xy(m["station"], half)[0],
+                "half_width_ft": half, "layer": layers.get("match", layers["ticks"]),
+                "label": m["label"],
+                "other_sheet": m["other_sheet"], "side": m["side"],
+                "label_offset_in": float(m["label_offset_in"]), "rotation": m["rotation"]})
+            match_stations.add(float(m["station"]))
+        extra = {k: sh[k] for k in REAL_SHEET_KEYS if k in sh}
+        sheets.append({**extra, "name": sh["name"], "size": sh["size"],
+                       "feet_per_inch": float(D["feet_per_inch"]),
+                       "viewport": dict(sh["viewport"]),
+                       "station_range": list(sh["station_range"]), "curves": list(sh["curves"]),
+                       "north_arrow_block": S["sheet"]["north_arrow"]["block"],
+                       "north_arrow_layer": layers.get("symbols", "0"),
+                       "title_block_fields": dict(sh["title_block_fields"]),
+                       "matches": matches})
+    return curve_tables, sheets, match_stations
 
 
 def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
@@ -101,42 +147,7 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
 
     elements = [{"ref": align.element_ref(i), "kind": el.kind, "layer": layers["alignment"]}
                 for i, el in enumerate(align.elements)]
-    table_anchor = {"alignment": name, "ref": "CURVES", "kind": "curve_table"}
-    curve_tables: List[dict] = []
-    sheets: List[dict] = []
-    match_stations = set()
-    for sh in D["sheets"]:
-        if sh["curves"]:  # a sheet that shows no curve carries no curve table
-            headers, rows, widths = curve_table_rows(align, D["curve_table_columns"],
-                                                     curves=sh["curves"])
-            curve_tables.append({
-                "sheet": sh["name"], "curves": list(sh["curves"]),
-                "columns": list(D["curve_table_columns"]), "headers": headers, "rows": rows,
-                "widths": widths, "position": list(sh["curve_table_position"]),
-                "text_height": float(D["text_heights"]["sheet_table_in"]),
-                "title": S["curve_table"]["title"], "layer": layers["tables"],
-                "anchor": dict(table_anchor)})
-        matches = []
-        for m in sh.get("matches", []):
-            half = float(m["half_width_ft"])
-            matches.append({
-                "station": float(m["station"]), "station_text": m["station_text"],
-                "start": align.station_to_xy(m["station"], -half)[0],
-                "end": align.station_to_xy(m["station"], half)[0],
-                "half_width_ft": half, "layer": layers.get("match", layers["ticks"]),
-                "label": m["label"],
-                "other_sheet": m["other_sheet"], "side": m["side"],
-                "label_offset_in": float(m["label_offset_in"]), "rotation": m["rotation"]})
-            match_stations.add(float(m["station"]))
-        extra = {k: sh[k] for k in REAL_SHEET_KEYS if k in sh}
-        sheets.append({**extra, "name": sh["name"], "size": sh["size"],
-                       "feet_per_inch": float(D["feet_per_inch"]),
-                       "viewport": dict(sh["viewport"]),
-                       "station_range": list(sh["station_range"]), "curves": list(sh["curves"]),
-                       "north_arrow_block": S["sheet"]["north_arrow"]["block"],
-                       "north_arrow_layer": layers.get("symbols", "0"),
-                       "title_block_fields": dict(sh["title_block_fields"]),
-                       "matches": matches})
+    curve_tables, sheets, match_stations = sheet_rows(align, D, S, name)
     # -- plan prep: pavement edges, width dimensions, the base drawing, the layer set
     pave = D.get("pavement") or {}
     edges: List[dict] = []
@@ -187,6 +198,8 @@ def compute_ground_truth(brief: TaskBrief) -> GroundTruth:
                            "space": ref_spec.get("space", "model")})
     asks = task_type(D.get("task_type", "plan-sheet")).asks
     scope = [g for g in GROUPS if g in asks]
+    if OPEN_BREAKS in asks:  # the breaks are the drafter's: graded by verify.breaks
+        scope.append(OPEN_BREAKS)
     counts = {"labels": len(labels), "ticks": len(ticks), "curves": len(align.curves()),
               "tangents": len(align.tangents()), "equations": len(align.equations),
               "sheets": len(sheets), "match_lines": len(match_stations), "edges": len(edges),
@@ -253,4 +266,4 @@ def match_truth(doc: Document, truth: GroundTruth,
             "content_mismatch": content_mismatch, "position_mismatch": position_mismatch}
 
 
-__all__ = ["compute_ground_truth", "match_truth"]
+__all__ = ["compute_ground_truth", "sheet_rows", "match_truth"]

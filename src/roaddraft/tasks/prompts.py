@@ -504,6 +504,60 @@ def _base_plan_sheet(w: _Words, explicit: bool) -> str:
             f"{_bullets(items)}")
 
 
+# -- the sheet breaks left to the drafter (types.TRAIN_TASK_TYPES, tasks.breaks): training only
+
+
+def _plan_sheet_breaks(w: _Words, explicit: bool) -> str:
+    """The whole plan sheet job with the count and the breaks left open.  No
+    word here may give the count away (``sheet`` or ``sheets``, ``each`` of two,
+    a list of names), so none of the pieces that speak of ``w.sheets`` is used:
+    the prompt names the first sheet's number and the rest follow from it."""
+    from roaddraft.tasks import breaks  # (it imports the generator, which imports this)
+    first = breaks.FIRST_SHEET
+    turned = f", every viewport turned {w.twist:.2f}°" if w.twisted else ""
+    if not explicit:
+        return f"Draft the plan sheets for {w.A} at {w.scale}, numbered from {first}{turned}."
+    fpi = float(w.D["feet_per_inch"])
+    fit_w, fit_h = w.S["sheet"]["fit_window_in"]
+    half = breaks.gen.MATCH_HALF_IN * fpi
+    on = w.layer("match") if "match" in w.layers else w.layer("ticks")
+    headers = [CURVE_COLUMNS[c][0] for c in w.D["curve_table_columns"]]
+    block = w.S["sheet"]["north_arrow"]["block"]
+    north = f", turned {w.twist:.2f}° to point to true north" if w.twisted else ""
+    tb = w.sheets[0]["title_block_fields"]
+    roles: Dict[str, List[str]] = {}
+    for role in ("designed", "drawn", "checked"):
+        roles.setdefault(tb[f"{role}_by"], []).append(role)
+    people = ", ".join(" and ".join(r) + f" by {who}" for who, r in roles.items())
+    items = ([f"Set up a viewport at {w.scale}{w.turned()} on each sheet showing its part of "
+              f"{w.A}, with all of that part's lettering whole inside it. At each break draw a "
+              f"match line square across the centerline, {half:g} ft each side, and label it at "
+              f"its end on both sheets it joins MATCH LINE STA <its station> SEE SHEET <the other "
+              f"sheet> in {w.label_h} text, all on {on}", w.linework()]
+             + _alignment_data(w, "it", table=False)
+             + [f"Add a {w.S['curve_table']['title']} table on each sheet that shows a curve, "
+                f"listing the curves that sheet shows, with columns {', '.join(headers[:-1])} and "
+                f"{headers[-1]} (Δ in degrees, minutes and seconds, lengths to the hundredth), in "
+                f"{w.text['table_height_in']:.2f} in text on {w.layer('tables')}",
+                f"Put the {block} block in the upper right of every sheet on "
+                f"{w.layer('symbols')}{north}",
+                f"Fill in every title block: project {tb['project']}, agency {tb['agency']}, sheet "
+                f"title {tb['sheet_title']}, the sheet's own number and the number of sheets, "
+                f"{people}, dated {tb['date']}, scale {tb['scale']}"])
+    reading = " Letter model-space labels to read upright as plotted." if w.twisted else ""
+    return (f"Draft the plan sheets for {w.A} on the {w.P['name']} project ({w.P['agency']}, "
+            f"{w.P['county']}): {w.size} at {w.scale}, numbered from {first} in order along the "
+            f"line{turned}. {w.A} is already in the design.{reading}\n"
+            f"How many sheets and where they break is yours to decide. Use as few sheets as the "
+            f"line takes: a sheet holds the stretch of the line that fits the office's {fit_w:g} "
+            f"by {fit_h:g} in plan window with {breaks.MARGIN_IN:.2f} in clear all round. Break "
+            f"only where a match line is sound, at least {breaks.CLEAR_FT:g} ft along the line "
+            f"from a curve's BC, EC or middle"
+            + (", from the station equation" if w.has_eq else "")
+            + f" and from either end of the line. A line that fits one sheet gets one sheet and "
+            f"no match line.\n{_bullets(items)}")
+
+
 # -- plan prep
 
 
@@ -893,6 +947,7 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "plan-sheet-pavement": _plan_sheet_pavement,
     "create-plan-sheet": _create_plan_sheet,
     "base-plan-sheet": _base_plan_sheet,
+    "plan-sheet-breaks": _plan_sheet_breaks,
     "real-stationing": _real_stationing,
     "real-bearings": _real_bearings,
     "real-callouts": _real_callouts,

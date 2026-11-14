@@ -37,7 +37,9 @@ call that was not *grounded* when the call was made:
   (``1" = 40'`` for a viewport at 40 ft to the inch), a point by station and
   offset (``150+00.00@100L``), a match line's label in the office's form
   (``MATCH LINE STA 150+00.00 SEE SHEET C-102``, its station and sheet ones
-  seen), a part of a longer string (the agency out of the project's
+  seen), a sheet numbered on from the one a task names where it leaves the
+  layout open (``C-102`` after ``numbered from C-101``, the number counted in
+  the shown work), a part of a longer string (the agency out of the project's
   description), or
 - worked out from grounded numbers in the turn's own line of shown work
   (``21.5 - 0.25 = 21.25``; the audit redoes the sum), or
@@ -49,7 +51,8 @@ call that was not *grounded* when the call was made:
   lettering round the line when it picks a scale, the two inches a match
   line reaches each side, the 25 rows it reads at a time when it wants each
   text whole, the two, four, three and six text heights further off its
-  line it tries a label that will not clear).
+  line it tries a label that will not clear, the sixty feet it keeps a match
+  line from a curve point where the breaks are left to it).
 
 A recording is kept when the verifier scores it 100 and the audit finds
 nothing.  The audit knows nothing of the agent, so it reads a model's
@@ -155,6 +158,18 @@ numbers with the lettering.  Through a turned view a dimension takes the
 viewport's twist as its ``view_rotation``, as the lettering does (plan
 decision 9, 2026-11-13), so its number reads upright on the sheet.
 
+A task can leave the layout itself to the drafter (``tasks.breaks``, the
+training-only type ``plan-sheet-breaks``, 2026-11-13, plan section 6 decision
+8): it gives the line, the scale and the first sheet's number, and not how many
+sheets there are or where they break.  The drafter then decides both before it
+lays anything out (``_choose_breaks``): it makes the first sheet, asks where the
+line's points fall on its paper, fills each sheet as far as the office's plan
+window holds the line with a quarter inch all round, ends a sheet only at a
+whole station on a tangent sixty feet from its ends, and with the count known
+moves the breaks to the sound whole stations nearest the even splits when
+every stretch still fits.  The sheets are then laid out, lettered, trimmed and
+matched as any are.
+
 A title block the task does not spell out is filled from the document: the
 project and the agency from its name and description, and any field the
 document's own record carries under the field's name -- who designed, drew
@@ -213,6 +228,11 @@ LETTERING_IN = 1.5
 #: how far it draws a match line each side of the centerline on the paper, where the task
 #: does not say (the length the office's own sheets show)
 MATCH_HALF_IN = 2.0
+#: how far along the line it keeps a match line from a curve point or an end of the line,
+#: where the task leaves the breaks to it: a curve point's label stands square to the line
+#: as the match line does, and at the office's plan scales sixty feet is more than an inch
+#: of paper between the two (the distance the office's own layouts keep)
+MATCH_CLEAR_FT = 60.0
 #: what a plan sheet of a roadway is titled when the task does not say (the title the
 #: title block tool's own example letters)
 SHEET_TITLE = "ROADWAY PLAN"
@@ -278,6 +298,13 @@ _TURNED = re.compile(r"turned (-?\d+(?:\.\d+)?)°")
 _BREAKS = re.compile(rf"breaking at stations? ({_ST}(?:(?:, | and ){_ST})*)")
 _MATCH_HALF = re.compile(r"(\d+(?:\.\d+)?) ft each side")
 _SIZE = re.compile(r"\b(ANSI|ARCH) ([A-E])\b")
+#: a layout left to the drafter (``tasks.breaks``): only the first sheet's number is given
+_NUMBERED = re.compile(rf"numbered from ({_SHEET_NAME})")
+#: the title block such a task states: every value but the sheet's number and the count
+_TITLE_OPEN = re.compile(
+    r"project (?P<project>.+?), agency (?P<agency>.+?), sheet title (?P<sheet_title>.+?), "
+    r"the sheet's own number and the number of sheets, (?P<people>.+?), "
+    rf"dated (?P<date>\S+), scale (?P<scale>{_SCALE})")
 #: a revision the designer reports (the generator's revision dial)
 _REVISED = (("radius", re.compile(r"curve (\d+)'s radius is now (\d+(?:\.\d+)?)'")),
             ("pi", re.compile(r"the PI of curve (\d+) has moved (\d+(?:\.\d+)?) ft (ahead|back)")),
@@ -321,7 +348,17 @@ def stated_title(text: str) -> Optional[dict]:
     the task lists.  None when the task leaves the title block to the drafter."""
     found = _TITLE.search(text)
     if not found:
-        return None
+        # a layout left to the drafter states every value but the number and the count,
+        # which follow from the layout: ``sheet_numbers`` None, no ``total_sheets``
+        found = _TITLE_OPEN.search(text)
+        if not found:
+            return None
+        fields = {k: found.group(k) for k in ("project", "agency", "sheet_title", "date", "scale")}
+        for roles, who in _PEOPLE.findall(found.group("people")):
+            for role in roles.split(" and "):
+                fields[f"{role}_by"] = who.strip()
+        fields["sheet_numbers"] = None
+        return fields
     fields = {k: found.group(k) for k in ("project", "agency", "sheet_title", "total_sheets",
                                           "date", "scale")}
     for roles, who in _PEOPLE.findall(found.group("people")):
@@ -329,6 +366,14 @@ def stated_title(text: str) -> Optional[dict]:
             fields[f"{role}_by"] = who.strip()
     fields["sheet_numbers"] = found.group("numbers")
     return fields
+
+
+def stated_open(text: str) -> Optional[str]:
+    """The number of the first sheet, when the task leaves the layout to the
+    drafter (how many sheets, and where they break) and says only where the
+    numbering starts; None for a task that names its sheets."""
+    found = _NUMBERED.search(text)
+    return found.group(1) if found else None
 
 
 def stated_revision(text: str) -> Optional[dict]:
@@ -504,8 +549,370 @@ def _sheet_points(results: Sequence[dict]) -> List[List[float]]:
     return [list((r.get("on_sheet") or r)["sheet_point"]) for r in results]
 
 
+def _span(lo: float, hi: float) -> tuple:
+    """How far it is from ``lo`` up to ``hi`` on the paper: ``(the distance,
+    the sum that finds it)``.  A point off the sheet's lower left has a
+    negative place, and the sum is written on the sizes of the two numbers,
+    whichever side of zero they fall."""
+    lo, hi = _r(lo), _r(hi)
+    d = round(hi - lo, 3)
+    if lo >= 0:
+        return d, f"{_n(hi)} - {_n(lo)} = {_n(d)}"
+    if hi <= 0:
+        return d, f"{_n(abs(lo))} - {_n(abs(hi))} = {_n(d)}"
+    return d, f"{_n(hi)} + {_n(abs(lo))} = {_n(d)}"
+
+
+def _choose_breaks(request: str, alignment: str, first: str,
+                   kinds: Sequence[str]) -> Generator[Turn, List[dict], dict]:
+    """Decide how many sheets a line takes and where they break, for a task
+    that leaves both to the drafter (``tasks.breaks``), and return what
+    ``_lay_out`` then lays out: the sheets, the breaks, the line as read and
+    the first sheet, which is made here to measure on.
+
+    The rule, each step from what the engine reports:
+
+    - *What a sheet holds.*  The first sheet is made with the office's plan
+      viewport at the scale (and twist) asked, and the engine is asked where
+      the line's points fall on its paper: the two ends, and the BC, middle and
+      EC of each curve, which bound the line closely.  Every sheet is turned
+      the same way, so the width and height of any stretch are read off those
+      places.  A stretch fits a sheet when its box, with a quarter inch all
+      round, is inside the office's plan window.
+    - *How many sheets.*  Each sheet in turn takes the line as far as it fits:
+      where the next point would run past the window, the place the window
+      runs out is worked out along the tangent between (the line is straight
+      there, so its place on the paper goes with the distance along it).
+    - *Where a match line may stand.*  At a whole station on a tangent, sixty
+      feet from each end of it, clear of the curve points' lettering.  Where
+      the window runs out inside a curve, or too near a tangent's end, the
+      sheet ends on the tangent before.
+    - *Evenly, if it still fits.*  Filling each sheet leaves the last one
+      short, so with the count known the breaks are tried at the sound whole
+      stations nearest the even splits, and kept there when every stretch
+      still fits.
+
+    Each break is asked of the engine before it is used: its station, its
+    point, and where it falls on the paper, to see the stretch it ends fits."""
+    sheet_spec = SPEC["sheet"]
+    ask = stated_layout(request)
+    scale, twist = ask["scale"], ask["twist"]
+    if scale is None:
+        raise NotCovered("the breaks are left open but no scale is given to count the sheets at")
+    kinds = ["curves"] + [k for k in kinds if k != "curves"]
+    size = ask["size"] or sheet_spec["size"]
+    frame = sheet_spec["viewport"]
+    (cx, cy), fw, fh = frame["center_paper"], frame["width_in"], frame["height_in"]
+    fit_w, fit_h = sheet_spec["fit_window_in"]
+    window = f"{_n(fit_w)} by {_n(fit_h)} in plan window"
+    m, clear, station = MARGIN_IN, MATCH_CLEAR_FT, float(SPEC["stationing"]["interval_ft"])
+
+    # -- the line
+    calls = [_q("get_design_data", kind="alignments", alignment=alignment)]
+    calls += [_q("get_design_data", kind=kind, alignment=alignment) for kind in kinds]
+    results = yield Turn(
+        "The task asks for the sheets themselves and leaves it to the drafter how many there "
+        f"are and where they break, so read the line first: where {alignment} begins and ends "
+        "and its curves.", calls)
+    _ok(results, calls)
+    if not results[0].get("rows"):
+        raise NotCovered(f"the design shows no {alignment}")
+    line = results[0]["rows"][0]
+    rows = {kind: r["rows"] for kind, r in zip(kinds, results[1:])}
+    if line.get("equations"):
+        raise NotCovered("choosing the breaks of a line with a station equation")
+    begin, end = float(line["begin_station"]), float(line["end_station"])
+    keys = [{"s": begin, "text": line["begin_station_text"], "kind": "begin",
+             "what": f"the beginning of the line at {line['begin_station_text']}",
+             "point": list(line["pis"][0]["point"])}]
+    for c in rows["curves"]:
+        n = c["index"]
+        keys += [{"s": float(c["pc_station"]), "text": c["pc_station_text"], "kind": "pc",
+                  "curve": n, "what": f"the BC of curve {n} at {c['pc_station_text']}",
+                  "point": list(c["pc"])},
+                 {"s": float(c["mc_station"]), "text": c["mc_station_text"], "kind": "mc",
+                  "curve": n, "what": f"the middle of curve {n} at {c['mc_station_text']}"},
+                 {"s": float(c["pt_station"]), "text": c["pt_station_text"], "kind": "pt",
+                  "curve": n, "what": f"the EC of curve {n} at {c['pt_station_text']}",
+                  "point": list(c["pt"])}]
+    keys.append({"s": end, "text": line["end_station_text"], "kind": "end",
+                 "what": f"the end of the line at {line['end_station_text']}",
+                 "point": list(line["pis"][-1]["point"])})
+    #: the tangents, each from the point it starts at to the point it ends at
+    tangents = [(a, b) for a, b in zip(keys, keys[1:]) if b["kind"] in ("pc", "end")]
+    #: the hundreds of every station read so far: what a whole station is counted from
+    hundreds = sorted({int(str(v).split("+")[0]) for row in [line] + [r for rs in rows.values()
+                                                                        for r in rs]
+                       for k, v in row.items() if k.endswith("station_text")})
+
+    def whole_words(w: float) -> str:
+        """The sums that name a whole station: counted on from the nearest
+        station already read, then written in feet."""
+        number = int(round(w / station))
+        h = min(hundreds, key=lambda v: (abs(v - number), v))
+        words = ""
+        if h != number:
+            op = " - " if number < h else " + "
+            words = f"{h}{op}{op.join(['1'] * abs(number - h))} = {number} and "
+        hundreds.append(number)
+        return words + f"{number} * {_n(station)} = {_n(w)}"
+
+    # -- the first sheet, to measure the line on
+    turned = {"rotation_deg": twist} if twist else {}
+    calls = [_q("create_sheet", name=first, size=size),
+             _q("create_viewport", sheet=first, center_paper=[cx, cy], width_in=fw, height_in=fh,
+                model_center=list(keys[0]["point"]), feet_per_inch=scale, **turned)]
+    for k in keys:
+        calls.append(_q("station_to_xy", alignment=alignment, station=k["text"], sheet=first)
+                     if k["kind"] == "mc" else
+                     _q("model_to_sheet", sheet=first, point=list(k["point"])))
+    results = yield Turn(
+        f"How much of the line a sheet holds is a matter of the paper, so make the first sheet, "
+        f"{first}, on {size.replace('_', ' ')}, "
+        f"{'the size asked for' if ask['size'] else 'the plan sheet the office uses'}, with the "
+        f"office's plan viewport: {_n(fw)} by {_n(fh)} in, centred at x {_n(cx)}, y {_n(cy)}, at "
+        f"{_n(scale)} ft to the inch as the task asks"
+        + (f" and turned {_n(twist)}° as it asks" if twist else "")
+        + ", set down on the beginning of the line for now. Then ask the engine where the "
+        "line's points fall on that paper: its two ends, and the BC, the middle and the EC of "
+        "each curve, which bound the line closely. Every sheet is turned the same way, so how "
+        "wide and how high any stretch of the line runs can be read off those places, wherever "
+        "the view is centred.", calls)
+    _ok(results, calls)
+    view = results[1]["created"][0]
+    for k, q in zip(keys, _sheet_points(results[2:])):
+        k["q"] = (_r(q[0]), _r(q[1]))
+
+    def measure(points: Sequence[dict]) -> dict:
+        """The box round some points on the paper: its sides, whether it fits
+        the plan window with the margin, and the sums."""
+        xs, ys = [p["q"][0] for p in points], [p["q"][1] for p in points]
+        box = (min(xs), min(ys), max(xs), max(ys))
+        w, wsum = _span(box[0], box[2])
+        h, hsum = _span(box[1], box[3])
+        ww, hh = round(w + m + m, 3), round(h + m + m, 3)
+        return {"box": box, "w": w, "h": h, "ww": ww, "hh": hh,
+                "fits": ww <= fit_w + 1e-9 and hh <= fit_h + 1e-9,
+                "words": f"{wsum} in wide and {hsum} in high, which with a quarter inch all "
+                         f"round is {_n(w)} + {_n(m)} + {_n(m)} = {_n(ww)} by {_n(h)} + {_n(m)} "
+                         f"+ {_n(m)} = {_n(hh)}"}
+
+    def between(lo: dict, hi: dict) -> List[dict]:
+        """A stretch's points: its two ends and the line's points between."""
+        return [lo] + [k for k in keys if lo["s"] + 1e-6 < k["s"] < hi["s"] - 1e-6] + [hi]
+
+    def sound_on(a: dict, b: dict, upto: float, after: float) -> Optional[float]:
+        """The last whole station on the tangent ``a`` to ``b`` that is not
+        past ``upto``, is sixty feet from both its ends and is past ``after``."""
+        w = math.floor(min(b["s"] - clear, upto) / station + 1e-9) * station
+        return w if w >= a["s"] + clear - 1e-9 and w > after + 1e-6 else None
+
+    def range_words(a: dict, b: dict) -> tuple:
+        lo, hi = round(_r(a["s"]) + clear, 3), round(_r(b["s"]) - clear, 3)
+        return lo, hi, (f"A match line keeps {_n(clear)} ft from a curve point and from an end "
+                        f"of the line, so on the tangent from {a['text']} to {b['text']} it may "
+                        f"stand from {_n(_r(a['s']))} + {_n(clear)} = {_n(lo)} to "
+                        f"{_n(_r(b['s']))} - {_n(clear)} = {_n(hi)}")
+
+    def asked_cut(text: str, result: dict) -> dict:
+        q = _sheet_points([result])[0]
+        return {"s": float(result["station"]), "raw": float(result["station"]), "text": text,
+                "kind": "cut", "what": f"the break at {text}", "point": list(result["point"]),
+                "q": (_r(q[0]), _r(q[1]))}
+
+    # -- how many sheets: each takes the line as far as the window lets it
+    count_words = {1: "one sheet", 2: "two sheets", 3: "three sheets", 4: "four sheets"}
+    names, filled, start, told = [first], [], keys[0], ""
+    prefix, _dash, number = first.rpartition("-")
+    while True:
+        name = names[-1]
+        pts, bad = [start], None
+        for k in keys:
+            if k["s"] <= start["s"] + 1e-6:
+                continue
+            if not measure(pts + [k])["fits"]:
+                bad = k
+                break
+            pts.append(k)
+        if bad is None:
+            whole = measure(pts)
+            told += (f"From {start['text']} to the end of the line at {keys[-1]['text']} the "
+                     f"points run {whole['words']}, inside the office's {window}, so "
+                     + (f"{name} takes the rest of the line. " if filled else
+                        f"one sheet carries the whole line: {name}, with no break and no match "
+                        "line. "))
+            break
+        p0, so_far, over = pts[-1], measure(pts), measure(pts + [bad])
+        say = (f"{name} starts at {start['text']}. "
+               + (f"Through {p0['what']} its points run {so_far['words']}, inside the office's "
+                  f"{window}. " if p0 is not start else "")
+               + f"Through {bad['what']} {'they' if p0 is not start else 'its points'} would "
+               "run "
+               + " and ".join(
+                   (f"{_span(over['box'][0], over['box'][2])[1]} in wide, {_n(over['w'])} + "
+                    f"{_n(m)} + {_n(m)} = {_n(over['ww'])}" if axis == "x" else
+                    f"{_span(over['box'][1], over['box'][3])[1]} in high, {_n(over['h'])} + "
+                    f"{_n(m)} + {_n(m)} = {_n(over['hh'])}")
+                   for axis in ("x", "y")
+                   if (over["ww"] > fit_w + 1e-9 if axis == "x" else over["hh"] > fit_h + 1e-9))
+               + (f", past the office's {window}. " if p0 is start else ", past the window. "))
+        limit = None
+        if bad["kind"] in ("pc", "end"):
+            # the window runs out on the tangent between: find where along it
+            length = round(_r(bad["s"]) - _r(p0["s"]), 3)
+            say += (f"The line is straight between the two, {_n(_r(bad['s']))} - "
+                    f"{_n(_r(p0['s']))} = {_n(length)} ft of it, so its place on the paper goes "
+                    "with the distance along it. ")
+            for i, (axis, room_in) in enumerate((("x", fit_w), ("y", fit_h))):
+                if (over["ww"] if axis == "x" else over["hh"]) <= room_in + 1e-9:
+                    continue
+                lo_edge, hi_edge = so_far["box"][i], so_far["box"][i + 2]
+                up = bad["q"][i] > p0["q"][i]
+                reach, reach_sum = (_span(lo_edge, p0["q"][i]) if up else
+                                    _span(p0["q"][i], hi_edge))
+                run, run_sum = (_span(p0["q"][i], bad["q"][i]) if up else
+                                _span(bad["q"][i], p0["q"][i]))
+                room = round(room_in - m - m - reach, 3)
+                dist = round(room / run * length, 3)
+                at = round(_r(p0["s"]) + dist, 3)
+                limit = at if limit is None else min(limit, at)
+                say += (f"In {axis} it goes on {run_sum} in over that length, "
+                        + (f"and the window, less the quarter inch each side, has {_n(room_in)} "
+                           f"- {_n(m)} - {_n(m)} = {_n(room)} in" if p0 is start else
+                           f"and the stretch already reaches {reach_sum} in to that point, so "
+                           f"the window has {_n(room_in)} - {_n(m)} - {_n(m)} - {_n(reach)} = "
+                           f"{_n(room)} in left")
+                        + f": {_n(room)} / {_n(run)} * {_n(length)} = {_n(dist)} ft more of the "
+                        f"line, to {_n(_r(p0['s']))} + {_n(dist)} = {_n(at)}. ")
+            i = next(i for i, (_a, b) in enumerate(tangents) if b is bad)
+        else:
+            say += (f"That is inside curve {bad['curve']}, and a match line stays off a curve, so "
+                    "the sheet ends on the tangent before it. ")
+            i = next(i for i, (_a, b) in enumerate(tangents)
+                     if b["kind"] == "pc" and b["curve"] == bad["curve"])
+        w = None
+        while i >= 0 and tangents[i][1]["s"] > start["s"] + 1e-6:
+            a, b = tangents[i]
+            lo_ok, hi_ok, words = range_words(a, b)
+            upto = hi_ok if limit is None else min(hi_ok, limit)
+            w = sound_on(a, b, upto, start["s"])
+            if w is not None:
+                say += (f"{words}. The last whole station there"
+                        + (f" not past {_n(upto)}" if upto < hi_ok else "")
+                        + f" is {whole_words(w)}: {_station_text(w)}. ")
+                break
+            say += (f"{words}, and no whole station there"
+                    + (f" up to {_n(upto)}" if upto < hi_ok else "")
+                    + (f" past {start['text']}" if a["s"] <= start["s"] else "")
+                    + " is that clear, so the sheet ends on the tangent before. ")
+            i, limit = i - 1, None
+        if w is None:
+            raise NotCovered(f"no sound whole station ends the sheet that starts at {start['text']}")
+        text = _station_text(w)
+        calls = [_q("station_to_xy", alignment=alignment, station=text, sheet=first)]
+        results = yield Turn(
+            told + say + f"Ask the engine for {text}: its point, and where it falls on the paper.",
+            calls)
+        _ok(results, calls)
+        cut = asked_cut(text, results[0])
+        ended = measure(between(start, cut))
+        if not ended["fits"]:
+            raise NotCovered(f"the stretch to {text} does not fit the window after all")
+        told = (f"{text} falls at x {_n(cut['q'][0])}, y {_n(cut['q'][1])}: from {start['text']} "
+                f"to it the points run {ended['words']}, inside the window, so {name} can run to "
+                f"{text}. ")
+        filled.append(cut)
+        start = cut
+        if len(names) >= len(count_words):
+            raise NotCovered("the line takes more sheets than the drafter lays out")
+        last = int(number) + len(names) - 1
+        names.append(f"{prefix}-{last + 1:0{len(number)}d}")
+        told += f"The next sheet is numbered on from {name}, {last} + 1 = {last + 1}: "
+
+    # -- where: as evenly as the line allows, when every stretch still fits
+    cuts = list(filled)
+    if filled:
+        n = len(names)
+        length = round(_r(end) - _r(begin), 3)
+        step = round(length / n, 3)
+        targets, at = [], _r(begin)
+        sums = [f"{_n(_r(end))} - {_n(_r(begin))} = {_n(length)} ft of line",
+                f"{_n(length)} / {n} = {_n(step)} ft a sheet"]
+        for _k in range(n - 1):
+            nxt = round(at + step, 3)
+            sums.append(f"{_n(at)} + {_n(step)} = {_n(nxt)}")
+            targets.append(nxt)
+            at = nxt
+        sound = [w for a, b in tangents
+                 for w in [station * j for j in range(int(math.ceil((a["s"] + clear) / station
+                                                                    - 1e-9)),
+                                                      int(math.floor((b["s"] - clear) / station
+                                                                     + 1e-9)) + 1)]]
+        even = [min(sound, key=lambda w: (abs(w - t), w)) for t in targets] if sound else []
+        told += (f"That is {count_words[n]}. Filling each sheet in turn leaves the last one "
+                 f"whatever remains, so see whether the line breaks evenly: {sums[0]}, "
+                 f"{sums[1]}, which puts the even break{'s' if n > 2 else ''} at "
+                 f"{_and(sums[2:])}. ")
+        if even and all(b > a for a, b in zip(even, even[1:])) and \
+                [round(w, 3) for w in even] != [round(c["s"], 3) for c in filled]:
+            known = {round(c["s"], 3): c for c in filled}
+            fresh = [w for w in even if round(w, 3) not in known]
+            said = []
+            for w in even:
+                a, b = next((a, b) for a, b in tangents if a["s"] <= w <= b["s"])
+                back, ahead = round(w - _r(a["s"]), 3), round(_r(b["s"]) - w, 3)
+                said.append(
+                    (f"{_station_text(w)}" if round(w, 3) in known else
+                     f"{whole_words(w)}, {_station_text(w)}")
+                    + f", {_n(w)} - {_n(_r(a['s']))} = {_n(back)} ft past the start of its "
+                    f"tangent and {_n(_r(b['s']))} - {_n(w)} = {_n(ahead)} ft short of its end")
+            calls = [_q("station_to_xy", alignment=alignment, station=_station_text(w),
+                        sheet=first) for w in fresh]
+            results = yield Turn(
+                told + "The whole station nearest each that is on a tangent and "
+                f"{_n(clear)} ft from its ends: {'; '.join(said)}. Ask the engine for "
+                f"{'each' if len(fresh) > 1 else 'it'}, to see that every stretch still fits.",
+                calls)
+            _ok(results, calls)
+            for w, result in zip(fresh, results):
+                known[round(w, 3)] = asked_cut(_station_text(w), result)
+            tried = [known[round(w, 3)] for w in even]
+            bounds = [keys[0]] + tried + [keys[-1]]
+            parts, fits_all = [], True
+            for name, lo, hi in zip(names, bounds, bounds[1:]):
+                stretch = measure(between(lo, hi))
+                fits_all = fits_all and stretch["fits"]
+                parts.append(f"{name}, {lo['text']} to {hi['text']}, would run "
+                             f"{stretch['words']}"
+                             + ("" if stretch["fits"] else ", past the window"))
+            told = "; ".join(parts) + ". "
+            if fits_all:
+                cuts = tried
+                told += (f"Every stretch is inside the office's {window}, so the sheets break "
+                         f"there, at {_and([c['text'] for c in cuts])}. ")
+            else:
+                told += (f"That does not fit, so the break{'s stay' if n > 2 else ' stays'} where "
+                         f"the sheets filled, at {_and([c['text'] for c in cuts])}. ")
+        elif even and all(b > a for a, b in zip(even, even[1:])):
+            told += (f"The sound whole station{'s' if n > 2 else ''} nearest "
+                     f"{'are' if n > 2 else 'is'} where the sheets filled, so the "
+                     f"break{'s stay' if n > 2 else ' stays'} at "
+                     f"{_and([c['text'] for c in cuts])}. ")
+        else:
+            told += ("No two sound whole stations near them keep the sheets in order, so the "
+                     f"break{'s stay' if n > 2 else ' stays'} where the sheets filled, at "
+                     f"{_and([c['text'] for c in cuts])}. ")
+    return {"names": names, "breaks": [c["text"] for c in cuts], "line": line, "rows": rows,
+            "cuts": [{"text": c["text"], "raw": c["raw"], "point": c["point"]} for c in cuts],
+            "made": {first: view}, "lead": told,
+            "done": (f"counted {count_words[len(names)]} for {alignment} at "
+                     f"{SPEC['sheet']['scale_text_format'].format(fpi=scale)}"
+                     + (f", breaking at {_and([c['text'] for c in cuts])}" if cuts else
+                        ", with no break"))}
+
+
 def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
-             lettered: bool) -> Generator[Turn, List[dict], dict]:
+             lettered: bool, chosen: Optional[dict] = None) -> Generator[Turn, List[dict], dict]:
     """Make the sheets a task asks for, each with the office's plan viewport
     centred on its stretch of the line, and return the layout: the sheets,
     their viewports and states, the scale and twist, the stretch each holds.
@@ -518,10 +925,16 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
     the view is centred on that.  A scale
     the task leaves open is the one the model's lettering was made for, or,
     with nothing lettered yet, the largest of the office's plan scales that
-    leaves room for the lettering inside the office's plan window."""
+    leaves room for the lettering inside the office's plan window.
+
+    ``chosen`` is a layout the task left to the drafter (``_choose_breaks``):
+    its sheets and breaks, the line as already read, and the first sheet, made
+    to measure the line on.  The sheets are then laid out as any are."""
     sheet_spec = SPEC["sheet"]
     ask = stated_layout(request)
     names, breaks = ask["sheets"], ask["breaks"]
+    if chosen:
+        names, breaks = chosen["names"], chosen["breaks"]
     if not names:
         raise NotCovered("the task names no sheet to lay out")
     if len(breaks) != len(names) - 1:
@@ -529,28 +942,32 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
     several = len(names) > 1
     twist = ask["twist"]
     kinds = ["curves"] + [k for k in kinds if k != "curves"]
-    probe = ask["scale"] is None and lettered
+    probe = ask["scale"] is None and lettered and not chosen
 
     # -- the line the sheets show
-    calls = [_q("get_design_data", kind="alignments", alignment=alignment)]
-    calls += [_q("get_design_data", kind=kind, alignment=alignment) for kind in kinds]
-    calls += [_q("station_to_xy", alignment=alignment, station=b) for b in breaks]
-    if probe:
-        calls.append(_q("find_entities", type="text", anchor={"kind": "station"}, limit=1))
-    results = yield Turn(
-        f"The task asks for the sheet{'s themselves' if several else ' itself'}, so read the "
-        f"line first: where {alignment} begins and ends and its curves"
-        + (f", the point of the break{'s' if len(breaks) > 1 else ''} at {_and(breaks)}"
-           if breaks else "")
-        + (", and one of the station numbers already lettered, for the scale it was made for"
-           if probe else "") + ".", calls)
-    _ok(results, calls)
-    if not results[0].get("rows"):
-        raise NotCovered(f"the design shows no {alignment}")
-    line = results[0]["rows"][0]
-    rows = {kind: r["rows"] for kind, r in zip(kinds, results[1:])}
-    cuts = [{"text": b, "raw": float(r["station"]), "point": list(r["point"])}
-            for b, r in zip(breaks, results[1 + len(kinds):])]
+    if chosen:  # read already, to choose the breaks by
+        line, rows, cuts = chosen["line"], chosen["rows"], chosen["cuts"]
+        results = []
+    else:
+        calls = [_q("get_design_data", kind="alignments", alignment=alignment)]
+        calls += [_q("get_design_data", kind=kind, alignment=alignment) for kind in kinds]
+        calls += [_q("station_to_xy", alignment=alignment, station=b) for b in breaks]
+        if probe:
+            calls.append(_q("find_entities", type="text", anchor={"kind": "station"}, limit=1))
+        results = yield Turn(
+            f"The task asks for the sheet{'s themselves' if several else ' itself'}, so read the "
+            f"line first: where {alignment} begins and ends and its curves"
+            + (f", the point of the break{'s' if len(breaks) > 1 else ''} at {_and(breaks)}"
+               if breaks else "")
+            + (", and one of the station numbers already lettered, for the scale it was made for"
+               if probe else "") + ".", calls)
+        _ok(results, calls)
+        if not results[0].get("rows"):
+            raise NotCovered(f"the design shows no {alignment}")
+        line = results[0]["rows"][0]
+        rows = {kind: r["rows"] for kind, r in zip(kinds, results[1:])}
+        cuts = [{"text": b, "raw": float(r["station"]), "point": list(r["point"])}
+                for b, r in zip(breaks, results[1 + len(kinds):])]
     ends = ([{"text": line["begin_station_text"], "raw": float(line["begin_station"]),
               "point": list(line["pis"][0]["point"])}] + cuts
             + [{"text": line["end_station_text"], "raw": float(line["end_station"]),
@@ -615,31 +1032,57 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
         return out
 
     # -- the sheets, each with a view started midway between the ends of its stretch
-    calls = [_q("create_sheet", name=name, size=size) for name in names]
+    #: a sheet made already (the first of a layout the drafter chose, measured on), with
+    #: its viewport's id: its view is moved to the start, not made
+    made: Dict[str, str] = dict((chosen or {}).get("made") or {})
+    calls = [_q("create_sheet", name=name, size=size) for name in names if name not in made]
     starts = []
     for name in names:
         lo, hi = stretch[name]
         tx, mx = _mid(lo["point"][0], hi["point"][0])
         ty, my = _mid(lo["point"][1], hi["point"][1])
         starts.append(f"for {name}, {lo['text']} to {hi['text']}, x {tx} and y {ty}")
-        calls.append(_q("create_viewport", sheet=name, center_paper=[cx, cy], width_in=fw,
-                        height_in=fh, model_center=[mx, my], feet_per_inch=scale, **turned))
+        if name in made:
+            calls.append(_q("modify_viewport", sheet=name, viewport_id=made[name],
+                            changes={"model_center": [mx, my]}))
+        else:
+            calls.append(_q("create_viewport", sheet=name, center_paper=[cx, cy], width_in=fw,
+                            height_in=fh, model_center=[mx, my], feet_per_inch=scale, **turned))
     calls += [_q("get_sheet_state", sheet=name) for name in names]
     spans = asked(calls)
     count = len(names)
-    results = yield Turn(
-        f"{why}Make {_and(names)} on {size.replace('_', ' ')}, "
-        f"{'the size asked for' if ask['size'] else 'the plan sheet the office uses'}, "
-        f"{'each ' if several else ''}with the office's plan viewport: {_n(fw)} by {_n(fh)} in, "
-        f"centred at x {_n(cx)}, y {_n(cy)}, at {_n(scale)} ft to the inch"
-        + (f" and turned {_n(twist)}° as the task asks" if twist else "")
-        + f". Start {'each' if several else 'the'} view on the point midway between the ends of "
-        f"its stretch: {'; '.join(starts)}. Then ask the engine where the stretch falls on the "
-        "paper. Its two ends and the PI of each curve on it bound it: a curve lies inside the "
-        "corner its tangents make at the PI.", calls)
+    fresh = [name for name in names if name not in made]
+    if chosen and fresh:
+        say = (f"{chosen['lead']}Make {_and(fresh)} like {_and(list(made))}: on "
+               f"{size.replace('_', ' ')}, with the office's plan viewport, {_n(fw)} by {_n(fh)} "
+               f"in, centred at x {_n(cx)}, y {_n(cy)}, at {_n(scale)} ft to the inch"
+               + (f" and turned {_n(twist)}°" if twist else "")
+               + f". Start each view, {_and(list(made))}'s too, on the point midway between the "
+               f"ends of its stretch: {'; '.join(starts)}. Then ask the engine where each stretch "
+               "falls on its paper. Its two ends and the PI of each curve on it bound it: a curve "
+               "lies inside the corner its tangents make at the PI.")
+    elif chosen:
+        say = (f"{chosen['lead']}Move the view of {_and(list(made))} to the point midway between "
+               f"the two ends of the line: {'; '.join(starts)}. Then ask the engine where the "
+               "line falls on the paper from there. Its two ends and the PI of each curve bound "
+               "it: a curve lies inside the corner its tangents make at the PI.")
+    else:
+        say = (
+            f"{why}Make {_and(names)} on {size.replace('_', ' ')}, "
+            f"{'the size asked for' if ask['size'] else 'the plan sheet the office uses'}, "
+            f"{'each ' if several else ''}with the office's plan viewport: {_n(fw)} by {_n(fh)} in, "
+            f"centred at x {_n(cx)}, y {_n(cy)}, at {_n(scale)} ft to the inch"
+            + (f" and turned {_n(twist)}° as the task asks" if twist else "")
+            + f". Start {'each' if several else 'the'} view on the point midway between the ends of "
+            f"its stretch: {'; '.join(starts)}. Then ask the engine where the stretch falls on the "
+            "paper. Its two ends and the PI of each curve on it bound it: a curve lies inside the "
+            "corner its tangents make at the PI.")
+    results = yield Turn(say, calls)
     _ok(results, calls)
-    vp = {name: results[count + i]["created"][0] for i, name in enumerate(names)}
-    state = {name: results[2 * count + i]["sheet"] for i, name in enumerate(names)}
+    views = len(fresh)  # (the calls run: the sheets made, a view each, then each sheet read)
+    vp = {name: made[name] if name in made else results[views + i]["created"][0]
+          for i, name in enumerate(names)}
+    state = {name: results[views + count + i]["sheet"] for i, name in enumerate(names)}
     frame_box = (cx - fw / 2.0, cy - fh / 2.0, cx + fw / 2.0, cy + fh / 2.0)
     for name in names:
         ua = state[name]["usable_area"]
@@ -2807,9 +3250,16 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
     # several sheets is trimmed and given its match lines once the lettering is down
     layout: Optional[dict] = None
     if "sheet" in todo:
+        # a task that leaves the number of sheets and their breaks open has them chosen first
+        chosen: Optional[dict] = None
+        first = stated_open(request)
+        if first:
+            chosen = yield from _choose_breaks(request, alignment, first,
+                                               ["tangents"] if "bearings" in lettering else [])
+            done.append(chosen["done"])
         layout = yield from _lay_out(request, alignment, summary,
                                      ["tangents"] if "bearings" in lettering else [],
-                                     lettered=not lettering)
+                                     lettered=not lettering, chosen=chosen)
         sheets, carry = layout["names"], layout["carry"]
         if len(sheets) == 1:
             done.append(
@@ -3272,9 +3722,13 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
             keys = state[name].get("title_block_keys") or []
             have = state[name].get("title_block_fields") or {}
             if stated:
-                if name not in stated["sheet_numbers"]:
+                if stated["sheet_numbers"] is None:  # a layout the task left to the drafter
+                    want = {k: v for k, v in stated.items() if k != "sheet_numbers"}
+                    want["total_sheets"] = str(len(sheets))
+                elif name not in stated["sheet_numbers"]:
                     raise NotCovered(f"the task's title block does not number {name}")
-                want = {k: v for k, v in stated.items() if k != "sheet_numbers"}
+                else:
+                    want = {k: v for k, v in stated.items() if k != "sheet_numbers"}
             else:
                 want = {"sheet_title": SHEET_TITLE, "total_sheets": str(len(sheets)),
                         "scale": SPEC["sheet"]["scale_text_format"].format(
@@ -3294,7 +3748,11 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
             if fields:
                 calls.append(_q("fill_title_block", sheet=name, fields=fields))
         if calls:
-            if stated:
+            if stated and stated["sheet_numbers"] is None:
+                say = ("The task gives every value of the title block but the two the layout "
+                       "decides. Letter them as written, each sheet under its own number, and "
+                       f"the number of sheets as the file now holds: {_s(len(sheets), 'sheet')}.")
+            elif stated:
                 say = ("The task gives every value of the title block. Letter them as written, "
                        "each sheet under its own number.")
             else:
@@ -3405,8 +3863,13 @@ def _standards():
 STANDARDS = _standards()
 #: what a drafter chooses for itself, where no standard speaks
 CHOICES = (MARGIN_IN, ROOM_IN, LETTERING_IN, MATCH_HALF_IN, FULL_ROWS) + CLEAR_STEPS
+#: ... and, where a task leaves the sheet breaks to it, how far it keeps a match line from a
+#: curve point (its own line, so a change to the tuple above merges without touching this)
+CHOICES += (MATCH_CLEAR_FT,)
 #: a design point named by its index: the kind is the engine's word, the index a number seen
 _ANCHOR = re.compile(r"^(BEGIN|END|PI|PC|PT|BC|EC|MC|T|C|EQ)-(\d+)$")
+#: a sheet's number, as a layout left to the drafter counts on from the first (C-102)
+_SHEET_NUMBER = re.compile(r"^([A-Z]+)-(\d+)$")
 #: a plan scale as a title block letters it
 _PLAN_SCALE = re.compile(r"^1\"\s*=\s*(\d+(?:\.\d+)?)'$")
 #: a point given by station and offset, as ``draw_station_offset`` takes it
@@ -3482,6 +3945,10 @@ class Seen:
         anchor = _ANCHOR.match(value)
         if anchor:  # the index has to be one the design showed: no standard names a curve
             return self.number(float(anchor.group(2)), standards=False)
+        numbered = _SHEET_NUMBER.match(value)
+        if numbered and re.search(rf"numbered from {re.escape(numbered.group(1))}-\d", self.text):
+            # a sheet numbered on from the one the task names: its number has to be worked out
+            return self.number(float(numbered.group(2)), standards=False)
         if _STATION.fullmatch(value):
             return self.number(numbers_in(value)[0], standards=False)
         scale = _PLAN_SCALE.match(value)
@@ -3679,7 +4146,8 @@ def main(argv=None) -> int:
 
 __all__ = ["COVERED", "NotCovered", "Turn", "GroundedAgent", "solve", "covers", "audit",
            "twist_ignored", "record_task", "record", "request_of", "stated_alignment",
-           "stated_title", "stated_layout", "stated_revision", "numbers_in", "worked_sums",
+           "stated_title", "stated_layout", "stated_open", "stated_revision", "numbers_in",
+           "worked_sums",
            "STANDARDS",
            "CHOICES"]
 

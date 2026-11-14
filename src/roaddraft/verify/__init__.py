@@ -26,7 +26,7 @@ from roaddraft.commands.bus import ANCHOR_PRODUCERS
 from roaddraft.document.document import Document
 from roaddraft.tasks.brief import GroundTruth
 from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1, spec_hash
-from roaddraft.tasks.types import CHECK_GROUPS, DESIGN_GROUPS, GROUPS
+from roaddraft.tasks.types import CHECK_GROUPS, DESIGN_GROUPS, GROUPS, OPEN_BREAKS
 from roaddraft.verify.audit import audit_journal
 from roaddraft.verify.checks import CHECKS, analyze
 from roaddraft.verify.context import Context, given_design
@@ -52,6 +52,12 @@ def verify(doc: Document, truth: Union[GroundTruth, dict], spec: Optional[dict] 
     spec = DRAFTING_SPEC_V1 if spec is None else spec
     if isinstance(truth, dict):
         truth = GroundTruth.from_dict(truth)
+    if OPEN_BREAKS in truth.scope:
+        # a training-only layout whose sheet count and breaks were the drafter's to choose
+        # (tasks.breaks): graded against the truth of the breaks it chose, with a check of
+        # its own on the choice.  No other truth carries the mark
+        from roaddraft.verify.breaks import verify_open
+        return verify_open(doc, truth, spec, journal=journal, prompt_level=prompt_level)
     ctx = Context.build(doc, truth, spec, prompt_level)
     scope = [g for g in GROUPS if g in ctx.scope]
     groups = check_groups(truth)
