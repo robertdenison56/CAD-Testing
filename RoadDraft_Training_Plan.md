@@ -742,10 +742,26 @@ again on the pin (decision 3): `faults inject`, then `conversations convert`.
    each checkpoint needs merging and a Q4_K_M GGUF conversion. Runpod bf16 on vLLM: minutes and a few dollars a
    set, the rig the Cost Plan assumed. I recommend Runpod for the loop, since training has to rent a card anyway,
    and a GGUF copy of the final checkpoints for a local board row.
+   **Decided 2026-11-13: the PC, Q4_K_M.** The "nights" above were wrong for the vague runs: the 9B's
+   vague episodes took 4.8 h on `d1-test`, 3.9 h on `d1-real` and 15.7 h on `hard-pilots` (the episodes'
+   own clocks, queue gaps not counted), so a package is about a day, perhaps two for a trained model that
+   works longer. The loop keeps the board's precision. Each checkpoint is merged and quantized to Q4_K_M on
+   the training pod before it stops, and the GGUF is carried to the PC.
 2. **A budget line for training.** The $71 left of November's $100 is set aside for the large-model queue.
    Through a first trained row I estimate $30-60 on top (smoke, T1, lean evals).
+   **Decided 2026-11-13: $150 through a first trained row.** The Track D queues spent the November money
+   (balance about $10.79 by the last queue's count, Nov 13 05:05), so the line needs a top-up first. It
+   covers the smoke (about $5-10), T1 (the data sized to the throughput the smoke measures: one epoch over
+   all 300.8M tokens fits), and the checkpoint conversions; the evals cost nothing on the PC. A budget line
+   is not a go: each paid step still waits on Robert's word.
 3. **The pin.** A new one from main with the base rerun on it (recommended), or the board's `0334fd4a`.
-4. **Frontier teacher data**: leave out (recommended) or check the terms.
+   **Decided 2026-11-13: a new pin from main.** All 6,568 training conversations were recorded on main's
+   tool surface (`9db020d9`); the board's `0334fd4a` has the stationing help from before 011c2008 and no
+   revision-only tools, so a model trained on the data would meet other tool descriptions at eval. Four
+   engine changes land on main first (decisions 9, 10, 11's base file and 13), the training sets are
+   recorded again on the result, and then the pin is cut and the base rerun runs on it.
+4. **Frontier teacher data**: leave out (recommended) or check the terms. **Decided 2026-11-13: leave it
+   out.** The training data is the grounded recordings, and later the subject's own passes (T2).
 5. **The title block from a vague prompt** (found 2026-11-11). **Decided 2026-11-11: the third, "do 3".**
    The document did not say who designed, drew or checked a sheet, or its date, and D1-10 wants those fields
    filled. The three ways out were:
@@ -760,20 +776,24 @@ again on the pin (decision 3): `faults inject`, then `conversations convert`.
 6. **The vague rows that ran before the names were in the document** (2026-11-11). Leave them ranked with
    the note above (recommended: the most any row could gain is 0.95 on `d1-test` and 1.55 on `d1-test-hard`,
    and neither board reorders), or rerun them. The local reruns are free and slow; the frontier ones are on
-   hold.
+   hold. **Decided 2026-11-13: leave them ranked.** The board carries no note of it yet; one goes in its
+   footer at the Track D close-out.
 
 7. **What may train the pilots** (2026-11-11, §8). Keep every sheet a held-out pilot uses out of training
    (recommended; training is then on generated sheets and the pilots stay a transfer test), or allow new
    parameters on the same sheets (cheap for five families, and the model has then seen the test's sheets).
+   **Decided 2026-11-13: keep them out.** No task on any of the 42 sheets the pilots use trains; the 9
+   clean sheets of §8 carry `pilot-dev`, for choosing a checkpoint only.
 8. **A seeded task that leaves the sheet breaks to the drafter** (2026-11-11, the open half of build 1). It
    needs a new task type whose prompt gives no breaks and a check that takes any sound set of them, as the
    `p05` grader does from the plotted sheets; the D1 sheet check grades against the generator's own breaks.
    Build it as a training-only type with a check of its own (recommended: no board set or id moves), or
-   leave `p05` to transfer from the stated-break layouts.
+   leave `p05` to transfer from the stated-break layouts. **Decided 2026-11-13: the training-only type.**
+   It touches no tool, so it need not wait for the pin.
 9. **Width dimensions through a turned viewport** (2026-11-11). `place_dimension` has no `view_rotation`;
    giving it one moves the tool surface. Until then the three width types stay untwisted. The drafter
    covers them untwisted since 2026-11-12, night (206 of 207 kept a level), so this only decides whether a
-   width task may be twisted.
+   width task may be twisted. **Decided 2026-11-13: build it, before the pin.**
 10. **What the engine tells a drafter about lettering that collides** (2026-11-12, the clearing step). Today
     nothing: a text is reported by its box on the model's axes, and a model that cannot look at a render has
     to work out the rest. The three ways on:
@@ -785,15 +805,23 @@ again on the pin (decision 3): `faults inject`, then `conversations convert`.
     - A query that lists the pairs that collide on a sheet. That hands over the verifier's own answer; I
       would not.
     I recommend the second, in the same cut as a new pin if decision 3 goes that way, and the first until
-    then.
+    then. **Decided 2026-11-13: the second, in the pin's cut.** The corners are the verifier's own
+    footprint (`verify.legibility.text_quad`) taken to the paper; the clearing step is rebuilt on them.
 11. **Letting a seeded revision task make the change itself** (2026-11-12, build 4). **Decided 2026-11-12:
     "Yes, revision only".** `modify_alignment` and `update_labels` are shown only on a revised task's list
     (its scope carries a `revision` mark), and where the design lives in the sheet file the drafter makes
     the change, graded by D1-15 and D1-01. No board task's list or digest moves. The base file
-    (`open_document` and `reload_references` in a D1 episode) is still open, for the pin.
+    (`open_document` and `reload_references` in a D1 episode) was left for the pin. **Decided 2026-11-13:
+    allow them, in the pin's cut**, so the drafter can make a revision where the design lives in the base
+    drawing too. My proposal for the scope: shown on a revised task's list only, like the two above.
 12. **The labels' follow guessed a twist on an untwisted sheet** (2026-11-12, found by build 4). **Decided
     2026-11-12: "Fix it now".** `commands/label_updates.py::_view_rotation` keeps no twist when no twist poses
     every label of a set as it stands, and guesses only when it does not. Stored rows stand as recorded.
+13. **A label square to its line on a twisted sheet** (found 2026-11-11, the sheet phase). `place_label` on
+    a sheet takes the end the text is set from out of the model direction (`labels.label_pose`, no twist)
+    and the rotation out of the paper (`labels.sheet_pose`), so through a turned viewport the text can run
+    back across the line; the drafter sets it again from the other end when `get_entity` shows that.
+    **Decided 2026-11-13: fix it, before the pin.** The tool list does not move.
 
 ## 7. Risks
 
