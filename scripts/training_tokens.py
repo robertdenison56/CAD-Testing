@@ -7,10 +7,13 @@ and runs under any Python that has them (Unsloth Studio's does)::
 
     PYTHON -I scripts/training_tokens.py results/training
 
-The subject is Qwen3.5 9B.  Its tokenizer is built from a GGUF vocabulary
-(byte-level BPE with the ``qwen35`` pre-tokenizer, as llama.cpp reads it;
-by default the vocabulary llama.cpp ships for its own ``qwen35`` tokenizer
-tests), or read from a Hugging Face ``tokenizer.json`` with ``--tokenizer``.
+The subject is Qwen3.5 9B.  By default its tokenizer is the model's own
+``tokenizer.json`` and its chat template the model's ``chat_template.jinja``
+(both from the ``Qwen/Qwen3.5-9B`` repo on Hugging Face, kept in
+``~/.roaddraft/tokenizers/Qwen3.5-9B``; they count LM Studio's prompts for
+the 9B to the token).  Without them, ``--gguf`` builds it from a GGUF
+vocabulary (byte-level BPE with the ``qwen35`` pre-tokenizer, as llama.cpp
+reads it), which ran 1-2% low.
 Qwen's chat markers (``<|im_start|>``, ``<tool_call>``, ``<think>`` ...) are
 one token each, as in the model's own tokenizer.  Each conversation is
 rendered through Qwen3.5's chat template with its tools, without a
@@ -37,8 +40,11 @@ import time
 from pathlib import Path
 
 HOME = Path.home()
+#: the 9B's own tokenizer and chat template (Qwen/Qwen3.5-9B on Hugging Face, SOURCE.json beside them)
+MODEL = HOME / ".roaddraft" / "tokenizers" / "Qwen3.5-9B"
+TOKENIZER = MODEL / "tokenizer.json"
+TEMPLATE = MODEL / "chat_template.jinja"
 GGUF = HOME / ".unsloth" / "llama.cpp" / "models" / "ggml-vocab-qwen35.gguf"
-TEMPLATE = HOME / ".unsloth" / "llama.cpp" / "models" / "templates" / "Qwen3.5-4B.jinja"
 #: the Qwen3.5 pre-tokenizer (llama.cpp's LLAMA_VOCAB_PRE_TYPE_QWEN35, from the model's tokenizer.json)
 QWEN35_SPLIT = (r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}"
                 r"| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+")
@@ -96,8 +102,14 @@ def tokenizer_from_gguf(path: Path):
 def tokenizer_from_json(path: Path):
     from tokenizers import Tokenizer
     tok = Tokenizer.from_file(str(path))
-    return tok, {"description": "the tokenizer in tokenizer.json", "source": shown(path),
-                 "sha256": sha256_file(path), "vocab": tok.get_vocab_size()}
+    info = {"description": "the tokenizer in tokenizer.json", "source": shown(path),
+            "sha256": sha256_file(path), "vocab": tok.get_vocab_size()}
+    source = path.parent / "SOURCE.json"   # where it was downloaded from, when that was recorded
+    if source.exists():
+        info["from"] = json.loads(source.read_text())
+        info["description"] = (f"{info['from']['repo']}'s own tokenizer (Hugging Face, revision "
+                               f"`{info['from']['revision'][:8]}`)")
+    return tok, info
 
 
 def check_vectors(tok, gguf: Path) -> dict:
@@ -235,7 +247,6 @@ def calibrate(counter: Counter, template, path: Path, tools_doc: dict) -> dict:
     if not deltas:
         return {}
     rel = [abs(r["counted"] - r["server"]) / r["server"] for r in rows]
-    first = rows[0]
     per_call, per_arg, const = least_squares([[r["calls"], r["arguments"], 1.0] for r in rows],
                                              [r["server"] - r["counted"] for r in rows])
     return {"source": str(path), "requests": len(rows), "conversations": len({r["id"] for r in rows}),
@@ -244,33 +255,38 @@ def calibrate(counter: Counter, template, path: Path, tools_doc: dict) -> dict:
             "server_minus_counted": {"per_call": round(per_call, 2), "per_argument": round(per_arg, 2),
                                      "constant": round(const, 1)},
             "rows": rows[:300],
-            "text": (f"{len(rows)} requests of {len({r['id'] for r in rows})} Qwen3.5 9B episodes, each "
-                     f"rendered as the harness sent it and counted here, against the prompt tokens LM Studio "
-                     f"reported. The first request ({first['server']:,} tokens at the server) counts "
-                     f"{first['counted']:,} here. The count runs low, by {-max(deltas):,} to {-min(deltas):,} "
-                     f"tokens (at most {100 * max(rel):.2f}% of a request), and the gap grows with the tool "
-                     f"calls the conversation holds: about {per_call:.1f} tokens a call and {per_arg:.1f} an "
-                     f"argument (least squares over the requests). So the totals below are about 1-2% low on "
-                     f"long conversations, and the assistant (loss) tokens lower than that in proportion, "
-                     f"since the gap sits in the tool calls. Most likely the 9B's GGUF tokenizer or template "
-                     f"differs from this vocabulary in how it splits `<function=`/`<parameter=` markup; "
-                     f"neither the 9B's GGUF nor its `tokenizer.json` is on this Mac.")}
+            "text": _calibration_text(rows, deltas, rel, per_call, per_arg)}
+
+
+def _calibration_text(rows, deltas, rel, per_call, per_arg) -> str:
+    first = rows[0]
+    said = (f"{len(rows)} requests of {len({r['id'] for r in rows})} Qwen3.5 9B episodes, each rendered as "
+            f"the harness sent it and counted here, against the prompt tokens LM Studio reported. The first "
+            f"request ({first['server']:,} tokens at the server) counts {first['counted']:,} here.")
+    if not any(deltas):
+        return said + " Every request counts exactly what the server reported, so the totals below are exact."
+    side = "low" if statistics.median(deltas) < 0 else "high"
+    return said + (f" The count runs {side}: {min(deltas):+,} to {max(deltas):+,} tokens against the server "
+                   f"(at most {100 * max(rel):.2f}% of a request), growing by about {-per_call:+.1f} tokens a "
+                   f"tool call and {-per_arg:+.1f} an argument (least squares over the requests), so the "
+                   f"totals below are off by about that much on long conversations.")
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("folder", type=Path, help="results/training: the conversations and tools.json")
-    parser.add_argument("--gguf", type=Path, default=GGUF)
-    parser.add_argument("--tokenizer", type=Path, help="a tokenizer.json instead of the GGUF vocabulary")
+    parser.add_argument("--gguf", type=Path, nargs="?", const=GGUF, default=None,
+                        help="build the tokenizer from a GGUF vocabulary instead of a tokenizer.json")
+    parser.add_argument("--tokenizer", type=Path, default=TOKENIZER, help="the model's tokenizer.json")
     parser.add_argument("--template", type=Path, default=TEMPLATE)
     parser.add_argument("--calibrate", type=Path, help="conversations with server prompt counts")
     parser.add_argument("--calibration-only", action="store_true",
                         help="update the calibration in tokens.json and count nothing else")
     args = parser.parse_args(argv)
     folder = args.folder
-    tok, tk_info = (tokenizer_from_json(args.tokenizer) if args.tokenizer
-                    else tokenizer_from_gguf(args.gguf))
-    if not args.tokenizer:
+    tok, tk_info = (tokenizer_from_gguf(args.gguf) if args.gguf
+                    else tokenizer_from_json(args.tokenizer))
+    if args.gguf:
         tk_info["test_vectors"] = check_vectors(tok, args.gguf)
     template, tp_info = template_from(args.template)
     counter = Counter(tok)

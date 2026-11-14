@@ -639,7 +639,9 @@ Qwen3.5's tokenizer from llama.cpp's qwen35 vocabulary (it agrees on all 51 of l
 renders through llama.cpp's Qwen3.5 template. Against LM Studio's counts on 240 requests of four 9B
 `d1-test` episodes, the first request counts 27,670 against the server's 27,698; the gap grows by about 2
 tokens a tool call and 2.3 an argument, at most 1.9% of a request. So the lengths are 1-2% low and the loss
-tokens lower still; a recount with the 9B's `tokenizer.json` belongs in the T1 smoke.
+tokens lower still; a recount with the 9B's `tokenizer.json` belongs in the T1 smoke. (Done 2026-11-13: the
+9B's own tokenizer counts LM Studio's requests exactly; the references are 302.9M tokens, and the loss tokens
+were 5.8% low. See the `c-faults` status.)
 
 **Open for T1.** The drafter's shown work is visible text, and Qwen3.5's template adds an empty think block
 to each assistant turn. One in eight conversations runs past 64k tokens, so the T1 sequence length (and its
@@ -721,11 +723,21 @@ most training tasks own their alignment, where there is nothing to leave off; on
 is the kind taken most. `scripts/training_tokens.py` leaves weight-0 messages out of the loss count. Tests:
 `tests/test_trajectories_faults.py` (11), and the converter's 57 with them, pass.
 
-**Not done.** The faulted copies' tokens are not counted: Unsloth Studio's llama.cpp was updated to b12340
-since 2026-11-12 and no longer ships `models/ggml-vocab-qwen35.gguf`, which the token script reads
-(`tokens.json` still holds the references' counts, unchanged). It needs the vocabulary again, or the
-9B's `tokenizer.json` (`--tokenizer`), which the T1 smoke wants anyway. And T1's mix (how many faulted
-copies beside the references) is the T1 run's choice; every reference that can have one has one.
+**Tokens** (recounted 2026-11-13; Robert: "Yes, count them"). Unsloth Studio's llama.cpp update to b12340
+took away the qwen35 vocabulary the token script read, so it now reads the 9B's own `tokenizer.json` and
+`chat_template.jinja` (`Qwen/Qwen3.5-9B` on Hugging Face, revision `c2022362`, kept in
+`~/.roaddraft/tokenizers/Qwen3.5-9B`; the template is byte-identical to llama.cpp's Qwen3.5 one); a GGUF
+vocabulary is now `--gguf` only. On the same 240 requests of four 9B episodes it counts exactly what LM
+Studio reported, every request to the token. The references recount at 302.9M tokens, 0.7% over the
+2026-11-12 count, and 31.8M of them trained on, 5.8% over (the old vocabulary's gap sat in the tool calls);
+846 run past 65,536 (was 812), none past 131,072. The faulted copies are 291.6M tokens: a copy runs a median
+291 tokens past its reference (most 1,868), 30 more cross 65,536, none 131,072. They train on 29.9M, a copy
+a median 38 fewer than its reference, because a swap's reference calls before the mistake share the broken
+turn's message and its weight 0 (they are trained on in the reference itself). Together: 12,703
+conversations, 594.4M tokens, 61.7M trained on.
+
+**Not done.** T1's mix (how many faulted copies beside the references) is the T1 run's choice; every
+reference that can have one has one.
 
 **Found, for the pin's cut.** The 9B's most frequent failed call is `place_label` with no alignment in a
 sheet file (396 on its six rows; after 184 of them no `place_label` worked again in the episode). The error's hint is "create one with

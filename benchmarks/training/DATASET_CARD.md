@@ -120,79 +120,81 @@ The 9B's counts are its failed calls of each kind over its six board rows (`d1-t
 
 ## Token lengths
 
-Counted with the Qwen3.5 tokenizer (byte-level BPE, the qwen35 pre-tokenizer) built from llama.cpp's qwen35 vocabulary (`~/.unsloth/llama.cpp/models/ggml-vocab-qwen35.gguf`, 151936 tokens, sha256 `63ed952ff338996c`), over each conversation rendered through Qwen3.5's chat template (`~/.unsloth/llama.cpp/models/templates/Qwen3.5-4B.jinja`, sha256 `a4aee8afcf2e0711`) with its tools, no generation prompt: the length of the training sequence.
+Counted with Qwen/Qwen3.5-9B's own tokenizer (Hugging Face, revision `c2022362`) (`~/.roaddraft/tokenizers/Qwen3.5-9B/tokenizer.json`, 248070 tokens, sha256 `5f9e4d4901a92b99`), over each conversation rendered through Qwen3.5's chat template (`~/.roaddraft/tokenizers/Qwen3.5-9B/chat_template.jinja`, sha256 `a4aee8afcf2e0711`) with its tools, no generation prompt: the length of the training sequence.
 
-**Calibration.** 240 requests of 4 Qwen3.5 9B episodes, each rendered as the harness sent it and counted here, against the prompt tokens LM Studio reported. The first request (27,698 tokens at the server) counts 27,670 here. The count runs low, by 28 to 1,145 tokens (at most 1.94% of a request), and the gap grows with the tool calls the conversation holds: about 2.0 tokens a call and 2.3 an argument (least squares over the requests). So the totals below are about 1-2% low on long conversations, and the assistant (loss) tokens lower than that in proportion, since the gap sits in the tool calls. Most likely the 9B's GGUF tokenizer or template differs from this vocabulary in how it splits `<function=`/`<parameter=` markup; neither the 9B's GGUF nor its `tokenizer.json` is on this Mac.
+**Calibration.** 240 requests of 4 Qwen3.5 9B episodes, each rendered as the harness sent it and counted here, against the prompt tokens LM Studio reported. The first request (27,698 tokens at the server) counts 27,698 here. Every request counts exactly what the server reported, so the totals below are exact.
 
 ### `d1-train` (2396 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,762-29,463 tokens; whole conversation median 32,071, p90 48,573, most 69,269; assistant tokens (the loss) median 852, most 15,467.
+Fixed prompt (system, tools, task) 27,790-29,491 tokens; whole conversation median 32,158, p90 48,732, most 69,619; assistant tokens (the loss) median 917, most 15,768.
 
 ```
-     28k-30k    456 ██████████████████
-     30k-32k    716 ████████████████████████████
-     32k-36k    534 █████████████████████
-     36k-40k    252 ██████████
-     40k-48k    167 ███████
-     48k-56k    167 ███████
-     56k-64k     97 ████
-     64k-80k      7 █
+     28k-30k    456 █████████████████████
+     30k-32k    606 ███████████████████████████
+     32k-36k    622 ████████████████████████████
+     36k-40k    251 ███████████
+     40k-48k    183 ████████
+     48k-56k    171 ████████
+     56k-64k     99 ████
+     64k-80k      8 █
 ```
 
 ### `d1-train-hard` (588 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,787-30,132 tokens; whole conversation median 71,718, p90 102,605, most 121,294; assistant tokens (the loss) median 11,787, most 25,909.
+Fixed prompt (system, tools, task) 27,815-30,169 tokens; whole conversation median 72,804, p90 103,889, most 122,806; assistant tokens (the loss) median 12,740, most 27,285.
 
 ```
      40k-48k    118 ███████████████
      48k-56k      0 
-     56k-64k    108 █████████████
-     64k-80k    227 ████████████████████████████
-     80k-96k     65 ████████
-96k-131.072k     70 █████████
+     56k-64k     99 █████████████
+     64k-80k    220 ████████████████████████████
+     80k-96k     77 ██████████
+96k-131.072k     74 █████████
 ```
 
 ### `d1-train-twist` (1200 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,762-28,379 tokens; whole conversation median 33,956, p90 47,179, most 64,313; assistant tokens (the loss) median 1,090, most 11,474.
+Fixed prompt (system, tools, task) 27,790-28,416 tokens; whole conversation median 34,118, p90 47,595, most 65,220; assistant tokens (the loss) median 1,172, most 12,307.
 
 ```
-     30k-32k    231 ████████████
-     32k-36k    544 ████████████████████████████
-     36k-40k    246 █████████████
-     40k-48k     63 ███
-     48k-56k     65 ███
-     56k-64k     50 ███
-     64k-80k      1 █
+     30k-32k    200 ██████████
+     32k-36k    562 ████████████████████████████
+     36k-40k    249 ████████████
+     40k-48k     73 ████
+     48k-56k     62 ███
+     56k-64k     49 ██
+     64k-80k      5 █
 ```
 
 ### `d1-train-crowd` (1184 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,773-28,289 tokens; whole conversation median 61,421, p90 82,837, most 113,596; assistant tokens (the loss) median 8,684, most 45,825.
+Fixed prompt (system, tools, task) 27,801-28,325 tokens; whole conversation median 61,958, p90 83,747, most 114,873; assistant tokens (the loss) median 9,167, most 46,971.
 
 ```
-     40k-48k    104 █████████
-     48k-56k    294 █████████████████████████
-     56k-64k    281 ████████████████████████
-     64k-80k    328 ████████████████████████████
-     80k-96k    153 █████████████
-96k-131.072k     24 ██
+     40k-48k     97 ████████
+     48k-56k    285 ████████████████████████
+     56k-64k    286 ████████████████████████
+     64k-80k    331 ████████████████████████████
+     80k-96k    155 █████████████
+96k-131.072k     30 ███
 ```
 
 ### `d1-train-revise` (1200 conversations, both levels)
 
-Fixed prompt (system, tools, task) 28,334-30,148 tokens; whole conversation median 41,648, p90 58,056, most 77,697; assistant tokens (the loss) median 1,548, most 13,974.
+Fixed prompt (system, tools, task) 28,362-30,182 tokens; whole conversation median 41,821, p90 58,378, most 78,465; assistant tokens (the loss) median 1,660, most 14,653.
 
 ```
-     32k-36k    105 ██████
-     36k-40k    495 ████████████████████████████
-     40k-48k     95 █████
-     48k-56k    296 █████████████████
-     56k-64k    191 ███████████
+     32k-36k     94 █████
+     36k-40k    506 ████████████████████████████
+     40k-48k     88 █████
+     48k-56k    294 ████████████████
+     56k-64k    200 ███████████
      64k-80k     18 █
 ```
 
-**All sets:** 6,568 conversations, 300,793,549 tokens; median 37,952, p90 70,504, p99 101,881, most 121,294. 812 are past 65,536 and 0 past 131,072.
+**All sets:** 6,568 conversations, 302,855,003 tokens; median 38,185, p90 71,326, p99 103,112, most 122,806. 846 are past 65,536 and 0 past 131,072.
+
+**Faulted copies:** 6,135 conversations, 291,577,760 tokens; median 39,565, most 122,835; 875 past 65,536 and 0 past 131,072. Assistant tokens trained on (the broken turns, weight 0, left out) median 2,501.
 
 ## How to rebuild
 
