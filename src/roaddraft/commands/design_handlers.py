@@ -581,11 +581,12 @@ def plan_label(doc: Document, p: dict) -> dict:
                                  anno.offset_for(scaled, kind) if scaled else None)
         else:
             model_offset = None
-        spec = compile_label(
-            align, ap, kind, side=p.get("side"), label_offset=model_offset,
-            rotation=p.get("rotation"), content=p.get("content"),
-            halign=p.get("halign"), valign=p.get("valign"),
-            view_rotation=p.get("view_rotation", 0.0))
+        lettering = dict(side=p.get("side"), label_offset=model_offset,
+                         rotation=p.get("rotation"), content=p.get("content"),
+                         halign=p.get("halign"), valign=p.get("valign"))
+        spec = compile_label(align, ap, kind, **lettering,
+                             view_rotation=p.get("view_rotation", 0.0)
+                             if space_key == "model" else 0.0)
     except DesignError as e:
         raise _fault(e)
     vp = None
@@ -598,11 +599,18 @@ def plan_label(doc: Document, p: dict) -> dict:
     else:
         sheet = doc.sheets[space_key]
         vp = _pick_viewport(doc, sheet, p.get("viewport"), spec.anchor_point, ap, align)
+        if vp.rotation_deg:
+            # a label on a sheet is read on the paper, through its viewport's twist:
+            # above/below, the end it is set from and the edge it sits on go by that
+            spec = compile_label(align, ap, kind, **lettering,
+                                 view_rotation=float(vp.rotation_deg))
         recorded_offset = float(p.get("label_offset", default_offset(kind, "sheet")))
         position, rotation_deg = sheet_pose(spec, vp.transform(), vp.rotation_deg,
                                             recorded_offset)
         height = p.get("height", SHEET_TEXT_HEIGHT)
     record = spec.anchor_record(vp.id if vp is not None else None)
+    if vp is not None:
+        record.pop("view_rotation", None)  # the viewport the record names carries the twist
     record["label_offset"] = float(recorded_offset)
     return {"space_key": space_key, "container": container, "alignment": align, "spec": spec,
             "anchor_point": ap, "kind": kind, "viewport": vp, "position": position,

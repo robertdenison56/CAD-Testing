@@ -165,6 +165,12 @@ def _resolve(align: Alignment, rec: dict):
 def _repose_label(doc: Document, space_key: str, e: Text, align: Alignment,
                   out: Followed) -> None:
     rec = e.anchor
+    vp = None
+    if space_key != "model":
+        vp = doc.sheets[space_key].viewport_by_id(rec.get("viewport"))
+        if vp is None:
+            out.stranded.append((e.id, f"its viewport {rec.get('viewport')} is not on the sheet"))
+            return
     try:
         ap = _resolve(align, rec)
         spec = compile_label(
@@ -172,18 +178,15 @@ def _repose_label(doc: Document, space_key: str, e: Text, align: Alignment,
             label_offset=rec.get("label_offset") if space_key == "model" else None,
             rotation=rec.get("rotation"),
             content=None if rec.get("content_auto") else e.content,
-            view_rotation=float(rec.get("view_rotation") or 0.0))
+            # a sheet label reads through its viewport's twist (place_label)
+            view_rotation=float(vp.rotation_deg if vp is not None
+                                else rec.get("view_rotation") or 0.0))
     except DesignError as err:
         out.stranded.append((e.id, str(err)))
         return
-    vp = None
     if space_key == "model":
         position, rotation = spec.position, spec.rotation_deg
     else:
-        vp = doc.sheets[space_key].viewport_by_id(rec.get("viewport"))
-        if vp is None:
-            out.stranded.append((e.id, f"its viewport {rec.get('viewport')} is not on the sheet"))
-            return
         offset = rec.get("label_offset")
         position, rotation = sheet_pose(spec, vp.transform(), vp.rotation_deg,
                                         SHEET_LABEL_OFFSET if offset is None else float(offset))

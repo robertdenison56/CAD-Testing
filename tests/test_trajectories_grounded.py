@@ -411,18 +411,16 @@ def test_a_frame_that_reaches_past_its_view_is_read_again_from_its_middle():
     assert row["kept"], (row["error"], row["lost"], row["ungrounded"])
 
 
-def test_a_match_label_that_runs_back_over_its_line_is_set_again_from_its_other_end():
-    # through this turned viewport the engine sets the label from the end that runs its
-    # text back across the centerline; the read-back shows it, and it is set again
+def test_a_match_label_through_a_turned_viewport_runs_clear_of_its_line_the_first_time():
+    # through this turned viewport the engine used to set the label from the end that ran
+    # its text back across the centerline, and the drafter set it again from the other;
+    # since training plan decision 13 the engine sets it from the end the paper wants
     task = _two_sheets("sheet-setup", "d1-train-twist")
     pairs = _pairs(_run(task, "explicit"))
     placed = [c["params"] for c, _r in pairs if c["name"] == "place_label"]
-    assert len(placed) == 4 and all("halign" not in p for p in placed[:2])
-    first = [r["entity"]["halign"] for c, r in pairs if c["name"] == "get_entity"][:2]
-    assert [p["halign"] for p in placed[2:]] == [
-        "right" if end == "left" else "left" for end in first]
+    assert len(placed) == 2 and all("halign" not in p for p in placed)
     assert all(p["side"] == "right" for p in placed)
-    assert [c["name"] for c, _r in pairs].count("delete_entities") == 1
+    assert "delete_entities" not in [c["name"] for c, _r in pairs]
     row = grounded.record_task(task, "explicit")
     assert row["kept"], (row["error"], row["lost"], row["ungrounded"])
 

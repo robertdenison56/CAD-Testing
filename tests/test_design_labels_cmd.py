@@ -180,6 +180,50 @@ def test_place_label_sheet_twist20_rotation_20():
     assert near(e.position, expect, 1e-6)
 
 
+def runs_clear(e: Text, paper_direction: float) -> bool:
+    """A label square to its line runs away from it (halign left runs along its
+    rotation, right against it); one along its line sits clear of it (valign
+    bottom puts the lettering on its rotation's +90 side, top on its -90)."""
+    side = paper_direction + (90.0 if e.anchor["side"] == "left" else -90.0)
+    if e.anchor["rotation"] == "perpendicular":
+        body = e.rotation_deg + (0.0 if e.halign == "left" else 180.0)
+    else:
+        body = e.rotation_deg + (90.0 if e.valign == "bottom" else -90.0)
+    return math.cos(math.radians(body - side)) > 0.5
+
+
+@pytest.mark.parametrize("twist", [-150.0, -95.0, -30.0, 45.0, 120.0, 175.0])
+def test_a_label_on_a_twisted_sheet_runs_clear_of_its_line(twist):
+    # Training plan decision 13 (found 2026-11-11): the end a label was set from and
+    # the edge it sat on came from the model, its rotation from the paper, so through
+    # a turned viewport about half of them ran back over the line or sat on it
+    from roaddraft.design.anchors import parse_anchor, resolve_anchor
+    s = sheet_session(rotation=twist)
+    align = s.doc.design.alignments["ALIGN-1"]
+    cases = [{"anchor": "PC-1"}, {"anchor": "PT-1", "side": "right"},
+             {"anchor": "13+00", "kind": "custom", "content": "MATCH LINE STA 13+00",
+              "rotation": "perpendicular", "side": "right"},
+             {"anchor": "13+00", "kind": "custom", "content": "FENCE", "side": "left"},
+             {"anchor": "T-1", "kind": "bearing"},
+             {"anchor": "21+00", "kind": "custom", "content": "R/W", "side": "below"},
+             {"anchor": "21+00", "kind": "custom", "content": "R/W", "side": "above"}]
+    for case in cases:
+        r = s.execute("place_label", {"space": "C-101", **case})
+        assert r["ok"], (case, r)
+        e = text_of(s, r)
+        paper = resolve_anchor(align, parse_anchor(case["anchor"])).direction_deg + twist
+        assert runs_clear(e, paper), (case, e.rotation_deg, e.halign, e.valign)
+        assert "view_rotation" not in e.anchor  # the viewport it names carries the twist
+    # below and above are read on the paper: the two R/W labels are on opposite sides,
+    # and the one below sits under the line as the sheet shows it
+    below, above = [e for e in s.doc.sheets["SH-001"].entities.values()
+                    if isinstance(e, Text) and e.content == "R/W"]
+    assert below.anchor["side"] != above.anchor["side"]
+    paper = math.radians(resolve_anchor(align, parse_anchor("21+00")).direction_deg + twist)
+    flipped = math.cos(paper) < 0.0  # the line runs right to left on the paper
+    assert below.anchor["side"] == ("left" if flipped else "right")
+
+
 def test_place_label_sheet_no_viewport_faults_with_hint():
     s = session_A()
     s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"})

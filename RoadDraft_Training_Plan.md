@@ -834,6 +834,17 @@ again on the pin (decision 3): `faults inject`, then `conversations convert`.
     and the rotation out of the paper (`labels.sheet_pose`), so through a turned viewport the text can run
     back across the line; the drafter sets it again from the other end when `get_entity` shows that.
     **Decided 2026-11-13: fix it, before the pin.** The tool list does not move.
+    **Built 2026-11-13.** It was wider than the square labels: a label along its line took the edge it sits
+    on from the model too, so on half the twists it sat on the line, and `above`/`below` were read in the
+    model though the help says on the paper. Swept over 24 twists and ten poses, 104 of 208 sheet labels
+    were set wrong, 0 after. `place_label` on a sheet now compiles the label with its viewport's twist (the
+    record is unchanged: the viewport it names carries the twist), and the follow lays a sheet label out
+    again the same way. The verifier's pose check takes only position and rotation from the paper; the
+    text's footprint (D1-08) does follow its end, so a stored run re-verified on the new engine could move
+    where a model lettered a twisted sheet without giving the end. Stored rows stand as recorded. The
+    reference passes its ends explicitly, so the oracle is 100 on all six held-out and dev sets, and every
+    training manifest is current. On `d1-train-twist`'s 133 layouts, 33 recordings lose
+    the turn that set a match-line label again (206 calls and 68 turns fewer), all 133 still kept.
 
 ## 7. Risks
 

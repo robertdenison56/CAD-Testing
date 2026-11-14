@@ -8,6 +8,7 @@ it leaves the same lettering as changing it and then labelling it.
 """
 from __future__ import annotations
 
+import math
 from collections import Counter
 
 import pytest
@@ -28,11 +29,11 @@ def _design(s: Session, name: str = "SR-100", pis=PIS, begin: str = "10+00") -> 
                                           "pis": pis})["ok"]
 
 
-def _sheet(s: Session) -> None:
+def _sheet(s: Session, twist: float = 10.0) -> None:
     assert s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"})["ok"]
     assert s.execute("create_viewport", {
         "sheet": "C-101", "center_paper": [17, 11.5], "width_in": 30, "height_in": 19,
-        "model_center": [1750, 1600], "feet_per_inch": 100, "rotation_deg": 10})["ok"]
+        "model_center": [1750, 1600], "feet_per_inch": 100, "rotation_deg": twist})["ok"]
 
 
 def _letter(s: Session, name: str = "SR-100") -> None:
@@ -87,10 +88,10 @@ def _lettering(s: Session) -> Counter:
     return out
 
 
-def _fresh(pis, begin="10+00") -> Session:
+def _fresh(pis, begin="10+00", twist=10.0) -> Session:
     s = Session(project_name="fresh")
     _design(s, pis=pis, begin=begin)
-    _sheet(s)
+    _sheet(s, twist)
     _letter(s)
     return s
 
@@ -118,6 +119,33 @@ def test_lettering_then_changing_the_design_is_changing_it_then_lettering(change
     again = s.execute("update_labels", {"alignment": "SR-100"})
     assert again["ok"] and again["created"] == again["deleted"] == []
     assert again["modified"] == [] and "already in step" in again["message"]
+
+
+@pytest.mark.parametrize("twist", [-120.0, 75.0, 160.0])
+def test_sheet_lettering_followed_through_a_turned_view_runs_clear_of_its_line(twist):
+    # place_label sets a sheet label from the end and the edge the paper wants
+    # (training plan decision 13); laid out again after the design changes, it must
+    # go by the paper too, not the model
+    from roaddraft.design.anchors import parse_anchor, resolve_anchor
+    s = Session(project_name="turned")
+    _design(s)
+    _sheet(s, twist)
+    _letter(s)
+    r = s.execute("modify_alignment", {"name": "SR-100", "changes": {"pis": MOVED}})
+    assert r["ok"] and r["warnings"] == [], r
+    assert _lettering(s) == _lettering(_fresh(MOVED, twist=twist))
+    align = s.doc.design.alignments["SR-100"]
+    labels = [e for e in s.doc.sheets["SH-001"].entities.values()
+              if isinstance(e, Text) and e.anchor and e.anchor.get("rotation") in
+              ("perpendicular", "along")]
+    assert len(labels) == 2
+    for e in labels:
+        paper = resolve_anchor(align, parse_anchor(e.anchor["ref"])).direction_deg + twist
+        side = paper + (90.0 if e.anchor["side"] == "left" else -90.0)
+        body = (e.rotation_deg + (0.0 if e.halign == "left" else 180.0)
+                if e.anchor["rotation"] == "perpendicular"
+                else e.rotation_deg + (90.0 if e.valign == "bottom" else -90.0))
+        assert math.cos(math.radians(body - side)) > 0.5, (e.content, e.halign, e.valign)
 
 
 def test_stationing_regenerated_keeps_its_provenance_and_undo_takes_it_back():
