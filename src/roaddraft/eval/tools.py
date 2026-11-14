@@ -83,9 +83,9 @@ HARNESS_DEFINITIONS = {
                         "the file you were handed again (get_document_state names the open "
                         "file, 'document'). Every tool then reads and changes the open "
                         "document, and each change is saved to its file as it is made. A sheet "
-                        "file keeps the copy of a base drawing it has already read: back in it, "
-                        "reload_references reads the base drawing again as it now stands. The "
-                        "file you were handed is the one that gets graded, so go back to it "
+                        "file can still hold the copy of a base drawing it read earlier: back in "
+                        "it, call reload_references to read the base drawing as it now stands. "
+                        "The file you were handed is the one that gets graded, so go back to it "
                         "before you submit."),
         "input_schema": {"type": "object",
                          "properties": {"path": {"type": "string", "minLength": 1,
@@ -118,11 +118,15 @@ def allowed_names(mode: str, scope: Iterable[str] = ()) -> Set[str]:
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}; modes: {', '.join(MODES)}")
     names = set(COMMANDS) | set(QUERIES) | set(HARNESS_TOOLS)
-    if "design" in set(scope):
+    # a revision made in the base drawing has the design in its scope to be graded, not to
+    # be created: a line of the same name made in the sheet file would stand in front of
+    # the base drawing's, and everything lettered through the reference would lose for it
+    in_base = {REVISION_SCOPE, BASE_SCOPE} <= set(scope)
+    if "design" in set(scope) and not in_base:
         names |= DESIGN_COMMANDS
     if REVISION_SCOPE in set(scope):
         names |= REVISION_COMMANDS
-        if BASE_SCOPE in set(scope):
+        if in_base:
             names |= BASE_COMMANDS
     if mode != "single":
         names |= RENDER_QUERIES

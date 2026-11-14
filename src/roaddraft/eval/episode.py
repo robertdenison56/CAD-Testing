@@ -429,7 +429,10 @@ class Episode:
                 "file, and nothing else", "valid_params_schema": spec,
                 "example": {"path": self.handed_name}}}
         folder = Path(self.root.given)
-        target = Path(path).expanduser()
+        try:
+            target = Path(path).expanduser()
+        except RuntimeError:  # '~nobody/x': no such home; a path a model typed, not a fault
+            return _error(name, "command_failed", f"no such document: {path}", self._documents())
         target = target if target.is_absolute() else folder / target
         if not self.root.contains(target):
             refused = confine.OutsideRoot(path)

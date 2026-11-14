@@ -186,6 +186,38 @@ def test_an_episode_that_does_not_score_100_is_dropped(tmp_path):
     assert cv.convert(path, "d1-dev").drop == "score"
 
 
+def test_an_episode_that_changed_another_document_is_kept_only_if_it_scored_100_as_it_ended(tmp_path):
+    """A revision made in the base drawing: what the sheet file had read of the
+    base when is not all in the journal, so a replay can score 100 where the
+    episode did not.  The conversation is kept on both scores, never the
+    replay's alone."""
+    entry = tasksets.load("d1-train-revise-base")["tasks"][0]
+    task = tasksets.task_from_entry(entry)
+    row = grounded.record_task(task, "vague", out_root=tmp_path)
+    assert row["kept"]
+    conv, _defs = cv.convert_episode(row["path"], "d1-train-revise-base")
+    assert conv["header"]["score"]["effective"] == 100.0
+    # the same file, its own score as it ended marked down: the journal still replays to 100
+    path = Path(row["path"])
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert any(r["type"] == "journal" and r.get("opened") for r in records)
+    for r in records:
+        if r["type"] == "verify":
+            r["effective_score"] = 0.0
+    doctored = tmp_path / "doctored.jsonl"
+    doctored.write_text("".join(json.dumps(r) + "\n" for r in records))
+    assert _drop(doctored, "d1-train-revise-base") == "score"
+    # an episode that opened no other document is still kept on its replay, as before
+    plain = grounded.record_task(_task("layer-setup"), "vague", out_root=tmp_path)
+    records = [json.loads(line) for line in Path(plain["path"]).read_text().splitlines()]
+    for r in records:
+        if r["type"] == "verify":
+            r["effective_score"] = 0.0
+    same = tmp_path / "plain-doctored.jsonl"
+    same.write_text("".join(json.dumps(r) + "\n" for r in records))
+    assert cv.convert_episode(same, "d1-dev")[0]["header"]["score"]["effective"] == 100.0
+
+
 def test_the_audit_drops_the_plain_oracle(oracle_run):
     # the oracle's numbers are worked out off the page (training plan, step 2): ungrounded
     _, _, _, path = oracle_run

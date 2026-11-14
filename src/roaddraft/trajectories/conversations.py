@@ -273,6 +273,15 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
                     journal=session.bus.journal, prompt_level=level)
     if report.effective_score < 100.0:
         raise Drop("score", f"re-scored {report.effective_score:g}")
+    if journal.get("opened"):
+        # an episode that changed another document (a revision made in the base drawing):
+        # what the sheet file had read of that document when, and so what it ended up
+        # showing, is not all in the journal, so the replay can score what the episode did
+        # not.  Kept only when the episode's own score, taken as it ended, was 100 too
+        live = (records.get("verify") or {}).get("effective_score")
+        if live is None or float(live) < 100.0:
+            raise Drop("score", f"scored {live} as it ended, {report.effective_score:g} "
+                                f"replayed from its journal")
     if audit:
         from roaddraft.tasks.revise import left_stale
         from roaddraft.trajectories import faults, grounded

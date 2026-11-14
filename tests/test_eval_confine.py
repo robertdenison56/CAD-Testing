@@ -294,6 +294,18 @@ def test_open_document_outside_the_folder_is_refused_and_nothing_opens(base_task
     assert state["ok"] and state["summary"]["document"] == handed
 
 
+def test_a_path_with_no_such_home_is_a_failed_call_not_a_harness_error(base_task):
+    """``~nobody/x`` cannot be expanded: that is a path a model typed, answered
+    like any other document that is not there, and the episode goes on."""
+    ep = _episode(base_task, mode="single")
+    result = _open(ep, "~no-such-user-here/x.rdoc.json")
+    assert result["ok"] is False and result["error"]["type"] == "command_failed"
+    assert "no such document" in result["error"]["message"]
+    assert ep.other is None and ep.opened == []
+    state = ep.execute(ToolCall("get_document_state", {}))
+    assert state["ok"] and state["summary"]["document"] == f"{base_task.task_id}.rdoc.json"
+
+
 def test_inside_the_folder_only_the_tasks_own_documents_open(base_task):
     ep = _episode(base_task, mode="single")
     folder = Path(ep.root.real)

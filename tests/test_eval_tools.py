@@ -159,6 +159,8 @@ def test_open_document_and_reload_references_only_on_a_revision_made_in_the_base
         revised = tools.allowed_names(mode, groups + [tools.REVISION_SCOPE])
         in_base = tools.allowed_names(mode, groups + [tools.REVISION_SCOPE, tools.BASE_SCOPE])
         assert in_base - revised == tools.BASE_COMMANDS == {"open_document", "reload_references"}
+        # the design is changed where it lives, never made again in the sheet file
+        assert revised - in_base == {"create_alignment"}
         assert tools.allowed_names(mode, groups + [tools.BASE_SCOPE]) == plain
         assert not any("save_document" in names for names in (plain, revised, in_base))
     assert {tools.REVISION_SCOPE, tools.BASE_SCOPE} <= set(base_task.truth.scope)
@@ -228,11 +230,15 @@ def test_no_other_tasks_tool_list_or_digest_moved_with_the_base_drawing_tools(
                     assert d["input_schema"] == entries[d["name"]]["params_schema"]
     theirs = tools.allowed_names("single", designer.truth.scope)
     mine = tools.allowed_names("single", base_task.truth.scope)
-    # the two tools, and create_alignment: the design is graded here, as in the sheet-file flavour
-    assert mine - theirs == {"open_document", "reload_references", "create_alignment"}
+    # the two tools and no other.  Not create_alignment, though the design is graded here
+    # (D1-15) as in the sheet-file flavour: the line lives in the base drawing, and one of
+    # its name made in the sheet file would stand in front of it and cost a right answer
+    # every label lettered through the reference
+    assert mine - theirs == {"open_document", "reload_references"}
     assert not theirs - mine
     assert mine - tools.allowed_names("single", own.truth.scope) == tools.BASE_COMMANDS
-    assert _names_pin(mine) == (79, "fa48f6b511e47876")
+    assert tools.allowed_names("single", own.truth.scope) - mine == {"create_alignment"}
+    assert _names_pin(mine) == (78, "71194756ba755694")
     digest = _digest("single", base_task.truth.scope)
     assert digest not in {_digest("single", scope) for scope in scopes.values()}
     # the digest worked out here is the one an episode's header records
