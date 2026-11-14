@@ -139,7 +139,8 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
                 ahead = align.station_to_xy(min(raw + float(wd["line_offset_ft"]),
                                                 align.end_station), 0.0)[0]
                 params = {"space": "model", "kind": "aligned", "p1": p1, "p2": p2,
-                          "line_point": ahead, "text_height": label_h, "layer": D["dims_layer"]}
+                          "line_point": ahead, "text_height": label_h, "layer": D["dims_layer"],
+                          **view}
                 if wd.get("text_gap_ft"):
                     params["text_gap"] = wd["text_gap_ft"]
                 steps.append(("place_dimension", params))

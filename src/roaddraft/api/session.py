@@ -152,6 +152,33 @@ def _paper_corners(owner, text, viewport=None) -> List[List[float]]:
     return [[round(v, 4) for v in corner] for corner in quad]
 
 
+def _lettering(owner, entity):
+    """The text an entity letters and legibility judges: a text itself, or the
+    number a dimension draws (None for anything else, and for a dimension
+    whose text is hidden)."""
+    if entity.TYPE == "text":
+        return entity
+    if entity.TYPE == "dimension":
+        from roaddraft.document.entities import Text
+        return next((prim for prim in entity.primitives(owner)
+                     if isinstance(prim, Text) and prim.content), None)
+    return None
+
+
+def _text_view(owner, entity, sheet):
+    """The viewport of ``sheet`` that shows a dimension's number, or None (and
+    None for anything but a dimension).  The number can stand a text length
+    past the line it measures along, so one sheet's frame can show it, or cut
+    it, where it does not show the middle of the dimension."""
+    if entity.TYPE != "dimension":
+        return None
+    from roaddraft.document import viewmap
+    text = _lettering(owner, entity)
+    if text is None:
+        return None
+    return next((vp for vp in sheet.viewports if viewmap.shows(vp, text.position)), None)
+
+
 QUERIES = {
     "get_document_state": {
         "description": "Document state. detail='summary' (default) for counts and "
@@ -182,8 +209,9 @@ QUERIES = {
                        "place_callout as target_entity or target.",
         "schema": obj({
             "space": {**NSTR, "description": "space to search (default 'model'); in a "
-                                             "sheet, each text row carries paper_corners "
-                                             "as visible_on gives them"},
+                                             "sheet, each text row (and each dimension row, "
+                                             "for its text) carries paper_corners as "
+                                             "visible_on gives them"},
             "layer": {"description": "layer name, or a list of them"},
             "type": {"description": "line|polyline|arc|circle|text|blockref|table|"
                                     "dimension|point|hatch, or a list"},
@@ -206,7 +234,10 @@ QUERIES = {
                                           "carries paper_corners, the four corners of its "
                                           "lettering on that sheet in inches, "
                                           "counter-clockwise from the lower left as it "
-                                          "reads: the footprint legibility is judged by"},
+                                          "reads: the footprint legibility is judged by. A "
+                                          "dimension row carries its number's paper_corners "
+                                          "the same way, and a dimension is listed when the "
+                                          "sheet shows its middle or its number"},
             "include_references": {"type": "boolean",
                                    "description": "search attachments too (default true)"},
             "detail": {"type": "string", "enum": ["summary", "full"],
@@ -859,7 +890,8 @@ class Session:
                 if bb is None or not geo.bbox_intersects(bb, bounds):
                     continue
             if shown_on is not None and not any(
-                    viewmap.is_visible(owner, entity, vp) for vp in shown_on.viewports):
+                    viewmap.is_visible(owner, entity, vp) for vp in shown_on.viewports) \
+                    and _text_view(owner, entity, shown_on) is None:
                 continue  # in the window's bounding box, but not in the window
             matches.append((entity, owner, ref))
 
@@ -880,15 +912,22 @@ class Session:
             length = entity_length(owner, entity)
             if length is not None:
                 row["length"] = round(length, 4)
+            lettered = _lettering(owner, entity)
             if shown_on is not None:
                 seen = self._entity_on_sheet(shown_on, owner, entity, "mid")
                 if seen is not None:
                     row.update(seen[0])
-                    if entity.TYPE == "text":
-                        row["paper_corners"] = _paper_corners(
-                            owner, entity, shown_on.viewport_by_id(seen[0]["viewport"]))
-            elif space_key != "model" and entity.TYPE == "text":
-                row["paper_corners"] = _paper_corners(owner, entity)
+                if lettered is not None:
+                    # through the viewport the row names: the one the entity is seen
+                    # through, or, for a dimension whose middle no view shows, the one
+                    # that shows its number
+                    through = shown_on.viewport_by_id(seen[0]["viewport"]) if seen is not None \
+                        else _text_view(owner, entity, shown_on)
+                    if through is not None:
+                        row.setdefault("viewport", through.id)
+                        row["paper_corners"] = _paper_corners(owner, lettered, through)
+            elif space_key != "model" and lettered is not None:
+                row["paper_corners"] = _paper_corners(owner, lettered)
             if entity.anchor:
                 row["anchor"] = dict(entity.anchor)
             content = getattr(entity, "content", None)

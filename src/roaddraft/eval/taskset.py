@@ -75,6 +75,15 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   ``"revise": <kind>``; a seed its kind cannot revise takes the next kind and
   says so under ``dialed``.
 
+- ``d1-train-twist-widths`` (2026-11-13, plan decision 9): a sixth training
+  set, seeds 16000-16299, the three types that dimension the pavement width
+  (``TWIST_WIDTH_TYPES``) through viewports turned the seed's own twist.  A
+  dimension's text could not be set to read through a twist until
+  ``place_dimension`` took ``view_rotation``; ``d1-train-twist`` was drawn
+  before that and keeps its nine types and its ids.  The two types handed a
+  sheet are on ``d1-test``'s dials and the whole plan on ``d1-test-hard``'s.
+  An entry carries ``"twist": true``.
+
 The prompt level is a run dimension, not a task-set one.  A test regenerates
 each manifest and asserts identical task ids: a changed spec or generator
 fails it, which is the tripwire; ``python -m roaddraft.eval taskset --write``
@@ -137,14 +146,16 @@ HARD_SHEETS = (2, 3)
 #: the training sets (2026-11-10): seeded tasks on seeds no eval set draws, ``d1-train`` on
 #: ``d1-test``'s dials and ``d1-train-hard`` on ``d1-test-hard``'s.  Kept out of ``NAMES``:
 #: every set there is held out of training, and nothing here is ever run for a score.
-TRAIN_NAMES = ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd", "d1-train-revise")
+TRAIN_NAMES = ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd", "d1-train-revise",
+               "d1-train-twist-widths")
 TRAIN_SEEDS = range(10000, 11200)
 TRAIN_HARD_SEEDS = range(12000, 12300)
 #: ``d1-train-twist`` (2026-11-11): twisted sheets on seeds of their own, over the seeded
 #: types whose work a twist changes: the model lettering read through it, the north arrow
 #: turned to north, the viewport laid out at it.  Left out: the three types with no sheet,
-#: the two with width dimensions (a dimension's text cannot be lettered through a twist;
-#: the generator refuses them), and ``pavement-edges`` and ``attach-reference``, whose work
+#: the two with width dimensions (when the set was drawn a dimension's text could not be
+#: lettered through a twist; they are ``d1-train-twist-widths`` now, on seeds of their own,
+#: so that no id here moves), and ``pavement-edges`` and ``attach-reference``, whose work
 #: is the same on a twisted sheet
 TRAIN_TWIST_SEEDS = range(13000, 13600)
 TWIST_TYPES = tuple(sorted(("stationing", "bearings", "curve-callouts", "curve-table",
@@ -158,6 +169,11 @@ TRAIN_CROWD_SEEDS = range(14000, 14600)
 #: ``d1-train-revise`` (2026-11-12): finished sheets whose design has since changed, on seeds
 #: of their own, over the types that letter a whole line on a sheet set up
 TRAIN_REVISE_SEEDS = range(15000, 15600)
+#: ``d1-train-twist-widths`` (2026-11-13): the types that dimension the pavement width, on
+#: twisted sheets and seeds of their own (``place_dimension`` reads a dimension's text
+#: through the viewport's twist since plan decision 9)
+TRAIN_TWIST_WIDTH_SEEDS = range(16000, 16300)
+TWIST_WIDTH_TYPES = ("pavement", "pavement-widths", "plan-sheet-pavement")
 
 
 def dials(index: int) -> dict:
@@ -258,6 +274,45 @@ def twist_dials(index: int) -> dict:
     d["task_type"] = TWIST_TYPES[index % len(TWIST_TYPES)]
     d["curves"] = CURVES[(index + index // len(TWIST_TYPES)) % len(CURVES)]
     return d
+
+
+def twist_width_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-train-twist-widths``: the type
+    cycles through ``TWIST_WIDTH_TYPES``, and each turn of the types steps the
+    rest.  The two types handed a sheet take ``d1-test``'s dials (curves 1, 2,
+    3; an equation every other three turns; one sheet or two, flipping every
+    six) and the whole plan ``d1-test-hard``'s (curves 3, 4, 5; two sheets or
+    three, flipping every three turns; an equation on one turn in five)."""
+    ttype = TWIST_WIDTH_TYPES[index % len(TWIST_WIDTH_TYPES)]
+    turn = index // len(TWIST_WIDTH_TYPES)
+    if ttype in HARD_TASK_TYPES:
+        return {"curves": HARD_CURVES[turn % len(HARD_CURVES)], "equations": hard_equation(turn),
+                "sheets": HARD_SHEETS[(turn // len(HARD_CURVES)) % len(HARD_SHEETS)],
+                "task_type": ttype}
+    return {"curves": CURVES[turn % len(CURVES)], "equations": bool((turn // len(CURVES)) % 2),
+            "sheets": 1 + (turn // (2 * len(CURVES))) % 2, "task_type": ttype}
+
+
+def _twist_width_entry(seed: int, index: int) -> dict:
+    """The ``index``-th entry of ``d1-train-twist-widths``.  A seed the
+    generator cannot lay out on the dialed sheets takes the type's other count
+    (one sheet, or three for the whole plan), and the entry says so;
+    ``RuntimeError`` when it has no tangent long enough to dimension either
+    way (the seed is then left out, as ``d1-train-hard`` leaves one)."""
+    d = twist_width_dials(index)
+    other = 3 if d["task_type"] in HARD_TASK_TYPES else 1
+    for sheets in ((d["sheets"], other) if d["sheets"] != other else (other,)):
+        try:
+            task = make_task(seed, d["curves"], d["equations"], d["task_type"], sheets, True)
+        except (ValueError, AssertionError):
+            continue
+        entry = {"seed": seed, "curves": d["curves"], "equations": d["equations"],
+                 "task_type": d["task_type"], "sheets": sheets, "task_id": task.task_id,
+                 "twist": True}
+        if sheets != d["sheets"]:
+            entry["dialed"] = {"task_type": d["task_type"], "sheets": d["sheets"]}
+        return entry
+    raise RuntimeError(f"seed {seed}: no twisted width task generates")
 
 
 def _entry(seed: int, index: int, twist: bool = False) -> dict:
@@ -609,6 +664,17 @@ def build(name: str) -> dict:
                 "spec_version": DRAFTING_SPEC_V1["version"],
                 "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
                 "tasks": tasks}
+    elif name == "d1-train-twist-widths":
+        tasks, skipped = [], []
+        for i, seed in enumerate(TRAIN_TWIST_WIDTH_SEEDS):
+            try:
+                tasks.append(_twist_width_entry(seed, i))
+            except RuntimeError:
+                skipped.append(seed)
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
+                "tasks": tasks}
     elif name == "d1-test-hard":
         return {"taskset": name, "generator_version": GENERATOR_VERSION,
                 "spec_version": DRAFTING_SPEC_V1["version"],
@@ -799,4 +865,5 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "HARD_SEEDS", "HARD_SEEDED_TYPES", "hard_dials", "JOB_CATALOG", "REAL_HARD_SIZE",
            "REAL_HARD_FILL", "build_real_hard", "TRAIN_NAMES", "TRAIN_SEEDS", "TRAIN_HARD_SEEDS",
            "TRAIN_TWIST_SEEDS", "TWIST_TYPES", "twist_dials", "TRAIN_CROWD_SEEDS", "crowd_dials",
-           "TRAIN_REVISE_SEEDS", "revise_dials", "shared", "train_overlap"]
+           "TRAIN_REVISE_SEEDS", "revise_dials", "TRAIN_TWIST_WIDTH_SEEDS", "TWIST_WIDTH_TYPES",
+           "twist_width_dials", "shared", "train_overlap"]

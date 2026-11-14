@@ -235,7 +235,7 @@ def _linear(dim, doc) -> List:
         out += _arrows(dim, base, 2, d2, _step(d2, o2, max(asz, EPS)))
         anchor = _step(d2, o2, 2.0 * asz + gap + width / 2.0)
     if text:
-        t_rot = geo.upright(rot)
+        t_rot = _reads(dim, rot)
         nx, ny = _unit(t_rot + 90.0)
         out.append(Text(id=f"{dim.id}:text", position=[anchor[0] + nx * gap,
                                                        anchor[1] + ny * gap],
@@ -291,7 +291,7 @@ def _radial(dim, doc) -> List:
         out += _arrows(dim, base, 1, tip, tail)
         if dim.kind == "diameter":
             out += _arrows(dim, base, 2, far, tip)
-        rot = geo.upright(_heading(tail, tip))
+        rot = _reads(dim, _heading(tail, tip))
         nx, ny = _unit(rot + 90.0)
         anchor = _project(dim.line_point, tail, tip)
         if text:
@@ -301,9 +301,18 @@ def _radial(dim, doc) -> List:
                             rotation_deg=rot, halign="center", valign="bottom", **base))
         return out
     landing = LEADER_LANDING * dim.text_height
-    from_left = tip[0] <= dim.line_point[0]
-    elbow = [dim.line_point[0] + (-landing if from_left else landing),
-             dim.line_point[1]]
+    twist = _twist(dim)
+    if not twist:
+        from_left = tip[0] <= dim.line_point[0]
+        elbow = [dim.line_point[0] + (-landing if from_left else landing),
+                 dim.line_point[1]]
+        level = 0.0
+    else:  # the landing and the text run level on the sheet, not in the model
+        level = _fold(-twist)
+        hx, hy = _unit(level)
+        from_left = ((tip[0] - dim.line_point[0]) * hx
+                     + (tip[1] - dim.line_point[1]) * hy) <= 0.0
+        elbow = _step(dim.line_point, (hx, hy), -landing if from_left else landing)
     out.append(Line(id=f"{dim.id}:line", start=list(tip), end=elbow, **base))
     if landing > 0:
         out.append(Line(id=f"{dim.id}:landing", start=elbow,
@@ -312,7 +321,7 @@ def _radial(dim, doc) -> List:
     if text:
         out.append(Text(id=f"{dim.id}:text", position=list(dim.line_point),
                         content=text, height=dim.text_height, style=dim.style,
-                        rotation_deg=0.0, halign="left" if from_left else "right",
+                        rotation_deg=level, halign="left" if from_left else "right",
                         valign="middle", **base))
     return out
 
@@ -341,7 +350,7 @@ def _arc_text(dim, doc, base, center, radius, mid_deg) -> List:
     if not text:
         return []
     gap = size(dim, "text_gap")
-    rot = geo.upright(mid_deg + 90.0)
+    rot = _reads(dim, mid_deg + 90.0)
     ux, uy = _unit(mid_deg)                       # outward, away from center
     nx, ny = _unit(rot + 90.0)                    # the text's own "up"
     valign = "bottom" if (nx * ux + ny * uy) >= 0 else "top"
@@ -401,6 +410,28 @@ def _radial_extension(dim, base, name, center, from_r, to_r, ang) -> Optional[Li
 
 def _base(dim) -> dict:
     return {"layer": dim.layer, "color": dim.color, "linetype": dim.linetype}
+
+
+def _twist(dim) -> float:
+    """The twist of the viewport the dimension is read through (0: none)."""
+    return float(getattr(dim, "view_rotation", None) or 0.0)
+
+
+def _fold(angle_deg: float) -> float:
+    """An angle in (-180, 180]."""
+    a = (float(angle_deg) + 180.0) % 360.0 - 180.0
+    return 180.0 if a == -180.0 else a
+
+
+def _reads(dim, angle_deg: float) -> float:
+    """The rotation of text set along ``angle_deg`` so that it reads upright:
+    in the model, or, for a dimension lettered for a twisted viewport, on the
+    sheet that shows it (the model rotation is then the paper one turned back
+    by the twist, as ``design.labels.label_pose`` does for a label)."""
+    twist = _twist(dim)
+    if not twist:
+        return geo.upright(angle_deg)
+    return _fold(geo.upright(angle_deg + twist) - twist)
 
 
 def _dim_line_points(dim):

@@ -66,11 +66,19 @@ def place_dimension(doc: Document, p: dict):
         fields["text_override"] = str(p["text"])
     if "prefix" in p:
         fields["prefix"] = str(p["prefix"])
+    twist = float(p.get("view_rotation") or 0.0)
+    if twist and space_key == "model":
+        fields["view_rotation"] = twist
 
     _, dim = _add(doc, p["space"], "dimension", Dimension, fields)
     _check_measurement(dim, p)
 
     warnings: List[str] = []
+    if twist and space_key != "model":
+        warnings.append(
+            f"view_rotation {twist:g} was not used: {dim.id} is on the sheet itself, where "
+            f"its text already reads upright; it is for a model dimension read through a "
+            f"twisted viewport")
     if not dimgeom.fits(dim, doc):
         warnings.append(
             f"{dim.id} is too short for its text: the text needs "

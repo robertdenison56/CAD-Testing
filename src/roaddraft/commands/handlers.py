@@ -642,11 +642,17 @@ def modify_entity(doc: Document, p: dict):
                 entity, immutable if immutable == "id" else "TYPE"):
             raise CommandFault(f"entity {immutable} cannot be changed")
     known = set(entity.to_dict()) | {"color", "linetype", "anchor", "annotative"}
+    if isinstance(entity, Dimension):
+        known.add("view_rotation")  # not in the record of an untwisted one
     unknown = set(changes) - known
     if unknown:
         raise CommandFault(
             f"unknown fields for {entity.TYPE}: {sorted(unknown)}",
             hint=f"editable fields: {sorted(known - {'id', 'type'})}")
+    if isinstance(entity, Dimension) and changes.get("view_rotation") and space_key != "model":
+        raise CommandFault(
+            f"{eid} is on the sheet itself, where its text already reads upright",
+            hint="view_rotation is for a model dimension read through a twisted viewport")
     if isinstance(changes.get("anchor"), dict):
         # Provenance is the bus's to write: a caller can neither claim it nor
         # transfer it to another entity, so an anchor set here keeps whatever

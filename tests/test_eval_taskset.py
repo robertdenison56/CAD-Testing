@@ -217,7 +217,8 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
     assert tasksets.train_overlap() == []
     assert not set(tasksets.TRAIN_NAMES) & set(tasksets.NAMES)
     assert tasksets.TRAIN_NAMES == ("d1-train", "d1-train-hard", "d1-train-twist",
-                                    "d1-train-crowd", "d1-train-revise")
+                                    "d1-train-crowd", "d1-train-revise",
+                                    "d1-train-twist-widths")
     train, hard, *_rest = (tasksets.load(n) for n in tasksets.TRAIN_NAMES)
     assert [t["seed"] for t in train["tasks"]] == list(tasksets.TRAIN_SEEDS)
     kept = [s for s in tasksets.TRAIN_HARD_SEEDS if s not in hard["skipped_seeds"]]
@@ -227,7 +228,8 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
     eval_seeds = {t["seed"] for n in tasksets.NAMES for t in tasksets.load(n)["tasks"] if "seed" in t}
     assert not eval_seeds & (set(tasksets.TRAIN_SEEDS) | set(tasksets.TRAIN_HARD_SEEDS)
                              | set(tasksets.TRAIN_TWIST_SEEDS) | set(tasksets.TRAIN_CROWD_SEEDS)
-                             | set(tasksets.TRAIN_REVISE_SEEDS))
+                             | set(tasksets.TRAIN_REVISE_SEEDS)
+                             | set(tasksets.TRAIN_TWIST_WIDTH_SEEDS))
 
 
 def test_the_twisted_training_set_is_every_seed_twisted_over_the_types_a_twist_changes():
@@ -255,6 +257,42 @@ def test_the_twisted_training_set_is_every_seed_twisted_over_the_types_a_twist_c
     entry = twisted[0]
     task = tasksets.task_from_entry(entry)
     assert task.brief.deliverable["view_rotation"]
+    plain = {k: v for k, v in entry.items() if k != "twist"}
+    assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
+
+
+def test_the_twisted_width_set_is_the_width_types_through_a_turned_view_on_seeds_of_its_own():
+    """``d1-train-twist-widths`` (2026-11-13, plan decision 9): the three types that
+    dimension the pavement width, every one twisted, on seeds no other set draws; and
+    ``d1-train-twist`` keeps the nine types and the ids it was drawn with."""
+    from collections import Counter
+    manifest = tasksets.load("d1-train-twist-widths")
+    tasks, skipped = manifest["tasks"], manifest["skipped_seeds"]
+    assert sorted([t["seed"] for t in tasks] + skipped) == list(tasksets.TRAIN_TWIST_WIDTH_SEEDS)
+    assert tasksets.TRAIN_TWIST_WIDTH_SEEDS == range(16000, 16300) and len(skipped) <= 10
+    assert all(t["twist"] is True for t in tasks)
+    assert tasksets.TWIST_WIDTH_TYPES == ("pavement", "pavement-widths", "plan-sheet-pavement")
+    assert not set(tasksets.TWIST_WIDTH_TYPES) & set(tasksets.TWIST_TYPES)
+    per_type = Counter(t["task_type"] for t in tasks)
+    assert set(per_type) == set(tasksets.TWIST_WIDTH_TYPES)
+    assert max(per_type.values()) - min(per_type.values()) <= 3
+    # the two types handed a sheet on d1-test's dials, the whole plan on d1-test-hard's
+    for ttype in ("pavement", "pavement-widths"):
+        mine = [t for t in tasks if t["task_type"] == ttype]
+        assert {t["curves"] for t in mine} == {1, 2, 3} and {t["sheets"] for t in mine} == {1, 2}
+        assert {t["equations"] for t in mine} == {True, False}
+    whole = [t for t in tasks if t["task_type"] == "plan-sheet-pavement"]
+    assert {t["curves"] for t in whole} == {3, 4, 5} and {t["sheets"] for t in whole} == {2, 3}
+    assert [tasksets.twist_width_dials(i)["task_type"] for i in range(3)] == list(
+        tasksets.TWIST_WIDTH_TYPES)
+    assert [tasksets.twist_width_dials(3 * k)["curves"] for k in range(3)] == [1, 2, 3]
+    assert [tasksets.twist_width_dials(3 * k + 2)["curves"] for k in range(3)] == [3, 4, 5]
+    # a dialed entry says what its dials were
+    assert all(t["dialed"]["sheets"] != t["sheets"] for t in tasks if "dialed" in t)
+    # the entry rebuilds twisted, with width dimensions that carry the turn
+    entry = next(t for t in tasks if t["task_type"] == "pavement-widths")
+    task = tasksets.task_from_entry(entry)
+    assert task.brief.deliverable["view_rotation"] and task.brief.deliverable["width_dimensions"]
     plain = {k: v for k, v in entry.items() if k != "twist"}
     assert tasksets.task_from_entry(plain, strict=False).task_id != entry["task_id"]
 

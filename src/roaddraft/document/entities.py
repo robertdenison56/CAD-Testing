@@ -657,6 +657,11 @@ class Dimension(Entity):
     the multiplier from drawn length to reported length, which is how a
     dimension drawn on a sheet reports model feet (and what the viewport
     transform maintains when model geometry is shown on paper).
+
+    ``view_rotation`` is the twist of the viewport a model dimension is read
+    through: its text is then set to read upright on that sheet, not in the
+    model (as a label's is). Null or 0 is an untwisted view, and is not
+    written to the file.
     """
     kind: str = "linear"
     p1: list = field(default_factory=lambda: [0.0, 0.0])
@@ -678,6 +683,7 @@ class Dimension(Entity):
     extension_offset: Optional[float] = None
     extension_beyond: Optional[float] = None
     measure_scale: float = 1.0
+    view_rotation: Optional[float] = None  # the twist of the view it is read through
 
     TYPE = "dimension"
 
@@ -691,6 +697,8 @@ class Dimension(Entity):
         for name in self.FIELDS:
             value = getattr(self, name)
             d[name] = list(value) if isinstance(value, list) else value
+        if self.view_rotation:  # an untwisted dimension's record is what it always was
+            d["view_rotation"] = float(self.view_rotation)
         return d
 
     @classmethod
@@ -718,6 +726,8 @@ class Dimension(Entity):
         fields["radius"] = None if radius is None else as_positive(radius, "radius")
         rotation = d.get("rotation_deg")
         fields["rotation_deg"] = None if rotation is None else float(rotation)
+        twist = d.get("view_rotation")
+        fields["view_rotation"] = float(twist) if twist else None
         for name in ("text_override", "prefix"):
             value = d.get(name)
             fields[name] = None if value is None else str(value)
@@ -759,7 +769,9 @@ class Dimension(Entity):
             extension_offset=scaled(self.extension_offset),
             extension_beyond=scaled(self.extension_beyond),
             # the drawing shrinks onto paper; the number it reports must not
-            measure_scale=(self.measure_scale / scale if scale else self.measure_scale))
+            measure_scale=(self.measure_scale / scale if scale else self.measure_scale),
+            # the view it is read through has not turned because the dimension moved
+            view_rotation=self.view_rotation)
 
 
 POINT_MARKERS = ("x", "cross", "circle", "circle_x", "dot", "none")

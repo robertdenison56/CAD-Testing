@@ -131,11 +131,13 @@ line moved off what it would cross; one left to the drafter is the half
 station nearest the tangent's middle that clears, the office's standard, else
 the nearest place just past what is in the way, where a station past an
 equation is worked out from the equation's own numbers.  On sheets handed over
-the text's box is worked out from the record and the engine's warning and
-checked against each view, and a dimension a frame would cut is set again;
-on sheets the drafter lays out, each frame is trimmed round the dimensions'
-boxes with the lettering.  A width is never drafted through a turned view
-(decision 9: ``place_dimension`` has no ``view_rotation``).
+each dimension is read back as the sheets show it, its number with the corners
+of its lettering on the paper (``paper_corners``, as a text's), and those are
+compared with each view's frame; a dimension a frame would cut is set again.
+On sheets the drafter lays out, each frame is trimmed round the dimensions'
+numbers with the lettering.  Through a turned view a dimension takes the
+viewport's twist as its ``view_rotation``, as the lettering does (plan
+decision 9, 2026-11-13), so its number reads upright on the sheet.
 
 A title block the task does not spell out is filled from the document: the
 project and the agency from its name and description, and any field the
@@ -359,6 +361,21 @@ def _n(value: float) -> str:
 def _r(value: float) -> float:
     """A number as it is written: what a sum shown in the work is done on."""
     return float(_n(value))
+
+
+def _n4(value: float) -> str:
+    """A place on the paper as the engine gives a corner: to the ten-thousandth."""
+    return f"{float(value):.4f}".rstrip("0").rstrip(".")
+
+
+def _corner_box(corners: Sequence[Sequence[float]]) -> tuple:
+    """The box round a footprint's corners on the paper, and the words that say
+    it: ``((x0, y0, x1, y1), words)``."""
+    xs = [float(_n4(c[0])) for c in corners]
+    ys = [float(_n4(c[1])) for c in corners]
+    box = (min(xs), min(ys), max(xs), max(ys))
+    return box, (f"corners {', '.join(f'({_n4(x)}, {_n4(y)})' for x, y in zip(xs, ys))}, x "
+                 f"{_n4(box[0])} to {_n4(box[2])} and y {_n4(box[1])} to {_n4(box[3])}")
 
 
 def _mid(a: float, b: float) -> tuple:
@@ -738,8 +755,10 @@ def _trim_and_match(layout: dict, alignment: str, match_layer: str, lead: str,
     that would show inside the frame nearer an edge than that would be cut
     there, so the edge moves out past it.  A station equation's label is the
     one long enough to reach further, so its own box is read for it.  A width
-    dimension (``dims``: each one's id with the station it measures at and its
-    box) is framed like a label of its station, read with the lettering.
+    dimension (``dims``: each one's id with the station it measures at) is
+    read with the lettering and framed round its number, whose corners on the
+    paper come with the listing: whole inside the frame of its own stretch's
+    sheet, and whole or not at all on another's.
 
     A frame worked out that way can reach past what its view showed while the
     view was the whole plan viewport, where no lettering was read; the view
@@ -814,21 +833,9 @@ def _trim_and_match(layout: dict, alignment: str, match_layer: str, lead: str,
     #: each long label's reach, worked out once: said before the frames that use it
     long_labels: Dict[str, str] = {}
 
-    #: how far each width dimension reaches from its point on the paper, across and up:
-    #: half its box each way (the views are not turned, so its box is its box there too)
-    dim_reach: Dict[str, tuple] = {}
-    dim_words = ""
-    if dims:
-        said = []
-        for did, d in dims.items():
-            w, t, sides_said = _box_sides(d["box"])
-            rx, ry = round(w / 2.0 / _r(scale), 3), round(t / 2.0 / _r(scale), 3)
-            dim_reach[did] = (rx, ry)
-            said.append(f"{did}'s box is {sides_said}: {_n(w)} / 2 / {_n(scale)} = {_n(rx)} in "
-                        f"either side of its point and {_n(t)} / 2 / {_n(scale)} = {_n(ry)} in "
-                        "above and below")
-        dim_words = ("A width dimension is framed round its own box, at the station it "
-                     "measures: " + "; ".join(said) + ". ")
+    dim_words = ("A width dimension is framed round its number, whose corners on each sheet "
+                 "came with the listing: whole inside the frame of the sheet its station is "
+                 "on, and on another sheet whole or not at all. ") if dims else ""
 
     def reach_of(row: dict, who: str) -> float:
         """How far the label may reach from its point, in paper inches: an
@@ -868,21 +875,29 @@ def _trim_and_match(layout: dict, alignment: str, match_layer: str, lead: str,
         not been read, so it cannot be trusted yet)."""
         lo, hi = stretch[name]
         own, others = [], []
+        #: the width dimensions' numbers this sheet lists, each the box round its corners
+        own_dims, other_dims = [], []
         for row in texts[name]:
             q, anchor = row.get("sheet_point"), row.get("anchor") or {}
+            if dims and row.get("type") == "dimension":
+                if row["id"] not in dims:
+                    raise NotCovered(f"{name} shows a dimension the drafter did not place")
+                if not row.get("paper_corners"):
+                    raise NotCovered(f"{row['id']} came back without the corners of its number")
+                box, said = _corner_box(row["paper_corners"])
+                station = dims[row["id"]]["station"]
+                mine = lo["raw"] - 1e-6 <= float(station) <= hi["raw"] + 1e-6
+                (own_dims if mine else other_dims).append(
+                    {"box": box, "said": said,
+                     "who": f"the number of the width dimension {row['id']} on "
+                            f"{dims[row['id']]['ref']}"})
+                continue
             if not q:
                 continue
             who = (f"{_LABEL_WORDS.get(anchor.get('kind'), 'the label')} at "
                    f"{anchor.get('ref') or row['id']}")
             station = anchor.get("station")
-            if dims and row.get("type") == "dimension":
-                if row["id"] not in dims:
-                    raise NotCovered(f"{name} shows a dimension the drafter did not place")
-                who = f"the width dimension {row['id']} on {dims[row['id']]['ref']}"
-                station = dims[row["id"]]["station"]
             item = {"x": _r(q[0]), "y": _r(q[1]), "r": reach_of(row, who), "who": who}
-            if row["id"] in dim_reach:
-                item["rx"], item["ry"] = dim_reach[row["id"]]
             mine = (station is not None
                     and lo["raw"] - 1e-6 <= float(station) <= hi["raw"] + 1e-6)
             (own if mine else others).append(item)
@@ -903,8 +918,36 @@ def _trim_and_match(layout: dict, alignment: str, match_layer: str, lead: str,
             notes.append(f"the {side} edge at {axis} {_n(it[axis])} {'-' if way < 0 else '+'} "
                          f"{_n(r_of(it, axis))} = {_n(edge[side])}, past {it['who']}")
         grown = []
+        def take_in(box: Sequence[float]) -> List[str]:
+            """Move out each edge the box reaches past, to the thousandth just
+            beyond it; the words for each move."""
+            out = []
+            for k, (side, axis, way) in enumerate(_EDGES):
+                if way * (box[k] - edge[side]) > 1e-9:
+                    edge[side] = (math.ceil if way > 0 else math.floor)(
+                        round(box[k] * 1000.0, 6)) / 1000.0
+                    out.append(f"the {side} edge moves out to {axis} {_n(edge[side])}")
+            return out
+
+        # a width dimension of this stretch: its number whole inside the frame
+        for d in own_dims:
+            out = take_in(d["box"])
+            grown.append(f"{d['who'][0].upper()}{d['who'][1:]} has {d['said']}: "
+                         + (_and(out) + " to take it in." if out else "inside the frame."))
         for _ in range(30):
             moved = False
+            for d in other_dims:
+                box = d["box"]
+                if not (box[0] < edge["right"] and edge["left"] < box[2]
+                        and box[1] < edge["top"] and edge["bottom"] < box[3]):
+                    continue  # none of it is inside the frame: the other sheet's to show
+                out = take_in(box)
+                if out:
+                    grown.append(
+                        f"{d['who'][0].upper()}{d['who'][1:]}, of another sheet's stretch, has "
+                        f"{d['said']}, part inside the frame and part not, so it would be cut: "
+                        f"{_and(out)} to show it whole.")
+                    moved = True
             for it in others:
                 if not (edge["left"] < it["x"] < edge["right"]
                         and edge["bottom"] < it["y"] < edge["top"]):
@@ -1745,9 +1788,6 @@ _WIDTH_AT = re.compile(rf"({_ST}) on (T-\d+)")
 #: how many places a fraction along an edge is written to: a station is graded to the
 #: two-hundredth of a foot, and a thousandth of a tangent's length is a foot or less
 FRACTION_PLACES = 6
-#: what the engine says of a dimension whose text does not fit between its points
-_TOO_SHORT = re.compile(r"the text needs (\d+(?:\.\d+)?) plus arrowheads across a "
-                        r"(\d+(?:\.\d+)?) span")
 #: the last places a width is tried, where a view's frame cuts every other: this many text
 #: heights ahead and back of the station (the dimension line alone, where the task states
 #: the station)
@@ -1790,10 +1830,13 @@ def _to_raw(display: float, line: dict, lo: float, hi: float) -> List[tuple]:
 
 def _widths(request: str, alignment: str, sheets: Sequence[str], state: Dict[str, dict],
             rows: Dict[str, list], line: Optional[dict], anno_scale, scale: float, paper: dict,
-            dims_layer: str, lead: str, read_sheets: bool) -> Generator[Turn, List[dict], dict]:
+            dims_layer: str, lead: str, read_sheets: bool,
+            twist: float = 0.0) -> Generator[Turn, List[dict], dict]:
     """Dimension the pavement width square across each tangent, edge to edge, clear
     of the lettering already along the line; returns ``{"carry", "done", "dims"}``,
-    ``dims`` each dimension's id with the station it measures at and its box.
+    ``dims`` each dimension's id with the station it measures at and its tangent.
+    ``twist`` is how far the sheets' viewports are turned: each dimension takes
+    it as its ``view_rotation``, so its number reads upright on the sheet.
 
     Each dimension measures between the two pavement edges of its tangent at one
     station: ``place_dimension`` takes each edge and the same fraction along it,
@@ -1815,10 +1858,11 @@ def _widths(request: str, alignment: str, sheets: Sequence[str], state: Dict[str
     station nearest the tangent's middle that clears, the office's standard, or
     else the nearest place just clear of what is in the way.  The dimensions are
     read back to see the text went out where it was meant to and, on sheets that
-    were handed over, that no view's frame cuts one: each sheet's view of the
-    model is worked out from its viewport and each dimension's box compared with
-    it, and one a frame would cut is set again at its next place (the next
-    station that clears, or its text out on the other side)."""
+    were handed over, that no view's frame cuts one: each sheet lists the
+    dimensions it shows, each number with the corners of its lettering on that
+    paper, and those are compared with the view's frame there; a number that is
+    whole on no sheet, or that a frame runs through, is set again at its next
+    place (the next station that clears, or its text out on the other side)."""
     stated = {ref: st for st, ref in _WIDTH_AT.findall(request)}
     set_scale = anno_scale != scale
     calls = [_q("set_annotation_scale", scale=scale)] if set_scale else []
@@ -2104,7 +2148,10 @@ def _widths(request: str, alignment: str, sheets: Sequence[str], state: Dict[str
         f"tool's default), and its height of the dimension line: {_n(gap)} + {_n(h)} = "
         f"{_n(band)} ft either way. The dimension line itself crosses the road, so it must miss "
         f"every label's stretch of the line. A line moved off a label is set half a text "
-        f"height clear of it, {_n(h)} / 2 = {_n(clear)} ft.")
+        f"height clear of it, {_n(h)} / 2 = {_n(clear)} ft."
+        + (f" The viewport{'s are' if len(sheets) > 1 else ' is'} turned {_n(twist)}°, so each "
+           f"dimension takes that as its view_rotation and its number reads upright on the "
+           f"sheet{'s' if len(sheets) > 1 else ''}." if twist else ""))
 
     def options(t: dict) -> Generator[dict, None, None]:
         """Where a tangent's width may go, best first: ``{"S", "D", "side",
@@ -2258,7 +2305,7 @@ def _widths(request: str, alignment: str, sheets: Sequence[str], state: Dict[str
                  f"{p2} on {dims_layer}.")
         return work, _q("place_dimension", space="model", kind="aligned", from_entity=p1,
                         from_at=frac, to_entity=p2, to_at=frac, line_point=[x, y],
-                        layer=dims_layer)
+                        layer=dims_layer, **({"view_rotation": twist} if twist else {}))
 
     # -- each tangent: where its width goes, and the dimension
     placed: Dict[str, dict] = {}
@@ -2291,102 +2338,56 @@ def _widths(request: str, alignment: str, sheets: Sequence[str], state: Dict[str
                      + says[:1] + preamble + says[1:] + [work] if w), [call])
         _ok(results, [call])
         said_general, pending = True, []
-        placed[ref] = {"id": results[0]["created"][0], "opt": opt, "gen": gen, "t": t,
-                       "fit": _TOO_SHORT.search(" ".join(results[0].get("warnings") or []))}
+        placed[ref] = {"id": results[0]["created"][0], "opt": opt, "gen": gen, "t": t}
     if not placed:
         raise NotCovered(f"no tangent of {alignment} has room for its width")
 
-    def text_box(p: dict, ent: dict) -> tuple:
-        """The box the text of a dimension placed takes in the model, from its
-        record and the warning it was placed with: ``(box, the words)``.  The
-        text stands along the dimension line, its middle past the line's far end
-        by two arrowheads, the gap and half its width when it does not fit
-        between the points (by the tool's defaults, 1.2 and 0.5 times the text
-        height), at the middle of the line when it does; and it stands off the
-        line by the gap and its height, on one side or the other."""
-        fit = p.get("fit")
-        if fit is None:
-            raise NotCovered(f"{p['id']} came back without the width of its text")
-        width, span = _r(fit.group(1)), _r(fit.group(2))
-        th = _r(ent["text_height"])
-        g_d = _r(ent["text_gap"]) if ent.get("text_gap") else round(0.5 * th, 3)
-        a_d = _r(ent["arrow_size"]) if ent.get("arrow_size") else round(1.2 * th, 3)
-        (x1, y1), (x2, y2), (lx, ly) = ent["p1"], ent["p2"], ent["line_point"]
-        dx, dx_w = _apart_words(x2, x1)
-        dy, dy_w = _apart_words(y2, y1)
-        east, north = _r(x2) >= _r(x1), _r(y2) >= _r(y1)
-        ux, uy = round(dx / span, FRACTION_PLACES), round(dy / span, FRACTION_PLACES)
-        hx, hy = round(dx / 2.0, 3), round(dy / 2.0, 3)
-        ex_, ey_ = (round(_r(lx) + hx, 3) if east else round(_r(lx) - hx, 3),
-                    round(_r(ly) + hy, 3) if north else round(_r(ly) - hy, 3))
-        hw = round(width / 2.0, 3)
-        on = round(a_d * 2 + g_d + hw, 3)
-        cx = round(ex_ + ux * on, 3) if east else round(ex_ - ux * on, 3)
-        cy = round(ey_ + uy * on, 3) if north else round(ey_ - uy * on, 3)
-        thick = round(g_d + th, 3)
-        rx = round(hw * ux + thick * uy, 3)
-        ry = round(hw * uy + thick * ux, 3)
-        box = (round(cx - rx, 3), round(cy - ry, 3), round(cx + rx, 3), round(cy + ry, 3))
-        ew, ns = ("+" if east else "-"), ("+" if north else "-")
-        words = (
-            f"Its second point lies {dx_w} ft {'east' if east else 'west'} and {dy_w} ft "
-            f"{'north' if north else 'south'} of its first, over the {_n(span)} ft it measures: "
-            f"{_n(dx)} / {_n(span)} = {_f(ux)} and {_n(dy)} / {_n(span)} = {_f(uy)} of each foot "
-            f"along it. The dimension line runs through its point x {_n(lx)}, y {_n(ly)} on the "
-            f"centerline, so its far end is at x {_n(lx)} {ew} {_n(dx)} / 2 = {_n(ex_)} and y "
-            f"{_n(ly)} {ns} {_n(dy)} / 2 = {_n(ey_)}. The engine said the text needs "
-            f"{_n(width)} ft, so it does not fit and stands outside. An arrowhead is 1.2 * "
-            f"{_n(th)} = {_n(a_d)} ft by the tool's default and half the text is {_n(width)} / 2 "
-            f"= {_n(hw)} ft, so the text's middle is two arrowheads, the gap and half its width "
-            f"on, {_n(a_d)} * 2 + {_n(g_d)} + {_n(hw)} = {_n(on)} ft, at x {_n(ex_)} {ew} "
-            f"{_f(ux)} * {_n(on)} = {_n(cx)} and y "
-            f"{_n(ey_)} {ns} {_f(uy)} * {_n(on)} = {_n(cy)}. Half its width along the line and "
-            f"the gap and its height either side of it, {_n(g_d)} + {_n(th)} = {_n(thick)} ft, "
-            f"take it at most {_n(hw)} * {_f(ux)} + {_n(thick)} * {_f(uy)} = {_n(rx)} ft either "
-            f"way in x and {_n(hw)} * {_f(uy)} + {_n(thick)} * {_f(ux)} = {_n(ry)} ft in y: its "
-            f"text takes x {_n(cx)} - {_n(rx)} = {_n(box[0])} to {_n(cx)} + {_n(rx)} = "
-            f"{_n(box[2])} and y {_n(cy)} - {_n(ry)} = {_n(box[1])} to {_n(cy)} + {_n(ry)} = "
-            f"{_n(box[3])}")
-        return box, words
-
     # -- read back: the text went out where it was meant to; on sheets handed over, each
-    # dimension shows whole on a sheet and no frame cuts it
-    windows: Dict[str, tuple] = {}
-    window_words: List[str] = []
+    # number shows whole on a sheet and no frame cuts it
+    frames: Dict[str, tuple] = {}
+    frame_words: List[str] = []
     unread = [name for name in sheets if name not in state] if read_sheets else []
     head = (" ".join(pending) + " " if pending else "")
     for _round in range(WIDTH_ROUNDS):
         calls = [_q("find_entities", type="dimension", detail="full", limit=FULL_ROWS)]
+        if read_sheets:
+            calls += [_q("find_entities", visible_on=name, type="dimension") for name in sheets]
+        states_at = len(calls)
         calls += [_q("get_sheet_state", sheet=name) for name in unread]
         results = yield Turn(
             head + "Read the dimensions back, each with its box, to see each text went out on "
-            "the side meant" + (f", and {_and(unread)} for where {'its' if len(unread) == 1 else 'their'} "
-                                "view looks" if unread else "")
-            + (", and check each box against what the sheets' views show." if read_sheets
-               else "."), calls)
+            "the side meant"
+            + (f"; what {_and(list(sheets))} show{'s' if len(sheets) == 1 else ''} of them, each "
+               "number with the corners of its lettering on that paper, to see no view's frame "
+               "cuts one" if read_sheets else "")
+            + (f"; and {_and(unread)} for {'its' if len(unread) == 1 else 'their'} "
+               f"view{'' if len(unread) == 1 else 's'}" if unread else "")
+            + ".", calls)
         _ok(results, calls)
         head = ""
-        for name, result in zip(unread, results[1:]):
+        for name, result in zip(unread, results[states_at:]):
             state[name] = result["sheet"]
         unread = []
         rows_back = {row["id"]: row for row in results[0]["entities"]}
+        listed = {name: {row["id"]: row for row in result.get("entities") or []}
+                  for name, result in zip(sheets, results[1:states_at])} if read_sheets else {}
+        if any(result.get("more") for result in results[:states_at]):
+            raise NotCovered("more dimensions than one reading lists")
         checked, bad = [], []
-        if read_sheets and not windows:
+        if read_sheets and not frames:
             for name in sheets:
                 views = state[name].get("viewports") or []
-                if len(views) != 1 or float(views[0].get("rotation_deg") or 0.0):
-                    raise NotCovered(f"{name} has no single untwisted view to check against")
-                v = views[0]
-                (mx, my), (w, hh), s = v["model_center"], (v["width_in"], v["height_in"]), \
-                    _r(v["feet_per_inch"])
-                x0, x1 = round(_r(mx) - _r(w) / 2 * s, 3), round(_r(mx) + _r(w) / 2 * s, 3)
-                y0, y1 = round(_r(my) - _r(hh) / 2 * s, 3), round(_r(my) + _r(hh) / 2 * s, 3)
-                windows[name] = (x0, y0, x1, y1)
-                window_words.append(
-                    f"{name}'s view shows the model from x {_n(mx)} - {_n(w)} / 2 * {_n(s)} = "
-                    f"{_n(x0)} to {_n(mx)} + {_n(w)} / 2 * {_n(s)} = {_n(x1)} and y {_n(my)} - "
-                    f"{_n(hh)} / 2 * {_n(s)} = {_n(y0)} to {_n(my)} + {_n(hh)} / 2 * {_n(s)} = "
-                    f"{_n(y1)}.")
+                if len(views) != 1:
+                    raise NotCovered(f"{name} has no single view to check against")
+                (cx, cy), w, hh = views[0]["center_paper"], views[0]["width_in"], \
+                    views[0]["height_in"]
+                x0, x1 = round(_r(cx) - _r(w) / 2, 3), round(_r(cx) + _r(w) / 2, 3)
+                y0, y1 = round(_r(cy) - _r(hh) / 2, 3), round(_r(cy) + _r(hh) / 2, 3)
+                frames[name] = (x0, y0, x1, y1)
+                frame_words.append(
+                    f"{name}'s view is framed on the paper from x {_n(cx)} - {_n(w)} / 2 = "
+                    f"{_n(x0)} to {_n(cx)} + {_n(w)} / 2 = {_n(x1)} and y {_n(cy)} - {_n(hh)} / 2 "
+                    f"= {_n(y0)} to {_n(cy)} + {_n(hh)} / 2 = {_n(y1)}.")
         for ref, p in placed.items():
             if p.get("checked"):
                 continue
@@ -2407,29 +2408,40 @@ def _widths(request: str, alignment: str, sheets: Sequence[str], state: Dict[str
                 raise NotCovered(f"the text of {p['id']} did not go out past its second point")
             words = (f"{p['id']} on {ref} reaches {w2} ft past its {side} point in "
                      f"{'xy'[axis]} and {w1} ft past its {_OTHER_SIDE[side]} one, so its text "
-                     f"went out on the {side}")
-            p["box"] = list(bb)
+                     f"went out on the {side}.")
             if read_sheets:
-                box, box_said = text_box(p, ent)
-                inside = [name for name, wv in windows.items()
-                          if wv[0] <= box[0] and wv[1] <= box[1] and box[2] <= wv[2]
-                          and box[3] <= wv[3]]
-                cut = [name for name, wv in windows.items()
-                       if name not in inside and _meet(box, wv)]
-                box_w = f"{box_said}. That box"
-                if inside and not cut:
-                    words += f". {box_w} lies inside {_and(inside)}'s view"
-                    others = [name for name in sheets if name not in inside]
-                    if others:
-                        words += f" and clear of {_and(others)}'s"
-                else:
+                inside, cut, off = [], [], []
+                for name in sheets:
+                    seen = listed[name].get(p["id"])
+                    if seen is None:
+                        off.append(f"{name} does not show it")
+                        continue
+                    if not seen.get("paper_corners"):
+                        raise NotCovered(f"{p['id']} came back without the corners of its number")
+                    box, said = _corner_box(seen["paper_corners"])
+                    f = frames[name]
+                    if f[0] <= box[0] and f[1] <= box[1] and box[2] <= f[2] and box[3] <= f[3]:
+                        inside.append(f"on {name} its number has {said}, inside the frame")
+                    elif box[2] < f[0] or f[2] < box[0] or box[3] < f[1] or f[3] < box[1]:
+                        off.append(f"on {name} its number has {said}, wholly outside the frame, "
+                                   "so it does not show there")
+                    else:
+                        over = [f"its {edge_name} edge at {'xy'[k % 2]} {_n(f[k])}"
+                                for k, edge_name in enumerate(("left", "bottom", "right", "top"))
+                                if (box[k] < f[k] if k < 2 else f[k] < box[k])]
+                        cut.append(f"on {name} its number has {said}, across the frame at "
+                                   f"{_and(over)}, which would cut it")
+                words += " " + "; ".join(w[0].upper() + w[1:] if k == 0 else w
+                                         for k, w in enumerate(inside + cut + off))
+                if cut or not inside:
                     bad.append(ref)
-                    words += (f". {box_w} runs across the edge of {_and(cut)}'s view, which "
-                              "would cut the text" if cut else f". {box_w} shows on no sheet")
+                    if not cut:
+                        words += ": it shows whole on no sheet"
+                words += "."
             p["checked"] = ref not in bad
             checked.append(words)
-        carry = " ".join(window_words) + (" " if window_words else "") + "; ".join(checked) + "."
-        window_words = []
+        carry = " ".join(frame_words + checked)
+        frame_words = []
         if not bad:
             break
         # set each one a frame would cut again at its next place
@@ -2450,12 +2462,9 @@ def _widths(request: str, alignment: str, sheets: Sequence[str], state: Dict[str
         _ok(results, calls)
         for k, ref in enumerate(bad):
             placed[ref]["id"] = results[2 * k + 1]["created"][0]
-            placed[ref]["fit"] = _TOO_SHORT.search(
-                " ".join(results[2 * k + 1].get("warnings") or []))
     else:
         raise NotCovered("the width dimensions do not settle inside the sheets' views")
-    dims = {p["id"]: {"station": p["opt"]["S"], "box": p["box"], "ref": ref}
-            for ref, p in placed.items()}
+    dims = {p["id"]: {"station": p["opt"]["S"], "ref": ref} for ref, p in placed.items()}
     done = (f"dimensioned the pavement width across {_and(list(placed))} on {dims_layer}, clear "
             "of the lettering along the line"
             + (f"; {_and(skipped)} too short to dimension clear of it" if skipped else ""))
@@ -2736,16 +2745,14 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
             done.append(cleared["done"])
 
     # -- the width dimensions, square across each tangent, clear of the lettering
-    #: each width dimension's id, with the station it measures at and its box
+    #: each width dimension's id, with the station it measures at and its tangent
     dims: Dict[str, dict] = {}
     if widths:
-        if twist:
-            raise NotCovered("a width dimension's text cannot be turned for a twisted view")
         lead, carry = carry, ""
         made = yield from _widths(
             request, alignment, sheets, state, rows, layout["line"] if layout else None, anno_scale,
             scale, (summary.get("settings") or {}).get("annotation_paper") or {},
-            layer("dims"), lead, read_sheets=layout is None)
+            layer("dims"), lead, read_sheets=layout is None, twist=twist)
         carry, dims = made["carry"], made["dims"]
         done.append(made["done"])
 
@@ -3330,13 +3337,20 @@ def twist_ignored(task: Task, doc) -> List[str]:
     from roaddraft.design.labels import LABEL_KINDS
     from roaddraft.document.document import Document
     from roaddraft.document.entities import Text
+    from roaddraft.document.entities import Dimension
     given = set(Document.from_dict(task.baseline).model_entities)
+    tol = float(SPEC["tolerances"]["rotation_deg"])
+
+    def off(view_rotation) -> bool:
+        return abs((float(view_rotation or 0.0) - twist + 180.0) % 360.0 - 180.0) > tol
+
     return sorted(
         e.id for e in doc.model_entities.values()
-        if isinstance(e, Text) and e.id not in given and e.anchor
-        and e.anchor.get("kind") in LABEL_KINDS
-        and abs((float(e.anchor.get("view_rotation") or 0.0) - twist + 180.0) % 360.0 - 180.0)
-        > float(SPEC["tolerances"]["rotation_deg"]))
+        if e.id not in given and (
+            (isinstance(e, Text) and e.anchor and e.anchor.get("kind") in LABEL_KINDS
+             and off(e.anchor.get("view_rotation")))
+            # a dimension's number is lettering too (plan decision 9)
+            or (isinstance(e, Dimension) and off(e.view_rotation))))
 
 
 # ------------------------------------------------------------ recording

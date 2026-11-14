@@ -119,6 +119,18 @@ class _Words:
         return (f" The {views} turned {self.twist:.2f}°, so letter model-space labels to read "
                 f"upright on the plotted {sheets}.")
 
+    def dims_reading(self, stated: bool = False) -> str:
+        """What the twist asks of a width dimension's text; ``stated`` when the
+        prompt has already given the viewports' turn."""
+        if not self.twisted:
+            return ""
+        sheets = "sheets" if self.many else "sheet"
+        if stated:
+            return f" Set the dimension text to read upright on the plotted {sheets} too."
+        views = "viewports are" if self.many else "viewport is"
+        return (f" The {views} turned {self.twist:.2f}°, so set the dimension text to read "
+                f"upright on the plotted {sheets}.")
+
     def lettered(self) -> str:
         """The lettering a sheet-setup task is handed, already made for the twist."""
         if not self.twisted:
@@ -455,12 +467,15 @@ def _plan_sheet_items(w: _Words, alignment: List[str], extra: List[str] = ()) ->
 
 def _plan_sheet_pavement(w: _Words, explicit: bool) -> str:
     if not explicit:
-        return (f"{w.section_words()}. Draft plan {w.sheet_list} for {w.A}{w.breaking()}, with "
+        return (f"{w.section_words()}. Draft plan {w.sheet_list} for {w.A}{w.breaking()}"
+                f"{w.turned_views()}, with "
                 f"the pavement edges and a width dimension across each tangent.")
     items = _plan_sheet_items(w, [w.linework(), w.edges(), w.widths()])
     return (f"Draft plan {w.sheet_list} for {w.A} on the {w.P['name']} project ({w.P['agency']}, "
-            f"{w.P['county']}): {w.size} at {w.scale}{w.breaking()}. {w.A} is already in the "
-            f"design and {w.section_words()[len(w.A) + 1:]}.\n{_bullets(items)}")
+            f"{w.P['county']}): {w.size} at {w.scale}{w.breaking()}{w.turned_views()}. {w.A} is "
+            f"already in the "
+            f"design and {w.section_words()[len(w.A) + 1:]}.{w.reading(stated=True)}"
+            f"{w.dims_reading(stated=True)}\n{_bullets(items)}")
 
 
 def _create_plan_sheet(w: _Words, explicit: bool) -> str:
@@ -508,13 +523,14 @@ def _pavement_edges(w: _Words, explicit: bool) -> str:
 def _pavement_widths(w: _Words, explicit: bool) -> str:
     if explicit:
         text = w.widths()
-        return f"{w.section_words()}. {text[0].upper()}{text[1:]}.{w.done()}"
+        return f"{w.section_words()}. {text[0].upper()}{text[1:]}.{w.done()}{w.dims_reading()}"
     return f"Dimension the pavement width on each tangent of {w.A}."
 
 
 def _pavement(w: _Words, explicit: bool) -> str:
     if explicit:
-        return f"{w.section_words()}. {w.edges()}, then {w.widths()}.{w.done()}"
+        return (f"{w.section_words()}. {w.edges()}, then {w.widths()}.{w.done()}"
+                f"{w.dims_reading()}")
     return f"{w.section_words()}. Draw the pavement edges and dimension the width on each tangent."
 
 

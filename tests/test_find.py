@@ -158,6 +158,122 @@ def test_a_text_row_carries_the_corners_its_legibility_is_judged_by(tmp_path, tw
                    for a, b in zip(p, q)), row["id"]
 
 
+@pytest.mark.parametrize("twist", [0.0, 37.5, -140.0])
+def test_a_dimension_row_carries_the_corners_of_its_text(tmp_path, twist):
+    # Training plan decisions 9 and 10 (2026-11-13): a dimension's number is lettering
+    # the verifier judges like any text (D1-08), through the viewport that shows it; a
+    # dimension row carries that text's corners on the paper as a text row does
+    from roaddraft.tasks.ground_truth import GroundTruth
+    from roaddraft.tasks.spec_v1 import DRAFTING_SPEC_V1
+    from roaddraft.verify import legibility
+    from roaddraft.verify.context import Context
+    s = project(tmp_path)
+    vp = s.query("get_sheet_state", {"sheet": "C-101"})["sheet"]["viewports"][0]["id"]
+    s.execute("modify_viewport", {"sheet": "C-101", "viewport_id": vp,
+                                  "changes": {"rotation_deg": twist}})
+    edges = find(s, anchor={"kind": "offset"})["entities"]
+    assert len(edges) >= 2
+    r = s.execute("place_dimension", {"space": "model", "kind": "aligned",
+                                      "from_entity": edges[0]["id"], "from_at": 0.1,
+                                      "to_entity": edges[1]["id"], "to_at": 0.1,
+                                      "line_point": edges[0]["point"], "text_height": 5.0,
+                                      "view_rotation": twist})
+    assert r["ok"], r
+    r = s.execute("place_dimension", {"space": "C-101", "kind": "aligned", "p1": [3, 20],
+                                      "p2": [9, 20], "line_point": [6, 20.5]})
+    assert r["ok"], r
+    shown = find(s, visible_on="C-101", type="dimension")["entities"]
+    own = find(s, space="C-101", type="dimension")["entities"]
+    assert len(shown) == 1 and len(own) == 1
+    assert all(len(row["paper_corners"]) == 4 for row in shown + own)
+    assert all("paper_corners" not in row for row in find(s, type="dimension")["entities"])
+    truth = GroundTruth.from_dict({"task_id": "find", "design_fingerprint": "",
+                                   "sheets": [{"name": "C-101"}]})
+    ctx = Context.build(s.doc, truth, DRAFTING_SPEC_V1, "vague")
+    judged = {it.entity_id: it.quad for sv in ctx.sheets for it in legibility.sheet_items(ctx, sv)}
+    for row in shown + own:
+        quad = judged[row["id"]]
+        assert all(abs(a - b) <= 6e-5 for p, q in zip(quad, row["paper_corners"])
+                   for a, b in zip(p, q)), row["id"]
+    # the model dimension's text reads upright on the sheet: its lower edge runs within a
+    # quarter turn of level, left to right
+    (x0, y0), (x1, y1) = shown[0]["paper_corners"][:2]
+    assert x1 - x0 > 0.0 or abs(x1 - x0) < 1e-6
+    # a dimension with its text hidden has no lettering to give corners for
+    r = s.execute("place_dimension", {"space": "C-101", "kind": "aligned", "p1": [3, 18],
+                                      "p2": [9, 18], "line_point": [6, 18.5], "text": ""})
+    assert r["ok"], r
+    rows = {row["id"]: row for row in find(s, space="C-101", type="dimension")["entities"]}
+    assert "paper_corners" not in rows[r["created"][0]]
+
+
+def test_a_dimension_is_listed_where_a_sheet_shows_its_text_though_not_its_line(tmp_path):
+    # the number of a dimension too short for it stands outside, a text length past the
+    # line it measures along: a frame can show (or cut) the number where it does not show
+    # the middle of the dimension, and the listing of what that sheet shows says so
+    s = project(tmp_path)
+    r = s.execute("place_dimension", {"space": "model", "kind": "aligned", "p1": [1100, 988],
+                                      "p2": [1100, 1012], "line_point": [1100, 1000],
+                                      "text_height": 8.0})
+    assert r["ok"] and any("too short for its text" in w for w in r["warnings"]), r
+    dim = s.doc.model_entities[r["created"][0]]
+    text = [e for e in dim.primitives(s.doc) if e.TYPE == "text"][0]
+    mid = [(dim.p1[0] + dim.p2[0]) / 2.0, (dim.p1[1] + dim.p2[1]) / 2.0]
+    away = [text.position[0] - mid[0], text.position[1] - mid[1]]
+    assert (away[0] ** 2 + away[1] ** 2) ** 0.5 > 20.0  # the number stands well off the line
+    vp = s.query("get_sheet_state", {"sheet": "C-101"})["sheet"]["viewports"][0]
+    # a small window centred well past the number, away from the line: it shows the
+    # number's point and not the middle of the dimension
+    centre = [text.position[0] + 1.5 * away[0], text.position[1] + 1.5 * away[1]]
+    reach = 2.0 * (away[0] ** 2 + away[1] ** 2) ** 0.5 / vp["feet_per_inch"]
+    r = s.execute("modify_viewport", {"sheet": "C-101", "viewport_id": vp["id"], "changes": {
+        "model_center": centre, "width_in": 2.0 * reach * 0.9, "height_in": 2.0 * reach * 0.9}})
+    assert r["ok"], r
+    from roaddraft.document import viewmap
+    view = s.doc.sheets["SH-001"].viewports[0]
+    assert viewmap.shows(view, text.position) and not viewmap.shows(view, mid)
+    rows = find(s, visible_on="C-101", type="dimension")["entities"]
+    assert [row["id"] for row in rows] == [dim.id]
+    assert rows[0]["viewport"] == view.id and len(rows[0]["paper_corners"]) == 4
+    assert "sheet_point" not in rows[0]  # the line itself does not show
+
+
+def test_a_dimension_row_gives_its_corners_through_the_viewport_it_names(tmp_path):
+    # two viewports on one sheet, one showing the middle of the dimension and the other
+    # its number: the row is one viewport's reading, not a mix of the two
+    from roaddraft.api.session import _paper_corners
+    from roaddraft.document import viewmap
+    from roaddraft.document.locate import point_at
+    s = project(tmp_path)
+    r = s.execute("place_dimension", {"space": "model", "kind": "aligned", "p1": [1100, 988],
+                                      "p2": [1100, 1012], "line_point": [1100, 1000],
+                                      "text_height": 8.0})
+    assert r["ok"], r
+    dim = s.doc.model_entities[r["created"][0]]
+    text = [e for e in dim.primitives(s.doc) if e.TYPE == "text"][0]
+    middle = point_at(s.doc, dim, "mid")[0]
+    apart = ((middle[0] - text.position[0]) ** 2 + (middle[1] - text.position[1]) ** 2) ** 0.5
+    assert apart > 10.0
+    side = round(apart / 50.0, 3)  # a window too small to show both, at 50 ft to the inch
+    first = s.query("get_sheet_state", {"sheet": "C-101"})["sheet"]["viewports"][0]
+    assert s.execute("modify_viewport", {"sheet": "C-101", "viewport_id": first["id"], "changes": {
+        "center_paper": [8.0, 8.0], "width_in": side, "height_in": side,
+        "model_center": list(middle)}})["ok"]
+    r = s.execute("create_viewport", {"sheet": "C-101", "center_paper": [20.0, 8.0],
+                                      "width_in": side, "height_in": side,
+                                      "model_center": list(text.position), "feet_per_inch": 50.0})
+    assert r["ok"], r
+    sheet = s.doc.sheets["SH-001"]
+    one, two = sheet.viewports
+    assert viewmap.shows(one, middle) and not viewmap.shows(one, text.position)
+    assert viewmap.shows(two, text.position) and not viewmap.shows(two, middle)
+    row = find(s, visible_on="C-101", type="dimension")["entities"][0]
+    assert row["viewport"] == one.id
+    assert row["sheet_point"] == pytest.approx([8.0, 8.0], abs=1e-3)
+    assert row["paper_corners"] == _paper_corners(s.doc, text, one)
+    assert all(abs(x - 8.0) < 6.0 for x, _y in row["paper_corners"])  # not over by x 20
+
+
 def test_find_can_ignore_references_and_names_a_bad_space(tmp_path):
     s = project(tmp_path)
     assert find(s, include_references=False)["total"] == 0   # the host owns nothing

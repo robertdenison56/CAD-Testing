@@ -273,6 +273,12 @@ SCHEMAS = {
                           "description": "linear: the direction measured along (0 = "
                                          "horizontal, 90 = vertical). Omit and the "
                                          "engine reads it off line_point"},
+         "view_rotation": {"type": "number",
+                           "description": "model space: the twist (rotation_deg) of the "
+                                          "viewport the dimension is read through; its "
+                                          "text is set to read upright on that sheet "
+                                          "instead of in the model (default 0, an "
+                                          "untwisted view)"},
          "text": {**STR, "description": "override the measured value ('' hides the text "
                                         "entirely); omit to let the number follow the "
                                         "geometry"},

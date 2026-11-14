@@ -183,7 +183,8 @@ def transform_entity(e: Entity, t: Similarity) -> Entity:
             precision=e.precision, arrow=e.arrow, arrow_size=scaled(e.arrow_size),
             text_gap=scaled(e.text_gap), extension_offset=scaled(e.extension_offset),
             extension_beyond=scaled(e.extension_beyond),
-            measure_scale=e.measure_scale / s if s else e.measure_scale)
+            measure_scale=e.measure_scale / s if s else e.measure_scale,
+            view_rotation=e.view_rotation)
     if isinstance(e, Point):
         return e.transformed(fn, 0.0, s)
     if isinstance(e, Hatch):

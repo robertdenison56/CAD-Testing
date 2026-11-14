@@ -362,7 +362,9 @@ def test_a_twisted_task_turns_the_road_under_the_same_sheet(ttype, sheets):
 @pytest.mark.parametrize("ttype, sheets, curves", [("annotate-sheet", 2, 3), ("stationing", 1, 1),
                                                    ("title-block", 2, 2), ("sheet-setup", 2, 2),
                                                    ("plan-sheet", 1, 2), ("annotate-base", 1, 3),
-                                                   ("curve-table", 1, 2), ("bearings", 2, 2)])
+                                                   ("curve-table", 1, 2), ("bearings", 2, 2),
+                                                   ("pavement-widths", 1, 2), ("pavement", 2, 3),
+                                                   ("plan-sheet-pavement", 2, 3)])
 def test_the_reference_scores_100_on_a_twisted_task_and_the_start_scores_0(ttype, sheets, curves):
     from roaddraft.verify import verify
     task = generate_task(13010 + curves, curves=curves, task_type=ttype, sheets=sheets,
@@ -400,12 +402,71 @@ def test_the_twist_dial_refuses_a_task_it_cannot_twist():
     for ttype in ("draw-alignment", "layer-setup", "create-alignment"):
         with pytest.raises(ValueError, match="no sheet"):
             generate_task(13000, task_type=ttype, twist=True)
-    # a dimension's text cannot be lettered to read through a twisted viewport
-    for ttype in ("pavement-widths", "pavement", "plan-sheet-pavement"):
-        with pytest.raises(ValueError, match="width dimensions"):
-            generate_task(13000, curves=2, task_type=ttype, twist=True)
     assert generate_task(13000, task_type="pavement-edges", twist=True).brief.deliverable[
         "view_rotation"] == seed_twist(13000)
+    # a width dimension's text reads through the twist since place_dimension takes
+    # view_rotation (training plan decision 9, 2026-11-13): the width types twist too
+    for ttype in ("pavement-widths", "pavement", "plan-sheet-pavement"):
+        task = generate_task(13000, curves=2, task_type=ttype, twist=True)
+        assert task.brief.deliverable["view_rotation"] == seed_twist(13000)
+        assert task.brief.deliverable["width_dimensions"]
+
+
+def test_the_reference_gives_a_twisted_width_dimension_the_viewports_turn():
+    """The reference's dimensions carry the twist as the lettering does, and a
+    dimension made without it can plot upside down on a sheet turned half a
+    turn and lose for it (D1-08).  Not every one does: the verifier reads text
+    square to a line as far round as 135 degrees, so a number set between -90
+    and -45 in the model still passes, which is why the drafter's keep rule
+    looks at the twist itself (``grounded.twist_ignored``)."""
+    from roaddraft.tasks.reference import solution_commands
+    from roaddraft.verify import verify
+    task = generate_task(13005, curves=2, task_type="pavement-widths", twist=180.0)
+    dims = [params for name, params in solution_commands(task) if name == "place_dimension"]
+    assert dims and all(p["view_rotation"] == 180.0 for p in dims)
+    plain = generate_task(13005, curves=2, task_type="pavement-widths")
+    assert all("view_rotation" not in params for name, params in solution_commands(plain)
+               if name == "place_dimension")
+    session = session_for_task(task)
+    made = []
+    for name, params in solution_commands(task):
+        r = session.execute(name, {k: v for k, v in params.items() if k != "view_rotation"})
+        assert r["ok"], r
+        made += r["created"] if name == "place_dimension" else []
+    report = verify(session.doc, task.truth, prompt_level="vague")
+    lost = {c.id: c for c in report.in_scope() if c.credit < 1.0}
+    assert set(lost) == {"D1-08"} and len(made) == 3
+    assert {f.code for f in lost["D1-08"].findings} == {"upside_down"}
+    flipped = {i for f in lost["D1-08"].findings for i in f.entity_ids}
+    assert len(flipped) == 2 and flipped < set(made)
+    # the width itself is still read right: the number, at the station
+    assert all(c.credit == 1.0 for c in report.in_scope() if c.id == "D1-13")
+    # with the twist, nothing is lost
+    session = session_for_task(task)
+    reference_solution(task, session)
+    assert verify(session.doc, task.truth, prompt_level="vague").rubric_score == 100.0
+
+
+def test_a_twisted_width_prompt_gives_the_turn_at_the_explicit_level_and_where_a_layout_is_asked():
+    twist = f"{seed_twist(16001):.2f}°"
+    for ttype in ("pavement-widths", "pavement"):
+        prompts = generate_task(16001, curves=2, task_type=ttype, twist=True).brief.prompts
+        assert prompts["explicit"].endswith(
+            f" The viewport is turned {twist}, so set the dimension text to read upright on "
+            f"the plotted sheet.")
+        assert "turned" not in prompts["vague"]  # the drafter has to look at the sheet
+        plain = generate_task(16001, curves=2, task_type=ttype).brief.prompts
+        assert prompts["vague"] == plain["vague"]
+        assert plain["explicit"] == prompts["explicit"][:len(plain["explicit"])]
+    whole = generate_task(16001, curves=2, task_type="plan-sheet-pavement", sheets=2,
+                          twist=True).brief.prompts
+    assert f", the viewports turned {twist}, with the pavement edges" in whole["vague"]
+    assert (f"the viewports turned {twist}. ALIGN-1 is already in the design and is two "
+            in whole["explicit"])
+    assert ("Letter model-space labels to read upright on the plotted sheets. Set the dimension "
+            "text to read upright on the plotted sheets too.\n- ") in whole["explicit"]
+    plain = generate_task(16001, curves=2, task_type="plan-sheet-pavement", sheets=2).brief.prompts
+    assert "turned" not in plain["vague"] and "upright" not in plain["explicit"]
 
 
 def test_a_twisted_prompt_gives_the_turn_where_the_layout_is_asked_and_leaves_it_to_be_seen_otherwise():

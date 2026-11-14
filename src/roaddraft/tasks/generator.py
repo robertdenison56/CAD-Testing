@@ -279,11 +279,15 @@ def _label_boxes(align: Alignment, fpi: float, turn: float = 0.0) -> List[Tuple[
 
 
 def _dimension_boxes(align: Alignment, half_width: float, width_dims: Sequence[dict],
-                     fpi: float) -> List[Tuple[float, tuple]]:
+                     fpi: float, turn: float = 0.0) -> List[Tuple[float, tuple]]:
     """``(distance from BEGIN, model bbox)`` of each width dimension's text, as
-    the engine sets it for the dimension the reference places."""
+    the engine sets it for the dimension the reference places.  Under a
+    viewport twisted ``turn`` the dimension is given the twist, as the
+    reference gives it, and each box is the text's as that view shows it
+    (``_laid``'s frame, like ``_label_boxes``')."""
     height = _round2(DRAFTING_SPEC_V1["text"]["label_height_in"] * fpi)
     begin = float(align.begin_station)
+    origin = align.pis[0].point if turn else None
     scratch = Document.new("dimension text")
     out = []
     for n, wd in enumerate(width_dims, start=1):
@@ -293,12 +297,23 @@ def _dimension_boxes(align: Alignment, half_width: float, width_dims: Sequence[d
         ahead = align.station_to_xy(min(raw + float(wd["line_offset_ft"]), align.end_station), 0.0)[0]
         dim = Dimension(id=f"DM-{n:03d}", kind="aligned", p1=list(p1), p2=list(p2),
                         line_point=list(ahead), text_height=height, unit_format="feet",
-                        text_gap=float(wd["text_gap_ft"]) if wd.get("text_gap_ft") else None)
+                        text_gap=float(wd["text_gap_ft"]) if wd.get("text_gap_ft") else None,
+                        view_rotation=turn or None)
         for prim in dimgeom.primitives(dim, scratch):
-            if isinstance(prim, Text) and prim.content:
+            if not (isinstance(prim, Text) and prim.content):
+                continue
+            if not turn:
                 out.append((raw - begin, tuple(geo.text_bbox(prim.position, prim.content, prim.height,
                                                                prim.rotation_deg, prim.halign,
                                                                prim.valign))))
+                continue
+            w, h = geo.text_size(prim.content, prim.height)
+            x0 = {"center": -w / 2.0, "right": -w}.get(prim.halign, 0.0)
+            y0 = {"middle": -h / 2.0, "top": -h}.get(prim.valign, 0.0)
+            corners = [[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]]
+            pts = [_about(geo.translate_point(geo.rotate_point(c, prim.rotation_deg), prim.position),
+                          origin, turn) for c in corners]
+            out.append((raw - begin, tuple(geo.bbox_of_points(pts))))
     return out
 
 
@@ -583,11 +598,6 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         shown = ttype.shown()
         if "sheet" not in shown:
             raise ValueError(f"a {ttype.name} task has no sheet, so nothing to twist")
-        if "widths" in shown:
-            # a dimension's text reads upright in the model and place_dimension has no
-            # view_rotation, so through a twist it can plot upside down however it is placed
-            raise ValueError(f"a {ttype.name} task carries width dimensions, whose text "
-                             f"cannot be lettered to read through a twisted viewport")
     rng = random.Random(int(seed))
     v_mph = int(design_speed_mph) if design_speed_mph else rng.choice(SPEEDS)
     n = rng.choice(CURVE_COUNTS) if curves is None else int(curves)
@@ -723,7 +733,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     if n_sheets > 1:
         label_boxes = _label_boxes(align, fpi, turn)
         if "widths" in ttype.shown():  # the width dimensions' text shows on these sheets
-            label_boxes += _dimension_boxes(align, half_width, width_dims, fpi)
+            label_boxes += _dimension_boxes(align, half_width, width_dims, fpi, turn)
     sheet_dicts: List[dict] = []
     for i in range(n_sheets):
         name = SHEET_NAMES[i]

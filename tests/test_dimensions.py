@@ -637,6 +637,172 @@ def test_a_sheet_renders_a_dimension_drawn_in_model_space(tmp_path):
     assert out["ok"] and out["size_bytes"] > 0
 
 
+# ------------------------------------------------- through a twisted view
+
+TWISTS = (-170.0, -135.0, -100.0, -75.0, -30.0, 20.0, 60.0, 95.0, 140.0, 180.0)
+
+
+def _reads_upright(paper_deg: float) -> bool:
+    folded = (paper_deg + 180.0) % 360.0 - 180.0
+    return -90.0 - 1e-6 <= folded <= 90.0 + 1e-6
+
+
+def _on_paper(v, twist: float):
+    """A model direction as a viewport twisted ``twist`` shows it."""
+    a = math.radians(twist)
+    return (v[0] * math.cos(a) - v[1] * math.sin(a), v[0] * math.sin(a) + v[1] * math.cos(a))
+
+
+@pytest.mark.parametrize("twist", TWISTS)
+def test_a_model_dimension_given_the_view_s_twist_reads_upright_on_the_sheet(twist):
+    """A dimension's text reads upright in the model, so through a twisted
+    viewport it can plot upside down however the dimension is drawn.  Given
+    the viewport's twist (``view_rotation``, as the labelers take it) the text
+    reads upright on the sheet and sits above its line as read there."""
+    blind = 0
+    for heading in range(0, 360, 15):
+        a = math.radians(heading)
+        ahead, left = (math.cos(a), math.sin(a)), (-math.sin(a), math.cos(a))
+        p1, p2 = [1000.0, 1000.0], [1000.0 + 120.0 * ahead[0], 1000.0 + 120.0 * ahead[1]]
+        drag = [1000.0 + 60.0 * ahead[0] + 30.0 * left[0],
+                1000.0 + 60.0 * ahead[1] + 30.0 * left[1]]
+        s = session()
+        base = {"space": "model", "kind": "aligned", "p1": p1, "p2": p2, "line_point": drag,
+                "text_height": 5.0, "layer": "V-ANNO-DIMS"}
+        ok(s.execute("place_dimension", base))
+        ok(s.execute("place_dimension", {**base, "view_rotation": twist}))
+        plain, seen = parts(s, "DM-001")["text"], parts(s, "DM-002")["text"]
+        blind += not _reads_upright(plain.rotation_deg + twist)
+        assert _reads_upright(seen.rotation_deg + twist), (heading, twist, seen.rotation_deg)
+        # the text stands off the dimension line on the side that is up on the paper
+        line = parts(s, "DM-002")["line"]
+        mid = [(line.start[0] + line.end[0]) / 2.0, (line.start[1] + line.end[1]) / 2.0]
+        off = _on_paper((seen.position[0] - mid[0], seen.position[1] - mid[1]), twist)
+        reading = math.radians(seen.rotation_deg + twist)
+        assert off[0] * -math.sin(reading) + off[1] * math.cos(reading) > 0.0, (heading, twist)
+        # and it is the same dimension: the number, the line and the measured points
+        assert seen.content == plain.content == "120.00'"
+        assert line.start == pytest.approx(parts(s, "DM-001")["line"].start)
+    assert blind, "some heading reads upside down through this twist without view_rotation"
+
+
+def test_an_untwisted_dimension_is_recorded_as_it_always_was():
+    s = road(session())
+    base = {"space": "model", "kind": "aligned", "p1": [100, -12], "p2": [100, 12],
+            "line_point": [180, 0], "text_height": 2.0, "layer": "V-ANNO-DIMS"}
+    ok(s.execute("place_dimension", base))
+    ok(s.execute("place_dimension", {**base, "view_rotation": 0}))
+    ok(s.execute("place_dimension", {**base, "view_rotation": 120.0}))
+    plain, zero, turned = (s.doc.model_entities[i] for i in ("DM-001", "DM-002", "DM-003"))
+    assert "view_rotation" not in plain.to_dict() and "view_rotation" not in zero.to_dict()
+    assert turned.to_dict()["view_rotation"] == 120.0
+    assert [(e.TYPE, getattr(e, "rotation_deg", None), getattr(e, "position", None))
+            for e in zero.primitives(s.doc)] == \
+           [(e.TYPE, getattr(e, "rotation_deg", None), getattr(e, "position", None))
+            for e in plain.primitives(s.doc)]
+    again = type(turned).from_dict(turned.to_dict())
+    assert again.view_rotation == 120.0
+    assert again.primitives(s.doc)[-1].rotation_deg == turned.primitives(s.doc)[-1].rotation_deg
+
+
+@pytest.mark.parametrize("twist", (-135.0, -60.0, 75.0, 180.0))
+def test_radial_and_angular_text_read_through_the_twist_too(twist):
+    for heading in range(0, 360, 30):
+        a = math.radians(heading)
+        out = [math.cos(a), math.sin(a)]
+        s = session()
+        common = {"space": "model", "layer": "V-ANNO-DIMS", "text_height": 4.0,
+                  "view_rotation": twist}
+        ok(s.execute("place_dimension", {**common, "kind": "radius", "center": [0, 0],
+                                         "radius": 200.0,
+                                         "line_point": [100 * out[0], 100 * out[1]]}))
+        ok(s.execute("place_dimension", {**common, "kind": "radius", "center": [0, 0],
+                                         "radius": 20.0,
+                                         "line_point": [60 * out[0], 60 * out[1]]}))
+        ok(s.execute("place_dimension", {
+            **common, "kind": "angular", "center": [0, 0], "p1": [50 * out[0], 50 * out[1]],
+            "p2": [50 * math.cos(a + 1.0), 50 * math.sin(a + 1.0)],
+            "line_point": [80 * math.cos(a + 0.5), 80 * math.sin(a + 0.5)]}))
+        for dim_id in ("DM-001", "DM-002", "DM-003"):
+            text = parts(s, dim_id)["text"]
+            assert _reads_upright(text.rotation_deg + twist), (dim_id, heading, twist)
+        # the leader's landing and its text run level on the sheet
+        leader = parts(s, "DM-002")
+        run = _on_paper((leader["landing"].end[0] - leader["landing"].start[0],
+                         leader["landing"].end[1] - leader["landing"].start[1]), twist)
+        assert run[1] == pytest.approx(0.0, abs=1e-9)
+        assert (leader["text"].rotation_deg + twist) % 360.0 == pytest.approx(0.0, abs=1e-9)
+        # the text runs away from the leader: it starts where the landing ends
+        assert (leader["text"].halign == "left") == (run[0] > 0.0)
+
+
+def test_a_twisted_dimension_keeps_its_twist_when_it_is_moved_copied_turned_or_mirrored():
+    """The viewport has not turned because the dimension moved: every edit that
+    rebuilds a dimension carries ``view_rotation`` along, or the number would
+    go back to reading upright in the model and upside down on the sheet."""
+    twist = 150.0
+    base = {"space": "model", "kind": "aligned", "p1": [100, -12], "p2": [100, 12],
+            "line_point": [110, 0], "text_height": 2.0, "layer": "V-ANNO-DIMS",
+            "view_rotation": twist}
+    edits = [
+        ("move_entities", {"ids": ["DM-001"], "delta": [10, 5]}),
+        ("copy_entities", {"ids": ["DM-001"], "delta": [50.0, 0.0]}),
+        ("rotate_entities", {"ids": ["DM-001"], "base": [100, 0], "angle": 35}),
+        ("scale_entities", {"ids": ["DM-001"], "base": [100, 0], "factor": 2.0}),
+        ("mirror_entities", {"ids": ["DM-001"], "line": [[0, 40], [400, 40]]}),
+        ("array_entities", {"ids": ["DM-001"], "kind": "rectangular", "rows": 1, "columns": 3,
+                            "column_spacing": 60.0}),
+    ]
+    for name, params in edits:
+        s = road(session())
+        ok(s.execute("place_dimension", base))
+        ok(s.execute(name, params))
+        dims = [e for e in s.doc.model_entities.values() if e.TYPE == "dimension"]
+        assert len(dims) >= 1 and all(d.view_rotation == twist for d in dims), name
+        for d in dims:
+            text = [e for e in d.primitives(s.doc) if e.TYPE == "text"][0]
+            assert _reads_upright(text.rotation_deg + twist), (name, d.id)
+        ok(s.execute("undo", {}))
+        assert s.doc.model_entities["DM-001"].view_rotation == twist
+
+
+def test_modify_entity_sets_and_clears_a_dimension_s_twist():
+    s = road(session())
+    ok(s.execute("place_dimension", {"space": "model", "kind": "aligned", "p1": [100, -12],
+                                     "p2": [100, 12], "line_point": [110, 0],
+                                     "text_height": 2.0, "layer": "V-ANNO-DIMS"}))
+    assert s.doc.model_entities["DM-001"].view_rotation is None
+    ok(s.execute("modify_entity", {"id": "DM-001", "changes": {"view_rotation": 150.0}}))
+    assert s.doc.model_entities["DM-001"].view_rotation == 150.0
+    assert _reads_upright(parts(s)["text"].rotation_deg + 150.0)
+    ok(s.execute("modify_entity", {"id": "DM-001", "changes": {"view_rotation": 0}}))
+    assert s.doc.model_entities["DM-001"].view_rotation is None
+    assert "view_rotation" not in s.doc.model_entities["DM-001"].to_dict()
+    ok(s.execute("modify_entity", {"id": "DM-001", "changes": {"view_rotation": -40.0}}))
+    assert s.doc.model_entities["DM-001"].view_rotation == -40.0
+    # a field no dimension has is still refused, and the hint lists this one
+    r = s.execute("modify_entity", {"id": "DM-001", "changes": {"twist": 5}})
+    assert not r["ok"] and "view_rotation" in r["error"]["hint"]
+    # on a sheet there is no view to read it through
+    ok(s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"}))
+    r = ok(s.execute("place_dimension", {"space": "C-101", "kind": "aligned", "p1": [2, 2],
+                                         "p2": [6, 2], "line_point": [4, 3]}))
+    r = s.execute("modify_entity", {"id": r["created"][0], "changes": {"view_rotation": 30.0}})
+    assert not r["ok"] and "already reads upright" in r["error"]["message"]
+
+
+def test_view_rotation_is_for_model_dimensions_and_a_sheet_one_says_so():
+    s = session()
+    ok(s.execute("create_sheet", {"name": "C-101", "size": "ANSI_D"}))
+    r = ok(s.execute("place_dimension", {"space": "C-101", "kind": "aligned",
+                                         "p1": [2, 2], "p2": [6, 2], "line_point": [4, 3],
+                                         "view_rotation": 120.0}))
+    assert any("view_rotation 120 was not used" in w for w in r["warnings"])
+    dim = s.doc.sheets["SH-001"].entities[r["created"][0]]
+    assert dim.view_rotation is None
+    assert parts(s, dim.id, "C-101")["text"].rotation_deg == 0.0
+
+
 def test_the_repl_grammar_reaches_dimensioning():
     from roaddraft.api.lines import route_line
     s = road(session())

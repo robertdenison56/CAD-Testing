@@ -747,6 +747,11 @@ of those". Giving `place_label`, `place_curve_table` and `annotate_stationing` t
 tool definition, only what a failed call says, so it can go in the pin's cut with decision 3's engine
 changes. The faulted copies then need making again, as they will after the training sets are recorded
 again on the pin (decision 3): `faults inject`, then `conversations convert`.
+**Built 2026-11-13 (3ae2dac7).** With no alignment of the document's own, `place_label`,
+`place_curve_table`, `annotate_stationing` and `draw_station_offset` now say "this document owns no
+alignments, but its references carry ['BASE:ALIGN-1'] -- name one of those as alignment", and a bare
+name the document does not own (`ALIGN-1` for `BASE:ALIGN-1`) gets the same hint. A command that draws
+the design itself (`draw_alignment`) and a document with nothing attached are told what they were.
 
 ## 6. Decisions for Robert
 
@@ -806,6 +811,32 @@ again on the pin (decision 3): `faults inject`, then `conversations convert`.
    giving it one moves the tool surface. Until then the three width types stay untwisted. The drafter
    covers them untwisted since 2026-11-12, night (206 of 207 kept a level), so this only decides whether a
    width task may be twisted. **Decided 2026-11-13: build it, before the pin.**
+   **Built 2026-11-13.** `place_dimension` takes `view_rotation` in model space, as the labelers do:
+   the number is set to read upright on the sheet (its model rotation is the paper one turned back by
+   the twist) and on the side of its line that is up on the paper, and a radius leader's landing and
+   text run level on the paper. A dimension keeps its twist when it is moved, copied, turned,
+   scaled, arrayed or mirrored, and `modify_entity` sets or clears it (both found by an independent
+   review before the commit: the first cut dropped the twist on any such edit, and a dimension
+   nudged after it was placed went back to reading upright in the model). An untwisted dimension
+   draws and is recorded as it always was (the file gets no new key; the same primitives bit for
+   bit over 80,000 random dimensions), so no held-out id, document or score moves. Over 24 headings and 10 twists,
+   536 of 960 dimension numbers did not read upright on the paper without it and none with it. The
+   verifier needed no change: it already judged a dimension's number as lettering (D1-08). It reads
+   text as far round as 135 degrees, though, so a number made without the twist is marked down on
+   some headings and not on others (at half a turn, 0 of 3 on one seed and 2 of 3 on another); the
+   drafter's keep rule (`twist_ignored`) therefore reads a dimension's `view_rotation` as it reads a
+   label's. The generator no longer refuses a twisted width task, the reference gives its dimensions
+   the twist, and the explicit prompts state it ("The viewport is turned 114.67°, so set the
+   dimension text to read upright on the plotted sheet."); a vague `pavement` or `pavement-widths`
+   prompt says nothing of it, like a vague lettering prompt, and a vague `plan-sheet-pavement` gives
+   the turn with the layout. The tasks are a set of their own, so that `d1-train-twist` keeps its
+   nine types and its ids: `d1-train-twist-widths`, seeds 16000-16299, 293 tasks (98
+   `pavement-widths`, 98 `plan-sheet-pavement`, 97 `pavement`; 7 seeds with no tangent to dimension
+   left out, 10 dialed to the type's other sheet count), the two types handed a sheet on `d1-test`'s
+   dials and the whole plan on `d1-test-hard`'s. Oracle 100 and null 0 on all 293 at both levels.
+   The drafter reads the twist off the viewport and gives it to each dimension; 291 of 293 are kept
+   a level (the two left are whole plans it declines to frame), a `pavement` or `pavement-widths`
+   task in a median 16 or 17 calls and a whole plan in 127 (vague, the most 144 of the 150 allowed).
 10. **What the engine tells a drafter about lettering that collides** (2026-11-12, the clearing step). Today
     nothing: a text is reported by its box on the model's axes, and a model that cannot look at a render has
     to work out the rest. The three ways on:
@@ -833,6 +864,26 @@ again on the pin (decision 3): `faults inject`, then `conversations convert`.
     level (was 592; the one left was not kept before either), and on the 592 kept both ways the median
     calls went 58 to 28 (34,893 to 15,485 in all), turns 21 to 16, the shown work 16% shorter and the
     results 15%. Every other training set keeps what it kept: 3,291 of 3,297 a level in all.
+    **Extended to dimensions the same day, with decision 9.** A dimension's number is lettering the
+    verifier judges the same way, and the width phase was working its box out by hand: from the
+    engine's "the text needs" warning, the tool's default ratios and the dimension's record, against
+    each view's window in the model, which is no box at all through a turned viewport. A dimension
+    row of `find_entities` now carries the `paper_corners` of its number, and `visible_on` lists a
+    dimension where the sheet shows its number as well as where it shows the middle of its line (a
+    number too long to fit stands a text length past the line it measures along, so a neighbouring
+    sheet's frame can cut it without showing the dimension). The width phase reads each dimension
+    back on every sheet handed over and compares the corners with the view's frame on the paper, and
+    a layout the drafter lays out is trimmed round each number's corners; one method, turned view or
+    not. The tool definitions move again (`cd5e8a86` to `c66b17cd`). On the 147 untwisted width
+    tasks of `d1-train` kept both ways, the shown work is 25% shorter (26% at the explicit level)
+    for two or three more calls a task (the median 15 to 17 at the vague level, 14 to 17 at the
+    explicit), and a number is set again on 6 vague recordings where the looser box had 11, on none
+    at the explicit level where it had 3. `d1-train` keeps 1,198 of 1,200 and `d1-train-hard` 294 of
+    297 a level, the same tasks as before; `d1-train-twist` 600, `d1-train-crowd` 599 and
+    `d1-train-revise` 600 as they were. With the new set that is 3,582 of 3,590 tasks kept a level.
+    Recorded again at the commit before and compared turn for turn, results included, the 3,090
+    recordings of those five sets with no width dimension are identical; only the 207 that
+    dimension a width changed.
 11. **Letting a seeded revision task make the change itself** (2026-11-12, build 4). **Decided 2026-11-12:
     "Yes, revision only".** `modify_alignment` and `update_labels` are shown only on a revised task's list
     (its scope carries a `revision` mark), and where the design lives in the sheet file the drafter makes
@@ -932,7 +983,8 @@ Build 2 is done, and so is the sheet and viewport phase of build 1 (the status o
 more tasks a level are recorded, 281 of the 283 layout tasks of `d1-train` and `d1-train-twist` and 235 of
 `d1-train-hard`, recorded for the first time. What is left of build 1 is the drafter choosing how many
 sheets a line takes and where they break, which no seeded task asks yet (decision 8). The 207 width tasks
-are recorded since 2026-11-12, night (206 kept a level), untwisted. What build 2 does not reach in `p17`: the
+are recorded since 2026-11-12, night (206 kept a level), untwisted, and through a turned view since
+2026-11-13 (`d1-train-twist-widths`, decision 9). What build 2 does not reach in `p17`: the
 pilots' sheets carry other lines and published lettering, and what the best row misses there is new
 lettering over other lettering as well as lettering upside down. The first of those is build 3, built
 2026-11-12 (the status above): `d1-train-crowd`, 600 crowded sheets, 534 recorded a level, then 592 once

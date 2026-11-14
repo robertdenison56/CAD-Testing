@@ -961,16 +961,20 @@ def test_a_label_along_a_tangent_is_judged_by_its_true_length_not_its_box():
 
 
 def test_a_width_text_a_frame_would_cut_is_set_again_where_a_view_shows_it_whole():
-    """On a layout of two sheets a frame can run through the place where the text
-    lands: the text's box is worked out from the record and the engine's warning
-    and checked against each view, and the dimension is set again."""
-    task = _train("D1-011195-a1edad034910")
-    for level in ("vague", "explicit"):
-        episode = _run(task, level)
+    """On a layout of two sheets a frame can run through the place where the number
+    lands: its corners on that sheet's paper lie part inside the view's frame and part
+    outside, and the dimension is set again.  The same on a turned sheet, where the
+    frame is still square to the paper and the number is not."""
+    plain = _train("D1-010283-899bbf4b8705")
+    turned = next(tasksets.task_from_entry(e) for e in tasksets.entries("d1-train-twist-widths")
+                  if e["task_id"] == "D1-016024-42ffcf9c7145")
+    for task in (plain, turned):
+        episode = _run(task, "vague")
         words = _words(episode)
-        assert "which would cut the text" in words and "Take off DM-" in words
-        row = grounded.record_task(task, level)
-        assert row["kept"], (level, row["error"], row["lost"], row["ungrounded"])
+        assert "across the frame at its " in words and "which would cut it" in words
+        assert "Take off DM-" in words
+        row = grounded.record_task(task, "vague")
+        assert row["kept"], (task.task_id, row["error"], row["lost"], row["ungrounded"])
 
 
 def test_a_whole_plan_with_widths_on_three_sheets_is_kept_inside_the_step_budget():
@@ -980,7 +984,104 @@ def test_a_whole_plan_with_widths_on_three_sheets_is_kept_inside_the_step_budget
     assert row["kept"], (row["termination"], row["error"], row["lost"], row["ungrounded"])
     assert row["steps"] <= Budgets().steps
     episode = _run(task, "vague")
-    assert "A width dimension is framed round its own box" in _words(episode)
+    words = _words(episode)
+    # each frame is trimmed round the dimensions' numbers, whose corners on each sheet
+    # come with the listing of what it shows (plan decisions 9 and 10)
+    assert "A width dimension is framed round its number" in words
+    assert "The number of the width dimension DM-" in words
+    listings = [r for c, r in _pairs(episode) if c["name"] == "find_entities"
+                and c["params"].get("visible_on") and "dimension" in c["params"].get("type", "")]
+    assert listings and all(len(row["paper_corners"]) == 4 for r in listings
+                            for row in r["entities"] if row["type"] == "dimension")
+
+
+# ------------------------------------------- widths through a turned view (2026-11-13)
+
+
+def _twisted_width(ttype: str, sheets=None, n: int = 0):
+    rows = [e for e in tasksets.load("d1-train-twist-widths")["tasks"]
+            if e["task_type"] == ttype and sheets in (None, e["sheets"])]
+    return tasksets.task_from_entry(rows[n])
+
+
+@pytest.mark.parametrize("ttype", tasksets.TWIST_WIDTH_TYPES)
+@pytest.mark.parametrize("level", ["vague", "explicit"])
+def test_a_grounded_reference_dimensions_a_twisted_sheet_and_is_kept(ttype, level):
+    row = grounded.record_task(_twisted_width(ttype), level)
+    assert row["termination"] == "submit", row["error"]
+    assert row["ungrounded"] == [] and row["twist_ignored"] == []
+    assert row["effective"] == 100.0 and row["lost"] == {}
+    assert row["kept"]
+
+
+def test_a_twisted_width_takes_the_turn_the_drafter_read_off_the_viewport():
+    """Plan decision 9: place_dimension takes the viewport's twist as the labelers do, so
+    the number reads upright on the sheet.  The vague prompt says nothing of the twist."""
+    task = _twisted_width("pavement-widths")
+    twist = task.brief.deliverable["view_rotation"]
+    assert "turned" not in task.brief.prompts["vague"]
+    episode = _run(task, "vague")
+    dims = [c["params"] for c, _r in _pairs(episode) if c["name"] == "place_dimension"]
+    assert dims and all(d["view_rotation"] == twist for d in dims)
+    assert all(not {"text_height", "text_gap", "p1", "p2", "rotation_deg"} & set(d) for d in dims)
+    assert (f"turned {twist:g}°, so each dimension takes that as its view_rotation"
+            in _words(episode))
+    # every number reads upright as plotted
+    from roaddraft.document.entities import Dimension, Text
+    doc = episode.session.doc
+    turned = [prim.rotation_deg + twist for e in doc.model_entities.values()
+              if isinstance(e, Dimension) for prim in e.primitives(doc) if isinstance(prim, Text)]
+    assert turned and all(-90.0 - 1e-6 <= (r + 180.0) % 360.0 - 180.0 <= 90.0 + 1e-6
+                          for r in turned)
+    # an untwisted sheet's dimensions carry no view_rotation
+    plain = [c["params"] for c, _r in _pairs(_run(_task("pavement-widths"), "vague"))
+             if c["name"] == "place_dimension"]
+    assert plain and all("view_rotation" not in d for d in plain)
+
+
+def test_a_width_is_read_back_on_the_paper_of_each_sheet_handed_over():
+    """Each sheet lists the dimensions it shows, each number with the corners of its
+    lettering on that paper, and those are compared with the view's frame: the same
+    reading on a turned sheet and an untwisted one, and no size worked out by hand."""
+    for task in (_twisted_width("pavement-widths", sheets=2), _two_sheets("pavement-widths")):
+        episode = _run(task, "vague")
+        names = [sh["name"] for sh in task.brief.deliverable["sheets"]]
+        listings = [(c["params"], r) for c, r in _pairs(episode)
+                    if c["name"] == "find_entities" and c["params"].get("visible_on")
+                    and c["params"].get("type") == "dimension"]
+        assert {p["visible_on"] for p, _r in listings} == set(names)
+        shown = [row for _p, r in listings for row in r["entities"]]
+        assert shown and all(len(row["paper_corners"]) == 4 for row in shown)
+        words = _words(episode)
+        for name in names:
+            assert f"{name}'s view is framed on the paper from x " in words
+        assert "its number has corners (" in words and "inside the frame" in words
+        assert "The engine said the text needs" not in words
+        assert "sheet_to_model" not in [c["name"] for c, _r in _pairs(episode)]
+
+
+def test_a_dimension_made_without_the_twist_is_not_kept():
+    """The keep rule's twist leg reads a dimension as it reads a label: one added on a
+    twisted sheet without the viewport's turn is no demonstration, whatever it scores."""
+    from roaddraft.eval.agents.basic import _QueueAgent, calls_from_commands
+    from roaddraft.tasks.reference import solution_commands
+
+    class Blind(_QueueAgent):
+        """The reference's commands with the twist taken out of the dimensions."""
+        name = "blind"
+
+        def reset(self, task, level, mode):
+            self.queue = calls_from_commands(
+                [(name, {k: v for k, v in params.items() if k != "view_rotation"})
+                 for name, params in solution_commands(task)])
+
+    task = _twisted_width("pavement-widths")
+    row = grounded.record_task(task, "vague", agent=Blind())
+    assert len(row["twist_ignored"]) == len(task.brief.deliverable["width_dimensions"])
+    assert all(i.startswith("DM-") for i in row["twist_ignored"]) and not row["kept"]
+    assert grounded.record_task(task, "vague", agent=OracleAgent())["twist_ignored"] == []
+    assert grounded.record_task(_task("pavement-widths"), "vague",
+                                agent=Blind())["twist_ignored"] == []
 
 
 def test_a_station_as_lettered_is_found_along_the_line_past_an_equation():
