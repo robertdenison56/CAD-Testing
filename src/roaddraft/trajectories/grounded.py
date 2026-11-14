@@ -3207,10 +3207,12 @@ def worked_sums(text: str) -> List[tuple]:
 class Seen:
     """What the model has in front of it at a point in an episode."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, rules: Sequence = ()):
         self.text = text
         self.strings: set = set()
         self.numbers: List[float] = numbers_in(text)
+        #: a task family's own string forms: ``rule(value, seen) -> bool`` (``audit``'s ``rules``)
+        self.rules = tuple(rules)
 
     def add(self, result) -> None:
         _flatten(result, self.strings, self.numbers)
@@ -3232,6 +3234,8 @@ class Seen:
         if not value or value in self.strings or value in self.text or value in STANDARDS[0]:
             return True
         if value in tool_text:
+            return True
+        if any(rule(value, self) for rule in self.rules):
             return True
         anchor = _ANCHOR.match(value)
         if anchor:  # the index has to be one the design showed: no standard names a curve
@@ -3272,14 +3276,19 @@ def _walk(value, path: str):
         yield path, value
 
 
-def audit(text: str, tools: Sequence[dict], turns: Sequence[dict]) -> List[dict]:
+def audit(text: str, tools: Sequence[dict], turns: Sequence[dict], rules: Sequence = (),
+          numbers: Sequence[float] = ()) -> List[dict]:
     """Every value an episode's calls carry that was not grounded when the
     call was made, and every number its shown work states that was not:
     ``[{"turn", "tool", "path", "value"}]``, empty for a grounded episode.
     ``text`` is the task as the model was given it, ``tools`` the definitions
-    it was shown, ``turns`` the episode's turn records."""
+    it was shown, ``turns`` the episode's turn records.  A task family with
+    forms of its own (``trajectories.reasoning``) adds ``rules``, each
+    ``rule(value, seen) -> bool`` for a string the general forms do not ground,
+    and ``numbers``, the constants it states as rules; the D1 sets pass neither."""
     tool_text = {t["name"]: json.dumps(t, ensure_ascii=False) for t in tools}
-    seen = Seen(text)
+    seen = Seen(text, rules)
+    seen.numbers += [float(n) for n in numbers]
     # a size a tool's definition gives as a ratio of the text height (place_dimension's
     # arrowheads, ``1.2 x the text height``) is the tool's own word on it
     seen.numbers += [float(m) for t in tool_text.values() for m in _RATIO.findall(t)]
