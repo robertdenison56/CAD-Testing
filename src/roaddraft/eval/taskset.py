@@ -105,6 +105,16 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   The seeded counterpart of the sheet break pilots (``p05``).  A seed whose line the generator lays on more sheets
   than carry it takes another sheet count and says so under ``dialed``.
 
+- ``train-deeds``, ``train-qa`` (2026-11-13, plan §8 build 5): the reasoning
+  families that need none of the pilots' sheets, as generated probe tasks on the
+  pilots' own harness (``eval.probe_tasks``), each graded by the pilot family's
+  own check code: ``tasks.deeds`` (``p03``: a deed that does not close, to
+  balance by the compass rule), seeds 19000-19299, and ``tasks.planted``
+  (``p14``: a finished sheet with planted errors to mark, one in three a clean
+  control), seeds 20000-20299.  In ``PROBE_TRAIN_NAMES``, not ``TRAIN_NAMES``
+  (the D1 converter and fault injector read those); an entry carries
+  ``"generated": <set>`` and a vague id of its own.
+
 The prompt level is a run dimension, not a task-set one.  A test regenerates
 each manifest and asserts identical task ids: a changed spec or generator
 fails it, which is the tripwire; ``python -m roaddraft.eval taskset --write``
@@ -208,6 +218,13 @@ TRAIN_BREAKS_SEEDS = range(17000, 17300)
 #: two sheets, two take three, one takes one (no break is a right answer too)
 BREAKS_SHEETS = (2, 3, 2, 3, 1)
 BREAKS_CURVES = (1, 2, 3, 4)
+#: the generated probe tasks of plan §8 build 5 (2026-11-13): the reasoning families that need
+#: none of the pilots' sheets, run on the pilots' own harness (``eval.probe_tasks``) and graded
+#: by checks of their own.  Kept apart from ``TRAIN_NAMES``, whose sets are D1 tasks the
+#: converter and the fault injector read; ``train_overlap`` covers both.
+#: ``train-deeds``: ``tasks.deeds`` (``p03``), seeds 19000-19299;
+#: ``train-qa``: ``tasks.planted`` (``p14``), seeds 20000-20299
+PROBE_TRAIN_NAMES = ("train-deeds", "train-qa")
 
 
 def dials(index: int) -> dict:
@@ -809,6 +826,8 @@ def build(name: str) -> dict:
                 "spec_version": DRAFTING_SPEC_V1["version"],
                 "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
                 "tasks": tasks}
+    elif name in PROBE_TRAIN_NAMES:
+        return build_generated(name)
     elif name == "d1-test-hard":
         return {"taskset": name, "generator_version": GENERATOR_VERSION,
                 "spec_version": DRAFTING_SPEC_V1["version"],
@@ -840,11 +859,38 @@ def build(name: str) -> dict:
                 "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
                 "tasks": tasks}
     else:
-        raise ValueError(f"unknown task set {name!r}; sets: {', '.join(NAMES + TRAIN_NAMES)}")
+        raise ValueError(f"unknown task set {name!r}; sets: "
+                         f"{', '.join(NAMES + TRAIN_NAMES + PROBE_TRAIN_NAMES)}")
     tasks = [_entry(seed, i) for i, seed in enumerate(seeds)]
     return {"taskset": name, "generator_version": GENERATOR_VERSION,
             "spec_version": DRAFTING_SPEC_V1["version"], "spec_hash": spec_hash(DRAFTING_SPEC_V1),
             "tasks": tasks}
+
+
+def _generator(name: str):
+    """The module that generates the probe training set ``name``."""
+    if name == "train-deeds":
+        from roaddraft.tasks import deeds
+        return deeds
+    if name == "train-qa":
+        from roaddraft.tasks import planted
+        return planted
+    raise ValueError(f"unknown generated set {name!r}; sets: {', '.join(PROBE_TRAIN_NAMES)}")
+
+
+def build_generated(name: str) -> dict:
+    """A generated probe training set's manifest: one entry a seed, a seed the
+    generator cannot make a task of left out and named under ``skipped_seeds``."""
+    module = _generator(name)
+    tasks, skipped = [], []
+    for seed in module.SEEDS:
+        try:
+            tasks.append({**module.entry(seed), "generated": name})
+        except ValueError:
+            skipped.append(seed)
+    return {"taskset": name, "generator_version": GENERATOR_VERSION,
+            "spec_version": DRAFTING_SPEC_V1["version"], "spec_hash": spec_hash(DRAFTING_SPEC_V1),
+            "harness": "probe", "skipped_seeds": skipped, "tasks": tasks}
 
 
 def manifest_path(name: str, root=None) -> Path:
@@ -950,7 +996,7 @@ def train_overlap(root=None) -> List[str]:
     training set, from the manifests on disk: empty when the training data is
     clean.  The tripwire the training plan rests on; a test holds it empty."""
     problems: List[str] = []
-    trains = {name: load(name, root) for name in TRAIN_NAMES}
+    trains = {name: load(name, root) for name in TRAIN_NAMES + PROBE_TRAIN_NAMES}
     for name, manifest in trains.items():
         for other in NAMES:
             problems += shared(manifest, load(other, root))
@@ -967,6 +1013,8 @@ def task_from_entry(entry: dict, strict: bool = True, level: str = "explicit") -
     sheet by ``tasks.real.build_real_task``; a probe entry (it names a
     ``probe``) is a ``probe_tasks.ProbeTask``, not a ``Task``, posed at prompt
     ``level`` (a D1 task is the same at every level: the episode picks its prompt)."""
+    if "generated" in entry:
+        return _generator(entry["generated"]).probe_task(entry, strict=strict, level=level)
     if "probe" in entry:
         from roaddraft.eval import probe_tasks
         return probe_tasks.task_from_entry(entry, strict=strict, level=level)
@@ -1009,7 +1057,7 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "build_probes", "PROBE_NAMES", "load_catalog", "real_dev_sheets", "real_quotas", "build_real", "build",
            "manifest_path", "write", "load", "check", "task_from_entry", "entries", "HARD_NAMES",
            "HARD_SEEDS", "HARD_SEEDED_TYPES", "hard_dials", "JOB_CATALOG", "REAL_HARD_SIZE",
-           "REAL_HARD_FILL", "build_real_hard", "TRAIN_NAMES", "TRAIN_SEEDS", "TRAIN_HARD_SEEDS",
+           "REAL_HARD_FILL", "build_real_hard", "TRAIN_NAMES", "PROBE_TRAIN_NAMES", "build_generated", "TRAIN_SEEDS", "TRAIN_HARD_SEEDS",
            "TRAIN_TWIST_SEEDS", "TWIST_TYPES", "twist_dials", "TRAIN_CROWD_SEEDS", "crowd_dials",
            "TRAIN_REVISE_SEEDS", "revise_dials", "TRAIN_TWIST_WIDTH_SEEDS", "TWIST_WIDTH_TYPES",
            "twist_width_dials", "TRAIN_REVISE_BASE_SEEDS", "revise_base_dials", "shared",
