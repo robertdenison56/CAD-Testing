@@ -34,6 +34,11 @@ with it.
 A model's thinking is not sent back by the harness (``openai_compat``), so it
 is not in the conversation either.
 
+A faulted copy of a reference (``trajectories.faults``) converts the same way:
+its broken turns' assistant messages carry ``"weight": 0`` (context, never a
+target), its header lists the faults (``injected``) and its id ends
+``.faults``; the audit leaves the broken turns' own findings out.
+
 **Kept**, and counted by reason when not (``Drop``):
 
 1. the episode ended on ``submit`` in a text-only mode (a vision episode's
@@ -71,6 +76,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 FORMAT = "roaddraft-d1-conversation/1"
 REPO = Path(__file__).resolve().parents[3]
 SOURCE = REPO / "results" / "grounded"
+#: the faulted copies of the references (``trajectories.faults``), <set>-<level>/ each
+FAULTS = REPO / "results" / "faults"
 OUT = REPO / "results" / "training"
 CARD = REPO / "benchmarks" / "training" / "DATASET_CARD.md"
 LEVELS = ("vague", "explicit")
@@ -176,6 +183,8 @@ def messages(system: str, brief: str, turns: Sequence[dict], budgets) -> List[di
             message["tool_calls"] = [{"id": c.id, "type": "function",
                                       "function": {"name": c.name, "arguments": c.params}}
                                      for c in calls]
+        if (said.get("fault") or {}).get("role") == "broken":
+            message["weight"] = 0   # an injected mistake: context for the recovery, never a target
         out.append(message)
         if i == len(turns) - 1:
             break
@@ -266,8 +275,9 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
         raise Drop("score", f"re-scored {report.effective_score:g}")
     if audit:
         from roaddraft.tasks.revise import left_stale
-        from roaddraft.trajectories import grounded
-        found = grounded.audit(brief, defs, turns)
+        from roaddraft.trajectories import faults, grounded
+        # an injected fault's broken turn is wrong on purpose and weighs 0: its own findings are left out
+        found = faults.audit_turns(brief, defs, turns)
         if found:
             raise Drop("ungrounded", json.dumps(found[:3], ensure_ascii=False))
         blind = grounded.twist_ignored(task, session.doc)
@@ -285,6 +295,8 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
     if any(t.get("usage") for t in turns):
         from roaddraft.eval.agents.llm import prompt_size
         held = [prompt_size(t.get("usage")) for t in turns]
+    from roaddraft.trajectories.faults import faults_of
+    injected = faults_of(turns)
     head = {
         "task_id": header["task_id"], "taskset": taskset, "task_type": header.get("task_type"),
         "seed": header.get("seed"), "sheets": header.get("sheets"), "level": level, "mode": mode,
@@ -300,13 +312,16 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
         "score": {"effective": report.effective_score, "rubric": report.rubric_score},
         "counts": {"turns": len(turns), "calls": calls, "results_shown": len(results),
                    "faults": sum(not r.get("ok") for r in results),
-                   "notes": sum(1 for m in msgs[2:] if m["role"] == "user")},
+                   "notes": sum(1 for m in msgs[2:] if m["role"] == "user"),
+                   "masked": sum(1 for m in msgs if m.get("weight") == 0)},
         "episode": _shown_path(path),
     }
+    if injected:
+        head["injected"] = injected   # the faults put in (trajectories.faults): their broken turns weigh 0
     if any(held):
         head["prompt_tokens"] = held   # what the server counted for each request, for calibration
-    return {"format": FORMAT, "id": f"{header['task_id']}.{level}", "header": head,
-            "messages": msgs}, defs
+    cid = f"{header['task_id']}.{level}" + (".faults" if injected else "")
+    return {"format": FORMAT, "id": cid, "header": head, "messages": msgs}, defs
 
 
 def _shown_path(path) -> str:
@@ -407,6 +422,10 @@ def convert_set(src: Path, taskset: str, out_file: Path, jobs: int = 1, audit: b
         "calls": _stats([h["counts"]["calls"] for h in heads]),
         "with_notes": sum(1 for h in heads if h["counts"]["notes"]),
     }
+    kinds = Counter(f["kind"] for h in heads for f in h.get("injected") or [])
+    if kinds:
+        tally["injected"] = dict(sorted(kinds.items()))
+        tally["masked"] = sum(h["counts"].get("masked", 0) for h in heads)
     if log:
         log(f"{out_file.name}: {len(kept)} kept of {len(paths)} episodes"
             + (f"; dropped {dict(reasons)}" if reasons else ""))
@@ -436,8 +455,10 @@ def write_tools(out: Path, tools: Dict[str, List[dict]]) -> Path:
 
 def run(sets: Sequence[str], levels: Sequence[str] = LEVELS, source: Path = SOURCE,
         out: Path = OUT, jobs: int = 1, audit: bool = True, limit: Optional[int] = None,
-        log=print) -> dict:
-    """Convert every ``<set>-<level>`` recording folder under ``source``."""
+        log=print, faults: Optional[Path] = FAULTS) -> dict:
+    """Convert every ``<set>-<level>`` recording folder under ``source`` and,
+    where ``faults`` holds one, its faulted copies (``trajectories.faults``)
+    into ``<set>-<level>-faults.jsonl``."""
     from roaddraft import __version__
     from roaddraft.eval.episode import HARNESS_VERSION
     from roaddraft.runners.core import pins as current_pins
@@ -460,6 +481,15 @@ def run(sets: Sequence[str], levels: Sequence[str] = LEVELS, source: Path = SOUR
                                        audit=audit, limit=limit, pins=pins, log=log)
             tally["manifest_seeds"] = manifest_seeds(name)
             summary["sets"][f"{name}-{level}"] = tally
+            for dig, defs in tools.items():
+                all_tools.setdefault(dig, defs)
+            faulted = Path(faults) / f"{name}-{level}" if faults else None
+            if faulted is None or not (faulted / "episodes").exists():
+                continue
+            tally, tools = convert_set(faulted, name, out / f"{name}-{level}-faults.jsonl", jobs=jobs,
+                                       audit=audit, limit=limit, pins=pins, log=log)
+            tally["variant"] = "faults"
+            summary["sets"][f"{name}-{level}-faults"] = tally
             for dig, defs in tools.items():
                 all_tools.setdefault(dig, defs)
     write_tools(out, all_tools)
@@ -532,6 +562,11 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
       "left; the closing `submit` call). The tool definitions are in `tools.json`, once per digest, "
       "in the function-tool shape the OpenAI-compatible provider sends.")
     w("")
+    if any(t.get("variant") == "faults" for t in sets.values()):
+        w("Beside each set's references, `<set>-<level>-faults.jsonl` holds their faulted copies: "
+          "the same conversations with one or two of the subject model's own mistakes put in and "
+          "recovered from (see *Injected faults* below).")
+        w("")
     w("Every conversation was re-scored before it was written: its task rebuilt from the "
       "training manifest and held to the episode's prompt hash, truth and starting document; its "
       "tool list held to the episode's tool digest; its journal replayed through the verifier "
@@ -617,6 +652,9 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
                 w(f"| `{name}` | {level} | {t['turns']['median']:g} ({t['turns']['max']}) | "
                   f"{t['calls']['median']:g} ({t['calls']['max']}) | {t['with_notes']} |")
     w("")
+    faulted = {k: t for k, t in sets.items() if t.get("variant") == "faults"}
+    if faulted:
+        _faults_section(w, names, sets, faulted)
     w("## Token lengths")
     w("")
     if not tokens:
@@ -669,6 +707,16 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
               f"{sum(1 for v in all_totals if v > 65536)} are past 65,536 and "
               f"{sum(1 for v in all_totals if v > 131072)} past 131,072.")
             w("")
+        ids = [i for t in sets.values() if t.get("variant") == "faults" for i in _ids(out, t["file"])]
+        rows = [counts[i] for i in ids if i in counts]
+        if rows:
+            totals = [r[0] for r in rows]
+            w(f"**Faulted copies:** {len(totals):,} conversations, {sum(totals):,} tokens; median "
+              f"{statistics.median(totals):,.0f}, most {max(totals):,}; "
+              f"{sum(1 for v in totals if v > 65536)} past 65,536 and "
+              f"{sum(1 for v in totals if v > 131072)} past 131,072. Assistant tokens trained on "
+              f"(the broken turns, weight 0, left out) median {statistics.median(r[2] for r in rows):,.0f}.")
+            w("")
     w("## How to rebuild")
     w("")
     w("```bash")
@@ -693,6 +741,51 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(L).rstrip() + "\n", encoding="utf-8")
     return path
+
+
+def _faults_section(w, names: Sequence[str], sets: dict, faulted: dict) -> None:
+    from roaddraft.trajectories.faults import KINDS
+    w("## Injected faults")
+    w("")
+    w("A faulted copy of each reference (`python -m roaddraft.trajectories.faults inject`; training "
+      "plan §3, *Data*): at one or two places a call broken the way the 9B breaks it on its board rows, "
+      "the engine's own error for it, then the reference's call with a line of shown work that reads "
+      "the error. The broken turn's assistant message carries `\"weight\": 0`: it is context for the "
+      "recovery and never a training target. Each copy was played through the episode loop and "
+      "checked as it ran: every broken call failed, every other result and the final journal equal "
+      "the reference's, it scores 100, and nothing outside the broken turns is ungrounded. The "
+      "conversation's id ends `.faults` and its header lists the faults (`injected`).")
+    w("")
+    w("| set | level | references | faulted copies | faults | dropped |")
+    w("|---|---|---:|---:|---:|---|")
+    total = Counter()
+    for name in names:
+        for level in LEVELS:
+            t = faulted.get(f"{name}-{level}-faults")
+            if not t:
+                continue
+            rec = t.get("recorder") or {}
+            n = sum((t.get("injected") or {}).values())
+            drops = ", ".join(f"{r} {k}" for r, k in t["dropped"].items()) or "0"
+            w(f"| `{name}` | {level} | {rec.get('tasks', '')} | {t['kept']} | {n} | {drops} |")
+            total["copies"] += t["kept"]
+            total["faults"] += n
+            for kind, k in (t.get("injected") or {}).items():
+                total[kind] += k
+    w(f"| all | | | {total['copies']} | {total['faults']} | |")
+    w("")
+    w("| mistake | what goes wrong | how it goes in | the 9B's failed calls of the kind | in the data |")
+    w("|---|---|---|---:|---:|")
+    for kind in KINDS:
+        w(f"| `{kind.name}` | {kind.what} | {kind.layout} | {sum(kind.tools.values())} | "
+          f"{total[kind.name]} |")
+    w("")
+    w("The 9B's counts are its failed calls of each kind over its six board rows (`d1-test` and "
+      "`d1-real` at both levels, `d1-test-hard` and `d1-real-hard` vague); only the shape of each "
+      "mistake is taken from them, and each broken call is made from the training reference's own. "
+      "A reference with no place for any of them (a title block, a reference attached, layers set "
+      "up and nothing after) has no faulted copy.")
+    w("")
 
 
 def _ids(out: Path, file: str) -> List[str]:
@@ -738,13 +831,18 @@ def main(argv=None) -> int:
     c.add_argument("--limit", type=int, help="convert the first N episodes of each folder")
     c.add_argument("--no-audit", dest="audit", action="store_false",
                    help="skip the grounded audit (score and pins are still checked)")
+    c.add_argument("--faults", type=Path, default=FAULTS,
+                   help="the faulted copies, <set>-<level>/ each (trajectories.faults)")
+    c.add_argument("--no-faults", dest="faults", action="store_const", const=None,
+                   help="convert the references only")
     k = sub.add_parser("card", help="write the dataset card from results/training")
     k.add_argument("--out", type=Path, default=OUT)
     k.add_argument("--card", type=Path, default=CARD)
     args = parser.parse_args(argv)
     if args.command == "convert":
         summary = run(args.sets or list(tasksets.TRAIN_NAMES), args.levels or list(LEVELS),
-                      args.source, args.out, jobs=args.jobs, audit=args.audit, limit=args.limit)
+                      args.source, args.out, jobs=args.jobs, audit=args.audit, limit=args.limit,
+                      faults=args.faults)
         kept = sum(t["kept"] for t in summary["sets"].values())
         dropped = sum(sum(t["dropped"].values()) for t in summary["sets"].values())
         print(f"{kept} conversations written to {args.out}, {dropped} dropped, "

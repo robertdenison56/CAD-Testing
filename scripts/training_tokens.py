@@ -180,7 +180,13 @@ def count_conversation(counter: Counter, template, conv: dict, tools: list):
             users += 1
         elif role == "assistant":
             break
-    assistant = sum(n for role, n in blocks if role == "assistant")
+    # the loss: every assistant block but those of a message with weight 0 (an injected fault's
+    # broken turn); the template writes one block per assistant message, in order
+    said = [n for role, n in blocks if role == "assistant"]
+    weights = [m.get("weight", 1) for m in conv.get("messages") or [] if m.get("role") == "assistant"]
+    if len(weights) != len(said):
+        weights = [1] * len(said)
+    assistant = sum(n for n, wt in zip(said, weights) if wt != 0)
     return [total, prompt, assistant]
 
 

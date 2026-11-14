@@ -6,13 +6,15 @@
 
 Stage C0 of `RoadDraft_Training_Plan.md`: every grounded reference the recorder kept (`python -m roaddraft.trajectories.grounded`), turned into the conversation the eval harness would have had with a model on the same task (`roaddraft.trajectories.conversations`). One JSONL line per conversation: a header of pins and counts, then chat-completions messages (system; the task; per turn the assistant's text and tool calls, one `tool` message per result as compact JSON, and the harness's `[harness]` note when few steps are left; the closing `submit` call). The tool definitions are in `tools.json`, once per digest, in the function-tool shape the OpenAI-compatible provider sends.
 
+Beside each set's references, `<set>-<level>-faults.jsonl` holds their faulted copies: the same conversations with one or two of the subject model's own mistakes put in and recovered from (see *Injected faults* below).
+
 Every conversation was re-scored before it was written: its task rebuilt from the training manifest and held to the episode's prompt hash, truth and starting document; its tool list held to the episode's tool digest; its journal replayed through the verifier (100 or dropped); and the grounded audit run again (nothing ungrounded, lettering made for a twisted sheet, nothing left stale on a revised one).
 
 ## Pins
 
 | pin | value |
 |---|---|
-| git commit at conversion | `5a318c3510`, with 8 files under `src/` changed past it (uncommitted training work) |
+| git commit at conversion | `18c6ebf4f7`, with 2 files under `src/` changed past it (uncommitted training work) |
 | roaddraft | 0.1.0 |
 | drafting spec | `v1` |
 | spec hash | `sha256:0e07d5e83c0b1cb8` |
@@ -24,7 +26,7 @@ Every conversation was re-scored before it was written: its task rebuilt from th
 | tools `sha256:39c620c1ba61` | 77 definitions (adds `create_alignment`, `modify_alignment`, `update_labels`) |
 | tools `sha256:9563fe0a13a4` | 76 definitions (adds `modify_alignment`, `update_labels`) |
 | tools `sha256:a6924e8a1366` | 74 definitions |
-| converted | 2026-11-12T22:01:08-0800, 218.9 s |
+| converted | 2026-11-13T17:38:28-0800, 286.6 s |
 
 Each conversation's header carries its own: `tools_sha256`, `prompt_hash` (the task text at its level, as the eval header has it), `system_sha256`, the spec, generator, verifier and harness versions, `git_commit` (conversion) and `recorded_commit` (the recording's; the grounded recorder writes none).
 
@@ -85,6 +87,36 @@ Tasks not covered wait on drafter phases not built yet (the width dimensions: `p
 | `d1-train-crowd` | explicit | 21 (48) | 58 (137) | 3 |
 | `d1-train-revise` | vague | 9.5 (30) | 16 (82) | 0 |
 | `d1-train-revise` | explicit | 9.5 (30) | 16 (82) | 0 |
+
+## Injected faults
+
+A faulted copy of each reference (`python -m roaddraft.trajectories.faults inject`; training plan §3, *Data*): at one or two places a call broken the way the 9B breaks it on its board rows, the engine's own error for it, then the reference's call with a line of shown work that reads the error. The broken turn's assistant message carries `"weight": 0`: it is context for the recovery and never a training target. Each copy was played through the episode loop and checked as it ran: every broken call failed, every other result and the final journal equal the reference's, it scores 100, and nothing outside the broken turns is ungrounded. The conversation's id ends `.faults` and its header lists the faults (`injected`).
+
+| set | level | references | faulted copies | faults | dropped |
+|---|---|---:|---:|---:|---|
+| `d1-train` | vague | 1198 | 1048 | 1306 | 0 |
+| `d1-train` | explicit | 1198 | 1048 | 1288 | 0 |
+| `d1-train-hard` | vague | 294 | 293 | 411 | 0 |
+| `d1-train-hard` | explicit | 294 | 294 | 410 | 0 |
+| `d1-train-twist` | vague | 600 | 534 | 701 | 0 |
+| `d1-train-twist` | explicit | 600 | 534 | 704 | 0 |
+| `d1-train-crowd` | vague | 592 | 592 | 819 | 0 |
+| `d1-train-crowd` | explicit | 592 | 592 | 823 | 0 |
+| `d1-train-revise` | vague | 600 | 600 | 716 | 0 |
+| `d1-train-revise` | explicit | 600 | 600 | 716 | 0 |
+| all | | | 6135 | 7894 | |
+
+| mistake | what goes wrong | how it goes in | the 9B's failed calls of the kind | in the data |
+|---|---|---|---:|---:|
+| `alignment_left_off` | a call on the referenced design that does not name its alignment | swap | 488 | 843 |
+| `alignment_misnamed` | the alignment named without its reference's name, or with one when it is the file's own | swap | 95 | 2525 |
+| `stationing_on_sheet` | alignment stationing sent to a sheet instead of model space | swap | 206 | 1022 |
+| `begin_station_given` | a begin station given to alignment-mode stationing | swap | 136 | 650 |
+| `layer_not_made` | drafting on a generic layer name the file does not have | swap | 110 | 2306 |
+| `draw_referenced` | drawing an alignment the attached base drawing already carries | insert | 76 | 121 |
+| `made_twice` | setting up again a sheet, reference or layer made earlier | insert | 66 | 427 |
+
+The 9B's counts are its failed calls of each kind over its six board rows (`d1-test` and `d1-real` at both levels, `d1-test-hard` and `d1-real-hard` vague); only the shape of each mistake is taken from them, and each broken call is made from the training reference's own. A reference with no place for any of them (a title block, a reference attached, layers set up and nothing after) has no faulted copy.
 
 ## Token lengths
 

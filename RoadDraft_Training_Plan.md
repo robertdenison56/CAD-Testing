@@ -125,6 +125,8 @@ All free, all on the Mac, none waiting on a decision:
    prompt hash, spec, generator and verifier versions in the header, and the token histogram that sizes T1.
 4. **T0's two pieces** (built 2026-11-12, night; status below): the convention sheet and the `--system-extra` flag. Ready to queue when the local hard
    sets finish (about Nov 15).
+5. **The injected faults** (`c-faults`, built 2026-11-13; status below): a faulted copy of each reference,
+   the 9B's own mistakes put in and recovered from, the broken turns at weight 0.
 
 Then, on your word: the T1 smoke, the first paid step.
 
@@ -671,6 +673,68 @@ so the PC run calls `python -m roaddraft.eval run` directly.
 (`trajectories/conversations.py`, the `prompt` drop). A run given an extra hashes the brief and the extra
 together, so the converter drops it as `prompt`. T0 runs are on held-out sets and never reach training; a
 T2 rollout run with an extra would need the check to use `eval.episode.prompt_hash(brief, extra)`.
+
+### Status, 2026-11-13 (`c-faults`: the injected faults; Robert: "Build fault injection")
+
+**What it is.** `roaddraft.trajectories.faults` makes a faulted copy of each kept reference: at one place
+(60%) or two (40%) a call broken the way the 9B breaks it, the engine's own error, then the reference's
+call with a line of shown work that reads the error ("This file owns no alignment of its own: the design
+is BASE:ALIGN-1, in the attached base drawing, and the call has to name it."). The broken turn's assistant
+message carries `"weight": 0` (the OpenAI fine-tuning convention): the model is trained on the recovery
+and never on the mistake. A *swap* breaks a reference call and every call after it in the turn that takes
+the same mistake (up to 4: a model that leaves the alignment off one label leaves it off the turn's
+others), and the next turn redoes them; an *insert* puts an extra call the reference never makes in a turn
+of its own before a reference turn.
+
+**The mistakes**, from the 9B's failed calls on its six board rows, tallied by tool and error (only their
+shape is taken; every broken call is made from the training reference's own call):
+
+| kind | the 9B's failed calls | how |
+|---|---:|---|
+| `alignment_left_off`: a label, table, stationing or query on the referenced design with no `alignment` | 488 | swap |
+| `alignment_misnamed`: `ALIGN-1` for `BASE:ALIGN-1`, or `BASE:` put on the file's own | 95 | swap |
+| `stationing_on_sheet`: alignment stationing given a sheet as its space | 206 | swap |
+| `begin_station_given`: a begin station given to alignment-mode stationing | 136 | swap |
+| `layer_not_made`: a generic name (`C-ANNO-TEXT`, `C-ROAD-CNTR`) for the file's layer | 110 | swap |
+| `draw_referenced`: `draw_alignment` on the base drawing's alignment | 76 | insert |
+| `made_twice`: a sheet, reference or layer set up again | 66 | insert |
+
+A kind is drawn by its count among the kinds a reference has a place for, then a tool by its count within
+the kind.
+
+**Through the bus.** A copy runs as an episode (`FaultAgent`) that plays the reference's recorded calls back
+with the broken turns in place, and is checked as it runs: every broken call must fail with the engine's
+`command_failed` or `query_failed`, and every other result must equal the reference's byte for byte. Then
+the journal must equal the reference's (a refused call changes nothing), the episode must score 100, and
+the grounded audit must find nothing ungrounded outside the broken turns. A copy that misses is tried at
+other places, up to three times. On the 6,568 references none missed.
+
+**The data.** `python -m roaddraft.trajectories.faults inject` (2.6 min, 6 jobs) wrote `results/faults/`;
+`conversations convert` now converts each set's faulted copies beside its references into
+`<set>-<level>-faults.jsonl` (id `<task>.<level>.faults`, header `injected`, `counts.masked`), and the card
+has an *Injected faults* section. 6,135 faulted copies of 6,568 references, 7,894 faults; 12,703
+conversations in all, none dropped. The 433 without a copy are title-block and layer-setup tasks (nothing
+after the set-up for a fault to land on; 66 of them in `d1-train-twist`) and one hard reference already at
+the 150-step budget. Mix: misnamed 32%, layer not made 29%, stationing on a sheet 13%, left off 11%, begin
+station 8%, made twice 5%, drawn referenced 2%. Left off is below its share of the 9B's failures because
+most training tasks own their alignment, where there is nothing to leave off; on the base-drawing tasks it
+is the kind taken most. `scripts/training_tokens.py` leaves weight-0 messages out of the loss count. Tests:
+`tests/test_trajectories_faults.py` (11), and the converter's 57 with them, pass.
+
+**Not done.** The faulted copies' tokens are not counted: Unsloth Studio's llama.cpp was updated to b12340
+since 2026-11-12 and no longer ships `models/ggml-vocab-qwen35.gguf`, which the token script reads
+(`tokens.json` still holds the references' counts, unchanged). It needs the vocabulary again, or the
+9B's `tokenizer.json` (`--tokenizer`), which the T1 smoke wants anyway. And T1's mix (how many faulted
+copies beside the references) is the T1 run's choice; every reference that can have one has one.
+
+**Found, for the pin's cut.** The 9B's most frequent failed call is `place_label` with no alignment in a
+sheet file (396 on its six rows; after 184 of them no `place_label` worked again in the episode). The error's hint is "create one with
+create_alignment or import_landxml", which sends a model the wrong way when the base drawing carries the
+design; `station_to_xy`'s error for the same thing says "its references carry ['BASE:ALIGN-1'] -- name one
+of those". Giving `place_label`, `place_curve_table` and `annotate_stationing` the same hint changes no
+tool definition, only what a failed call says, so it can go in the pin's cut with decision 3's engine
+changes. The faulted copies then need making again, as they will after the training sets are recorded
+again on the pin (decision 3): `faults inject`, then `conversations convert`.
 
 ## 6. Decisions for Robert
 
