@@ -83,6 +83,20 @@ def _referenced_alignment(doc: Document, qualified: str) -> Alignment:
     return out
 
 
+def _carried(doc: Document) -> list[str]:
+    """The alignments the attached references carry, by their qualified names."""
+    from roaddraft.document.references import reference_alignments
+    return [f"{ref.name}:{a.name}" for ref, _b, a, _pl in reference_alignments(doc)]
+
+
+def _name_one(carried: list[str]) -> str:
+    """The hint for a labeler run in a sheet file with no alignment of its
+    own: the design is in the base drawing, so name it there (the queries
+    say the same)."""
+    return (f"this document owns no alignments, but its references carry {carried} "
+            f"-- name one of those as alignment")
+
+
 def _alignment(doc: Document, p: dict, key: str = "alignment",
                referenced: bool = False) -> Alignment:
     """``p[key]`` or the document's only alignment; teaching faults otherwise.
@@ -95,12 +109,19 @@ def _alignment(doc: Document, p: dict, key: str = "alignment",
         if len(aligns) == 1:
             return next(iter(aligns.values()))
         if not aligns:
-            raise CommandFault("the document has no alignments",
-                               hint="create one with create_alignment or import_landxml")
+            carried = _carried(doc) if referenced else []
+            raise CommandFault(
+                "the document has no alignments",
+                hint=_name_one(carried) if carried else
+                     "create one with create_alignment or import_landxml")
         raise CommandFault(
             f"alignment is required: the document has {len(aligns)} alignments "
             f"({', '.join(aligns)})", hint="run list_alignments")
     if name not in aligns:
+        if ":" not in str(name) and referenced and not aligns:
+            carried = _carried(doc)
+            if carried:
+                raise CommandFault(f"no alignment named {name!r}", hint=_name_one(carried))
         if ":" in str(name):
             if referenced:
                 return _referenced_alignment(doc, str(name))

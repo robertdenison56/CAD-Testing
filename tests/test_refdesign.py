@@ -182,6 +182,49 @@ def test_the_errors_say_where_the_alignments_actually_are(tmp_path):
     assert not r["ok"] and "no attachment carries a design model" in r["error"]["hint"]
 
 
+def test_a_labeler_in_a_sheet_file_is_sent_to_the_base_drawing_s_alignment(tmp_path):
+    """The labelers work through a reference, so with no alignment of the
+    document's own their fault names the one the base drawing carries, as
+    the queries' does, and does not send the drafter to create_alignment."""
+    s = plans(tmp_path)
+    assert s.execute("create_layer", {"name": "V-ANNO-TEXT"})["ok"]
+    assert s.execute("create_sheet", {"name": "C-101"})["ok"]
+    lettering = [
+        ("place_label", {"space": "model", "anchor": "PC-1", "layer": "V-ANNO-TEXT"}),
+        ("place_label", {"space": "model", "alignment": "SR-100", "anchor": "PC-1",
+                         "layer": "V-ANNO-TEXT"}),
+        ("place_curve_table", {"space": "C-101", "position": [2, 2], "layer": "V-ANNO-TEXT"}),
+        ("annotate_stationing", {"space": "model", "layer": "V-ANNO-TEXT"}),
+        ("draw_station_offset", {"points": ["12+00@12L", "13+00@12L"],
+                                 "layer": "V-ANNO-TEXT"}),
+    ]
+    for name, params in lettering:
+        r = s.execute(name, params)
+        assert not r["ok"], name
+        hint = r["error"]["hint"]
+        assert "owns no alignments" in hint and "['DESIGN:SR-100']" in hint, (name, hint)
+        assert "create_alignment" not in hint, (name, hint)
+    # the hint's name works as given
+    r = s.execute("place_label", {"space": "model", "alignment": "DESIGN:SR-100",
+                                  "anchor": "PC-1", "layer": "V-ANNO-TEXT"})
+    assert r["ok"], r
+
+    # a command that draws the design itself still says to make one: it cannot
+    # work through a reference
+    r = s.execute("draw_alignment", {"layer": "V-ANNO-TEXT"})
+    assert not r["ok"] and "create_alignment" in r["error"]["hint"]
+
+    # and a document with nothing attached is told the same as before
+    bare = Session()
+    assert bare.execute("create_layer", {"name": "V-ANNO-TEXT"})["ok"]
+    r = bare.execute("place_label", {"space": "model", "anchor": "PC-1",
+                                     "layer": "V-ANNO-TEXT"})
+    assert not r["ok"] and "create_alignment" in r["error"]["hint"]
+    r = bare.execute("annotate_stationing", {"space": "model", "layer": "V-ANNO-TEXT"})
+    assert not r["ok"] and r["error"]["hint"] == ("or pass alignment=NAME for design-model "
+                                                  "stationing")
+
+
 def test_a_detached_reference_takes_its_design_with_it(tmp_path):
     s = plans(tmp_path)
     assert s.query("list_alignments", {"include_references": True})["count"] == 1

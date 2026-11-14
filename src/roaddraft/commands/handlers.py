@@ -1084,8 +1084,11 @@ def annotate_stationing(doc: Document, p: dict):
         from roaddraft.commands import design_handlers
         return design_handlers.annotate_stationing_alignment(doc, p)
     if "path_ids" not in p:
+        from roaddraft.commands import design_handlers
+        carried = [] if doc.design.alignments else design_handlers._carried(doc)
         raise CommandFault("path_ids is required in entity-chain mode",
-                           hint="or pass alignment=NAME for design-model stationing")
+                           hint="or pass alignment=NAME for design-model stationing"
+                                + (f": {design_handlers._name_one(carried)}" if carried else ""))
     if "begin_station" not in p:
         raise CommandFault("begin_station is required with path_ids",
                            hint="the station at the start of the path, or at start_point")
