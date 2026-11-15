@@ -12,6 +12,9 @@
     python benchmarks/lmstudio/lms_campaign.py e3 NAME [--taskset d1-variance] [--samples 5|1] [--mode single]
                                                 [--level explicit] [--limit N] [--run-id ID]
                                                 [--pilots text|images|all] [--worktree PATH] [--dry-run] [--print]
+                                                [--system-extra FILE] [--thinking off]
+    python benchmarks/lmstudio/lms_campaign.py thinking RUN_ID          # a run's reasoning tokens; exit 1 when a --thinking off run thought
+    python benchmarks/lmstudio/lms_campaign.py run-state RUN_ID [--commit SHA]   # new, partial, finished or other (a queue's relaunch reads it)
     python benchmarks/lmstudio/lms_campaign.py clear-errors RUN_ID [--apply] [--stalled] [--turn-time]  # errored (stalled, silent) episodes aside
     python benchmarks/lmstudio/lms_campaign.py watch RUN_ID [--interval 60] [--idle 20]   # stop + set aside a stalled run's episode (0 steps, or a silent last turn)
     python benchmarks/lmstudio/lms_campaign.py score NAME [--print]
@@ -44,6 +47,21 @@ RUN_ID --worktree PATH`` runs the rest from a worktree checked out at the run's 
 must be clean in ``src`` and ``tests``; its HEAD is recorded in the run's pins as usual. A pin older than
 291ae711 (2026-10-27) has no ``--context-tokens``: ``e3`` leaves the flag out for such a worktree (the 9B's d1-real
 run at d98e7025) and the run keeps the budgets it had.
+
+``e3 --system-extra FILE`` and ``e3 --thinking off`` (2026-11-14, the training plan's base rerun and T0) go to the
+harness as they are. A relative FILE is the worktree's own copy (the pin's file, not main's, which moves), and a
+worktree whose harness has no such flag is refused, since a run without it would be another run. ``thinking RUN_ID``
+reads a run's episodes: the reasoning tokens against the output tokens, and whether the headers say thinking was off;
+a run asked to answer without thinking that carries reasoning tokens means the server did not obey, and exits 1.
+So does one with no thinking-off episode to judge by: an episode that ended in error, or that reports no output
+tokens, shows nothing about the server (a request it refused ends that way), so it is not counted as obeyed.
+``run-state RUN_ID`` says where a run stands for a queue that is relaunched: ``new``, ``partial`` (the harness
+resumes it), ``finished`` (every cell ended and the report written) or ``other`` (run at another commit than
+``--commit``, so not to be resumed from this pin).
+
+A copy of this script inside a worktree (``<repo>/.claude/worktrees/<name>/benchmarks/lmstudio/``) is run as the
+pin's own driver: the interpreter, ``results/e3-lms`` and the other worktrees are the main checkout's (``HOME``);
+the specs (``models.json``) and the task sets are the copy's.
 
 The context (2026-10-27): every ``e3`` run passes ``--context-tokens CONTEXT`` beside ``--lms-context CONTEXT``, so
 the harness ends an episode whose prompt reaches the window as a ``context`` budget trip, the way vLLM's refusal
@@ -88,17 +106,25 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+def home_repo(repo: Path) -> Path:
+    """The main checkout: ``repo`` itself, or the checkout whose ``.claude/worktrees`` folder ``repo`` sits in."""
+    if repo.parent.name == "worktrees" and repo.parent.parent.name == ".claude":
+        return repo.parents[2]
+    return repo
+
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+HOME = home_repo(REPO)               # where the interpreter, the results and the worktrees live
 SPECS = HERE / "models.json"
-WORKTREE = REPO / ".claude" / "worktrees" / "runpod-k3"
+WORKTREE = HOME / ".claude" / "worktrees" / "runpod-k3"
 PIN = "2658fa0"                      # the Runpod rig's pin (2026-10-19); tool surface 60eeeb21 since e7178a2
-PYTHON = REPO / ".venv" / "bin" / "python"
+PYTHON = HOME / ".venv" / "bin" / "python"
 LMS = str(Path.home() / ".lmstudio" / "bin" / "lms")
-CAMPAIGN = REPO / "benchmarks" / "probe_runs" / "2026-10-20-lms-k3"
-E3_OUT = REPO / "results" / "e3-lms"
+CAMPAIGN = HOME / "benchmarks" / "probe_runs" / "2026-10-20-lms-k3"
+E3_OUT = HOME / "results" / "e3-lms"
 BASE_URL = "http://localhost:1234/v1"
 MODELS_URL = "http://localhost:1234/api/v0/models"
 DEVICE = "RobertsPC"
@@ -318,6 +344,12 @@ def context_budget_in(worktree: Path = WORKTREE) -> bool:
     older pin runs without it, under the budgets the run had; a missing worktree is preflight's to report."""
     main = worktree / "src" / "roaddraft" / "eval" / "__main__.py"
     return not main.is_file() or "--context-tokens" in main.read_text(encoding="utf-8")
+
+
+def harness_takes(flag: str, worktree: Path = WORKTREE) -> bool:
+    """Whether the worktree's harness has ``flag`` on its command line; a missing worktree is preflight's to report."""
+    main = worktree / "src" / "roaddraft" / "eval" / "__main__.py"
+    return not main.is_file() or f'"{flag}"' in main.read_text(encoding="utf-8")
 
 
 def run_command(m: dict, label: str, probes: List[str], repeat: int = 1, force: bool = False) -> List[str]:
@@ -570,6 +602,18 @@ def cmd_e3(args) -> int:
                  f"first, or --pilots text")
     if m.get("extra_body"):
         cmd += ["--extra-body", json.dumps(m["extra_body"])]
+    # the training plan's T0 sheet and no-think base: passed on as given, never dropped for an older harness
+    extra = getattr(args, "system_extra", None)
+    if extra:
+        path = Path(extra) if Path(extra).is_absolute() else worktree / extra
+        if not path.is_file():
+            sys.exit(f"--system-extra: no file at {path} (a relative path is read in the worktree)")
+        cmd += ["--system-extra", str(path)]
+    if getattr(args, "thinking", None):
+        cmd += ["--thinking", args.thinking]
+    for flag in ("--system-extra", "--thinking"):
+        if flag in cmd and not harness_takes(flag, worktree):
+            sys.exit(f"the harness at {worktree} has no {flag}; run from a worktree at a pin that has it")
     if args.dry_run:
         cmd.append("--dry-run")
     log = E3_OUT / f"{run_id}.log"
@@ -695,6 +739,88 @@ def cmd_clear_errors(args) -> int:
         return 0
     dest = set_aside(run_dir, [f for f, _ in errored])
     print(f"moved {len(errored)} episode file(s) to {dest}; the run resumes them with e3 --run-id {run_dir.name}")
+    return 0
+
+
+# ------------------------------------------------------------------ did a run think (2026-11-14)
+
+def thinking_tally(run_dir: Path) -> dict:
+    """A run's finished episodes: how many, their output and reasoning tokens, how many headers record
+    ``thinking: off`` (``provider_config``), how many of those can be judged (ended without error and report
+    output tokens), and how many carry reasoning tokens all the same."""
+    t = {"episodes": 0, "output_tokens": 0, "reasoning_tokens": 0, "off": 0, "off_judged": 0, "off_but_thought": 0}
+    for f in sorted((run_dir / "episodes").glob("*.jsonl")):
+        end = end_record(f)
+        if end is None:
+            continue
+        with f.open(encoding="utf-8") as fh:
+            header = json.loads(fh.readline())
+        usage = end.get("usage_total") or {}
+        output = int(usage.get("output_tokens") or 0)
+        reasoning = int(usage.get("reasoning_tokens") or 0)
+        off = (header.get("provider_config") or {}).get("thinking") == "off"
+        t["episodes"] += 1
+        t["output_tokens"] += output
+        t["reasoning_tokens"] += reasoning
+        t["off"] += off
+        # an errored episode, or one with no output tokens on record, shows nothing about the server
+        t["off_judged"] += off and end.get("termination") != "error" and output > 0
+        t["off_but_thought"] += off and reasoning > 0
+    return t
+
+
+def cmd_thinking(args) -> int:
+    """Whether a run thought: its reasoning tokens against its output tokens. Exit 1 when episodes run with
+    ``--thinking off`` carry reasoning tokens (the server did not obey the request), when the run has no
+    finished episode to judge by, or when none of its thinking-off episodes both ended without error and
+    reports output tokens (a refused request ends in error with no tokens: that is not the server obeying);
+    0 otherwise. A server that reports no reasoning tokens at all would pass
+    unseen, so the share on a thinking run of the same model is the thing to compare with (the 9B: about three
+    quarters of its output tokens)."""
+    run_dir = Path(args.run_id) if Path(args.run_id).is_dir() else E3_OUT / args.run_id
+    if not (run_dir / "episodes").is_dir():
+        sys.exit(f"no episodes under {run_dir}")
+    t = thinking_tally(run_dir)
+    share = t["reasoning_tokens"] / t["output_tokens"] if t["output_tokens"] else 0.0
+    print(f"{run_dir.name}: {t['episodes']} finished episode(s), {t['output_tokens']} output tokens, "
+          f"{t['reasoning_tokens']} of them reasoning ({share:.1%}); {t['off']} run with thinking off, "
+          f"{t['off_but_thought']} of those thought anyway")
+    unjudged = bool(t["off"]) and not t["off_judged"]
+    if unjudged:
+        print("no thinking-off episode ended without error with output tokens on record: nothing shows the "
+              "server obeyed --thinking off (read the episodes' errors, then run the check again)")
+    if t["off_but_thought"]:
+        print("the server did not obey --thinking off: load the model with thinking off in LM Studio, or a "
+              "copy of it with the no-think template, and run again under a new run id")
+    return 1 if t["off_but_thought"] or not t["episodes"] or unjudged else 0
+
+
+# ------------------------------------------------------------------ where a run stands (2026-11-14)
+
+def run_state(run_dir: Path, commit: Optional[str] = None) -> Tuple[str, str]:
+    """Where a run stands, for a queue that is relaunched, as a word and a detail: ``new`` (no folder, or
+    nothing in it), ``other`` (``run.json`` names another commit than ``commit``, or none: not this pin's run),
+    ``finished`` (every cell has an end record and the report is written) or ``partial`` (the harness resumes
+    it, skipping the episodes that ended)."""
+    episodes = run_dir / "episodes"
+    files = sorted(episodes.glob("*.jsonl")) if episodes.is_dir() else []
+    if not (run_dir / "run.json").is_file():
+        return ("partial", f"{len(files)} episode file(s) and no run.json") if files else ("new", "no run yet")
+    record = json.loads((run_dir / "run.json").read_text())
+    ran_at = (record.get("pins") or {}).get("commit") or ""
+    if commit and ran_at != commit:
+        return "other", f"run at {ran_at[:8] or 'no recorded commit'}, not at {commit[:8]}"
+    ended = sum(end_record(f) is not None for f in files)
+    cells = int(record.get("cells") or 0)
+    if cells and ended >= cells and (run_dir / "report").exists():
+        return "finished", f"{ended} of {cells} episodes ended, report written"
+    return "partial", f"{ended} of {cells} episodes ended" + ("" if ended < cells or not cells else ", no report")
+
+
+def cmd_run_state(args) -> int:
+    """Print where a run stands (``run_state``): the word first, then the detail. Always exit 0."""
+    run_dir = Path(args.run_id) if Path(args.run_id).is_dir() else E3_OUT / args.run_id
+    print(*run_state(run_dir, args.commit))
     return 0
 
 
@@ -877,7 +1003,16 @@ def main(argv=None) -> int:
                     help="hard-pilots only: the 24 text pilots, the 9 that come with a page, or every one")
     e3.add_argument("--worktree", help=f"the checkout to run from (default {WORKTREE}); a resume uses one "
                                          "at the run's own pins.commit")
+    e3.add_argument("--system-extra", metavar="FILE", help="a file appended to the system prompt (the harness's "
+                    "flag; training plan T0); a relative path is read in the worktree")
+    e3.add_argument("--thinking", choices=["off"], help="ask the server to answer without thinking (the harness's "
+                    "flag); check the run with `thinking RUN_ID`")
     e3.add_argument("--print", action="store_true"); e3.set_defaults(fn=cmd_e3)
+    th = sub.add_parser("thinking"); th.add_argument("run_id", help="a run id under results/e3-lms, or a path")
+    th.set_defaults(fn=cmd_thinking)
+    rs = sub.add_parser("run-state"); rs.add_argument("run_id", help="a run id under results/e3-lms, or a path")
+    rs.add_argument("--commit", help="the commit the run must have been made at (run.json pins.commit)")
+    rs.set_defaults(fn=cmd_run_state)
     ce = sub.add_parser("clear-errors"); ce.add_argument("run_id", help="a run id under results/e3-lms, or a path")
     ce.add_argument("--apply", action="store_true", help="move them; without it, list only")
     ce.add_argument("--stalled", action="store_true",

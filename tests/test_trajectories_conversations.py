@@ -165,8 +165,11 @@ def test_a_grounded_reference_converts_and_keeps_its_shown_work(tmp_path):
     records = [json.loads(line) for line in Path(row["path"]).read_text().splitlines()]
     turns = [r for r in records if r["type"] == "turn"]
     said = [m["content"] for m in msgs if m["role"] == "assistant"]
-    assert said == [t["assistant"]["text"] for t in turns]
-    assert msgs[-1]["tool_calls"][-1]["function"]["name"] == "submit"
+    assert said[:-1] == [t["assistant"]["text"] for t in turns[:-1]] and all(said[:-1])
+    # the drafter closes on a bare submit; its record carries the note as the text, the message does not
+    closing = msgs[-1]["tool_calls"][-1]["function"]
+    assert closing["name"] == "submit" and turns[-1]["assistant"]["text"] == closing["arguments"]["note"]
+    assert said[-1] == ""
     shown = [m for m in msgs if m["role"] == "tool"]
     assert len(shown) == head["counts"]["results_shown"] == sum(len(t["results"]) for t in turns[:-1])
     assert all(json.loads(m["content"])["ok"] for m in shown)
@@ -331,3 +334,170 @@ def test_the_calibration_fit_recovers_a_linear_gap():
     xs = [[c, a, 1.0] for c in range(1, 6) for a in range(0, 12, 3)]
     ys = [2.0 * c + 2.5 * a + 20 for c, a, _ in xs]
     assert [round(v, 6) for v in tt.least_squares(xs, ys)] == [2.0, 2.5, 20.0]
+
+
+# ------------------------------------------------------------ a run given --system-extra
+
+def _extra_run(tmp_path, text="Read the curve data before lettering it.\n"):
+    file = tmp_path / "extra.md"
+    file.write_text(text)
+    extra = prompts.SystemExtra.load(file)
+    task = _task("stationing")
+    provider = FakeProvider.oracle(per_turn=4)
+    agent = LLMAgent(provider, label="fake-model")
+    result = Episode(task, agent, EpisodeConfig(level="vague", system_extra=extra),
+                     out_root=tmp_path).run()
+    assert result.termination == "submit" and result.effective_score == 100.0
+    return task, provider, extra, file, Path(result.path)
+
+
+def test_an_episode_given_a_system_extra_converts_with_the_prompt_as_sent(tmp_path):
+    task, provider, extra, file, path = _extra_run(tmp_path)
+    header = json.loads(path.read_text().splitlines()[0])
+    # the run hashed the brief and the extra together: the brief alone is not its prompt hash
+    from roaddraft.tasks.prompts import task_text
+    assert header["prompt_hash"] != cv.digest(task_text(task.brief, "vague"))
+    assert header["system_extra"] == extra.record()
+    conv, _defs = cv.convert_episode(path, "d1-dev", audit=False)
+    system = conv["messages"][0]["content"]
+    assert system == provider.requests[-1]["system"] == header["system_prompt"]
+    assert system.endswith("\n\n" + extra.text.strip() + "\n")
+    head = conv["header"]
+    assert head["prompt_hash"] == header["prompt_hash"] and head["system_extra"] == extra.record()
+    assert head["system_sha256"] == header["prompt_sha256"]
+    assert [_shape(m) for m in conv["messages"][1:-1]] == _sent(provider.requests[-1]["transcript"])
+
+
+@pytest.mark.parametrize("text", ["Read the curve data before lettering it.\n",
+                                  "No closing newline.\n\nTwo paragraphs"])
+def test_a_system_extra_whose_file_is_gone_is_read_from_the_prompt_as_sent(tmp_path, text):
+    task, provider, extra, file, path = _extra_run(tmp_path, text)
+    file.unlink()
+    assert cv.system_extra_of(json.loads(path.read_text().splitlines()[0])).text == text
+    conv, _defs = cv.convert_episode(path, "d1-dev", audit=False)
+    assert conv["messages"][0]["content"] == provider.requests[-1]["system"]
+    # the file changed since the run: its text is no longer the run's, the prompt's still is
+    file.write_text("Another extra.\n")
+    assert cv.system_extra_of(json.loads(path.read_text().splitlines()[0])).text == text
+
+
+def test_an_episode_whose_system_extra_cannot_be_held_to_its_digest_is_dropped(tmp_path):
+    task, provider, extra, file, path = _extra_run(tmp_path)
+    # the header names another extra than the one hashed: no text has that digest
+    other = _rewrite(path, tmp_path / "other.jsonl",
+                     lambda rs: rs[0]["system_extra"].update(sha256="sha256:" + "2" * 64))
+    assert _drop(other) == "prompt"
+    # the extra is the run's, the task text is not
+    file.unlink()
+    changed = _rewrite(path, tmp_path / "changed.jsonl",
+                       lambda rs: rs[0].update(prompt_hash="sha256:" + "0" * 64))
+    assert _drop(changed) == "prompt"
+    # an episode with no extra is held to the brief alone, as before
+    assert cv.system_extra_of({"prompt_hash": "x"}) is None
+
+
+def test_a_reference_recorded_under_a_system_extra_gets_the_extra_in_its_system_prompt(tmp_path):
+    """The grounded drafter sends no system prompt; a recording made under an
+    extra gets the one an LLM agent would have been sent: the template, then the extra."""
+    file = tmp_path / "extra.md"
+    file.write_text("Letter to the standard.\n")
+    extra = prompts.SystemExtra.load(file)
+    task = _task("layer-setup")
+    result = Episode(task, grounded.GroundedAgent(), EpisodeConfig(level="vague", system_extra=extra),
+                     out_root=tmp_path).run()
+    assert result.effective_score == 100.0
+    conv, _defs = cv.convert_episode(result.path, "d1-dev")
+    base = prompts.system_prompt("neutral", "single", Budgets().for_mode("single"))
+    assert conv["messages"][0]["content"] == prompts.with_extra(base, extra.text)
+
+
+# ------------------------------------------------------------ the closing turn's note
+
+def _closing(text: str, note="Done: 16 layers."):
+    params = {} if note is None else {"note": note}
+    return [{"n": 1, "assistant": {"text": "The layers first.", "submit": False,
+                                   "tool_calls": [{"name": "list_layers", "params": {}}]},
+             "results": [{"ok": True, "name": "list_layers", "layers": []}]},
+            {"n": 2, "assistant": {"text": text, "submit": True,
+                                   "tool_calls": [{"name": "submit", "params": params}]},
+             "results": [{"ok": True, "name": "submit", "message": "submitted"}]}]
+
+
+def test_a_closing_turn_recorded_with_its_note_as_its_text_carries_the_note_once():
+    # Episode.run writes the note in as the text of a closing turn that said nothing
+    last = cv.messages("sys", "task", _closing("Done: 16 layers."), Budgets())[-1]
+    assert last["content"] == ""
+    assert last["tool_calls"][0]["function"] == {"name": "submit", "arguments": {"note": "Done: 16 layers."}}
+
+
+def test_a_closing_turn_that_said_something_else_keeps_what_it_said():
+    turns = _closing("C-101 holds the whole run: 1,150 ft at 40 scale is 28.75 in.")
+    msgs = cv.messages("sys", "task", turns, Budgets())
+    assert msgs[-1]["content"] == "C-101 holds the whole run: 1,150 ft at 40 scale is 28.75 in."
+    assert msgs[2]["content"] == "The layers first."
+    # a submit with no note at all: the text is the turn's own
+    assert cv.messages("sys", "task", _closing("Done.", note=None), Budgets())[-1]["content"] == "Done."
+
+
+def test_the_last_message_is_what_the_model_sent_when_it_closed_on_a_bare_submit(oracle_run):
+    task, provider, result, path = oracle_run
+    conv, _defs = cv.convert_episode(path, "d1-dev", audit=False)
+    # the fake model's last turn is a submit call and no text; its episode record has the note as text
+    assert _shape(conv["messages"][-1]) == ("assistant", "", [("submit", {"note": "reference solution replayed"})])
+
+
+# ------------------------------------------------------------ the faulted copies and the summary
+
+def test_a_named_source_takes_faulted_copies_only_from_a_named_faults_folder(tmp_path, monkeypatch, capsys):
+    import shutil
+    src, copies = tmp_path / "src", tmp_path / "faults"
+    assert grounded.record("d1-train", src / "d1-train-vague", level="vague", limit=2)["kept"] == 2
+    shutil.copytree(src / "d1-train-vague", copies / "d1-train-vague")
+    monkeypatch.setattr(cv, "FAULTS", copies)   # the repo's default folder, holding copies of this set
+    base = ["convert", "--set", "d1-train", "--level", "vague", "--jobs", "1"]
+
+    def sets(out, *more):
+        assert cv.main(base + ["--out", str(out), *more]) == 0
+        return set(json.loads((out / "summary.json").read_text())["sets"])
+
+    assert sets(tmp_path / "a", "--source", str(src)) == {"d1-train-vague"}
+    assert not (tmp_path / "a" / "d1-train-vague-faults.jsonl").exists()
+    assert sets(tmp_path / "b", "--source", str(src), "--faults", str(copies)) == {
+        "d1-train-vague", "d1-train-vague-faults"}
+    # the plain call: the default recordings with the default faulted copies
+    monkeypatch.setattr(cv, "SOURCE", src)
+    assert sets(tmp_path / "c") == {"d1-train-vague", "d1-train-vague-faults"}
+    assert sets(tmp_path / "d", "--no-faults") == {"d1-train-vague"}
+    summary = cv.run(["d1-train"], ["vague"], source=src, out=tmp_path / "e", log=lambda *_: None)
+    assert set(summary["sets"]) == {"d1-train-vague", "d1-train-vague-faults"}
+    capsys.readouterr()
+
+
+def test_the_summary_describes_the_folder_after_a_set_by_set_conversion(tmp_path):
+    src, out = tmp_path / "src", tmp_path / "out"
+    grounded.record("d1-dev", src / "d1-dev-vague", level="vague", types=["layer-setup"])
+    grounded.record("d1-dev", src / "d1-dev-explicit", level="explicit", types=["create-alignment"])
+    said = []
+    first = cv.run(["d1-dev"], ["vague"], source=src, out=out, log=said.append)
+    second = cv.run(["d1-dev"], ["explicit"], source=src, out=out, log=said.append)
+    on_disk = json.loads((out / "summary.json").read_text())
+    assert on_disk == second and list(second["sets"]) == ["d1-dev-vague", "d1-dev-explicit"]
+    # the earlier call's set keeps its own tally and the call that wrote it
+    assert second["sets"]["d1-dev-vague"] == first["sets"]["d1-dev-vague"]
+    assert second["sets"]["d1-dev-vague"]["made_at"] == first["made_at"]
+    assert second["sets"]["d1-dev-explicit"]["git_commit"] == second["git_commit"]
+    for key, tally in second["sets"].items():
+        assert tally["kept"] == (out / tally["file"]).read_text().count("\n") == 3
+    # the two sets were shown different tools: the summary lists what tools.json holds
+    assert set(second["tools"]) == set(json.loads((out / "tools.json").read_text()))
+    assert len(second["tools"]) == 2 and len(first["tools"]) == 1
+    assert not any("in no summary.json" in line for line in said)
+    card = cv.card(out, tmp_path / "CARD.md").read_text()
+    assert "| vague | 3 |" in card and "| explicit | 3 |" in card
+
+    # a file that is gone leaves the summary; one no call wrote is named
+    (out / "d1-dev-vague.jsonl").unlink()
+    (out / "stray.jsonl").write_text("")
+    third = cv.run(["d1-dev"], ["explicit"], source=src, out=out, log=said.append)
+    assert list(third["sets"]) == ["d1-dev-explicit"]
+    assert any(line.startswith("stray.jsonl:") and "in no summary.json" in line for line in said)

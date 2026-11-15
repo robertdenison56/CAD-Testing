@@ -10,6 +10,7 @@
         [--dialect neutral] [--cost-cap USD] [--output-tokens N]
         [--context-tokens N] ...                      # defaults to --lms-context
         [--system-extra FILE]                         # appended to every model's system prompt (T0)
+        [--thinking off]                              # openai: the think block closed (a no-think base)
         [--claude-bin PATH] [--claude-arg ARG ...] [--max-budget-usd D]   # --provider claude-code
         [--codex-bin PATH] [--codex-arg ARG ...]                          # --provider codex
     python -m roaddraft.eval taskset [NAME ...] [--write | --check]
@@ -87,7 +88,7 @@ def cmd_run(args) -> int:
     options = {"effort": args.effort, "max_tokens": args.max_tokens, "base_url": args.base_url,
                "api_key_env": args.api_key_env, "lms_context": args.lms_context,
                "extra_body": json.loads(args.extra_body) if args.extra_body else None,
-               "send_reasoning": True if args.send_reasoning else None,
+               "send_reasoning": True if args.send_reasoning else None, "thinking": args.thinking,
                "claude_bin": args.claude_bin, "claude_args": args.claude_arg or None,
                "max_budget_usd": args.max_budget_usd,
                "codex_bin": args.codex_bin, "codex_args": args.codex_arg or None}
@@ -104,6 +105,15 @@ def cmd_run(args) -> int:
             extra = SystemExtra.load(args.system_extra)
         except ValueError as ex:
             print(f"run: {ex}", file=sys.stderr)
+            return 2
+    if args.thinking:
+        from roaddraft.eval import providers
+        others = sorted({args.provider or providers.infer(m) for m in models} - {"openai"})
+        if args.agent or not models or others or args.effort:
+            why = ("it does not combine with --effort (both set reasoning_effort)" if args.effort else
+                   "run it with --model on the openai provider only"
+                   + (f" (not {', '.join(others)})" if others else ""))
+            print(f"run: --thinking is a request field of an OpenAI-compatible server; {why}", file=sys.stderr)
             return 2
     if args.subset:
         if args.limit:
@@ -155,6 +165,8 @@ def cmd_run(args) -> int:
         if extra is not None:
             print(f"  system extra {extra.path} {extra.sha256[:19]}: {len(extra.text.strip())} "
                   "characters after every model's system prompt")
+        if args.thinking:
+            print(f"  thinking {args.thinking}: every request asks the server for it")
         return 0
     for model in models:   # fail before the matrix, not once per cell
         try:
@@ -451,6 +463,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         "convention sheet); run.json and each episode header name it and its sha256, "
                         "and the prompt hash covers it. Every provider takes it, claude-code and "
                         "codex too (it is part of the system prompt they are given)")
+    p.add_argument("--thinking", choices=["off"],
+                   help="openai: ask the server to answer without thinking (chat_template_kwargs "
+                        "enable_thinking false and reasoning_effort none in every request); run.json and "
+                        "each episode header record it, and a run is not resumed under the other setting. "
+                        "Left out, nothing is sent and the model's default stands")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_run)
 

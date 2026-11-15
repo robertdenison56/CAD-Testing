@@ -31,7 +31,7 @@ CLI_PROVIDERS = ("claude-code", "codex")
 OPTIONS = {
     "anthropic": ("effort", "max_tokens", "strict"),
     "openai": ("effort", "base_url", "api_key_env", "extra_body", "max_tokens", "lms_context",
-               "call_cap", "send_reasoning"),
+               "call_cap", "send_reasoning", "thinking"),
     "fake": ("effort",),
     "claude-code": ("effort", "claude_bin", "claude_args", "max_budget_usd"),
     "codex": ("effort", "codex_bin", "codex_args"),

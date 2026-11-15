@@ -287,10 +287,13 @@ class ReasoningAgent(Agent):
 # ------------------------------------------------------------ recording
 
 def record_task(task, level: str = "vague", out_root=None, run_id: str = "") -> dict:
-    """Run one generated probe task under the grounded drafter and audit it."""
+    """Run one generated probe task under the grounded drafter and audit it.
+    The episode runs on the pilots' budgets (``probe_tasks.BUDGETS``), not D1's:
+    the header and the system prompt then state what a pilot run is told."""
     from roaddraft.eval.episode import EpisodeConfig
-    from roaddraft.eval.probe_tasks import ProbeEpisode
-    episode = ProbeEpisode(task, ReasoningAgent(), EpisodeConfig(level=level, run_id=run_id),
+    from roaddraft.eval.probe_tasks import BUDGETS, ProbeEpisode
+    episode = ProbeEpisode(task, ReasoningAgent(),
+                           EpisodeConfig(level=level, run_id=run_id, budgets=BUDGETS),
                            out_root=out_root)
     result = episode.run()
     ungrounded = audit(episode.brief_text, episode.tools, episode.turns)

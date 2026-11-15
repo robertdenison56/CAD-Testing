@@ -21,6 +21,15 @@ calls run).  The runner's cap of 4 was a guard for one local model that
 wrote calls without waiting for results; here it is 16 by default, so a
 strong model's parallel calls are not cut.
 
+``thinking="off"`` (``--thinking off``; training plan, the like-for-like base
+of a checkpoint served without thinking) asks the server to render the
+generation prompt with the think block closed: ``THINKING_OFF`` goes into
+every request, over ``extra_body`` where the two meet.  It is recorded in
+the episode header (``provider_config.thinking``) and in ``run.json``; left
+unset nothing is sent and nothing is recorded, so the model's default
+stands (Qwen3.5 thinks).  Whether the server obeyed shows in the reply: a
+turn's ``reasoning_tokens`` and thinking text stay empty when it did.
+
 Usage: ``prompt_tokens`` includes any cached tokens, so ``input_tokens`` is
 the prompt less ``prompt_tokens_details.cached_tokens`` and the cached part
 is ``cache_read_input_tokens``, the Anthropic meaning of each.
@@ -35,6 +44,13 @@ from roaddraft.eval.providers.base import Call, LimitReached, Provider, Turn
 
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 CALL_CAP = 16
+#: what ``--thinking off`` adds to a request.  ``chat_template_kwargs`` is the field llama.cpp's server and vLLM
+#: pass to the chat template (Qwen3.5's closes the think block on ``enable_thinking: false``); ``reasoning_effort:
+#: "none"`` is the OpenAI-style spelling of the same wish.  Which of the two LM Studio's server reads was not
+#: confirmed against a live server when this was written (2026-11-14), so both go and the run is checked by
+#: its reasoning tokens (``lms_campaign.py thinking RUN``) before it is believed.
+THINKING_OFF = {"chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"}
+THINKING = ("off",)
 STOP_MAP = {"tool_calls": "tool_use", "function_call": "tool_use", "call_cap": "tool_use",
             "stop": "end", "length": "max_tokens", "content_filter": "refusal"}
 
@@ -160,8 +176,14 @@ class OpenAICompatProvider(Provider):
                  api_key_env: str = "OPENAI_API_KEY", extra_body: Optional[dict] = None,
                  max_tokens: Optional[int] = None, lms_context: Optional[int] = None,
                  call_cap: int = CALL_CAP, post: Optional[Callable[[dict], dict]] = None,
-                 send_reasoning: bool = False):
+                 send_reasoning: bool = False, thinking: Optional[str] = None):
         super().__init__(model, effort)
+        if thinking is not None and thinking not in THINKING:
+            raise ValueError(f"unknown thinking setting {thinking!r}; the one setting is 'off' "
+                             "(leave it unset for the model's default)")
+        if thinking == "off" and effort:
+            raise ValueError("thinking off and an effort level both set reasoning_effort; give one")
+        self.thinking = thinking
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
         self.api_key_env = api_key_env
         self.extra_body = dict(extra_body or {})
@@ -194,6 +216,9 @@ class OpenAICompatProvider(Provider):
             body["max_tokens"] = self.max_tokens
         if self.effort:
             body["reasoning_effort"] = self.effort
+        if self.thinking == "off":
+            for key, value in THINKING_OFF.items():
+                body[key] = dict(body.get(key) or {}, **value) if isinstance(value, dict) else value
         return body
 
     def complete(self, system: str, transcript: List[dict], tools: List[dict]) -> Turn:
@@ -224,8 +249,10 @@ class OpenAICompatProvider(Provider):
             d["lms_context"] = self.lms_context
         if self.send_reasoning:
             d["send_reasoning"] = True
+        if self.thinking:
+            d["thinking"] = self.thinking
         return d
 
 
-__all__ = ["OpenAICompatProvider", "DEFAULT_BASE_URL", "parse_args", "function_tools",
+__all__ = ["OpenAICompatProvider", "DEFAULT_BASE_URL", "THINKING", "THINKING_OFF", "parse_args", "function_tools",
            "chat_messages", "parse_reply"]

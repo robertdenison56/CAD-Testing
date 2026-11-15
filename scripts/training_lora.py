@@ -31,10 +31,20 @@ conversations (the five longest first, so a sequence that does not fit
 fails in the first minutes) for one epoch, and writes ``metrics.jsonl``: per
 step the loss, the tokens, tokens a second and the peak GPU memory.
 
+``--val-fraction`` holds a share of the training tasks out of training, by
+seed (every conversation of a held seed, both levels and the faulted copies),
+and reports the loss on up to ``--val-max`` of their reference conversations
+before the first step, every ``--eval-steps`` and at the end of each epoch.
+The validation data is training-set seeds only: no eval set is read.
+
+``--resume CHECKPOINT`` continues a run from one of its checkpoints: the
+adapter, the optimizer, the step and the place in the epoch (the order of an
+epoch depends only on ``--seed`` and the epoch's number).
+
 Writes under ``--out``: ``prepared.json``, ``metrics.jsonl``,
-``checkpoint-<step>/`` (the adapter, every ``--save-steps`` and at the end of
-each epoch), ``adapter/`` (the last), ``run.json`` (arguments, versions,
-template hash, timings).
+``checkpoint-<step>/`` (the adapter and ``trainer_state.pt``, every
+``--save-steps`` and at the end of each epoch), ``adapter/`` (the last),
+``run.json`` (arguments, versions, template hash, timings).
 """
 from __future__ import annotations
 
@@ -83,7 +93,7 @@ def load_tokenizer(source: str, revision: Optional[str] = None, check_template: 
     if check_template and sha != TEMPLATE_SHA256:
         raise SystemExit(f"the tokenizer's chat template is sha256 {sha[:16]}, not the checked "
                          f"{TEMPLATE_SHA256[:16]}: run scripts/training_render_check.py on it first, then "
-                         f"pass --template-sha256 {sha}")
+                         "pass --no-template-check (run.json records the hash used)")
     return tok, sha
 
 
@@ -129,9 +139,41 @@ def smoke_pick(convs: List[dict], lengths: Dict[str, list], n: int = SMOKE, long
     return head + pick
 
 
+def task_key(conv: dict) -> str:
+    """What a conversation is a copy of: its task's seed (the two levels and
+    the faulted copies of one task share it), else its id before the level."""
+    seed = (conv.get("header") or {}).get("seed")
+    return f"seed:{seed}" if seed is not None else str(conv["id"]).split(".")[0]
+
+
+def in_validation(conv: dict, fraction: float) -> bool:
+    """Whether the conversation's task is held out for the validation loss:
+    a fixed draw on the task's key, so it does not follow the dials (which
+    cycle with the seed) and does not move when conversations are added."""
+    if fraction <= 0:
+        return False
+    draw = int(hashlib.sha256(("validation:" + task_key(conv)).encode()).hexdigest()[:8], 16)
+    return draw < fraction * 2**32
+
+
+def split_validation(convs: List[dict], fraction: float, n: int, seed: int = 0):
+    """``(training, validation)``: every conversation of a held task leaves
+    training; the validation sample is up to ``n`` of their reference
+    conversations (no faulted copy), drawn evenly across the files."""
+    held = [c for c in convs if in_validation(c, fraction)]
+    train = [c for c in convs if not in_validation(c, fraction)]
+    refs = [c for c in held if not c["_file"].endswith("-faults.jsonl")]
+    val = smoke_pick(refs, {}, n=n, longest=0, seed=seed)
+    if {task_key(c) for c in train} & {task_key(c) for c in val}:
+        raise SystemExit("a validation task is also in training")
+    return train, val
+
+
 def build_examples(conv: dict, tools: list, tok, thinking: str, max_len: int) -> List[dict]:
     """A conversation's training sequences: ids, labels and counts; a
-    sequence past ``max_len`` is left out and counted."""
+    sequence past ``max_len`` is left out and counted, and so is one that
+    trains nothing (every turn it holds is a weight-0 turn)."""
+    import numpy as np
     on = thinking == "on"
     render = lambda m, g: tok.apply_chat_template(list(m), tools=tools, tokenize=False,  # noqa: E731
                                                   add_generation_prompt=g, enable_thinking=on)
@@ -144,10 +186,12 @@ def build_examples(conv: dict, tools: list, tok, thinking: str, max_len: int) ->
     out = []
     for k, seg in enumerate(plan.segments):
         ids, labels = tr.labels_for(seg.text, seg.spans, encode)
-        trained = sum(1 for x in labels if x != tr.IGNORE)
+        # int32 arrays, not lists: a full epoch is 616M tokens, 5 GB this way and several times that as lists
+        ids, labels = np.asarray(ids, dtype=np.int32), np.asarray(labels, dtype=np.int32)
+        trained = int((labels[1:] != tr.IGNORE).sum())   # the first token has no context: never a target
         out.append({"id": f"{conv['id']}#{k}", "conversation": conv["id"], "input_ids": ids, "labels": labels,
                     "tokens": len(ids), "trained": trained, "too_long": len(ids) > max_len,
-                    "turns": len(seg.turns), "masked": len(seg.masked)})
+                    "untrained": trained == 0, "turns": len(seg.turns), "masked": len(seg.masked)})
     return out
 
 
@@ -182,12 +226,18 @@ def prepare(convs, tools_doc, args, keep_ids: bool) -> List[dict]:
     return rows
 
 
+def usable(rows: List[dict]) -> List[dict]:
+    """The sequences that train: not past the length limit, and with a target."""
+    return [r for r in rows if not r["too_long"] and not r["untrained"]]
+
+
 def stats(rows: List[dict], convs: List[dict]) -> dict:
-    kept = [r for r in rows if not r["too_long"]]
+    kept = usable(rows)
     lens = sorted(r["tokens"] for r in kept)
     q = lambda p: lens[min(len(lens) - 1, int(p * len(lens)))] if lens else 0  # noqa: E731
     return {"conversations": len(convs), "sequences": len(rows), "kept": len(kept),
-            "dropped_too_long": len(rows) - len(kept),
+            "dropped_too_long": sum(1 for r in rows if r["too_long"]),
+            "dropped_untrained": sum(1 for r in rows if r["untrained"] and not r["too_long"]),
             "split_conversations": len({r["conversation"] for r in rows if not r["id"].endswith("#0")}),
             "tokens": sum(lens), "trained_tokens": sum(r["trained"] for r in kept),
             "masked_turns": sum(r["masked"] for r in kept),
@@ -204,11 +254,16 @@ def load_model(args):
         model, _ = FastLanguageModel.from_pretrained(
             model_name=args.model, revision=args.revision, max_seq_length=args.max_seq_len,
             dtype=torch.bfloat16, load_in_4bit=args.load_4bit, full_finetuning=False)
-        model = FastLanguageModel.get_peft_model(
-            model, r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-            target_modules=list(args.target_names), bias="none",
-            use_gradient_checkpointing="unsloth", random_state=args.seed, max_seq_length=args.max_seq_len)
-        return model
+        kw = dict(r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout, bias="none",
+                  use_gradient_checkpointing="unsloth", random_state=args.seed, max_seq_length=args.max_seq_len)
+        try:
+            # the same pattern as the hf engine: a name list also matches a vision tower's projections
+            return FastLanguageModel.get_peft_model(model, target_modules=TARGETS, **kw)
+        except Exception as exc:   # noqa: BLE001
+            # an Unsloth that takes names only (before 2026.11); adapter_summary then checks where they landed
+            print(f"Unsloth did not take the target pattern ({type(exc).__name__}: {exc}); using the names",
+                  flush=True)
+            return FastLanguageModel.get_peft_model(model, target_modules=list(args.target_names), **kw)
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM
     kw = {"dtype": torch.bfloat16, "attn_implementation": args.attn}
@@ -223,6 +278,7 @@ def load_model(args):
     else:
         model = AutoModelForCausalLM.from_pretrained(args.model, device_map={"": 0} if torch.cuda.is_available()
                                                      else None, **kw)
+    torch.manual_seed(args.seed)   # the adapter's initial weights
     model.config.use_cache = False
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -230,6 +286,25 @@ def load_model(args):
     cfg = LoraConfig(r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
                      target_modules=TARGETS, bias="none", task_type="CAUSAL_LM")
     return get_peft_model(model, cfg)
+
+
+def adapter_summary(model) -> dict:
+    """What the adapter sits on: the adapted modules by kind and the
+    trainable parameters.  Refuses an adapter on anything but the language
+    model's layers (a name list, as Unsloth takes, also matches a vision
+    tower's ``q_proj`` or ``out_proj``)."""
+    import re
+    adapted = sorted({name.rsplit(".lora_A", 1)[0] for name, _ in model.named_modules() if ".lora_A" in name})
+    stray = [n for n in adapted if not re.fullmatch(TARGETS, n) or "vis" in n.lower()]
+    if stray or not adapted:
+        raise SystemExit(f"the adapter is on {len(stray)} module(s) outside the language model's layers "
+                         f"(of {len(adapted)}); first: {stray[:3]}")
+    kinds: Dict[str, int] = {}
+    for n in adapted:
+        kinds[n.rsplit(".", 1)[1]] = kinds.get(n.rsplit(".", 1)[1], 0) + 1
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return {"modules": len(adapted), "by_kind": kinds, "trainable_parameters": trainable,
+            "parameters": sum(p.numel() for p in model.parameters())}
 
 
 def tiny_model(spec: str):
@@ -273,9 +348,9 @@ def chunked_loss(hidden, lm_head, labels, chunk: int = 4096):
 def step_loss(model, ex, args, device):
     """(summed loss, trained tokens) of one sequence."""
     import torch
-    ids = torch.tensor([ex["input_ids"]], device=device)
-    labels = torch.tensor(ex["labels"], device=device)
-    if args.engine == "unsloth":
+    ids = torch.as_tensor(ex["input_ids"], dtype=torch.long, device=device)[None]
+    labels = torch.as_tensor(ex["labels"], dtype=torch.long, device=device)
+    if args.engine == "unsloth" and args.loss == "engine":
         out = model(input_ids=ids, labels=labels[None])
         n = int((labels[1:] != tr.IGNORE).sum())
         return out.loss.float() * n, n
@@ -287,7 +362,71 @@ def step_loss(model, ex, args, device):
 
 # ------------------------------------------------------------ the loop
 
-def train(model, examples: List[dict], args, out: Path, log) -> dict:
+STATE = "trainer_state.pt"
+
+
+def host_peak_gib() -> float:
+    """The process's peak resident memory (Unsloth's checkpointing keeps the
+    saved activations here, about 32 GB at 122k tokens)."""
+    import resource
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return round(peak / (2**30 if sys.platform == "darwin" else 2**20), 2)
+
+
+def epoch_order(examples: List[dict], args, epoch: int) -> List[dict]:
+    """The order of an epoch: a shuffle that depends only on the seed and the
+    epoch's number, so a resumed run takes up the same order.  The smoke's
+    first epoch starts with its longest sequences."""
+    rng = random.Random(f"{args.seed}:{epoch}")
+    order = sorted(examples, key=lambda ex: ex["id"])
+    rng.shuffle(order)
+    if args.smoke and epoch == 0:
+        order.sort(key=lambda ex: ex["tokens"], reverse=True)
+        head, tail = order[:SMOKE_LONGEST], order[SMOKE_LONGEST:]
+        rng.shuffle(tail)
+        order = head + tail
+    return order
+
+
+def evaluate(model, val: List[dict], args, device) -> dict:
+    """The loss a trained token on the validation sequences, no gradient."""
+    import torch
+    was_training = model.training
+    model.eval()
+    t0, total, n = time.time(), 0.0, 0
+    with torch.no_grad():
+        for ex in val:
+            loss_sum, k = step_loss(model, ex, args, device)
+            total += float(loss_sum)
+            n += k
+    if was_training:
+        model.train()
+    return {"eval_loss": total / n if n else None, "eval_sequences": len(val), "eval_trained_tokens": n,
+            "eval_tokens": sum(ex["tokens"] for ex in val), "eval_seconds": round(time.time() - t0, 1)}
+
+
+def save_checkpoint(model, opt, path: Path, state: dict) -> None:
+    """The adapter, then the optimizer and the place in the run; the state
+    file is written last, so a checkpoint that has one is whole."""
+    import torch
+    model.save_pretrained(str(path))
+    tmp = path / (STATE + ".tmp")
+    torch.save(dict(state, optimizer=opt.state_dict()), str(tmp))
+    os.replace(tmp, path / STATE)
+
+
+def load_checkpoint(model, path: Path) -> dict:
+    """Load a checkpoint's adapter into ``model`` and return its state."""
+    import torch
+    from peft.utils import load_peft_weights, set_peft_model_state_dict
+    if not (path / STATE).exists():
+        raise SystemExit(f"{path} has no {STATE}: not a whole checkpoint of this script")
+    set_peft_model_state_dict(model, load_peft_weights(str(path), device="cpu"))
+    return torch.load(str(path / STATE), map_location="cpu", weights_only=False)
+
+
+def train(model, examples: List[dict], args, out: Path, log, val: Sequence[dict] = (),
+          resume: Optional[dict] = None) -> dict:
     import torch
     device = next(model.parameters()).device
     params = [p for p in model.parameters() if p.requires_grad]
@@ -305,30 +444,52 @@ def train(model, examples: List[dict], args, out: Path, log) -> dict:
             return args.lr * (s + 1) / warm
         return args.lr * 0.5 * (1 + math.cos(math.pi * min(1.0, (s - warm) / max(1, total - warm))))
 
+    shape = {"sequences": len(examples), "grad_accum": args.grad_accum, "seed": args.seed,
+             "smoke": bool(args.smoke), "total_steps": total}
     cuda = torch.cuda.is_available()
-    rng = random.Random(args.seed)
-    step, seen_tokens, started = 0, 0, time.time()
+    step, seen_tokens, first_epoch, first_window, before = 0, 0, 0, 0, 0.0
+    if resume:
+        if resume["shape"] != shape:
+            raise SystemExit(f"the checkpoint was written by another run: {resume['shape']} != {shape}")
+        opt.load_state_dict(resume["optimizer"])
+        step, seen_tokens, before = resume["step"], resume["tokens"], resume["seconds"]
+        first_epoch, first_window = resume["epoch"], resume["window"]
+    started = time.time()
+
+    def place(epoch, window):
+        return {"shape": shape, "step": step, "tokens": seen_tokens, "epoch": epoch, "window": window,
+                "seconds": round(before + time.time() - started, 1)}
+
+    def report(row):
+        log.write(json.dumps(row) + "\n")
+        log.flush()
+        print(json.dumps(row), flush=True)
+
     model.train()
-    for epoch in range(args.epochs):
-        order = list(examples)
-        if args.smoke and epoch == 0:
-            head, tail = order[:SMOKE_LONGEST], order[SMOKE_LONGEST:]   # the longest first, as picked
-            rng.shuffle(tail)
-            order = head + tail
-        else:
-            rng.shuffle(order)
-        for s in range(0, len(order), args.grad_accum):
-            window = order[s:s + args.grad_accum]
+    if val and not resume:
+        report(dict(evaluate(model, val, args, device), step=0, epoch=0))
+    for epoch in range(first_epoch, args.epochs):
+        order = epoch_order(examples, args, epoch)
+        windows = [order[s:s + args.grad_accum] for s in range(0, len(order), args.grad_accum)]
+        next_window = len(windows)
+        for w, window in enumerate(windows):
+            if epoch == first_epoch and w < first_window:
+                continue
+            if args.max_steps and step >= args.max_steps:
+                next_window = w
+                break
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             if cuda:
                 torch.cuda.reset_peak_memory_stats()
                 torch.cuda.synchronize()
             t0 = time.time()
-            n_window = sum(1 for ex in window for x in ex["labels"][1:] if x != tr.IGNORE) or 1
+            n_window = sum(ex["trained"] for ex in window) or 1
             loss_total, toks = 0.0, 0
             for ex in window:
                 loss_sum, _ = step_loss(model, ex, args, device)
+                if not bool(torch.isfinite(loss_sum)):
+                    raise SystemExit(f"the loss of {ex['id']} ({ex['tokens']} tokens) is {float(loss_sum)}")
                 (loss_sum / n_window).backward()
                 loss_total += float(loss_sum.detach())
                 toks += ex["tokens"]
@@ -340,25 +501,27 @@ def train(model, examples: List[dict], args, out: Path, log) -> dict:
             dt = time.time() - t0
             step += 1
             seen_tokens += toks
-            row = {"step": step, "epoch": epoch, "loss": loss_total / n_window, "lr": lr_at(step - 1),
-                   "grad_norm": float(gnorm), "sequences": len(window), "tokens": toks,
-                   "longest": max(ex["tokens"] for ex in window), "trained_tokens": n_window,
-                   "seconds": round(dt, 2), "tokens_per_second": round(toks / dt, 1) if dt else None,
-                   "peak_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2) if cuda else None,
-                   "reserved_gib": round(torch.cuda.max_memory_reserved() / 2**30, 2) if cuda else None,
-                   "elapsed": round(time.time() - started, 1)}
-            log.write(json.dumps(row) + "\n")
-            log.flush()
-            print(json.dumps(row), flush=True)
-            if args.save_steps and step % args.save_steps == 0:
-                model.save_pretrained(str(out / f"checkpoint-{step}"))
-            if args.max_steps and step >= args.max_steps:
-                break
-        model.save_pretrained(str(out / f"checkpoint-{step}"))
+            report({"step": step, "epoch": epoch, "loss": loss_total / n_window, "lr": lr_at(step - 1),
+                    "grad_norm": float(gnorm), "sequences": len(window), "tokens": toks,
+                    "longest": max(ex["tokens"] for ex in window), "trained_tokens": n_window,
+                    "seconds": round(dt, 2), "tokens_per_second": round(toks / dt, 1) if dt else None,
+                    "peak_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2) if cuda else None,
+                    "reserved_gib": round(torch.cuda.max_memory_reserved() / 2**30, 2) if cuda else None,
+                    "host_peak_gib": host_peak_gib(),
+                    "elapsed": round(before + time.time() - started, 1)})
+            if val and args.eval_steps and step % args.eval_steps == 0:
+                report(dict(evaluate(model, val, args, device), step=step, epoch=epoch))
+            if args.save_steps and step % args.save_steps == 0 and w + 1 < len(windows):
+                save_checkpoint(model, opt, out / f"checkpoint-{step}", place(epoch, w + 1))
+        if val and not (args.eval_steps and step % args.eval_steps == 0):
+            report(dict(evaluate(model, val, args, device), step=step, epoch=epoch))
+        whole = next_window == len(windows)
+        save_checkpoint(model, opt, out / f"checkpoint-{step}",
+                        place(epoch + 1, 0) if whole else place(epoch, next_window))
         if args.max_steps and step >= args.max_steps:
             break
     model.save_pretrained(str(out / "adapter"))
-    secs = time.time() - started
+    secs = before + time.time() - started
     return {"steps": step, "tokens": seen_tokens, "seconds": round(secs, 1),
             "tokens_per_second": round(seen_tokens / secs, 1) if secs else None}
 
@@ -398,7 +561,17 @@ def parse(argv=None):
     p.add_argument("--lora-r", type=int, default=32)
     p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--lora-dropout", type=float, default=0.0)
-    p.add_argument("--save-steps", type=int, default=0)
+    p.add_argument("--save-steps", type=int, default=0,
+                   help="a checkpoint every N steps (0: at the end of each epoch only; set it for a long run)")
+    p.add_argument("--resume", type=Path, help="a checkpoint-<step> folder of this run to continue from")
+    p.add_argument("--val-fraction", type=float, default=0.0,
+                   help="share of the training tasks held out of training for the validation loss, by seed")
+    p.add_argument("--val-max", type=int, default=24, help="validation conversations scored at each evaluation")
+    p.add_argument("--eval-steps", type=int, default=0,
+                   help="the validation loss every N steps (always before the first step and after each epoch)")
+    p.add_argument("--loss", choices=("engine", "own"), default="engine",
+                   help="unsloth engine: its own loss, or this script's chunked loss over the trained "
+                        "positions (the hf engine always uses the latter)")
     p.add_argument("--seed", type=int, default=3407)
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     a = p.parse_args(argv)
@@ -416,19 +589,29 @@ def main(argv=None) -> int:
     args = parse(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     started = time.time()
+    if args.engine == "unsloth" and not args.prepare_only:
+        import unsloth  # noqa: F401  before transformers: it sets its patches up at import
     tok, sha = load_tokenizer(args.tokenizer, args.revision, not args.no_template_check)
     tools_doc = json.loads((args.data / "tools.json").read_text())
     lengths_path = args.data / "tokens.json"
     lengths = json.loads(lengths_path.read_text()).get("conversations", {}) if lengths_path.exists() else {}
     convs = read_conversations(args.data, args.sets, args.faults)
+    convs, val_convs = split_validation(convs, args.val_fraction, args.val_max, seed=args.seed)
     if args.smoke:
+        unsized = sum(1 for c in convs if c["id"] not in lengths)
+        if unsized:
+            print(f"warning: {unsized} of {len(convs)} conversations are not in tokens.json, so the smoke "
+                  "cannot rank them: run scripts/training_tokens.py on this folder first", flush=True)
         convs = smoke_pick(convs, lengths, seed=args.seed)
     elif args.limit:
         random.Random(args.seed).shuffle(convs)
         convs = convs[:args.limit]
-    print(f"{len(convs)} conversations", flush=True)
+    print(f"{len(convs)} conversations, {len(val_convs)} for validation", flush=True)
     rows = prepare(convs, tools_doc, args, keep_ids=not args.prepare_only)
     st = stats(rows, convs)
+    val_rows = prepare(val_convs, tools_doc, args, keep_ids=not args.prepare_only) if val_convs else []
+    if val_convs:
+        st["validation"] = stats(val_rows, val_convs)
     (args.out / "prepared.json").write_text(json.dumps(dict(st, prepared_seconds=round(time.time() - started, 1),
                                                             thinking=args.thinking, template_sha256=sha,
                                                             max_seq_len=args.max_seq_len), indent=1) + "\n")
@@ -438,7 +621,7 @@ def main(argv=None) -> int:
     if args.prepare_only:
         (args.out / "run.json").write_text(json.dumps(run, indent=1) + "\n")
         return 0
-    examples = [r for r in rows if not r["too_long"]]
+    examples, val = usable(rows), usable(val_rows)
     import torch
     import transformers
     run["versions"] = {"torch": torch.__version__, "transformers": transformers.__version__,
@@ -454,8 +637,11 @@ def main(argv=None) -> int:
     t0 = time.time()
     model = load_model(args)
     run["load_seconds"] = round(time.time() - t0, 1)
+    run["adapter"] = adapter_summary(model)
+    print(json.dumps(run["adapter"]), flush=True)
+    resume = load_checkpoint(model, args.resume) if args.resume else None
     with (args.out / "metrics.jsonl").open("a") as log:
-        run["train"] = train(model, examples, args, args.out, log)
+        run["train"] = train(model, examples, args, args.out, log, val=val, resume=resume)
     run["seconds"] = round(time.time() - started, 1)
     (args.out / "run.json").write_text(json.dumps(run, indent=1) + "\n")
     print(json.dumps(run["train"]), flush=True)

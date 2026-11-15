@@ -43,8 +43,9 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   Ranked on its own board.  Too few instances per family to spare a dev split.
 - ``pilot-dev`` (2026-11-13, ``RoadDraft_Training_Plan.md`` §8 and decision 7):
   that dev split, built apart: instances of the ``p17``, ``p04``, ``p05`` and
-  ``p11`` families on the nine sample sheets no pilot, no real-sheet set and no
-  dev set uses (``probes/pilot_dev.py``, outside the pilot package, so the
+  ``p11`` families on the eight sample sheets no pilot, no real-sheet set and no
+  dev set uses and whose design none of them carries (``probes/pilot_dev.py``,
+  outside the pilot package, so the
   held-out set does not move).  Run like ``hard-pilots``; for choosing a
   checkpoint only, like ``d1-real-dev``: never trained on, not on the board.
 
@@ -547,8 +548,10 @@ def current_generator(name: Optional[str]) -> str:
 def current_verifier(name: Optional[str]) -> str:
     """The verifier version a run on ``name`` is held to: the D1 verifier's,
     or, for a probe set, the pilot checks' source hash
-    (``probe_tasks.check_version``), since a pilot is graded by its own check."""
-    if name is not None and is_probe(name):
+    (``probe_tasks.check_version``), since a pilot is graded by its own check.
+    A generated probe set (``train-deeds``, ``train-qa``) has its own: the
+    pilot checks it reuses and the module that generates it."""
+    if name is not None and (is_probe(name) or name in PROBE_TRAIN_NAMES):
         from roaddraft.eval import probe_tasks
         return probe_tasks.check_version(probe_tasks.check_sources(name))
     from roaddraft.verify import VERIFIER_VERSION
@@ -557,9 +560,10 @@ def current_verifier(name: Optional[str]) -> str:
 
 def default_budgets(name: Optional[str]):
     """The budgets a run on ``name`` takes when it sets none: Track P's for the
-    probe tasks (eval/probe_tasks.BUDGETS), the harness's otherwise."""
+    probe tasks (eval/probe_tasks.BUDGETS), the generated ones among them
+    (``train-deeds``, ``train-qa``), the harness's otherwise."""
     from roaddraft.eval.budget import Budgets
-    if name is not None and is_probe(name):
+    if name is not None and (is_probe(name) or name in PROBE_TRAIN_NAMES):
         from roaddraft.eval import probe_tasks
         return probe_tasks.BUDGETS
     return Budgets()
@@ -975,9 +979,11 @@ def shared(train: dict, held_out: dict) -> List[str]:
     an eval set, and none can be trained on."""
     a, b = train.get("taskset"), held_out.get("taskset")
     problems = [f"{a}: {e.get('task_id')} is not a seeded task; a training set holds no real sheet "
-                "and no probe" for e in train["tasks"] if "seed" not in e]
-    ids = {e["task_id"] for e in train["tasks"]} | {e["vague_task_id"] for e in train["tasks"]
-                                                    if e.get("vague_task_id")}
+                "and no probe" for e in train["tasks"]
+                if "seed" not in e or "sheet_id" in e or "probe" in e]
+    # a generated probe task's id, and the id of the seeded design it is set on
+    ids = {e[k] for e in train["tasks"] for k in ("task_id", "vague_task_id", "base_task_id")
+           if e.get(k)}
     theirs = {e["task_id"] for e in held_out["tasks"]} | {e["vague_task_id"]
                                                           for e in held_out["tasks"]
                                                           if e.get("vague_task_id")}

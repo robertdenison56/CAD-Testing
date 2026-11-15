@@ -4,10 +4,11 @@ The training plan (``RoadDraft_Training_Plan.md`` §8, "A validation set on real
 sheets", and §6 decision 7, settled 2026-11-13) keeps every sheet a held-out
 pilot uses out of training and asks for a validation set on the redrafted
 sheets that carry an alignment and are in no pilot, no real-sheet eval set and
-no dev set. There are nine: Caltrans PPM-206, 207, 214, 215 and 218 (the
-electrical examples), FDOT-924 (a selective clearing and grubbing plan), the CFL
-parking-lot SWPPP sheet and WFL Other Sections p06 (an erosion control plan) and
-p09 (a wall plan). This module sets instances of four pilot families on them:
+no dev set. Nine are in none by sheet id, and eight of them are clean: Caltrans
+PPM-206, 207, 214, 215 and 218 (the electrical examples), FDOT-924 (a selective
+clearing and grubbing plan) and WFL Other Sections p06 (an erosion control plan)
+and p09 (a wall plan). The ninth, the CFL parking-lot SWPPP sheet, is left out
+(below). This module sets instances of four pilot families on the eight:
 
 * ``p17`` twisted sheet: the line's viewport re-cut at a new twist (or turned
   half a turn), the line lettered so it reads from the bottom or right;
@@ -50,15 +51,19 @@ than 6 tangents, and a line under 200 ft):
 * FDOT-924 (sheet 1371): CL1, one 1063-ft tangent, 1" = 69'. p17, p11, and p05
   twice: at 1" = 40' it needs two sheets (a real break), at 1" = 50' one sheet
   set corner to corner where the level cut takes two. p04 left out (defaults pass).
-* CFL parking-lot SWPPP (ECP(PKG)): CL1 is traced (44 tangents), so no lettering
-  job; p05 on it at 1" = 40' (one sheet turned; the level cut takes two). Its CL1
-  is the same geometry as the CFL-F-Parking-Lot sheet's, which the held-out
-  ``p18-redline-pdf-cfld1`` uses (a different family, but the same line).
+* CFL parking-lot SWPPP (ECP(PKG)): not used. Its CL1 (traced, 44 tangents) and
+  its alignment file's linework are the CFL-F-Parking-Lot sheet's, and that sheet
+  is held out twice: the pilot ``p18-redline-pdf-cfld1`` and a ``d1-real``
+  construction-callouts task both work on that line. A sheet id of its own does
+  not make a design clean, so ``p05-dev-cflpkg``, the one instance set on it, was
+  dropped (2026-11-14, before any ``pilot-dev`` run); ``tests/test_pilot_dev.py``
+  holds every sheet here to sharing no design line and no base drawing with any
+  other eval set.
 * WFL Other Sections p06 (F.2): CL1 (one tangent) and CL2 (two tangents, then a
   compound pair of curves to its end), 1" = 100'. p17 on CL2, p04 on CL1 among
   CL2's published lettering, p05 on CL1 at 1" = 40' (one sheet turned; the level
   cut takes two), p11 restationing CL1. A radius or PI redline (``p11``'s other two
-  kinds) is not possible on any of the nine: CL2 is the only line with a curve,
+  kinds) is not possible on any of the eight: CL2 is the only line with a curve,
   and a compound curve that ends the line has no PI form (``pis_from_elements``
   returns none), so it cannot be re-made with a new radius.
 * WFL Other Sections p09 (H.5): CL1 is one 211-ft curve with no tangent, which no
@@ -73,7 +78,7 @@ is graded at a scale the board's tasks never use; every lettered line but WFL
 CL2 is tangents only, so the curve items (BC/EC, bubbles, the CURVE DATA table)
 arise only in the WFL p17 instance; the two p04 sheets are lightly crowded (the
 default poses put one label, and two, on other lettering, against 3 to 25 on
-the held-out sheets); four of the six p05 stretches fit one sheet, so they test
+the held-out sheets); four of the five p05 stretches fit one sheet, so they test
 the count and the turn but no match line; and every p11 is a restation.
 
 Each instance records the naive answers its family is built to catch (``NAIVE``),
@@ -100,9 +105,10 @@ from roaddraft.probes.pilot.redlines import Redline
 from roaddraft.tasks.reference import phase_commands
 
 #: the redrafted sheets with an alignment that no held-out pilot, real-sheet eval set or
-#: dev set uses (plan §8); ``tests/test_pilot_dev.py`` derives them again
+#: dev set uses (plan §8), and whose design no sheet of those sets carries;
+#: ``tests/test_pilot_dev.py`` derives them again
 SHEETS = ("PPM-206", "PPM-207", "PPM-214", "PPM-215", "PPM-218",
-          "FDOT-924-1-Selective-CandG-Plan", "CFL-G-Blank-Parking-Lot-Sheets-SWPPP",
+          "FDOT-924-1-Selective-CandG-Plan",
           "WFL-Other-Sections-p06", "WFL-Other-Sections-p09")
 #: the task set (``eval/taskset.py``)
 TASK_SET = "pilot-dev"
@@ -215,13 +221,6 @@ P5 = {
         "doc": "pfh247-1_pln_ec.rdraft", "alignment": "ALI:CL1", "line": "CL1",
         "a": "118+00.00", "b": "125+00.00", "size": "ANSI_B", "template": "wfl",
         "border": _FL_BORDER, "road": "PFH 247(1)", "fpi": 40.0, "spare": 0},
-    "p05-dev-cflpkg": {
-        "sheet_id": "CFL-G-Blank-Parking-Lot-Sheets-SWPPP", "agency": "CFL",
-        "files": {"TERPKG.rdraft": "SUR", "ALIPKG.rdraft": "ALI", "CORPKG.rdraft": "COR"},
-        "doc": "ECP(PKG).rdraft", "alignment": "ALI:CL1", "line": "CL1",
-        "a": "100+00.00", "b": "107+00.00", "size": "ANSI_B", "template": "wfl",
-        "border": _FL_BORDER, "road": "the Central Federal Lands sample parking lot",
-        "fpi": 40.0, "spare": 0},
     "p05-dev-ppm218": {
         "sheet_id": "PPM-218", "agency": "Caltrans",
         "files": {"1300010110aa01.rdraft": "AA01", "1300010110bb01.rdraft": "BB01"},
@@ -240,7 +239,7 @@ P5 = {
 }
 #: the fewest sheets each stretch takes (``layout._fewest``; a test holds it)
 FEWEST = {"p05-dev-fdot924": 2, "p05-dev-fdot924x50": 1, "p05-dev-wfl06": 1,
-          "p05-dev-cflpkg": 1, "p05-dev-ppm218": 1, "p05-dev-wfl09": 1}
+          "p05-dev-ppm218": 1, "p05-dev-wfl09": 1}
 _P5_NOTES = {
     "p05-dev-fdot924": "SR 91 CL1 6400+00 to 6409+00 at 1\" = 40' on the FDOT border (616 x 384 "
                        "ft): 900 ft of one tangent heading due east, so the level cut is also "
@@ -253,10 +252,6 @@ _P5_NOTES = {
                      "(624 x 416 ft): 700 ft of one tangent at 3.9°, one sheet set corner to "
                      "corner. Naive answers checked: north-up sheets and the level cut (2 each), "
                      "two even sheets. No match line.",
-    "p05-dev-cflpkg": "The CFL sample parking lot's CL1 (traced, 44 tangents) 100+00 to 107+00 "
-                      "at 1\" = 40': one sheet turned. Naive answers checked: north-up sheets and "
-                      "the level cut (2 each), two even sheets. No match line. Its CL1 is the CFL-F-Parking-Lot sheet's, which a "
-                      "held-out p18 pilot uses.",
     "p05-dev-ppm218": "Electrical Example F, CL2 (traced, 11 tangents) 10+00 to 16+90 at 1\" = "
                       "40' on the Caltrans border: one sheet, but the line heads up and to the "
                       "left (N 48° W to N 38° W in plan). Naive answers checked: a north-up sheet "
@@ -544,7 +539,6 @@ for _pid, _cfg in P4.items():
     NAIVE[_pid] = [("the labelers' default poses", _p4_naive(_cfg), "legibility")]
 _P5_NAIVE = {"p05-dev-fdot924": ("one more",), "p05-dev-fdot924x50": ("north-up", "level"),
              "p05-dev-wfl06": ("north-up", "level", "one more"),
-             "p05-dev-cflpkg": ("north-up", "level", "one more"),
              "p05-dev-ppm218": ("north-up", "one more"),
              "p05-dev-wfl09": ("north-up", "one more")}
 for _pid, _cfg in P5.items():

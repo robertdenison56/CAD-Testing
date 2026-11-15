@@ -18,7 +18,10 @@ against the cap, so a cap on a local model never trips.
 A run may append one file to every model's system prompt (``system_extra``,
 ``--system-extra``: training plan stage T0).  ``run.json`` and every episode
 header name the file and its digest, and a run is not resumed over finished
-episodes that were told another one (``ResumeMismatch``).
+episodes that were told another one (``ResumeMismatch``).  The same holds
+for ``--thinking off`` (``provider_options["thinking"]``, recorded in each
+header's ``provider_config``): a run is not resumed over episodes that ran
+under the other setting.
 
 A dead endpoint stops the runner too (``stopped = "engine"``): before each
 episode the agent is asked whether it is ready (an LLM agent's provider
@@ -69,11 +72,13 @@ class Cell:
 
     @property
     def task_id(self) -> str:
-        """The task's id; a probe task at the vague level has its own (``probe_tasks.task_id``)."""
-        if self.level == "vague" and "probe" in self.entry:
+        """The task's id; a probe task at the vague level has its own (``probe_tasks.task_id``),
+        and so has a generated one (``train-deeds``, ``train-qa``)."""
+        if self.level == "vague" and ("probe" in self.entry or "generated" in self.entry):
             tid = self.entry.get("vague_task_id")
             if not tid:
-                raise ValueError(f"probe {self.entry['probe']} has no vague prompt")
+                raise ValueError(f"probe {self.entry.get('probe') or self.entry['task_id']} "
+                                 "has no vague prompt")
             return tid
         return self.entry["task_id"]
 
@@ -158,7 +163,8 @@ def run_cell(cell: Cell, spec: RunSpec, pins: Optional[dict] = None,
     config = EpisodeConfig(level=cell.level, mode=cell.mode, dialect=cell.dialect,
                            budgets=spec.budgets, sample=cell.sample, run_id=spec.resolved_run_id(),
                            system_extra=spec.system_extra)
-    if "probe" in cell.entry:  # a probe task (eval/probe_tasks.py): its own episode and oracle
+    # a probe task (eval/probe_tasks.py), a pilot or a generated one: its own episode and oracle
+    if "probe" in cell.entry or "generated" in cell.entry:
         from roaddraft.eval import probe_tasks
         if cell.agent == "oracle" and agent_factory is None:
             agent = probe_tasks.ProbeOracleAgent()
@@ -259,7 +265,8 @@ def _header_and_end(path) -> dict:
 
 
 class ResumeMismatch(ValueError):
-    """The run's folder holds finished episodes told another system extra (or none)."""
+    """The run's folder holds finished episodes told another system extra (or none),
+    or run under another thinking setting."""
 
 
 def check_resumed_prompt(spec: RunSpec, finished: Sequence[tuple]) -> None:
@@ -276,6 +283,15 @@ def check_resumed_prompt(spec: RunSpec, finished: Sequence[tuple]) -> None:
             f"{len(odd)} finished episodes in {spec.out_root} ({', '.join(odd[:3])}"
             f"{', ...' if len(odd) > 3 else ''}) were told another system extra than this run "
             f"asks for ({told}); a resumed run keeps its prompt: give it a new --run-id")
+    think = (spec.provider_options or {}).get("thinking")
+    odd = [cell.task_id for cell, rec in finished
+           if ((rec.get("header") or {}).get("provider_config") or {}).get("thinking") != think]
+    if odd:
+        raise ResumeMismatch(
+            f"{len(odd)} finished episodes in {spec.out_root} ({', '.join(odd[:3])}"
+            f"{', ...' if len(odd) > 3 else ''}) ran with thinking "
+            f"{'left to the model' if think else 'off'} and this run asks for it "
+            f"{think or 'left to the model'}; a resumed run keeps its setting: give it a new --run-id")
 
 
 def run(spec: RunSpec, agent_factory: Optional[Callable[[str, RunSpec], Agent]] = None,

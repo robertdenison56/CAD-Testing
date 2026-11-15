@@ -753,6 +753,58 @@ alignments, but its references carry ['BASE:ALIGN-1'] -- name one of those as al
 name the document does not own (`ALIGN-1` for `BASE:ALIGN-1`) gets the same hint. A command that draws
 the design itself (`draw_alignment`) and a document with nothing attached are told what they were.
 
+### Status, 2026-11-14 (the pin's branch: `training/pin-cut`)
+
+Everything waiting for the pin is on one branch, `training/pin-cut` (main `1b5ce003` + `pilot-dev`, the T1
+smoke kit and build 5), fixed after review and not yet tagged. Robert's rule for this pass: nothing that
+affects a score already run.
+
+**Recorded again on the branch.** The eight D1 training sets keep 4,182 of 4,190 tasks a level, the same
+eight tasks short as before (`d1-train` 1,198 of 1,200, `-hard` 294 of 297, `-twist` 600, `-crowd` 599 of
+600, `-revise` 600, `-twist-widths` 291 of 293, `-revise-base` 300, `-breaks` 300). Build 5,
+`train-deeds` (seeds 19000-19299) and `train-qa` (20000-20299), keeps 300 of 300 a level each; they now
+record on the pilots' budgets (600 steps, 12 faults; they had the D1 budgets) and carry their own pins
+(`pilot-check-417746eb2a92`, `pilot-check-d9a65d2ae684`), and `eval run --taskset train-deeds` works
+(oracle 100, null 0). 7,931 faulted copies of the 8,364 D1 references.
+
+**The dataset** (`results/training`, card in `benchmarks/training/DATASET_CARD.md`): 17,495 conversations,
+none dropped; the converter takes probe episodes, holds a `--system-extra` run to the prompt as sent, and
+no longer writes a closing submit note twice (8,193 conversations had it). The trainer's preparation
+gives 17,812 sequences, 17,799 kept, 906.9M tokens, 82.9M trained, median 48,102, longest 130,837. 13
+sequences run past 131,072 tokens and are left out: all from `d1-train-twist-widths` seeds 16287 and
+16062, references and faulted copies. The two seeds stay in the set.
+
+**The base rerun and T0, set up, not launched.** `benchmarks/lmstudio/queue-base-pin.sh PIN_WORKTREE TAG
+[--dry-run] [--after PID] [--resume]` runs base, base with thinking off, and T0. `eval run` and
+`lms_campaign.py e3` take `--thinking off` and `--system-extra`; a one-episode check must show the server
+obeyed before any thinking-off set starts. The base package measured from the stored 9B rows is about
+56 hours on the PC (d1-test 4.8, d1-real 3.9, d1-test-hard 19.1, d1-real-hard 6.6, hard-pilots 15.7, the
+dev sets about 6), T0 about 9; with thinking off on every set, up to 56 more. A run given
+`--thinking off` or `--system-extra` reports and ranks as its own row (`· thinking off`,
+`· system extra <sheet>@<digest>`); a run with neither is keyed and written as before. `pilot-dev` is
+never published, like the other dev sets.
+
+**Stored scores, checked.** Under the branch and under its last commit, the reports of all 92 published
+runs regenerate byte for byte the same; `make_leaderboard.py --check` is current; the held-out manifests,
+the tool digest (`c66b17cd`), `d1-verify-v8` and `e3-v3` are unchanged; seven held-out episodes built
+under both trees have the same prompt, budgets and pins.
+
+**The trainer** (`scripts/training_lora.py`): a validation split by seed, `--resume`, `--save-steps`,
+`--loss own`. Not verifiable on the Mac: Unsloth's adapter set-up with the target pattern, its loss at
+122k tokens (the fallback is `--loss own`), and a resume under `adamw8bit`. The T1 smoke is the check.
+
+**Open.**
+- The base `-pin1` 9B runs will share a row key with the published `-v3` 9B vague rows, and the Overall
+  table takes the later of two runs with one key without saying so. Retire or supersede the `-v3` rows
+  when the rerun is published, or have the board refuse a repeated key; left alone here because either
+  moves the board.
+- The headline base: thinking on (as the board's 9B rows ran) or off (the only way a trained checkpoint
+  can be served). The queue runs both.
+- Decision 14, below.
+- Found by the check, older than this branch: `report --reverify` gives another score than the published
+  one on 16 of 71 D1 runs (by 0.004 to 0.49, real sheets mostly), and 38 summaries are from report
+  version `e4-v1`. Stored scores as read do not move; publishing any of them again would.
+
 ## 6. Decisions for Robert
 
 1. **The rig for base, T0 and checkpoints.** PC only: free, one to one and a half nights per 100 episodes, and
@@ -911,6 +963,14 @@ the design itself (`draw_alignment`) and a document with nothing attached are to
     training manifest is current. On `d1-train-twist`'s 133 layouts, 33 recordings lose
     the turn that set a match-line label again (206 calls and 68 turns fewer), all 133 still kept.
 
+14. **The labels' follow after a revision in the base drawing** (2026-11-14, found recording
+    `d1-train-revise-base`). `update_labels` set 251 of 300 sheets right after the base drawing was
+    revised; the drafter set the rest by hand. A fix is built on `training/dec14-update-labels`
+    (`219feed7`): 300 of 300, 35 new tests, and two `d1-train-revise` task ids change (seeds 15239 and
+    15436). **Not in the pin** (2026-11-14, under "nothing that affects a score already run"): a stored
+    `hard-pilots` row that called `update_labels` could replay differently. To decide after the base
+    rerun; taking it then means recording those two tasks again.
+
 ## 7. Risks
 
 | risk | guard |
@@ -990,12 +1050,15 @@ lettering over other lettering as well as lettering upside down. The first of th
 2026-11-12 (the status above): `d1-train-crowd`, 600 crowded sheets, 534 recorded a level, then 592 once
 labels were measured by their true sizes (2026-11-12, night). Build 4 followed the same day:
 `d1-train-revise`, 600 revised sheets, all 600 recorded a level. Every seeded type is now covered: 3,284 of
-3,297 tasks kept a level. Build 5 (the reasoning families) and the open half of build 1 are left.
+3,297 tasks kept a level. Build 5 (the reasoning families) was built 2026-11-13 as `train-deeds` and
+`train-qa` (status of 2026-11-14); the open half of build 1 is left.
 
 **A validation set on real sheets.** `pilot-dev`: `p17`, `p04`, `p05` and `p11` instances on the 9 clean
 sheets, registered outside the pilot package. For choosing a checkpoint only, like `d1-real-dev`.
 **Built 2026-11-13** (`src/roaddraft/probes/pilot_dev.py`, `benchmarks/tasksets/pilot-dev.json`): 19
-instances, 6 `p17`, 2 `p04`, 6 `p05`, 5 `p11`, every one of the 9 sheets used; what each sheet could not
+instances, 6 `p17`, 2 `p04`, 6 `p05`, 5 `p11`, every one of the 9 sheets used (18 on 8 sheets since
+2026-11-14: the CFL SWPPP sheet shares its design line with a `d1-real` and a `hard-pilots` task, so
+`p05-dev-cflpkg` was dropped; set hash `probe-00949a4813fb`); what each sheet could not
 carry, and where an instance is weaker than its held-out counterparts, is in the module's docstring.
 
 **One thing the base rerun will show first.** Of the 59.8 points the best row loses on the pilots, 9.8 are

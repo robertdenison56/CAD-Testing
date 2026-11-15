@@ -10,23 +10,28 @@ Beside each set's references, `<set>-<level>-faults.jsonl` holds their faulted c
 
 Every conversation was re-scored before it was written: its task rebuilt from the training manifest and held to the episode's prompt hash, truth and starting document; its tool list held to the episode's tool digest; its journal replayed through the verifier (100 or dropped); and the grounded audit run again (nothing ungrounded, lettering made for a twisted sheet, nothing left stale on a revised one).
 
+`train-deeds`, `train-qa` are probe tasks: they run on the pilots' harness (`roaddraft.eval.probe_tasks`), on the MCP server's own tools and that harness's system prompt, each graded by its task's own pass/fail check. Their conversations are laid out the same way. Such an episode has no command journal to replay, so each was played again before it was written: its recorded calls made through a new episode on the task rebuilt from the manifest, kept when every call answered as recorded, the check passed on the files the replay left, and the audit (`roaddraft.trajectories.reasoning.audit`) found nothing ungrounded.
+
 ## Pins
 
 | pin | value |
 |---|---|
-| git commit at conversion | `18c6ebf4f7`, with 2 files under `src/` changed past it (uncommitted training work) |
+| git commit at conversion | `8f5261efc0`, with 10 files under `src/` changed past it (uncommitted training work) |
 | roaddraft | 0.1.0 |
 | drafting spec | `v1` |
 | spec hash | `sha256:0e07d5e83c0b1cb8` |
 | generator | `d1-v6` |
-| verifier | `d1-verify-v8` |
+| verifier | `d1-verify-v8`, `pilot-check-417746eb2a92`, `pilot-check-d9a65d2ae684` |
 | harness | `e3-v3` |
 | system prompt | `sha256:084ffff960df` (`system_neutral.md`, single mode, 150 steps, 8 faults) |
-| tools `sha256:249f52398d93` | 75 definitions (adds `create_alignment`) |
-| tools `sha256:39c620c1ba61` | 77 definitions (adds `create_alignment`, `modify_alignment`, `update_labels`) |
-| tools `sha256:9563fe0a13a4` | 76 definitions (adds `modify_alignment`, `update_labels`) |
-| tools `sha256:a6924e8a1366` | 74 definitions |
-| converted | 2026-11-13T17:38:28-0800, 286.6 s |
+| system prompt, probe tasks | `sha256:e6c465190e2c` (the MCP server's instructions, then how the task runs: `probe_tasks.system_prompt`, under each episode's mode and budgets) |
+| tools `sha256:0f108e6bfd14` | 74 definitions |
+| tools `sha256:3eda3e1ab6be` | 78 definitions (adds `modify_alignment`, `open_document`, `reload_references`, `update_labels`) |
+| tools `sha256:4a1409088c93` | 106 definitions (probe tasks: the MCP server's tools and the harness's) |
+| tools `sha256:4dab95e8a77d` | 76 definitions (adds `modify_alignment`, `update_labels`) |
+| tools `sha256:b6f0e10f666c` | 77 definitions (adds `create_alignment`, `modify_alignment`, `update_labels`) |
+| tools `sha256:c9415662ce61` | 75 definitions (adds `create_alignment`) |
+| converted | 2026-11-14T23:27:33-0800, 458.1 s |
 
 Each conversation's header carries its own: `tools_sha256`, `prompt_hash` (the task text at its level, as the eval header has it), `system_sha256`, the spec, generator, verifier and harness versions, `git_commit` (conversion) and `recorded_commit` (the recording's; the grounded recorder writes none).
 
@@ -40,38 +45,51 @@ Each conversation's header carries its own: `tools_sha256`, `prompt_hash` (the t
 | `d1-train-hard` | 12000-12299 | explicit | 297 | 297 | 294 | 294 | 0 |
 | `d1-train-twist` | 13000-13599 | vague | 600 | 600 | 600 | 600 | 0 |
 | `d1-train-twist` | 13000-13599 | explicit | 600 | 600 | 600 | 600 | 0 |
-| `d1-train-crowd` | 14000-14599 | vague | 600 | 600 | 592 | 592 | 0 |
-| `d1-train-crowd` | 14000-14599 | explicit | 600 | 600 | 592 | 592 | 0 |
+| `d1-train-crowd` | 14000-14599 | vague | 600 | 600 | 599 | 599 | 0 |
+| `d1-train-crowd` | 14000-14599 | explicit | 600 | 600 | 599 | 599 | 0 |
 | `d1-train-revise` | 15000-15599 | vague | 600 | 600 | 600 | 600 | 0 |
 | `d1-train-revise` | 15000-15599 | explicit | 600 | 600 | 600 | 600 | 0 |
-| all | | vague | 3297 | | | 3284 | |
-| all | | explicit | 3297 | | | 3284 | |
+| `d1-train-twist-widths` | 16000-16299 | vague | 293 | 293 | 291 | 291 | 0 |
+| `d1-train-twist-widths` | 16000-16299 | explicit | 293 | 293 | 291 | 291 | 0 |
+| `d1-train-breaks` | 17000-17299 | vague | 300 | 300 | 300 | 300 | 0 |
+| `d1-train-breaks` | 17000-17299 | explicit | 300 | 300 | 300 | 300 | 0 |
+| `d1-train-revise-base` | 18000-18299 | vague | 300 | 300 | 300 | 300 | 0 |
+| `d1-train-revise-base` | 18000-18299 | explicit | 300 | 300 | 300 | 300 | 0 |
+| `train-deeds` | 19000-19299 | vague | 300 |  | 300 | 300 | 0 |
+| `train-deeds` | 19000-19299 | explicit | 300 |  | 300 | 300 | 0 |
+| `train-qa` | 20000-20299 | vague | 300 |  | 300 | 300 | 0 |
+| `train-qa` | 20000-20299 | explicit | 300 |  | 300 | 300 | 0 |
+| all | | vague | 4790 | | | 4782 | |
+| all | | explicit | 4790 | | | 4782 | |
 
 Tasks not covered wait on drafter phases not built yet (the width dimensions: `pavement`, `pavement-widths`, `plan-sheet-pavement`); covered and not kept are where the drafter stopped rather than guess. Both are the recorder's (`results/grounded/<set>-<level>/index.json`).
 
 **Kept by task type** (the same at both levels):
 
-| type | `d1-train` | `d1-train-hard` | `d1-train-twist` | `d1-train-crowd` | `d1-train-revise` |
-|---|---:|---:|---:|---:|---:|
-| `annotate-base` | 75 | 59 | 67 | 153 | 300 |
-| `annotate-sheet` | 75 |  | 67 | 118 | 300 |
-| `attach-reference` | 75 |  |  |  |  |
-| `base-plan-sheet` |  | 59 |  |  |  |
-| `bearings` | 75 |  | 67 | 111 |  |
-| `create-alignment` | 75 |  |  |  |  |
-| `create-plan-sheet` |  | 57 |  |  |  |
-| `curve-callouts` | 75 |  | 67 | 124 |  |
-| `curve-table` | 75 |  | 67 |  |  |
-| `draw-alignment` | 75 |  |  |  |  |
-| `layer-setup` | 75 |  |  |  |  |
-| `pavement` | 72 |  |  |  |  |
-| `pavement-edges` | 78 |  |  |  |  |
-| `pavement-widths` | 75 |  |  |  |  |
-| `plan-sheet` | 74 | 60 | 67 |  |  |
-| `plan-sheet-pavement` |  | 59 |  |  |  |
-| `sheet-setup` | 74 |  | 66 |  |  |
-| `stationing` | 75 |  | 66 | 86 |  |
-| `title-block` | 75 |  | 66 |  |  |
+| type | `d1-train` | `d1-train-hard` | `d1-train-twist` | `d1-train-crowd` | `d1-train-revise` | `d1-train-twist-widths` | `d1-train-breaks` | `d1-train-revise-base` | `train-deeds` | `train-qa` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `annotate-base` | 75 | 59 | 67 | 154 | 300 |  |  | 300 |  |  |
+| `annotate-sheet` | 75 |  | 67 | 119 | 300 |  |  |  |  |  |
+| `attach-reference` | 75 |  |  |  |  |  |  |  |  |  |
+| `base-plan-sheet` |  | 59 |  |  |  |  |  |  |  |  |
+| `bearings` | 75 |  | 67 | 116 |  |  |  |  |  |  |
+| `create-alignment` | 75 |  |  |  |  |  |  |  |  |  |
+| `create-plan-sheet` |  | 57 |  |  |  |  |  |  |  |  |
+| `curve-callouts` | 75 |  | 67 | 124 |  |  |  |  |  |  |
+| `curve-table` | 75 |  | 67 |  |  |  |  |  |  |  |
+| `draw-alignment` | 75 |  |  |  |  |  |  |  |  |  |
+| `layer-setup` | 75 |  |  |  |  |  |  |  |  |  |
+| `pavement` | 72 |  |  |  |  | 97 |  |  |  |  |
+| `pavement-edges` | 78 |  |  |  |  |  |  |  |  |  |
+| `pavement-widths` | 75 |  |  |  |  | 98 |  |  |  |  |
+| `plan-sheet` | 74 | 60 | 67 |  |  |  |  |  |  |  |
+| `plan-sheet-breaks` |  |  |  |  |  |  | 300 |  |  |  |
+| `plan-sheet-pavement` |  | 59 |  |  |  | 96 |  |  |  |  |
+| `sheet-setup` | 74 |  | 66 |  |  |  |  |  |  |  |
+| `stationing` | 75 |  | 66 | 86 |  |  |  |  |  |  |
+| `title-block` | 75 |  | 66 |  |  |  |  |  |  |  |
+| `train-qa-review` |  |  |  |  |  |  |  |  |  | 300 |
+| `train-survey-traps` |  |  |  |  |  |  |  |  | 300 |  |
 
 **Turns and calls** (median, and the most in brackets):
 
@@ -81,12 +99,22 @@ Tasks not covered wait on drafter phases not built yet (the width dimensions: `p
 | `d1-train` | explicit | 5 (25) | 10 (87) | 0 |
 | `d1-train-hard` | vague | 23 (36) | 104 (150) | 32 |
 | `d1-train-hard` | explicit | 23 (36) | 94.5 (141) | 4 |
-| `d1-train-twist` | vague | 6 (26) | 13.5 (93) | 0 |
-| `d1-train-twist` | explicit | 6 (26) | 13.5 (82) | 0 |
-| `d1-train-crowd` | vague | 21 (48) | 58 (137) | 3 |
-| `d1-train-crowd` | explicit | 21 (48) | 58 (137) | 3 |
-| `d1-train-revise` | vague | 9.5 (30) | 16 (82) | 0 |
-| `d1-train-revise` | explicit | 9.5 (30) | 16 (82) | 0 |
+| `d1-train-twist` | vague | 6 (24) | 13.5 (88) | 0 |
+| `d1-train-twist` | explicit | 6 (24) | 13.5 (77) | 0 |
+| `d1-train-crowd` | vague | 16 (32) | 28 (55) | 0 |
+| `d1-train-crowd` | explicit | 16 (32) | 28 (55) | 0 |
+| `d1-train-revise` | vague | 9.5 (18) | 16 (34) | 0 |
+| `d1-train-revise` | explicit | 9.5 (18) | 16 (34) | 0 |
+| `d1-train-twist-widths` | vague | 11 (37) | 17 (144) | 2 |
+| `d1-train-twist-widths` | explicit | 10 (35) | 17 (135) | 0 |
+| `d1-train-breaks` | vague | 25 (30) | 104 (143) | 31 |
+| `d1-train-breaks` | explicit | 25 (30) | 93 (132) | 0 |
+| `d1-train-revise-base` | vague | 20 (23) | 34.5 (45) | 0 |
+| `d1-train-revise-base` | explicit | 20 (23) | 34.5 (45) | 0 |
+| `train-deeds` | vague | 6 (6) | 10 (10) | 0 |
+| `train-deeds` | explicit | 6 (6) | 10 (10) | 0 |
+| `train-qa` | vague | 5 (6) | 19 (25) | 0 |
+| `train-qa` | explicit | 5 (6) | 19 (25) | 0 |
 
 ## Injected faults
 
@@ -100,21 +128,27 @@ A faulted copy of each reference (`python -m roaddraft.trajectories.faults injec
 | `d1-train-hard` | explicit | 294 | 294 | 410 | 0 |
 | `d1-train-twist` | vague | 600 | 534 | 701 | 0 |
 | `d1-train-twist` | explicit | 600 | 534 | 704 | 0 |
-| `d1-train-crowd` | vague | 592 | 592 | 819 | 0 |
-| `d1-train-crowd` | explicit | 592 | 592 | 823 | 0 |
+| `d1-train-crowd` | vague | 599 | 599 | 829 | 0 |
+| `d1-train-crowd` | explicit | 599 | 599 | 833 | 0 |
 | `d1-train-revise` | vague | 600 | 600 | 716 | 0 |
 | `d1-train-revise` | explicit | 600 | 600 | 716 | 0 |
-| all | | | 6135 | 7894 | |
+| `d1-train-twist-widths` | vague | 291 | 291 | 408 | 0 |
+| `d1-train-twist-widths` | explicit | 291 | 291 | 405 | 0 |
+| `d1-train-breaks` | vague | 300 | 300 | 442 | 0 |
+| `d1-train-breaks` | explicit | 300 | 300 | 411 | 0 |
+| `d1-train-revise-base` | vague | 300 | 300 | 422 | 0 |
+| `d1-train-revise-base` | explicit | 300 | 300 | 415 | 0 |
+| all | | | 7931 | 10417 | |
 
 | mistake | what goes wrong | how it goes in | the 9B's failed calls of the kind | in the data |
 |---|---|---|---:|---:|
-| `alignment_left_off` | a call on the referenced design that does not name its alignment | swap | 488 | 843 |
-| `alignment_misnamed` | the alignment named without its reference's name, or with one when it is the file's own | swap | 95 | 2525 |
-| `stationing_on_sheet` | alignment stationing sent to a sheet instead of model space | swap | 206 | 1022 |
-| `begin_station_given` | a begin station given to alignment-mode stationing | swap | 136 | 650 |
-| `layer_not_made` | drafting on a generic layer name the file does not have | swap | 110 | 2306 |
-| `draw_referenced` | drawing an alignment the attached base drawing already carries | insert | 76 | 121 |
-| `made_twice` | setting up again a sheet, reference or layer made earlier | insert | 66 | 427 |
+| `alignment_left_off` | a call on the referenced design that does not name its alignment | swap | 488 | 1208 |
+| `alignment_misnamed` | the alignment named without its reference's name, or with one when it is the file's own | swap | 95 | 3127 |
+| `stationing_on_sheet` | alignment stationing sent to a sheet instead of model space | swap | 206 | 1469 |
+| `begin_station_given` | a begin station given to alignment-mode stationing | swap | 136 | 934 |
+| `layer_not_made` | drafting on a generic layer name the file does not have | swap | 110 | 2936 |
+| `draw_referenced` | drawing an alignment the attached base drawing already carries | insert | 76 | 161 |
+| `made_twice` | setting up again a sheet, reference or layer made earlier | insert | 66 | 582 |
 
 The 9B's counts are its failed calls of each kind over its six board rows (`d1-test` and `d1-real` at both levels, `d1-test-hard` and `d1-real-hard` vague); only the shape of each mistake is taken from them, and each broken call is made from the training reference's own. A reference with no place for any of them (a title block, a reference attached, layers set up and nothing after) has no faulted copy.
 
@@ -122,79 +156,130 @@ The 9B's counts are its failed calls of each kind over its six board rows (`d1-t
 
 Counted with Qwen/Qwen3.5-9B's own tokenizer (Hugging Face, revision `c2022362`) (`~/.roaddraft/tokenizers/Qwen3.5-9B/tokenizer.json`, 248070 tokens, sha256 `5f9e4d4901a92b99`), over each conversation rendered through Qwen3.5's chat template (`~/.roaddraft/tokenizers/Qwen3.5-9B/chat_template.jinja`, sha256 `a4aee8afcf2e0711`) with its tools, no generation prompt: the length of the training sequence.
 
-**Calibration.** 240 requests of 4 Qwen3.5 9B episodes, each rendered as the harness sent it and counted here, against the prompt tokens LM Studio reported. The first request (27,698 tokens at the server) counts 27,698 here. Every request counts exactly what the server reported, so the totals below are exact.
-
 ### `d1-train` (2396 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,790-29,491 tokens; whole conversation median 32,158, p90 48,732, most 69,619; assistant tokens (the loss) median 917, most 15,768.
+Fixed prompt (system, tools, task) 27,942-29,643 tokens; whole conversation median 32,297, p90 49,003, most 71,459; assistant tokens (the loss) median 917, most 11,735.
 
 ```
-     28k-30k    456 █████████████████████
-     30k-32k    606 ███████████████████████████
-     32k-36k    622 ████████████████████████████
-     36k-40k    251 ███████████
-     40k-48k    183 ████████
-     48k-56k    171 ████████
-     56k-64k     99 ████
-     64k-80k      8 █
+     28k-30k    394 █████████████████
+     30k-32k    662 ████████████████████████████
+     32k-36k    626 ██████████████████████████
+     36k-40k    252 ███████████
+     40k-48k    177 ███████
+     48k-56k    187 ████████
+     56k-64k     91 ████
+     64k-80k      7 █
 ```
 
 ### `d1-train-hard` (588 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,815-30,169 tokens; whole conversation median 72,804, p90 103,889, most 122,806; assistant tokens (the loss) median 12,740, most 27,285.
+Fixed prompt (system, tools, task) 27,967-30,321 tokens; whole conversation median 77,024, p90 108,152, most 130,545; assistant tokens (the loss) median 12,526, most 27,533.
 
 ```
-     40k-48k    118 ███████████████
+     40k-48k    118 █████████████████
      48k-56k      0 
-     56k-64k     99 █████████████
-     64k-80k    220 ████████████████████████████
-     80k-96k     77 ██████████
-96k-131.072k     74 █████████
+     56k-64k     40 ██████
+     64k-80k    200 ████████████████████████████
+     80k-96k    140 ████████████████████
+96k-131.072k     90 █████████████
 ```
 
 ### `d1-train-twist` (1200 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,790-28,416 tokens; whole conversation median 34,118, p90 47,595, most 65,220; assistant tokens (the loss) median 1,172, most 12,307.
+Fixed prompt (system, tools, task) 27,942-28,568 tokens; whole conversation median 34,270, p90 49,227, most 66,011; assistant tokens (the loss) median 1,172, most 11,294.
 
 ```
-     30k-32k    200 ██████████
-     32k-36k    562 ████████████████████████████
-     36k-40k    249 ████████████
-     40k-48k     73 ████
-     48k-56k     62 ███
-     56k-64k     49 ██
-     64k-80k      5 █
+     30k-32k    186 █████████
+     32k-36k    566 ████████████████████████████
+     36k-40k    258 █████████████
+     40k-48k     66 ███
+     48k-56k     63 ███
+     56k-64k     54 ███
+     64k-80k      7 █
 ```
 
-### `d1-train-crowd` (1184 conversations, both levels)
+### `d1-train-crowd` (1198 conversations, both levels)
 
-Fixed prompt (system, tools, task) 27,801-28,325 tokens; whole conversation median 61,958, p90 83,747, most 114,873; assistant tokens (the loss) median 9,167, most 46,971.
+Fixed prompt (system, tools, task) 27,953-28,477 tokens; whole conversation median 55,980, p90 68,686, most 85,499; assistant tokens (the loss) median 6,839, most 29,552.
 
 ```
-     40k-48k     97 ████████
-     48k-56k    285 ████████████████████████
-     56k-64k    286 ████████████████████████
-     64k-80k    331 ████████████████████████████
-     80k-96k    155 █████████████
-96k-131.072k     30 ███
+     40k-48k    119 ███████
+     48k-56k    480 ████████████████████████████
+     56k-64k    343 ████████████████████
+     64k-80k    246 ██████████████
+     80k-96k     10 █
 ```
 
 ### `d1-train-revise` (1200 conversations, both levels)
 
-Fixed prompt (system, tools, task) 28,362-30,182 tokens; whole conversation median 41,821, p90 58,378, most 78,465; assistant tokens (the loss) median 1,660, most 14,653.
+Fixed prompt (system, tools, task) 28,514-30,334 tokens; whole conversation median 41,842, p90 57,826, most 61,491; assistant tokens (the loss) median 1,623, most 4,675.
 
 ```
-     32k-36k     94 █████
-     36k-40k    506 ████████████████████████████
-     40k-48k     88 █████
+     32k-36k     77 ████
+     36k-40k    523 ████████████████████████████
+     40k-48k    101 █████
      48k-56k    294 ████████████████
-     56k-64k    200 ███████████
-     64k-80k     18 █
+     56k-64k    205 ███████████
 ```
 
-**All sets:** 6,568 conversations, 302,855,003 tokens; median 38,185, p90 71,326, p99 103,112, most 122,806. 846 are past 65,536 and 0 past 131,072.
+### `d1-train-twist-widths` (582 conversations, both levels)
 
-**Faulted copies:** 6,135 conversations, 291,577,760 tokens; median 39,565, most 122,835; 875 past 65,536 and 0 past 131,072. Assistant tokens trained on (the broken turns, weight 0, left out) median 2,501.
+Fixed prompt (system, tools, task) 27,949-28,777 tokens; whole conversation median 54,912, p90 114,488, most 134,336; assistant tokens (the loss) median 6,796, most 27,328.
+
+```
+     40k-48k    124 ███████████████████
+     48k-56k    184 ████████████████████████████
+     56k-64k     82 ████████████
+     64k-80k      0 
+     80k-96k     37 ██████
+96k-131.072k    152 ███████████████████████
+   131.072k+      3 █
+```
+
+### `d1-train-breaks` (600 conversations, both levels)
+
+Fixed prompt (system, tools, task) 27,962-28,617 tokens; whole conversation median 68,929, p90 83,119, most 87,186; assistant tokens (the loss) median 12,324, most 18,074.
+
+```
+     36k-40k     25 ███
+     40k-48k    105 ███████████
+     48k-56k      0 
+     56k-64k     81 ████████
+     64k-80k    269 ████████████████████████████
+     80k-96k    120 ████████████
+```
+
+### `d1-train-revise-base` (600 conversations, both levels)
+
+Fixed prompt (system, tools, task) 28,790-29,185 tokens; whole conversation median 58,460, p90 64,836, most 67,918; assistant tokens (the loss) median 3,584, most 5,300.
+
+```
+     40k-48k     13 █
+     48k-56k    209 ████████████████████
+     56k-64k    294 ████████████████████████████
+     64k-80k     84 ████████
+```
+
+### `train-deeds` (600 conversations, both levels)
+
+Fixed prompt (system, tools, task) 40,896-41,016 tokens; whole conversation median 45,910, p90 46,309, most 46,395; assistant tokens (the loss) median 1,922, most 2,180.
+
+```
+     40k-48k    600 ████████████████████████████
+```
+
+### `train-qa` (600 conversations, both levels)
+
+Fixed prompt (system, tools, task) 40,736-40,775 tokens; whole conversation median 54,358, p90 57,722, most 58,701; assistant tokens (the loss) median 1,909, most 2,810.
+
+```
+     48k-56k    414 ████████████████████████████
+     56k-64k    186 █████████████
+```
+
+**All sets:** 9,564 conversations, 472,413,141 tokens; median 46,661, p90 68,877, p99 114,398, most 134,336. 1211 are past 65,536 and 3 past 131,072.
+
+**Faulted copies:** 7,931 conversations, 402,051,166 tokens; median 48,432, most 134,589; 1266 past 65,536 and 3 past 131,072. Assistant tokens trained on (the broken turns, weight 0, left out) median 2,937.
 
 ## How to rebuild
 

@@ -118,6 +118,43 @@ Only the card can prove: Unsloth's Qwen3.5 kernels on CUDA, the memory at 122,83
 the real 9B's load/merge/convert (the vision tower and the MTP head are dropped: transformers loads the
 9B as the text-only `Qwen3_5ForCausalLM`), and the PC loading the result.
 
+### 3a. The sets recorded after the kit was built (run on this Mac, 2026-11-14)
+
+`d1-train-revise-base`, `d1-train-breaks`, `d1-train-twist-widths`, `train-deeds` and `train-qa`, recorded on
+the integrated engine and converted with `--no-faults` into a scratch folder (references only):
+
+- Three tool sets, not one: 74 tools (the D1 sets), 78 (`d1-train-revise-base`: `open_document` and
+  `reload_references` among them; the 30 vague conversations converted call `open_document` 60 times and
+  `reload_references` 30) and 106 (the two probe sets). `prepare` takes each conversation's own set from
+  `tools.json` by its header's hash; nothing in the kit needed to change for them.
+- Render check on 30 episodes a set of the three D1 sets (14 conversations, 320 requests; `annotate-base`
+  with the 78-tool set and `plan-sheet-breaks` included): thinking off **0 issues**, thinking on mismatches
+  every turn, as before. On all ten files (20 conversations, 368 requests, the probe sets included),
+  thinking off: 0 issues.
+- `--prepare-only` on all ten files: 2,982 conversations → 3,021 sequences, **177,735,760 tokens kept,
+  17,703,788 trained**, median 54,607, p99 121,729, 33 conversations split by a `[harness]` note (31 of them in
+  `d1-train-breaks-vague`).
+- **Six sequences are past 131,072 tokens and are dropped**, all in `d1-train-twist-widths`: seed 16287 at
+  both levels (132,373 explicit; 132,289 to 134,652 in its four vague segments) and the last segment of seed
+  16062 vague (131,455). The whole dataset before these sets had none (longest 122,835). The longest kept
+  sequence is now **130,535** (`D1-016062-….vague#2`), so the smoke's memory figure should be read at that
+  length once the dataset is rebuilt.
+
+### 3b. Validation loss and resuming
+
+- `--val-fraction 0.02 --val-max 24 --eval-steps N`: a share of the *training* tasks is held out of training
+  by seed (both levels and the faulted copies of a held seed leave together) and the loss on up to 24 of
+  their reference conversations is logged before the first step, every N steps and after each epoch
+  (`eval_loss` rows in `metrics.jsonl`). No eval set is read: `d1-dev` and every held-out set stay unseen.
+  Each evaluation costs a forward pass over the sample (24 conversations ≈ 1.2M tokens), so the smoke runs
+  without it; use it for T1.
+- `--save-steps N` writes `checkpoint-<step>/` (adapter + `trainer_state.pt`: optimizer, step, place in the
+  epoch); `--resume runs/x/checkpoint-<step>` with the same arguments continues it. Checked on the tiny model
+  (CPU): a run resumed from its step-2 checkpoint gave step 3's loss and gradient norm to the last digit
+  (12.437446088358836, 0.17192812263965607). Not checked: `adamw8bit`'s state through a resume (CUDA only).
+- `metrics.jsonl` has `host_peak_gib` beside the card's `peak_gib`/`reserved_gib`: Unsloth's checkpointing
+  keeps activations in host memory, so the pod's RAM is part of the measurement.
+
 ## 4. The pod
 
 | | choice | why |

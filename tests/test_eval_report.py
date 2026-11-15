@@ -384,6 +384,7 @@ def test_a_real_set_is_judged_against_the_real_generator():
     assert R.current_versions("d1-test")["generator_version"] == GENERATOR_VERSION
     assert R.current_versions()["generator_version"] == GENERATOR_VERSION
     assert "d1-real-dev" in R.NEVER_REPORTED and "d1-real" in R.LEADERBOARD_SETS
+    assert set(R.NEVER_REPORTED) == {"d1-dev", "d1-real-dev", "pilot-dev"}
 
 
 def test_readme_board_is_current():

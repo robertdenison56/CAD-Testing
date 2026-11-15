@@ -4,6 +4,7 @@ levels; the sheets are the clean ones; and the held-out pilots do not move."""
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -22,7 +23,7 @@ PILOT_DIR = Path(layout.__file__).parent
 
 
 def test_instances():
-    assert len(IDS) == 19 and len(set(IDS)) == 19
+    assert len(IDS) == 18 and len(set(IDS)) == 18
     for p in D.PROBES:
         assert P.family(p) in FAMILIES and "-dev-" in p.id, p.id
         assert p.prompt.strip() and p.vague.strip() and p.vague != p.prompt and p.note.strip()
@@ -87,7 +88,8 @@ def held_out_pilot_sheets():
     found = set()
     for path in PILOT_DIR.glob("*.py"):
         text = path.read_text()
-        found |= {i for i in ids if re.search(r"[\"']" + re.escape(i) + r"[\"'-]", text)}
+        # quoted, or the last part of a quoted path ("WFL/WFL-Plan-Profile-Sheets/<id>")
+        found |= {i for i in ids if re.search(r"[\"'/]" + re.escape(i) + r"[\"'-]", text)}
     mine = set(IDS)
     for name in ["common"] + list(importlib.import_module("roaddraft.probes.pilot").MODULES):
         module = importlib.import_module(f"roaddraft.probes.pilot.{name}")
@@ -100,16 +102,96 @@ def held_out_pilot_sheets():
     return found
 
 
+def _designs(doc: dict) -> set:
+    """What a drawing file carries that a task works on: each design line by its shape
+    (the run of tangents and curves, lengths and radii to 0.1 ft, so a copy moved,
+    turned or restationed is the same line), and its model linework as drawn."""
+    found = set()
+    for a in (doc.get("design") or {}).get("alignments", {}).values():
+        found.add(("line",) + tuple((e["kind"], round(e["length"], 1),
+                                     round(abs(e.get("radius") or 0.0), 1))
+                                    for e in a["elements"]))
+    drawn = (doc.get("model") or {}).get("entities") or []
+    drawn = drawn.values() if isinstance(drawn, dict) else drawn   # a seeded base keys them by id
+    rows = sorted(json.dumps({k: v for k, v in e.items() if k != "id"}, sort_keys=True)
+                  for e in drawn)
+    if rows:
+        found.add(("base", hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()))
+    return found
+
+
+def _sheet_designs(sheet_id: str) -> set:
+    """The design lines and base drawings in a redrafted sheet's files."""
+    found = set()
+    for path in sorted(Path(common.folder(sheet_id)).rglob("*.rdraft")):
+        found |= _designs(json.loads(path.read_text()))
+    return found
+
+
+def held_out_designs() -> dict:
+    """Every other eval set's design lines and base drawings, each with the sets and
+    sheets (a seeded set: tasks) that carry it."""
+    held = {}
+
+    def note(designs, name, where):
+        for d in designs:
+            held.setdefault(d, set()).add((name, where))
+    for name in tasksets.NAMES:
+        if name == D.TASK_SET:
+            continue
+        if name == P.PILOT_SET:
+            for sheet in sorted(held_out_pilot_sheets()):
+                note(_sheet_designs(sheet), name, sheet)
+            continue
+        rows = tasksets.load(name)["tasks"]
+        for sheet in sorted({r["sheet_id"] for r in rows if "sheet_id" in r}):
+            note(_sheet_designs(sheet), name, sheet)
+        for r in rows:
+            if "sheet_id" not in r:      # a seeded task: the files it starts on
+                for doc in tasksets.task_from_entry(r).files.values():
+                    note(_designs(doc), name, r["task_id"])
+    return held
+
+
+SHEETS = {"PPM-206", "PPM-207", "PPM-214", "PPM-215", "PPM-218",
+          "FDOT-924-1-Selective-CandG-Plan",
+          "WFL-Other-Sections-p06", "WFL-Other-Sections-p09"}
+#: a sheet no other set uses whose design line is one a held-out sheet carries, so not clean
+SHARED_DESIGN = {"CFL-G-Blank-Parking-Lot-Sheets-SWPPP": "CFL-F-Parking-Lot"}
+
+
 def test_no_pilot_dev_sheet_is_held_out():
     pilots = held_out_pilot_sheets()
-    assert len(pilots) >= 40          # 42 by the plan's count (§8)
+    assert len(pilots) == 42          # the plan's count (§8); two are named by path only
+    assert set(D.SHEETS) == SHEETS
+    assert {r["sheet_id"] for r in tasksets.load(D.TASK_SET)["tasks"]} == set(D.SHEETS)
     real = {t["sheet_id"] for name in ("d1-real", "d1-real-hard", "d1-real-dev")
             for t in tasksets.load(name)["tasks"]}
     assert real and not set(D.SHEETS) & pilots and not set(D.SHEETS) & real
-    # and the nine are every sheet with an alignment that is in none of them
+    # and the eight are every sheet with an alignment that is in none of them and
+    # shares no design with one that is (the next test)
     from roaddraft.tasks import real as R
     clean = {s.id for s in R.real_sheets()} - pilots - real
-    assert clean == set(D.SHEETS)
+    assert clean == set(D.SHEETS) | set(SHARED_DESIGN)
+
+
+def test_no_pilot_dev_design_is_held_out():
+    """A sheet id alone does not tell: two sheets of one project carry the same line
+    under two ids.  No design line and no base drawing a ``pilot-dev`` sheet's files
+    hold is in any other eval set (the held-out pilots, the real-sheet sets, the
+    seeded sets); the one clean-by-id sheet that fails this is not in the set."""
+    held = held_out_designs()
+    assert {name for where in held.values() for name, _w in where} == \
+        set(tasksets.NAMES) - {D.TASK_SET}
+    for sheet in sorted(D.SHEETS):
+        mine = _sheet_designs(sheet)
+        assert any(d[0] == "line" for d in mine), sheet
+        shared = {d[0]: sorted(held[d]) for d in mine if d in held}
+        assert not shared, (sheet, shared)
+    for sheet, other in SHARED_DESIGN.items():   # why it was left out, held to the files
+        assert sheet not in D.SHEETS
+        carried = {w for d in _sheet_designs(sheet) if d[0] == "line" for w in held.get(d, ())}
+        assert {("d1-real", other), (P.PILOT_SET, other)} <= carried
 
 
 def test_every_instance_builds_on_its_own_sheet(tmp_path):
@@ -188,5 +270,9 @@ def test_a_grade_carries_its_sets_check_hash(tmp_path):
 
 def test_the_training_sets_share_nothing_with_pilot_dev():
     dev = tasksets.load(D.TASK_SET)
-    for name in tasksets.TRAIN_NAMES:
-        assert tasksets.shared(tasksets.load(name), dev) == []
+    for name in tasksets.TRAIN_NAMES + tasksets.PROBE_TRAIN_NAMES:
+        train = tasksets.load(name)
+        assert tasksets.shared(train, dev) == []
+        # a training entry names a seed and no sheet, so none is on a pilot-dev sheet
+        assert all("seed" in e and "sheet_id" not in e and "probe" not in e
+                   for e in train["tasks"]), name

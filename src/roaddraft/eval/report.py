@@ -46,7 +46,7 @@ A row is one (model, provider, effort, dialect, mode, level).  The rules:
 
 Publishing copies ``summary.json``, ``leaderboard.md`` and the heatmap to
 ``benchmarks/runs/<run_id>/``.  A run on a draft spec or on a development
-set (``d1-dev``, ``d1-real-dev``) is not rankable (the plan publishes only on
+set (``d1-dev``, ``d1-real-dev``, ``pilot-dev``) is not rankable (the plan publishes only on
 frozen ids and never reports the dev sets); it is published only on request,
 marked with why.  ``scripts/make_leaderboard.py`` builds the README board from
 the published summaries: one ranking per leaderboard set, ``d1-test`` (the
@@ -112,7 +112,9 @@ SET_TITLES = {"d1-test": "seeded sheets", "d1-real": "the sample plan sheets",
               "hard-pilots": "the harder tasks (pass or fail)",
               "d1-test-hard": "seeded sheets, the whole job (3-5 curves, 2-3 sheets)",
               "d1-real-hard": "the sample plan sheets, the whole job"}
-NEVER_REPORTED = ("d1-dev", "d1-real-dev")
+#: the development sets: a run on one is never published or ranked (``pilot-dev`` is the pilots'
+#: validation set, ``probes/pilot_dev.py``: checkpoint selection only)
+NEVER_REPORTED = ("d1-dev", "d1-real-dev", "pilot-dev")
 #: the prompt levels a set's board ranks apart, the focus first (Robert, 2026-11-08: the
 #: vague prompt is the board's focus; an explicit-prompt score is not comparable with it)
 BOARD_LEVELS = ("vague", "explicit")
@@ -156,6 +158,12 @@ HARNESS_TOOL_NAMES = frozenset({"get_task_brief", "run_check", "submit"})
 RECOVERY_WINDOW = 3
 
 GROUP_DIMS = ("model", "provider", "effort", "dialect", "mode", "level")
+#: what else sets a row apart, read from the episode header and carried only by a run that set it:
+#: ``thinking`` (``--thinking off``, ``provider_config.thinking``) and ``system_extra`` (``--system-extra``,
+#: the file's name and the head of its digest).  A run without them has neither field in its episode
+#: rows nor in its row key, so its report and its place on the board are what they were before these
+#: existed; a run with one is its own row, labelled so, on every board and in the Overall table.
+VARIANT_DIMS = ("thinking", "system_extra")
 #: (name, dimension, a, b): gap = effective(a) - effective(b), paired by task;
 #: b None means every other value of the dimension
 GAPS: Tuple[Tuple[str, str, str, Optional[str]], ...] = (
@@ -346,6 +354,7 @@ def load_episode(path, reverify: bool = False, check_delta: bool = True) -> Opti
     cost, prices_checked = _cost(header, end, rec["turns"])
     usage = end.get("usage_total") or {}
     termination = end.get("termination") or "unknown"
+    variant = variant_of(header)
     row = {
         "file": Path(path).name, "run_id": header.get("run_id"), "task_id": header.get("task_id"),
         "task_type": header.get("task_type"), "sheets": header.get("sheets"),
@@ -354,7 +363,8 @@ def load_episode(path, reverify: bool = False, check_delta: bool = True) -> Opti
         "provider": header.get("provider") or "unknown", "effort": header.get("effort"),
         "effort_label": effort_label(header.get("model") or header.get("agent"),
                                      header.get("provider") or "unknown", header.get("effort"),
-                                     (header.get("provider_config") or {}).get("extra_body")),
+                                     (header.get("provider_config") or {}).get("extra_body"),
+                                     variant.get("thinking")),
         "dialect": header.get("dialect", "neutral"), "mode": header.get("mode", "single"),
         "level": level, "sample": header.get("sample", 0),
         "spec_version": verify_rec.get("spec_version", header.get("spec_version")),
@@ -383,13 +393,49 @@ def load_episode(path, reverify: bool = False, check_delta: bool = True) -> Opti
         "elapsed_ms": end.get("elapsed_ms"),
         "findings": len(findings),
     }
+    row.update(variant)   # only what the run set: a plain run's row has no such field
     return {"row": row, "checks": checks, "findings": findings, "errors": use["errors"]}
 
 
 # --------------------------------------------------------------- aggregate
 
+def variant_of(header: dict) -> dict:
+    """The ``VARIANT_DIMS`` an episode's header carries, and no key for one it does not:
+    ``thinking`` as the run set it, ``system_extra`` as the file's name and the first eight
+    hex digits of its sha256 (two sheets of one name stay apart)."""
+    out = {}
+    thinking = (header.get("provider_config") or {}).get("thinking")
+    if thinking:
+        out["thinking"] = str(thinking)
+    extra = header.get("system_extra")
+    if extra:
+        extra = extra if isinstance(extra, dict) else {"path": str(extra)}
+        name = Path(str(extra.get("path") or "")).stem or "unnamed"
+        digest = str(extra.get("sha256") or "").removeprefix("sha256:")[:8]
+        out["system_extra"] = name + (f"@{digest}" if digest else "")
+    return out
+
+
+def variant_label(key: dict) -> str:
+    """What a row's ``VARIANT_DIMS`` say in its label; empty for a row without them."""
+    parts = []
+    if key.get("thinking"):
+        parts.append(f"thinking {key['thinking']}")
+    if key.get("system_extra"):
+        parts.append(f"system extra {key['system_extra']}")
+    return " · ".join(parts)
+
+
 def group_key(row: dict) -> Tuple:
-    return tuple(row.get(d) for d in GROUP_DIMS)
+    return tuple(row.get(d) for d in GROUP_DIMS + VARIANT_DIMS)
+
+
+def key_dims(key: Tuple) -> dict:
+    """A ``group_key`` as the dict a row's ``key`` holds: every ``GROUP_DIMS``, and a
+    ``VARIANT_DIMS`` only where the run set it."""
+    dims = dict(zip(GROUP_DIMS, key))
+    dims.update({d: v for d, v in zip(VARIANT_DIMS, key[len(GROUP_DIMS):]) if v})
+    return dims
 
 
 def group_label(dims: dict) -> str:
@@ -399,6 +445,8 @@ def group_label(dims: dict) -> str:
     parts = [model, dims["mode"], dims["level"]]
     if dims.get("dialect") and dims["dialect"] != "neutral":
         parts.append(dims["dialect"])
+    if variant_label(dims):
+        parts.append(variant_label(dims))
     return " · ".join(parts)
 
 
@@ -413,12 +461,16 @@ CLI_PROVIDERS = ("claude-code", "codex")
 
 
 def effort_label(model: Optional[str], provider: str, effort: Optional[str],
-                 extra_body: Optional[dict] = None) -> str:
+                 extra_body: Optional[dict] = None, thinking: Optional[str] = None) -> str:
     """An episode's effort (``roaddraft.effort``): the level the run set, what
     the request body set, else the model's default marked ``(default)``, or
-    ``default`` where that is not known; ``–`` for the harness's own agents."""
+    ``default`` where that is not known; ``–`` for the harness's own agents.
+    A run given ``--thinking`` says that: the switch is sent with every request
+    and is not in ``extra_body``."""
     if provider == "harness":
         return "–"
+    if thinking:
+        return f"thinking {thinking}"
     return effort_of.describe(model or "?", effort, EFFORT_SENT.get(provider), extra_body)[0]
 
 
@@ -428,7 +480,8 @@ def effort_cell(row: dict) -> str:
     if row.get("effort"):
         return row["effort"]
     key = row.get("key") or row
-    return effort_label(key.get("model"), key.get("provider") or "unknown", key.get("effort"))
+    return effort_label(key.get("model"), key.get("provider") or "unknown", key.get("effort"),
+                        thinking=key.get("thinking"))
 
 
 def task_means(eps: Sequence[dict], field: str = "effective_score") -> Dict[str, float]:
@@ -756,7 +809,7 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
     groups: Dict[Tuple, List[dict]] = {}
     for e in eps:
         groups.setdefault(group_key(e["row"]), []).append(e)
-    rows = [summarize_group(dict(zip(GROUP_DIMS, k)), v) for k, v in groups.items()]
+    rows = [summarize_group(key_dims(k), v) for k, v in groups.items()]
     order = sorted(range(len(rows)), key=lambda i: rank_key(rows[i]))
     keys = list(groups)
     rows = [rows[i] for i in order]
@@ -773,11 +826,11 @@ def build(run_dir, reverify: bool = False, check_delta: bool = True) -> dict:
             for kb in keys:
                 if kb == ka or (b is not None and kb[idx] != b) or kb[idx] == a:
                     continue
-                if any(ka[j] != kb[j] for j in range(len(GROUP_DIMS)) if j != idx):
+                if any(ka[j] != kb[j] for j in range(len(ka)) if j != idx):
                     continue
                 p = paired(groups[ka], groups[kb])
                 if p:
-                    other = dict(zip(GROUP_DIMS, ka))
+                    other = key_dims(ka)
                     gaps.append({"gap_name": name, "dimension": dim, "a": a, "b": kb[idx],
                                  "row": group_label(other).replace(f" · {a}", ""), **p})
     versions = {f: sorted({str(e["row"][f]) for e in eps})
@@ -1157,8 +1210,9 @@ def files(s: dict) -> Dict[str, str]:
     """The report's files by name."""
     rows = s["rows"]
     eps = s.get("_episodes") or []
-    dims = list(GROUP_DIMS)
-    per_check_rows = [[g["rank"], *[g["key"][d] for d in dims], cid, c["name"], c["weight"], c["n"],
+    # a variant is a column only in a report that has one, so every other report's files are unchanged
+    dims = list(GROUP_DIMS) + [d for d in VARIANT_DIMS if any(g["key"].get(d) for g in rows)]
+    per_check_rows = [[g["rank"], *[g["key"].get(d) for d in dims], cid, c["name"], c["weight"], c["n"],
                        c["mean_credit"], c["pass_rate"]]
                       for g in rows for cid, c in g["per_check"].items()]
     tax_rows = []
@@ -1166,14 +1220,15 @@ def files(s: dict) -> Dict[str, str]:
         for cat, codes in TAXONOMY:
             t = g["taxonomy"][cat]
             for code in codes:
-                tax_rows.append([g["rank"], *[g["key"][d] for d in dims], cat, code,
+                tax_rows.append([g["rank"], *[g["key"].get(d) for d in dims], cat, code,
                                  t["codes"].get(code, 0), t["episodes"], t["per_episode"]])
         for err, n in g["tool_errors"].items():
-            tax_rows.append([g["rank"], *[g["key"][d] for d in dims], "tool_use", err, n, None, None])
+            tax_rows.append([g["rank"], *[g["key"].get(d) for d in dims], "tool_use", err, n, None, None])
         for term, n in g["terminations"].items():
-            tax_rows.append([g["rank"], *[g["key"][d] for d in dims], "termination", term, n,
+            tax_rows.append([g["rank"], *[g["key"].get(d) for d in dims], "termination", term, n,
                              None, None])
     ep_fields = list(eps[0]["row"]) if eps else []
+    ep_fields += [d for d in VARIANT_DIMS if d not in ep_fields and any(d in e["row"] for e in eps)]
     out = {
         "summary.json": json.dumps({k: v for k, v in s.items() if not k.startswith("_")},
                                    indent=1, ensure_ascii=False) + "\n",
@@ -1183,7 +1238,7 @@ def files(s: dict) -> Dict[str, str]:
                                "pass_rate"], per_check_rows),
         "taxonomy.csv": _csv(["rank", *dims, "category", "code", "count", "episodes_share",
                               "per_episode"], tax_rows),
-        "episodes.csv": _csv(ep_fields, ([e["row"][f] for f in ep_fields]
+        "episodes.csv": _csv(ep_fields, ([e["row"].get(f) for f in ep_fields]
                                          for e in sorted(eps, key=lambda e: e["row"]["file"]))),
     }
     return out
@@ -1807,9 +1862,10 @@ def replace_block(text: str, block: str) -> str:
 
 __all__ = ["REPORT_VERSION", "LEADERBOARD_SETS", "SET_TITLES", "NEVER_REPORTED",
            "BOARD_LEVELS", "ONE_PROMPT_SETS", "LEVEL_NOTES", "LEVEL_BOARD_FILES", "level_board", "row_level",
-           "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "GAPS",
+           "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "VARIANT_DIMS", "GAPS",
            "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
-           "effort_label", "effort_cell", "summarize_group", "by_group", "group_columns",
+           "effort_label", "effort_cell", "variant_of", "variant_label", "key_dims",
+           "summarize_group", "by_group", "group_columns",
            "group_legend", "paired", "build", "publish_problems",
            "render_markdown", "files",
            "write", "publish", "published", "board", "render_board", "replace_block",

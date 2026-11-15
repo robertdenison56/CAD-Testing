@@ -167,7 +167,52 @@ def by_id(probe_id: str) -> Probe:
     if probe_id in BY_ID:
         return BY_ID[probe_id]
     from roaddraft.probes import tasks
-    return tasks.get(probe_id)
+    try:
+        return tasks.get(probe_id)
+    except KeyError:
+        probe = generated(probe_id)
+        if probe is None:
+            raise
+        return probe
+
+
+def generated(probe_id: str) -> Optional[Probe]:
+    """A generated training probe by its id (``tasks.deeds``: ``t03-deed-<seed>``;
+    ``tasks.planted``: ``t14-qa-<seed>``), made again from its seed, which also
+    registers its start; None when the id is neither's.  With it ``rescore``
+    (``report --reverify``) reaches the episodes of ``train-deeds`` and ``train-qa``."""
+    name, seed = generated_set(probe_id), probe_id.rpartition("-")[2]
+    if name == "train-deeds":
+        from roaddraft.tasks import deeds
+        return deeds.deed_task(int(seed)).probe
+    if name == "train-qa":
+        from roaddraft.tasks import planted
+        return planted.qa_task(int(seed)).probe
+    return None
+
+
+#: the generated training sets by the stem of their probe ids
+GENERATED_SETS = {"t03-deed": "train-deeds", "t14-qa": "train-qa"}
+
+
+def generated_set(probe_id: str) -> Optional[str]:
+    """The generated training set a probe id is of (``t03-deed-<seed>``: ``train-deeds``;
+    ``t14-qa-<seed>``: ``train-qa``); None for a pilot or a ``pilot-dev`` instance."""
+    kind, _, seed = probe_id.rpartition("-")
+    return GENERATED_SETS.get(kind) if seed.isdigit() else None
+
+
+def pins_of(probe: Probe) -> Tuple[str, str]:
+    """The generator and verifier versions an episode of ``probe`` is stamped with: its
+    set's.  A generated training probe carries its own set's (``train-deeds``,
+    ``train-qa``): the generator version its manifest names and the hash of the checks
+    that grade it, not the held-out pilots' hashes."""
+    name = generated_set(probe.id)
+    if name is not None:
+        from roaddraft.tasks.brief import GENERATOR_VERSION
+        return GENERATOR_VERSION, check_version(check_sources(name))
+    name = set_of(probe)
+    return generator_version(probes_of(name)), check_version(check_sources(name))
 
 
 def generator_version(probes: Optional[Sequence[Probe]] = None) -> str:
@@ -189,12 +234,18 @@ def current_ids(probes: Optional[Sequence[Probe]] = None, level: str = "explicit
 
 def check_sources(name: str = PILOT_SET) -> List[Path]:
     """The files the pilot checks live in: the pilot package, one module per family;
-    for ``pilot-dev``, its own module beside them (it reuses the families' checks)."""
+    for ``pilot-dev``, its own module beside them (it reuses the families' checks);
+    for a generated training set, the module that generates it beside them (a deed
+    is graded by the survey family's check, a review by its own in ``tasks.planted``)."""
     import roaddraft.probes.pilot as pilot_pkg
     paths = sorted(Path(pilot_pkg.__file__).parent.glob("*.py"))
     if name == DEV_SET:
         import roaddraft.probes.pilot_dev as dev
         paths.append(Path(dev.__file__))
+    elif name in GENERATED_SETS.values():
+        import importlib
+        module = {"train-deeds": "roaddraft.tasks.deeds", "train-qa": "roaddraft.tasks.planted"}[name]
+        paths.append(Path(importlib.import_module(module).__file__))
     return paths
 
 
@@ -363,7 +414,7 @@ def grade(probe: Probe, project: Path, touched: bool = True, level: str = "expli
     # already satisfies (a clean control's "no false alarms")
     items = list(result.items) if touched else [(n, False) for n, _d in result.items]
     return ProbeReport(probe.id, passed, result.detail if touched else "no engine calls",
-                       items, touched, check_version(check_sources(set_of(probe))))
+                       items, touched, pins_of(probe)[1])
 
 
 def _changed_files(project: Path, probe: Probe) -> List[Path]:
@@ -501,12 +552,12 @@ class ProbeEpisode(Episode):
     def header(self) -> dict:
         from roaddraft.tasks.spec_v1 import SPEC_VERSION, spec_hash
         pins = self.pins or {}
+        generator, verifier = pins_of(self.probe)
         return {"type": "header", "run_id": self.config.run_id, "task_id": self.task.task_id,
                 "task_type": self.task.task_type, "sheets": 1, "seed": None,
                 "probe": self.probe.id, "start": self.probe.start,
                 "spec_version": SPEC_VERSION, "spec_hash": spec_hash(),
-                "generator_version": generator_version(probes_of(set_of(self.probe))),
-                "verifier_version": check_version(check_sources(set_of(self.probe))),
+                "generator_version": generator, "verifier_version": verifier,
                 "harness_version": HARNESS_VERSION,
                 **prompt_fields(self.brief_text, self.config.system_extra),
                 "git_commit": pins.get("commit"),
@@ -672,6 +723,6 @@ class ProbeOracleAgent(_QueueAgent):
 
 __all__ = ["PILOT_SET", "DEV_SET", "SETS", "dev_probes", "probes_of", "set_of", "FAMILIES", "BUDGETS", "ProbeTask", "ProbeReport", "ProbeEpisode",
            "ProbeOracleAgent", "EpisodeServer", "pilots", "by_id", "entry", "task_id",
-           "task_type", "brief_text", "levels_of", "generator_version", "current_ids", "check_sources",
+           "task_type", "brief_text", "levels_of", "generated", "generated_set", "pins_of", "generator_version", "current_ids", "check_sources",
            "check_version", "task_from_entry", "grade",
            "rescore", "keep", "oracle_calls", "system_prompt"]

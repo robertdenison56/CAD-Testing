@@ -186,3 +186,54 @@ def test_the_lora_targets_are_the_language_models_projections():
     miss = ["model.visual.blocks.0.attn.qkv", "lm_head", "model.layers.0.linear_attn.in_proj_a",
             "model.visual.blocks.3.mlp.linear_fc1"]
     assert all(pat.fullmatch(n) for n in hit) and not any(pat.fullmatch(n) for n in miss)
+
+
+def _copies(seeds):
+    """Four conversations a seed: both levels, each with a faulted copy."""
+    return [{"id": f"D1-{s}-abc.{level}" + (".faults" if faulted else ""), "header": {"seed": s},
+             "_file": f"d1-train-{level}" + ("-faults" if faulted else "") + ".jsonl"}
+            for s in seeds for level in ("vague", "explicit") for faulted in (False, True)]
+
+
+def test_a_validation_task_leaves_training_with_every_copy_of_it():
+    lora = _script("training_lora")
+    convs = _copies(range(10000, 10400))
+    train, val = lora.split_validation(convs, 0.1, 24, seed=3407)
+    held = {lora.task_key(c) for c in convs} - {lora.task_key(c) for c in train}
+    assert 20 <= len(held) <= 60                       # about a tenth of 400 seeds
+    assert len(train) == 4 * (400 - len(held))         # every copy of a held seed is out
+    assert len(val) == 24 and {lora.task_key(c) for c in val} <= held
+    assert not any(c["_file"].endswith("-faults.jsonl") for c in val)
+    # the draw is on the seed alone: more data does not move a task across the line
+    more, _ = lora.split_validation(convs + _copies(range(10400, 10500)), 0.1, 24, seed=3407)
+    assert {lora.task_key(c) for c in train} <= {lora.task_key(c) for c in more}
+    assert lora.split_validation(convs, 0.0, 24) == (convs, [])
+
+
+def test_a_conversation_without_a_seed_is_keyed_by_its_id_before_the_level():
+    lora = _script("training_lora")
+    assert lora.task_key({"id": "TR-t03-deed-19000-fe70009b1d.vague.faults", "header": {}}) == "TR-t03-deed-19000-fe70009b1d"
+    assert lora.task_key({"id": "x.vague", "header": {"seed": 0}}) == "seed:0"
+
+
+def test_an_epochs_order_depends_only_on_the_seed_and_the_epoch():
+    import argparse
+    lora = _script("training_lora")
+    rows = [{"id": f"c{k}#0", "tokens": 100 + k} for k in range(40)]
+    args = argparse.Namespace(seed=3407, smoke=False)
+    first = [r["id"] for r in lora.epoch_order(rows, args, 0)]
+    assert first == [r["id"] for r in lora.epoch_order(rows[::-1], args, 0)]      # a resumed run's order
+    assert first != [r["id"] for r in lora.epoch_order(rows, args, 1)]
+    assert sorted(first) == sorted(r["id"] for r in rows)
+    smoke = lora.epoch_order(rows, argparse.Namespace(seed=3407, smoke=True), 0)
+    assert [r["tokens"] for r in smoke[:5]] == [139, 138, 137, 136, 135]
+
+
+def test_a_sequence_past_the_limit_or_without_a_target_does_not_train():
+    lora = _script("training_lora")
+    rows = [{"id": "a#0", "conversation": "a", "tokens": 10, "trained": 3, "too_long": False, "untrained": False, "masked": 0},
+            {"id": "a#1", "conversation": "a", "tokens": 99, "trained": 2, "too_long": True, "untrained": False, "masked": 0},
+            {"id": "b#0", "conversation": "b", "tokens": 12, "trained": 0, "too_long": False, "untrained": True, "masked": 1}]
+    assert [r["id"] for r in lora.usable(rows)] == ["a#0"]
+    st = lora.stats(rows, [{"id": "a"}, {"id": "b"}])
+    assert (st["kept"], st["dropped_too_long"], st["dropped_untrained"], st["tokens"], st["longest"]) == (1, 1, 1, 10, 10)

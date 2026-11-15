@@ -66,7 +66,8 @@ def test_the_generated_sets_are_their_own_seeds_and_share_nothing():
     assert set(deeds.SEEDS).isdisjoint(planted.SEEDS)
     others = (set(tasksets.TRAIN_SEEDS) | set(tasksets.TRAIN_HARD_SEEDS)
               | set(tasksets.TRAIN_TWIST_SEEDS) | set(tasksets.TRAIN_CROWD_SEEDS)
-              | set(tasksets.TRAIN_REVISE_SEEDS))
+              | set(tasksets.TRAIN_REVISE_SEEDS) | set(tasksets.TRAIN_TWIST_WIDTH_SEEDS)
+              | set(tasksets.TRAIN_REVISE_BASE_SEEDS) | set(tasksets.TRAIN_BREAKS_SEEDS))
     assert others.isdisjoint(deeds.SEEDS) and others.isdisjoint(planted.SEEDS)
 
 
@@ -83,6 +84,91 @@ def test_the_generated_manifests_rebuild_to_their_ids():
                                         else entry["vague_task_id"])
 
 
+def _header(path) -> dict:
+    with open(path) as f:
+        return json.loads(f.readline())
+
+
+@pytest.mark.parametrize("name,seed", [("train-deeds", 19000), ("train-qa", 20000)])
+def test_the_recorder_runs_on_the_pilots_budgets(name, seed, tmp_path):
+    """A recorded conversation states the budgets a pilot run is told (600 steps, 12
+    faults), not D1's 150 and 8: the converter builds the system prompt from the header."""
+    from roaddraft.eval import probe_tasks
+    from roaddraft.trajectories.conversations import budgets_of
+    task = tasksets.task_from_entry(_row(name, seed), level="vague")
+    row = reasoning.record_task(task, "vague", out_root=tmp_path)
+    assert row["kept"], row
+    header = _header(row["path"])
+    assert header["budgets"] == probe_tasks.BUDGETS.for_mode("single").to_dict()
+    assert (header["budgets"]["steps"], header["budgets"]["faults"]) == (600, 12)
+    said = probe_tasks.system_prompt("single", budgets_of(header))
+    assert "You have 600 steps, and 12 failed calls in a row end the task" in said
+    assert tasksets.default_budgets(name) == probe_tasks.BUDGETS
+
+
+@pytest.mark.parametrize("name", tasksets.PROBE_TRAIN_NAMES)
+def test_the_runner_runs_a_generated_set_as_it_runs_the_pilots(name, tmp_path):
+    """``python -m roaddraft.eval run --taskset train-deeds`` (and ``train-qa``): the
+    oracle passes and the null agent fails through the loop, at both levels, each
+    episode filed under the id of its level and on the pilots' budgets."""
+    from roaddraft.eval import probe_tasks
+    from roaddraft.eval.runner import Cell, RunSpec, cell_path, run
+    spec = RunSpec(taskset=name, agents=("oracle", "null"), levels=LEVELS, limit=2,
+                   results_root=str(tmp_path), run_id="gen",
+                   budgets=tasksets.default_budgets(name))
+    summary = run(spec)
+    assert summary["episodes"] == 8 and not summary.get("errors")
+    for level in LEVELS:
+        assert summary["groups"][f"oracle|{level}|single"]["mean_effective"] == 100.0
+        assert summary["groups"][f"oracle|{level}|single"]["n"] == 2
+        assert summary["groups"][f"null|{level}|single"]["mean_effective"] == 0.0
+        for entry in tasksets.entries(name, limit=2):
+            cell = Cell(entry, "oracle", level, "single", 0)
+            assert cell.task_id == entry["vague_task_id" if level == "vague" else "task_id"]
+            header = _header(cell_path(spec, cell))
+            assert header["task_id"] == cell.task_id and header["level"] == level
+            assert header["budgets"]["steps"] == probe_tasks.BUDGETS.steps
+
+
+def test_a_generated_episode_carries_its_own_sets_pins(tmp_path, monkeypatch):
+    """A training episode is stamped with its own set's hashes: the generator version
+    its manifest names and a check hash over the pilot checks and the module that
+    generates it.  The held-out pilots' two hashes are theirs alone and do not move."""
+    from roaddraft.eval import probe_tasks
+    held = (probe_tasks.generator_version(probe_tasks.pilots()), probe_tasks.check_version())
+    assert held == (tasksets.current_generator("hard-pilots"),
+                    tasksets.current_verifier("hard-pilots"))
+    for name, module, seed in (("train-deeds", deeds, 19000), ("train-qa", planted, 20000)):
+        result = _run(name, seed, ProbeOracleAgent(), "vague")
+        probe = tasksets.task_from_entry(_row(name, seed)).probe
+        assert probe_tasks.generated_set(probe.id) == name
+        generator, verifier = probe_tasks.pins_of(probe)
+        assert generator == tasksets.load(name)["generator_version"] \
+            == tasksets.current_generator(name) != held[0]
+        assert verifier == tasksets.current_verifier(name) != held[1]
+        assert result.report.to_dict()["verifier_version"] == verifier
+        task = tasksets.task_from_entry(_row(name, seed), level="vague")
+        episode = ProbeEpisode(task, NullAgent(), EpisodeConfig(level="vague"))
+        episode.reset()
+        header = episode.header()
+        assert (header["generator_version"], header["verifier_version"]) == (generator, verifier)
+        # the hash is over the generating module too, so an edit to it moves the pin
+        sources = probe_tasks.check_sources(name)
+        assert sources[:-1] == probe_tasks.check_sources() and sources[-1].samefile(module.__file__)
+        edited = tmp_path / sources[-1].name
+        edited.write_bytes(sources[-1].read_bytes() + b"\n# edited\n")
+        assert probe_tasks.check_version(sources[:-1] + [edited]) != verifier
+    assert len({tasksets.current_verifier(n) for n in tasksets.PROBE_TRAIN_NAMES}) == 2
+    # a pilot and a pilot-dev instance keep their sets' pins
+    from roaddraft.probes import pilot_dev
+    assert probe_tasks.generated_set(probe_tasks.pilots()[0].id) is None
+    assert probe_tasks.pins_of(probe_tasks.pilots()[0]) == held
+    assert probe_tasks.pins_of(pilot_dev.PROBES[0]) == (
+        tasksets.current_generator("pilot-dev"), tasksets.current_verifier("pilot-dev"))
+    assert not any(probe_tasks.generated_set(p.id)
+                   for p in probe_tasks.pilots() + probe_tasks.dev_probes())
+
+
 def test_nothing_is_registered_inside_the_pilot_package():
     """A probe added to ``probes/pilot`` joins the held-out set and moves its hashes."""
     from roaddraft.eval import probe_tasks
@@ -92,6 +178,86 @@ def test_nothing_is_registered_inside_the_pilot_package():
     assert len(pilots) == 112
     assert not any(p.startswith(("t03-", "t14-")) for p in pilots)
     assert tasksets.check("hard-pilots") == []
+
+
+def _plain(text) -> str:
+    return str(text).replace("\u2019", "'").replace("\u2032", "'").replace("\u201d", '"')
+
+
+def _course(leg: dict) -> tuple:
+    if "bearing" in leg:
+        return ("line", _plain(leg["bearing"]), round(leg["distance"], 2))
+    return ("curve", round(leg["radius"], 2), _plain(leg["delta"]))
+
+
+def test_no_generated_deed_repeats_a_held_out_deed():
+    """The three held-out deeds (``p03-misclosure-*``) against all 300 generated:
+    no course, no point of beginning and no (misclosure, precision) answer in
+    common, and a generated deed is set on no sheet."""
+    from roaddraft.design import cogo
+    from roaddraft.probes.pilot import survey
+    held = [(survey.MIS_POB, [{"bearing": b, "distance": d} for b, d in survey.MIS_DEED]),
+            (survey.DEED_PPM049.pob, list(survey.DEED_PPM049.legs)),
+            (survey.DEED_FDOT915.pob, list(survey.DEED_FDOT915.legs))]
+    held_courses = {_course(leg) for _, legs in held for leg in legs}
+    held_pobs = {(round(x, 2), round(y, 2)) for (x, y), _ in held}
+    held_answers = set()
+    for pob, legs in held:
+        m = cogo.run_traverse(pob, [dict(leg) for leg in legs], close=True).misclosure()
+        held_answers.add((round(m["distance"], 2), round(m["perimeter"] / m["distance"])))
+    assert len(held_courses) == 22 and len(held_answers) == 3
+    made = [deeds.deed_task(t["seed"]) for t in tasksets.load("train-deeds")["tasks"]]
+    assert len(made) == 300
+    for d in made:
+        assert d.deed.sheet_id == ""
+        assert not {_course(leg) for leg in d.deed.legs} & held_courses, d.seed
+        assert (round(d.deed.pob[0], 2), round(d.deed.pob[1], 2)) not in held_pobs, d.seed
+        assert (round(d.misclosure, 2), round(d.precision)) not in held_answers, d.seed
+
+
+def test_no_generated_review_sheet_letters_a_held_out_sheets_values(tmp_path):
+    """The nine held-out QA reviews (``p14``) against all 300 generated sheets:
+    no bearing, station or curve value lettered on a generated sheet is lettered
+    in a held-out pilot's files, and no plant is one of theirs."""
+    import re
+    from roaddraft.document.fileformat import read_document
+    from roaddraft.eval import probe_tasks
+    from roaddraft.probes import fixture
+    from roaddraft.probes.pilot import qa_review
+    value = re.compile(r"\d+°\d+'\d+|\d+\+\d\d\.\d\d|\d{3,}\.\d\d")
+
+    def lettered(node, out):
+        if isinstance(node, str):
+            if value.search(_plain(node)):
+                out.add(_plain(node))
+        elif isinstance(node, dict):
+            for v in node.values():
+                lettered(v, out)
+        elif isinstance(node, (list, tuple)):
+            for v in node:
+                lettered(v, out)
+        return out
+
+    pilots = [p for p in probe_tasks.pilots() if p.id.startswith("p14-")]
+    assert len(pilots) == 9
+    theirs = set()
+    for p in pilots:
+        doc = fixture.start_document(tmp_path / p.id, p.start)
+        for path in doc.parent.rglob("*.rdraft"):
+            lettered(read_document(path), theirs)
+    their_plants = {_plain(pl["what"]) for name in dir(qa_review) if name.endswith("_PLANTS")
+                    for pl in getattr(qa_review, name)}
+    assert len(theirs) > 100 and len(their_plants) > 25
+    ours, our_plants = set(), set()
+    for row in tasksets.load("train-qa")["tasks"]:
+        task = planted.qa_task(row["seed"])
+        lettered(planted._STARTS[task.seed], ours)
+        our_plants |= {_plain(pl["what"]) for pl in task.plants}
+    assert len(ours) > 2000 and len(our_plants) > 300
+    # a whole station (``142+00.00``) is on any line stationed through it: not a sheet's value
+    both = {s for s in ours & theirs if not re.fullmatch(r"\d+\+00\.00", s)}
+    assert not both, sorted(both)
+    assert not our_plants & their_plants
 
 
 # ------------------------------------------------------------ the deeds

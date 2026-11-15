@@ -53,6 +53,38 @@ target), its header lists the faults (``injected``) and its id ends
    was made for the twist, and nothing on a revised sheet was left stale:
    the recorder's keep rule, applied again so a rollout is held to it too.
 
+A run given ``--system-extra`` hashes its task text and the extra together
+(``eval.episode.prompt_hash``).  Its episodes are held to that hash with the
+extra their header records, file and digest: the text is read from the file
+where it still has the digest, else from the end of the system prompt as
+sent, and held to the digest either way.  The conversation's system prompt
+is the prompt as sent, the extra in it.
+
+**Probe tasks.**  The generated reasoning sets (``train-deeds``,
+``train-qa``: ``tasks.deeds``, ``tasks.planted``) record their references on
+the pilots' harness (``eval.probe_tasks.ProbeEpisode``), and their episode
+files convert beside the D1 sets'.  The pieces are that harness's:
+
+- *System*: the agent's own where its header carries one, else what
+  ``ProbeEpisode`` hands an agent's ``begin`` under the episode's mode and
+  budgets (``probe_tasks.system_prompt``: the MCP server's instructions,
+  then how the task runs).
+- *Tools*: the list ``ProbeEpisode.reset`` builds, the MCP server's tools and
+  the harness's, held to the header's digest.
+- *Task*: the text the harness sends (``probe_tasks.brief_text``, the probe
+  runner's ``prompting.task_text``), the task rebuilt from its manifest at
+  the episode's level.
+- *Turns* and *End*: as above; a probe episode runs the same loop.
+
+A probe episode's journal is not a list of commands (the MCP server saves the
+files itself), so the episode is played again instead: its recorded calls
+through a new ``ProbeEpisode`` on the manifest's task.  It is kept when every
+call answers as the episode recorded (the start documents and the engine are
+the episode's), the task's own check passes on the files the replay leaves,
+and ``trajectories.reasoning.audit`` finds nothing ungrounded.  An episode
+that looked at an attachment is dropped as ``vision``: the scan it was sent
+is not in its file.
+
 ``python -m roaddraft.trajectories.conversations convert`` writes one JSONL
 of conversations per training set and level into ``results/training/``,
 ``tools.json`` and ``summary.json``; ``scripts/training_tokens.py`` counts
@@ -71,13 +103,16 @@ import time
 from collections import Counter
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 FORMAT = "roaddraft-d1-conversation/1"
 REPO = Path(__file__).resolve().parents[3]
 SOURCE = REPO / "results" / "grounded"
 #: the faulted copies of the references (``trajectories.faults``), <set>-<level>/ each
 FAULTS = REPO / "results" / "faults"
+#: ``run``'s faults when none is named: ``FAULTS`` for the recordings in ``SOURCE``, the
+#: references they were made from, and no faulted copies for any other source
+PAIRED = "paired"
 OUT = REPO / "results" / "training"
 CARD = REPO / "benchmarks" / "training" / "DATASET_CARD.md"
 LEVELS = ("vague", "explicit")
@@ -85,7 +120,7 @@ LEVELS = ("vague", "explicit")
 TEXT_MODES = ("single", "self_correct")
 #: why an episode is not a training example, in the order the checks run
 REASONS = ("not_submitted", "vision", "nudged", "no_task", "prompt", "truth", "start", "tools",
-           "score", "ungrounded", "twist_ignored", "left_stale", "error")
+           "replay", "score", "ungrounded", "twist_ignored", "left_stale", "error")
 
 
 def digest(text: str) -> str:
@@ -143,15 +178,65 @@ def budgets_of(header: dict):
     return Budgets(**{k: v for k, v in (header.get("budgets") or {}).items() if k in known})
 
 
-def system_text(header: dict) -> str:
+def system_text(header: dict, extra=None) -> str:
     """The system prompt the episode's model was sent, or, for an agent that
-    had none, the one an LLM agent is sent under the same mode and budgets."""
+    had none, the one an LLM agent is sent under the same mode and budgets,
+    the run's system extra (``system_extra_of``) after it when it had one."""
     if header.get("system_prompt"):
         return header["system_prompt"]
     from roaddraft.eval.agents.llm import system_for
-    return system_for({"mode": header.get("mode", "single"), "level": header.get("level"),
-                       "dialect": header.get("dialect", "neutral"), "budgets": budgets_of(header),
-                       "scope": header.get("scope") or []})
+    context = {"mode": header.get("mode", "single"), "level": header.get("level"),
+               "dialect": header.get("dialect", "neutral"), "budgets": budgets_of(header),
+               "scope": header.get("scope") or []}
+    if extra is not None:
+        context["system_extra"] = extra.text
+    return system_for(context)
+
+
+def system_extra_of(header: dict):
+    """The system extra the episode's run was given (``--system-extra``), or
+    None.  The header records its file and digest, not its text.  The text is
+    read from the file where the file still has that digest; else it is taken
+    from the end of the system prompt as sent, where the agent put it
+    (``prompts.with_extra``), and held to the digest.  ``Drop("prompt")``
+    when neither gives the text the run hashed."""
+    recorded = header.get("system_extra")
+    if not recorded:
+        return None
+    from roaddraft.eval.prompts import SystemExtra
+    want = recorded.get("sha256")
+    shown = str(recorded.get("path") or "")
+    path = Path(shown)
+    if shown:
+        try:
+            extra = SystemExtra.load(path if path.is_absolute() else REPO / path)
+        except ValueError:
+            extra = None
+        if extra is not None and extra.sha256 == want:
+            return extra
+    # with_extra puts the stripped text last, after a blank line: the file is that text,
+    # with a closing newline or without
+    sent = header.get("system_prompt") or ""
+    at = sent.find("\n\n")
+    while at >= 0:
+        tail = sent[at + 2:].strip()
+        for text in (tail + "\n", tail):
+            if text and digest(text) == want:
+                return SystemExtra(path=shown, sha256=want, text=text)
+        at = sent.find("\n\n", at + 1)
+    raise Drop("prompt", f"the run's system extra ({shown}, {want}) is not on disk with that "
+                         "digest and is not the end of the system prompt as sent")
+
+
+def held_to_prompt(header: dict, brief: str):
+    """Hold ``brief`` to the header's prompt hash as the episode took it
+    (``eval.episode.prompt_hash``: the task text, and with a system extra the
+    two together), or ``Drop("prompt")``.  The run's system extra, or None."""
+    from roaddraft.eval.episode import prompt_hash
+    extra = system_extra_of(header)
+    if prompt_hash(brief, extra) != header.get("prompt_hash"):
+        raise Drop("prompt", "the task text at its level is not the one the episode was given")
+    return extra
 
 
 def _agent():
@@ -178,7 +263,13 @@ def messages(system: str, brief: str, turns: Sequence[dict], budgets) -> List[di
         for c in said.get("tool_calls") or []:
             n += 1
             calls.append(Call(f"call_{n:04d}", c["name"], dict(c.get("params") or {})))
-        message = {"role": "assistant", "content": said.get("text") or ""}
+        text = said.get("text") or ""
+        # a closing turn that said nothing is recorded with its submit note as its text
+        # (Episode.run): the note is the submit call's argument already, and is written once
+        if said.get("submit") and calls and calls[-1].name == "submit" \
+                and text == str(calls[-1].params.get("note") or ""):
+            text = ""
+        message = {"role": "assistant", "content": text}
         if calls:
             message["tool_calls"] = [{"id": c.id, "type": "function",
                                       "function": {"name": c.name, "arguments": c.params}}
@@ -211,11 +302,23 @@ def _entries(taskset: str) -> Dict[str, dict]:
     return _CACHE[key]
 
 
-def rebuild_task(taskset: str, task_id: str):
+def rebuild_task(taskset: str, task_id: str, level: Optional[str] = None):
+    """The task ``task_id`` of the ``taskset`` manifest.  A probe task is its
+    own id at each prompt level and is built posed at ``level``; a D1 task is
+    the same at every level."""
     from roaddraft.eval import taskset as tasksets
     entry = _entries(taskset).get(task_id)
+    if entry is None and level == "vague":
+        entry = next((e for e in _entries(taskset).values()
+                      if e.get("vague_task_id") == task_id), None)
     if entry is None:
         raise Drop("no_task", f"{task_id} is not in the {taskset} manifest")
+    if "generated" in entry or "probe" in entry:
+        want = entry.get("vague_task_id") if level == "vague" else entry["task_id"]
+        if want != task_id:
+            raise Drop("no_task", f"{task_id} is not the {taskset} manifest's task at the "
+                                  f"{level} level")
+        return tasksets.task_from_entry(entry, level=level or "explicit")
     return tasksets.task_from_entry(entry)
 
 
@@ -255,10 +358,14 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
         raise Drop("nudged", f"turns {nudged}")
 
     level = header["level"]
+    if header.get("probe") or journal.get("probe"):
+        return _convert_probe(path, taskset, records, audit)
     task = rebuild_task(taskset, header["task_id"])
+    if getattr(task, "probe", None) is not None:
+        raise Drop("no_task", f"{header['task_id']} is a probe task of {taskset}, the episode "
+                              "is not a probe episode")
     brief = task_text(task.brief, level)
-    if digest(brief) != header.get("prompt_hash"):
-        raise Drop("prompt", "the task text at its level is not the one the episode was given")
+    extra = held_to_prompt(header, brief)
     if task.truth.to_dict() != journal.get("truth"):
         raise Drop("truth", "the manifest's task grades differently from the episode's truth")
     if task.baseline != journal.get("baseline"):
@@ -296,8 +403,19 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
         if behind:
             raise Drop("left_stale", ", ".join(behind[:5]))
 
-    system = system_text(header)
+    system = system_text(header, extra)
     msgs = messages(system, brief, turns, budgets_of(header))
+    return _conversation(path, taskset, header, turns, msgs, system, tools_digest,
+                         VERIFIER_VERSION, report), defs
+
+
+def _conversation(path, taskset: str, header: dict, turns: Sequence[dict], msgs: List[dict],
+                  system: str, tools_digest: str, verifier: str, report,
+                  more: Optional[dict] = None) -> dict:
+    """The conversation record of a kept episode: its id, the header of pins
+    and counts (``more``: what a kind of episode adds or replaces), and the
+    messages."""
+    level, mode = header["level"], header.get("mode", "single")
     calls = sum(len((t.get("assistant") or {}).get("tool_calls") or []) for t in turns)
     results = [r for t in turns[:-1] for r in t.get("results") or []]
     held = []
@@ -316,7 +434,7 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
         "system_sha256": digest(system),
         "spec_version": header.get("spec_version"), "spec_hash": header.get("spec_hash"),
         "generator_version": header.get("generator_version"),
-        "verifier_version": VERIFIER_VERSION, "harness_version": header.get("harness_version"),
+        "verifier_version": verifier, "harness_version": header.get("harness_version"),
         "recorded_commit": header.get("git_commit"), "recorded_at": header.get("started_at"),
         "score": {"effective": report.effective_score, "rubric": report.rubric_score},
         "counts": {"turns": len(turns), "calls": calls, "results_shown": len(results),
@@ -325,12 +443,131 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
                    "masked": sum(1 for m in msgs if m.get("weight") == 0)},
         "episode": _shown_path(path),
     }
+    head.update(more or {})
+    if header.get("system_extra"):
+        # the run's --system-extra, file and digest: its text is in the system prompt
+        head["system_extra"] = dict(header["system_extra"])
     if injected:
         head["injected"] = injected   # the faults put in (trajectories.faults): their broken turns weigh 0
     if any(held):
         head["prompt_tokens"] = held   # what the server counted for each request, for calibration
     cid = f"{header['task_id']}.{level}" + (".faults" if injected else "")
-    return {"format": FORMAT, "id": cid, "header": head, "messages": msgs}, defs
+    return {"format": FORMAT, "id": cid, "header": head, "messages": msgs}
+
+
+# ------------------------------------------------------------ one probe episode
+
+#: the MCP server's tool that returns a scan: its image goes to the model and not to the file
+ATTACHMENT_TOOL = "view_attachment"
+
+
+def _replay_agent(turns: Sequence[dict]):
+    """An agent that makes an episode's recorded calls again, turn by turn,
+    and keeps the context its episode hands ``begin``."""
+    from roaddraft.eval.agents import Agent, Submit, ToolCall
+
+    class Replay(Agent):
+        name = "replay"
+
+        def __init__(self):
+            self.context: dict = {}
+            self.n = 0
+
+        def begin(self, context: dict) -> None:
+            self.context = dict(context)
+
+        def act(self, observation: dict):
+            said = turns[self.n].get("assistant") or {}
+            self.n += 1
+            calls = said.get("tool_calls") or []
+            if not calls:
+                return Submit(note=said.get("text") or "", implicit=bool(said.get("implicit_submit")))
+            return [ToolCall(c["name"], json.loads(json.dumps(c.get("params") or {}))) for c in calls]
+
+    return Replay()
+
+
+def _plain(value):
+    """``value`` as it reads back from an episode file."""
+    return json.loads(json.dumps(value, ensure_ascii=False))
+
+
+def _convert_probe(path, taskset: str, records: dict, audit: bool) -> Tuple[dict, List[dict]]:
+    """``convert_episode`` for a probe-task episode (``eval.probe_tasks``)."""
+    from roaddraft.eval.agents.llm import system_for
+    from roaddraft.eval.episode import EpisodeConfig
+    from roaddraft.eval.probe_tasks import ProbeEpisode
+
+    header, journal, turns = records["header"], records["journal"], records["turns"]
+    level, mode = header["level"], header.get("mode", "single")
+    looked = [t["n"] for t in turns
+              if any(c.get("name") == ATTACHMENT_TOOL
+                     for c in (t.get("assistant") or {}).get("tool_calls") or [])]
+    if looked:
+        raise Drop("vision", f"turns {looked} looked at an attachment: the scan is not in the file")
+    task = rebuild_task(taskset, header["task_id"], level)
+    probe = getattr(task, "probe", None)
+    if probe is None:
+        raise Drop("no_task", f"{header['task_id']} is not a probe task of {taskset}")
+    brief = task.brief
+    extra = held_to_prompt(header, brief)
+    if (probe.id, probe.start) != (journal.get("probe"), journal.get("start")):
+        raise Drop("start", f"the manifest's task is probe {probe.id} on start {probe.start}, the "
+                            f"episode ran {journal.get('probe')} on {journal.get('start')}")
+
+    # the episode again, on the manifest's task: the harness builds the start, the tool list
+    # and the system prompt itself, and every recorded call is made on them
+    budgets = budgets_of(header)
+    agent = _replay_agent(turns)
+    episode = ProbeEpisode(task, agent, EpisodeConfig(
+        level=level, mode=mode, dialect=header.get("dialect", "neutral"), budgets=budgets,
+        sample=int(header.get("sample") or 0), system_extra=extra))
+    result = episode.run()
+    defs = _plain(episode.tools)
+    tools_digest = tools_sha256(defs)
+    if tools_digest != header.get("tools_sha256"):
+        raise Drop("tools", f"the task's tools digest to {tools_digest}, "
+                            f"the episode was shown {header.get('tools_sha256')}")
+    again = _plain(episode.turns)
+    for was, now in zip(turns, again):
+        got, want = now.get("results") or [], was.get("results") or []
+        if got != want:
+            k = next((i for i, (a, b) in enumerate(zip(got, want)) if a != b), min(len(got), len(want)))
+            name = (want[k] if k < len(want) else got[k]).get("name")
+            raise Drop("replay", f"turn {was.get('n')}, call {k + 1} ({name}) answers differently "
+                                 "on the manifest's task: the start documents or the engine are "
+                                 "not the episode's")
+    if result.termination != "submit" or len(again) != len(turns):
+        raise Drop("replay", f"played again it ended on {result.termination} after {len(again)} "
+                             f"turns ({result.error or 'no error'}), the episode submitted after "
+                             f"{len(turns)}")
+    report = result.report
+    if report.effective_score < 100.0:
+        raise Drop("score", f"the task's check fails on the replayed files: "
+                            f"{str(getattr(report, 'detail', ''))[:160]}")
+    if audit:
+        from roaddraft.trajectories import faults, reasoning
+        broken = faults.broken_turns(turns)
+        found = [f for f in reasoning.audit(brief, defs, turns) if f.get("turn") not in broken]
+        if found:
+            raise Drop("ungrounded", json.dumps(found[:3], ensure_ascii=False))
+
+    # an agent's own system prompt as sent; else what the harness's begin context asks for
+    system = header.get("system_prompt") or system_for(agent.context)
+    msgs = messages(system, brief, turns, budgets)
+    more = {"harness": "probe", "probe": probe.id, "start": probe.start,
+            "seed": _entry_seed(taskset, header["task_id"], header.get("seed"))}
+    return _conversation(path, taskset, header, turns, msgs, system, tools_digest,
+                         report.verifier_version, report, more), defs
+
+
+def _entry_seed(taskset: str, task_id: str, default=None):
+    """The seed a generated probe task was made from, which its episode header does not
+    carry: the manifest entry's."""
+    for e in _entries(taskset).values():
+        if task_id in (e.get("task_id"), e.get("vague_task_id")):
+            return e.get("seed", default)
+    return default
 
 
 def _shown_path(path) -> str:
@@ -374,8 +611,10 @@ def sources(src: Path) -> Tuple[List[Path], dict]:
     for row in rows:
         if row.get("kept"):
             paths.append(src / "episodes" / Path(row["path"]).name)
+    # the reasoning recorder (probe tasks) has no notion of covered: every task has a drafter
+    covered = sum(bool(r.get("covered")) for r in rows) if any("covered" in r for r in rows) else None
     recorder = {"tasks": index.get("tasks", len(rows)),
-                "covered": index.get("covered", sum(bool(r.get("covered")) for r in rows)),
+                "covered": index.get("covered", covered),
                 "kept": index.get("kept", len(paths)),
                 "taskset": index.get("taskset"), "level": index.get("level")}
     return paths, recorder
@@ -431,6 +670,8 @@ def convert_set(src: Path, taskset: str, out_file: Path, jobs: int = 1, audit: b
         "calls": _stats([h["counts"]["calls"] for h in heads]),
         "with_notes": sum(1 for h in heads if h["counts"]["notes"]),
     }
+    if any(h.get("harness") == "probe" for h in heads):
+        tally["harness"] = "probe"   # episodes of the pilots' harness (eval.probe_tasks)
     kinds = Counter(f["kind"] for h in heads for f in h.get("injected") or [])
     if kinds:
         tally["injected"] = dict(sorted(kinds.items()))
@@ -464,15 +705,20 @@ def write_tools(out: Path, tools: Dict[str, List[dict]]) -> Path:
 
 def run(sets: Sequence[str], levels: Sequence[str] = LEVELS, source: Path = SOURCE,
         out: Path = OUT, jobs: int = 1, audit: bool = True, limit: Optional[int] = None,
-        log=print, faults: Optional[Path] = FAULTS) -> dict:
+        log=print, faults: Union[Path, str, None] = PAIRED) -> dict:
     """Convert every ``<set>-<level>`` recording folder under ``source`` and,
     where ``faults`` holds one, its faulted copies (``trajectories.faults``)
-    into ``<set>-<level>-faults.jsonl``."""
+    into ``<set>-<level>-faults.jsonl``.  With no ``faults`` named, the
+    recordings in ``SOURCE`` take the copies in ``FAULTS`` and any other
+    source takes none.  ``summary.json`` describes every set the folder
+    holds: a set an earlier call wrote and this one did not keeps its tally."""
     from roaddraft import __version__
     from roaddraft.eval.episode import HARNESS_VERSION
     from roaddraft.runners.core import pins as current_pins
     from roaddraft.verify import VERIFIER_VERSION
     out = Path(out)
+    if isinstance(faults, str) and faults == PAIRED:
+        faults = FAULTS if Path(source).resolve() == SOURCE.resolve() else None
     pins = current_pins()
     started = time.time()
     summary = {"format": FORMAT, "made_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -489,7 +735,7 @@ def run(sets: Sequence[str], levels: Sequence[str] = LEVELS, source: Path = SOUR
             tally, tools = convert_set(src, name, out / f"{name}-{level}.jsonl", jobs=jobs,
                                        audit=audit, limit=limit, pins=pins, log=log)
             tally["manifest_seeds"] = manifest_seeds(name)
-            summary["sets"][f"{name}-{level}"] = tally
+            summary["sets"][f"{name}-{level}"] = _stamped(tally, summary)
             for dig, defs in tools.items():
                 all_tools.setdefault(dig, defs)
             faulted = Path(faults) / f"{name}-{level}" if faults else None
@@ -498,14 +744,50 @@ def run(sets: Sequence[str], levels: Sequence[str] = LEVELS, source: Path = SOUR
             tally, tools = convert_set(faulted, name, out / f"{name}-{level}-faults.jsonl", jobs=jobs,
                                        audit=audit, limit=limit, pins=pins, log=log)
             tally["variant"] = "faults"
-            summary["sets"][f"{name}-{level}-faults"] = tally
+            summary["sets"][f"{name}-{level}-faults"] = _stamped(tally, summary)
             for dig, defs in tools.items():
                 all_tools.setdefault(dig, defs)
-    write_tools(out, all_tools)
-    summary["tools"] = {dig: len(defs) for dig, defs in sorted(all_tools.items())}
+    held = json.loads(write_tools(out, all_tools).read_text())
+    _carry_forward(out, summary, log)
+    # tools.json keeps the tool sets of every call, and so does the summary
+    summary["tools"] = {dig: row["count"] for dig, row in sorted(held.items())}
     summary["seconds"] = round(time.time() - started, 1)
     (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
     return summary
+
+
+def _stamped(tally: dict, summary: dict) -> dict:
+    """The tally with the call that wrote its file: the summary's own pins are
+    the last call's, and a folder converted set by set holds files of several."""
+    for key in ("made_at", "git_commit", "audit"):
+        tally[key] = summary[key]
+    return tally
+
+
+def _carry_forward(out: Path, summary: dict, log) -> None:
+    """Into ``summary`` the tallies of the folder's own ``summary.json`` for
+    the files this call did not write and that are still there, in the order
+    they were first written; a conversations file no summary describes is
+    logged."""
+    path = out / "summary.json"
+    sets = summary["sets"]
+    if path.exists():
+        prior = json.loads(path.read_text())
+        merged = {}
+        for key, tally in (prior.get("sets") or {}).items():
+            if key in sets:
+                merged[key] = sets[key]
+            elif (out / (tally.get("file") or f"{key}.jsonl")).exists():
+                for field in ("made_at", "git_commit", "audit"):   # a summary from before the stamps
+                    tally.setdefault(field, prior.get(field))
+                merged[key] = tally
+        merged.update((k, t) for k, t in sets.items() if k not in merged)
+        sets.clear()
+        sets.update(merged)
+    described = {t.get("file") for t in sets.values()}
+    for file in sorted(out.glob("*.jsonl")):
+        if file.name not in described:
+            log(f"{file.name}: in {out}, in no summary.json")
 
 
 # ------------------------------------------------------------ the card
@@ -530,6 +812,8 @@ def histogram(values: Sequence[int], edges: Sequence[int]) -> List[Tuple[str, in
     return rows
 
 
+#: the probe-task training sets, in the card's order
+PROBE_ORDER = ("train-deeds", "train-qa")
 EDGES = (0, 26000, 28000, 30000, 32000, 36000, 40000, 48000, 56000, 64000, 80000, 96000, 131072)
 
 
@@ -548,11 +832,14 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
     tokens = json.loads(tokens_path.read_text()) if tokens_path.exists() else None
     counts = (tokens or {}).get("conversations") or {}
     sets = summary["sets"]
-    names = sorted({t["taskset"] for t in sets.values()},
+    probe_sets = sorted({t["taskset"] for t in sets.values() if t.get("harness") == "probe"},
+                        key=lambda n: (PROBE_ORDER.index(n) if n in PROBE_ORDER else 99, n))
+    names = sorted({t["taskset"] for t in sets.values()} - set(probe_sets),
                    key=lambda n: ["d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd",
                                   "d1-train-revise"].index(n)
                    if n in ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd",
                             "d1-train-revise") else 99)
+    names += probe_sets   # the probe-task sets after the D1 sets
     L: List[str] = []
     w = L.append
     w("# RoadDraft training data: dataset card")
@@ -582,6 +869,16 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
       "(100 or dropped); and the grounded audit run again (nothing ungrounded, lettering made for "
       "a twisted sheet, nothing left stale on a revised one).")
     w("")
+    if probe_sets:
+        w(", ".join(f"`{n}`" for n in probe_sets) + " are probe tasks: they run on the pilots' harness "
+          "(`roaddraft.eval.probe_tasks`), on the MCP server's own tools and that harness's system "
+          "prompt, each graded by its task's own pass/fail check. Their conversations are laid out "
+          "the same way. Such an episode has no command journal to replay, so each was played again "
+          "before it was written: its recorded calls made through a new episode on the task rebuilt "
+          "from the manifest, kept when every call answered as recorded, the check passed on the "
+          "files the replay left, and the audit (`roaddraft.trajectories.reasoning.audit`) found "
+          "nothing ungrounded.")
+        w("")
     w("## Pins")
     w("")
     w("| pin | value |")
@@ -598,11 +895,25 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
                        ("harness_version", "harness")):
         vals = sorted({h.get(key) for h in heads if h.get(key)})
         w(f"| {label} | {', '.join(f'`{v}`' for v in vals) or 'n/a'} |")
-    systems = sorted({h.get("system_sha256") for h in heads if h.get("system_sha256")})
-    w(f"| system prompt | {', '.join(f'`{s[:19]}`' for s in systems)} (`system_neutral.md`, single "
-      "mode, 150 steps, 8 faults) |")
+    systems = sorted({h.get("system_sha256") for h in heads
+                      if h.get("system_sha256") and h.get("harness") != "probe"})
+    if systems:
+        w(f"| system prompt | {', '.join(f'`{s[:19]}`' for s in systems)} (`system_neutral.md`, single "
+          "mode, 150 steps, 8 faults) |")
+    systems = sorted({h.get("system_sha256") for h in heads
+                      if h.get("system_sha256") and h.get("harness") == "probe"})
+    if systems:
+        w(f"| system prompt, probe tasks | {', '.join(f'`{s[:19]}`' for s in systems)} (the MCP "
+          "server's instructions, then how the task runs: `probe_tasks.system_prompt`, under each "
+          "episode's mode and budgets) |")
+    probe_tools = {dig for t in sets.values() if t.get("harness") == "probe" for dig in t["tools"]}
+    seeded = [set(r["names"]) for dig, r in tools.items() if dig not in probe_tools]
     for dig, row in tools.items():
-        extra = sorted(set(row["names"]) - set.intersection(*(set(r["names"]) for r in tools.values())))
+        if dig in probe_tools:
+            w(f"| tools `{dig[:19]}` | {row['count']} definitions (probe tasks: the MCP server's "
+              "tools and the harness's) |")
+            continue
+        extra = sorted(set(row["names"]) - set.intersection(*seeded))
         w(f"| tools `{dig[:19]}` | {row['count']} definitions"
           + (f" (adds {', '.join(f'`{e}`' for e in extra)})" if extra else "") + " |")
     w(f"| converted | {summary.get('made_at')}, {summary.get('seconds')} s |")
@@ -626,8 +937,9 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
             seeds = t.get("manifest_seeds")
             seeds = f"{seeds[0]}-{seeds[1]}" if seeds else ""
             drops = ", ".join(f"{r} {n}" for r, n in t["dropped"].items()) or "0"
+            covered = rec.get("covered", "")
             w(f"| `{name}` | {seeds} | {level} | {rec.get('tasks', '')} | "
-              f"{rec.get('covered', '')} | {rec.get('kept', t['episodes'])} | {t['kept']} | {drops} |")
+              f"{'' if covered is None else covered} | {rec.get('kept', t['episodes'])} | {t['kept']} | {drops} |")
             total[level] += t["kept"]
             total["tasks_" + level] += rec.get("tasks", 0)
     w(f"| all | | vague | {total['tasks_vague']} | | | {total['vague']} | |")
@@ -831,8 +1143,10 @@ def main(argv=None) -> int:
                                      description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     c = sub.add_parser("convert", help="episode files -> conversations JSONL, tools.json, summary.json")
-    c.add_argument("--set", action="append", dest="sets", choices=tasksets.TRAIN_NAMES,
-                   help="a training set (default: all five)")
+    every = tuple(tasksets.TRAIN_NAMES) + tuple(tasksets.PROBE_TRAIN_NAMES)
+    c.add_argument("--set", action="append", dest="sets", choices=every,
+                   help="a training set (default: every D1 training set and the probe-task "
+                        "sets, train-deeds and train-qa)")
     c.add_argument("--level", action="append", dest="levels", choices=LEVELS)
     c.add_argument("--source", type=Path, default=SOURCE, help="the recordings, <set>-<level>/ each")
     c.add_argument("--out", type=Path, default=OUT)
@@ -840,18 +1154,20 @@ def main(argv=None) -> int:
     c.add_argument("--limit", type=int, help="convert the first N episodes of each folder")
     c.add_argument("--no-audit", dest="audit", action="store_false",
                    help="skip the grounded audit (score and pins are still checked)")
-    c.add_argument("--faults", type=Path, default=FAULTS,
-                   help="the faulted copies, <set>-<level>/ each (trajectories.faults)")
+    c.add_argument("--faults", type=Path, default=argparse.SUPPRESS,
+                   help="the faulted copies, <set>-<level>/ each (trajectories.faults); default: "
+                        "results/faults for the default --source, none for any other")
     c.add_argument("--no-faults", dest="faults", action="store_const", const=None,
+                   default=argparse.SUPPRESS,
                    help="convert the references only")
     k = sub.add_parser("card", help="write the dataset card from results/training")
     k.add_argument("--out", type=Path, default=OUT)
     k.add_argument("--card", type=Path, default=CARD)
     args = parser.parse_args(argv)
     if args.command == "convert":
-        summary = run(args.sets or list(tasksets.TRAIN_NAMES), args.levels or list(LEVELS),
+        summary = run(args.sets or list(every), args.levels or list(LEVELS),
                       args.source, args.out, jobs=args.jobs, audit=args.audit, limit=args.limit,
-                      faults=args.faults)
+                      faults=getattr(args, "faults", PAIRED))
         kept = sum(t["kept"] for t in summary["sets"].values())
         dropped = sum(sum(t["dropped"].values()) for t in summary["sets"].values())
         print(f"{kept} conversations written to {args.out}, {dropped} dropped, "
@@ -863,7 +1179,8 @@ def main(argv=None) -> int:
 
 
 __all__ = ["FORMAT", "REASONS", "Drop", "Example", "digest", "tools_sha256", "tool_set",
-           "function_tools", "system_text", "messages", "convert_episode", "convert",
+           "function_tools", "system_text", "system_extra_of", "held_to_prompt", "rebuild_task",
+           "budgets_of", "messages", "convert_episode", "convert",
            "convert_set", "sources", "run", "write_tools", "card", "histogram", "main"]
 
 if __name__ == "__main__":

@@ -459,7 +459,34 @@ def test_shared_reports_an_id_a_seed_and_a_task_that_is_not_seeded():
     assert [p for p in tasksets.shared(retyped, test) if "seed" in p]
     real = {"taskset": "d1-train", "tasks": [dict(tasksets.load("d1-real")["tasks"][0])]}
     assert any("not a seeded task" in p for p in tasksets.shared(real, test))
+    # a seed does not excuse an entry that also names a sheet or a probe
+    own = tasksets.load("d1-train")["tasks"][0]
+    for key, value in (("sheet_id", "PPM-045"), ("probe", "p03-misclosure-ppm045")):
+        marked = {"taskset": "d1-train", "tasks": [{**own, key: value}]}
+        assert any("not a seeded task" in p for p in tasksets.shared(marked, test))
+    # the design a generated probe task is set on counts as its id too
+    based = {"taskset": "train-deeds", "tasks": [{**own, "task_id": "TR-x", "seed": 19000,
+                                                  "base_task_id": test["tasks"][3]["task_id"]}]}
+    assert any("task id" in p for p in tasksets.shared(based, test))
     assert tasksets.shared({"taskset": "d1-train", "tasks": []}, test) == []
+
+
+def test_no_training_entry_names_a_sheet_and_no_training_seed_is_an_eval_seed():
+    """Every training entry, the generated probe sets included: a seed above
+    every eval seed, and no sheet, probe or attachment (the sample sheets and
+    the pilots are all in an eval set)."""
+    eval_seeds = {t["seed"] for n in tasksets.NAMES for t in tasksets.load(n)["tasks"] if "seed" in t}
+    eval_ids = {t[k] for n in tasksets.NAMES for t in tasksets.load(n)["tasks"]
+                for k in ("task_id", "vague_task_id") if t.get(k)}
+    seen = set()
+    for name in tasksets.TRAIN_NAMES + tasksets.PROBE_TRAIN_NAMES:
+        for e in tasksets.load(name)["tasks"]:
+            assert not {"sheet_id", "sheet", "agency", "probe", "attachments", "start"} & set(e), name
+            assert e["seed"] > max(eval_seeds) and e["seed"] not in seen, (name, e["seed"])
+            seen.add(e["seed"])
+            assert not {e["task_id"], e.get("vague_task_id"), e.get("base_task_id")} & eval_ids
+    assert len(seen) == sum(len(tasksets.load(n)["tasks"])
+                            for n in tasksets.TRAIN_NAMES + tasksets.PROBE_TRAIN_NAMES)
 
 
 def test_the_training_manifests_are_on_the_current_spec_and_rebuild_to_their_ids():

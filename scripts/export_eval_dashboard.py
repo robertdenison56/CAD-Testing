@@ -35,7 +35,7 @@ from statistics import mean
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from roaddraft.eval.report import _usd, row_level  # noqa: E402
+from roaddraft.eval.report import VARIANT_DIMS, _usd, row_level, variant_label  # noqa: E402
 from roaddraft.runners.leaderboard import NAMES  # noqa: E402
 from roaddraft.tasks.types import REAL_GROUP_NAMES, REAL_GROUP_OF, REAL_GROUP_ORDER  # noqa: E402
 
@@ -115,7 +115,29 @@ def row_label(key: dict) -> str:
         bits.append(f"{key['level']} prompt")
     if key.get("dialect", "neutral") != "neutral":
         bits.append(f"{key['dialect']} skin")
+    if variant_label(key):   # a thinking-off run, a run given a system extra: its own row, said so
+        bits.append(variant_label(key))
     return " · ".join(bits)
+
+
+def overall_key(key: dict) -> str:
+    """An overall row's key: the model's dimensions, and a variant's only where the run set one."""
+    dims = ("model", "provider", "effort", "mode") + tuple(d for d in VARIANT_DIMS if key.get(d))
+    return "|".join(f"{k}={key.get(k)}" for k in dims)
+
+
+def overall_row(o: dict, n_sets: int, as_of: str) -> dict:
+    """One model's row of ``eval_overall.json``, before its set cells."""
+    run_id = next(iter(o["sets"].values()))["run_id"]
+    name = model_name(o["key"], run_id)
+    if variant_label(o["key"]):
+        name += f" · {variant_label(o['key'])}"
+    return {"key": overall_key(o["key"]),
+            "rank": str(o["rank"]) if o.get("rank") else "", "name": name,
+            "effort": o.get("effort") or "–", "overall": f1(o["overall"]),
+            "pm": "–" if o["half_width"] is None else f"± {o['half_width']:.1f}",
+            "sets": f"{o['n_sets']} of {n_sets}", "as_of": as_of,
+            "missing": ", ".join(o.get("missing") or [])}
 
 
 def find_report(results: Path, run_id: str) -> Path:
@@ -343,13 +365,7 @@ def main(argv=None) -> int:
     overall = []
     ov = (lb.get("overall") or {}).get("vague") or {"ranked": [], "partial": [], "weights": {}}
     for o in ov["ranked"] + ov["partial"]:
-        run_id = next(iter(o["sets"].values()))["run_id"]
-        row = {"key": "|".join(f"{k}={o['key'].get(k)}" for k in ("model", "provider", "effort", "mode")),
-               "rank": str(o["rank"]) if o.get("rank") else "", "name": model_name(o["key"], run_id),
-               "effort": o.get("effort") or "–", "overall": f1(o["overall"]),
-               "pm": "–" if o["half_width"] is None else f"± {o['half_width']:.1f}",
-               "sets": f"{o['n_sets']} of {len(ov['sets'])}", "as_of": as_of,
-               "missing": ", ".join(o.get("missing") or [])}
+        row = overall_row(o, len(ov["sets"]), as_of)
         for set_id in SETS:
             c = o["sets"].get(set_id)
             row[set_id.replace("-", "_")] = "–" if not c else f1(c["effective_mean"]) + (" †" if c["text_only"] else "")
