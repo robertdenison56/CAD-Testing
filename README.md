@@ -31,8 +31,8 @@ Vague prompts only: the request in a sentence, the board's focus. Every other pr
 | 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **71.0** | 2.0 | 92.8 | 90.5 | 28.6 | 92.9 | 72.1 | 5 of 5 |
 | 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **53.8** | 1.9 | 76.0 | 75.1 | 24.1 | 54.5 | 50.8 | 5 of 5 |
 | 4 | gpt-6-luna (medium) via codex · single · vague | medium | **46.3** | 1.7 | 76.1 | 71.8 | 2.7 | 43.2 | 51.0 | 5 of 5 |
-| 5 | qwen/qwen3.5-9b · single · vague | default | **32.5** | 1.7 | 62.6 | 59.6 | 0.9 | 9.4 | 33.5 | 5 of 5 |
-|  | google/gemma-4-12b · single · vague | thinking on | – | – | 67.2 | 59.0 | – | 3.0 | 37.5 | 4 of 5 |
+| 5 | google/gemma-4-12b · single · vague | thinking on | **32.9** | 1.5 | 67.2 | 59.0 | 0.0 | 3.0 | 37.5 | 5 of 5 |
+| 6 | qwen/qwen3.5-9b · single · vague | default | **32.5** | 1.7 | 62.6 | 59.6 | 0.9 | 9.4 | 33.5 | 5 of 5 |
 |  | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | – | – | 76.3 | – | 8.0 | – | – | 2 of 5 |
 |  | google/gemma-4-31B-it · single · vague | thinking on | – | – | 80.1 | – | 1.8 | – | – | 2 of 5 |
 |  | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | – | – | 64.0 | – | 2.7 | – | – | 2 of 5 |
@@ -41,28 +41,30 @@ Vague prompts only: the request in a sentence, the board's focus. Every other pr
 |  | zai-org/glm-4.6v-flash · single · vague | default | – | – | 25.2 | 13.6 | – | – | – | 2 of 5 |
 |  | glm-5.3 · single · vague | default | – | – | 66.5 | – | – | – | – | 1 of 5 |
 |  | google/gemma-4-26B-A4B-it · single · vague | thinking on | – | – | – | – | 0.9 | – | – | 1 of 5 |
+|  | gpt-6-astra (medium) via codex · single · vague | medium | – | – | 96.6 | – | – | – | – | 1 of 5 |
 
 Overall = the weighted mean of the model's effective scores on the 5 sets below, each set's weight beside its name (Robert, 2026-11-13: the real plan sheets and the hard pilots count double the seeded sheets); ± is the sets' 95% half-widths combined with the same weights (root-sum-square). A model ranks here only with a full-set run on every set; cost-subset runs are other tasks and do not count, so a model short of a set is listed unranked with the sets it has. † a text-only `hard-pilots` row, scored on its text pilots alone.
 
 ### `d1-test`: seeded sheets
 
-**Best model 95.5/100 on d1-test with the vague prompt (claude-opus-5-5 (medium) via claude-code · single · vague, 95% CI 93.6–96.9, hard-fail 0%).**
+**Best model 96.6/100 on d1-test with the vague prompt (gpt-6-astra (medium) via codex · single · vague, 95% CI 96.1–97.1, hard-fail 0%).**
 
 | # | Model · mode · prompt | Effort | Effective | 95% CI | Rubric | Hard-fail | Clean | Invalid calls | Cost / sheet | Tasks × k | Run |
 |---:|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
-| 1 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **95.5** | 93.6–96.9 | 95.5 | 0% | 66% | 0% | $0.371 | 100 × 1 | `e3-d1-test-claude-opus-5-5-claude-code-medium-single-vague-v3` |
-| 2 | gpt-6.1-terra (medium) via codex · single · vague | medium | **92.8** | 90.7–94.8 | 92.8 | 0% | 58% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6.1-terra-codex-medium-single-vague-v3` |
-| 3 | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | thinking on | **82.4** | 78.5–85.9 | 85.3 | 4% | 42% | 0% | – | 100 × 1 | `e3-d1-test-nemotron-3.5-super-vl-single-vague-v3` |
-| 4 | google/gemma-4-31B-it · single · vague | thinking on | **80.1** | 77.1–82.7 | 80.7 | 1% | 35% | 0% | – | 100 × 1 | `e3-d1-test-gemma-4-31b-single-vague-v3` |
-| 5 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **76.3** | 73.4–79.1 | 77.6 | 2% | 22% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.6-35b-a3b-single-vague-v3` |
-| 6 | gpt-6-luna (medium) via codex · single · vague | medium | **76.1** | 72.7–79.3 | 77.8 | 3% | 31% | 1% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single-vague-v3` |
-| 7 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **76.0** | 74.1–77.8 | 76.0 | 0% | 23% | 0% | $0.181 | 100 × 1 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
-| 8 | openai/gpt-oss-120b · single · vague | medium (default) | **70.3** | 65.0–75.5 | 75.5 | 8% | 39% | 2% | – | 100 × 1 | `e3-d1-test-gpt-oss-120b-single-vague-v3` |
-| 9 | google/gemma-4-12b · single · vague | thinking on | **67.2** | 63.6–70.7 | 72.3 | 9% | 32% | 2% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single-vague-v3` |
-| 10 | glm-5.3 · single · vague | default | **66.5** | 62.5–70.2 | 71.5 | 9% | 22% | 2% | $0.042 | 100 × 1 | `e3-d1-test-glm-5.3-single-vague-v3` |
-| 11 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **64.0** | 58.6–69.4 | 69.8 | 10% | 27% | 1% | – | 100 × 1 | `e3-d1-test-mistral-small-4-single-vague-v3` |
-| 12 | qwen/qwen3.5-9b · single · vague | default | **62.6** | 57.7–67.6 | 66.3 | 6% | 31% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague-v3` |
-| 13 | zai-org/glm-4.6v-flash · single · vague | default | **25.2** | 21.3–29.4 | 26.8 | 7% | 14% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single-vague-v3` |
+| 1 | gpt-6-astra (medium) via codex · single · vague | medium | **96.6** | 96.1–97.1 | 96.6 | 0% | 64% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6-astra-codex-medium-single-vague-v3` |
+| 2 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **95.5** | 93.6–96.9 | 95.5 | 0% | 66% | 0% | $0.371 | 100 × 1 | `e3-d1-test-claude-opus-5-5-claude-code-medium-single-vague-v3` |
+| 3 | gpt-6.1-terra (medium) via codex · single · vague | medium | **92.8** | 90.7–94.8 | 92.8 | 0% | 58% | 0% | – | 100 × 1 | `e3-d1-test-gpt-6.1-terra-codex-medium-single-vague-v3` |
+| 4 | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | thinking on | **82.4** | 78.5–85.9 | 85.3 | 4% | 42% | 0% | – | 100 × 1 | `e3-d1-test-nemotron-3.5-super-vl-single-vague-v3` |
+| 5 | google/gemma-4-31B-it · single · vague | thinking on | **80.1** | 77.1–82.7 | 80.7 | 1% | 35% | 0% | – | 100 × 1 | `e3-d1-test-gemma-4-31b-single-vague-v3` |
+| 6 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **76.3** | 73.4–79.1 | 77.6 | 2% | 22% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.6-35b-a3b-single-vague-v3` |
+| 7 | gpt-6-luna (medium) via codex · single · vague | medium | **76.1** | 72.7–79.3 | 77.8 | 3% | 31% | 1% | – | 100 × 1 | `e3-d1-test-gpt-6-luna-codex-medium-single-vague-v3` |
+| 8 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **76.0** | 74.1–77.8 | 76.0 | 0% | 23% | 0% | $0.181 | 100 × 1 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
+| 9 | openai/gpt-oss-120b · single · vague | medium (default) | **70.3** | 65.0–75.5 | 75.5 | 8% | 39% | 2% | – | 100 × 1 | `e3-d1-test-gpt-oss-120b-single-vague-v3` |
+| 10 | google/gemma-4-12b · single · vague | thinking on | **67.2** | 63.6–70.7 | 72.3 | 9% | 32% | 2% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single-vague-v3` |
+| 11 | glm-5.3 · single · vague | default | **66.5** | 62.5–70.2 | 71.5 | 9% | 22% | 2% | $0.042 | 100 × 1 | `e3-d1-test-glm-5.3-single-vague-v3` |
+| 12 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **64.0** | 58.6–69.4 | 69.8 | 10% | 27% | 1% | – | 100 × 1 | `e3-d1-test-mistral-small-4-single-vague-v3` |
+| 13 | qwen/qwen3.5-9b · single · vague | default | **62.6** | 57.7–67.6 | 66.3 | 6% | 31% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 14 | zai-org/glm-4.6v-flash · single · vague | default | **25.2** | 21.3–29.4 | 26.8 | 7% | 14% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single-vague-v3` |
 
 ### `d1-real`: the sample plan sheets
 
@@ -110,6 +112,7 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 9 | google/gemma-4-31B-it · single · vague | thinking on | **1.8** | 0.0–4.5 | 40.9 | 98% | 2% | 0% | – | 112 × 1 | `e3-hard-pilots-gemma-4-31b-single-vague-v3` |
 | 10 | qwen/qwen3.5-9b · single · vague | default | **0.9** | 0.0–2.7 | 25.4 | 99% | 1% | 0% | – | 112 × 1 | `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-vague-v3` |
 | 11 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **0.9** | 0.0–2.7 | 28.0 | 99% | 1% | 1% | – | 112 × 1 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` |
+| 12 | google/gemma-4-12b · single · vague | thinking on | **0.0** | 0.0–0.0 | 26.9 | 100% | 0% | 3% | – | 112 × 1 | `e3-hard-pilots-gemma-4-12b-q8-lms-single-vague-v3` |
 
 **Cost subset `cost5` on `hard-pilots`, vague prompt: partial runs, to save cost.** 66 of the set's 112 tasks, 5 of each task type (every task of a smaller type), the fixed draw in `benchmarks/tasksets/cost-subsets.json`; only Runpod runs rank here, and only when they hold every task of the subset with none in error or unfinished. Each full run of the set is re-scored on the same 66 tasks so the rows compare; a subset score is not comparable with a full-set score above.
 
@@ -126,6 +129,7 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 9 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **3.0** | 0.0–6.1 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-mistral-small-4-single-vague-v3` |
 | 10 | google/gemma-4-26B-A4B-it · single · vague | thinking on | **1.5** | 0.0–4.5 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` |
 | 11 | qwen/qwen3.5-9b · single · vague | default | **1.5** | 0.0–4.5 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 12 | google/gemma-4-12b · single · vague | thinking on | **0.0** | 0.0–0.0 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gemma-4-12b-q8-lms-single-vague-v3` |
 
 ### `d1-test-hard`: seeded sheets, the whole job (3-5 curves, 2-3 sheets)
 
