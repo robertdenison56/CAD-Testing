@@ -182,3 +182,48 @@ def test_pilot_dev_is_a_development_set_and_is_never_reported(tmp_path):
     listed = R.board([{**s, "episodes": 19, "rows": []}])["others"]
     assert [(o["run_id"], o["reasons"]) for o in listed] == [
         ("pd", ["pilot-dev is a development set and is never reported"])]
+
+
+# ------------------------------------------------------------------ two runs under one row (2026-11-15)
+
+def _published(tmp_path, run_id, key, taskset="d1-test", **over):
+    """A stand-in published run with one ranked row, and its report folder ready to publish."""
+    s = {"run_id": run_id, "taskset": taskset, "publish_problems": [], "partial": False, "coverage": {},
+         "rows": [{"key": key, "label": "9B · single · vague"}]}
+    s.update(over)
+    rep = tmp_path / f"report-{run_id}"
+    rep.mkdir()
+    for name in ("summary.json", "leaderboard.md", "per_check.svg"):
+        (rep / name).write_text(json.dumps(s) if name == "summary.json" else "x")
+    return s, rep
+
+
+def test_a_run_is_not_published_over_another_runs_row_and_is_over_its_own(tmp_path):
+    key = {"model": "qwen/qwen3.5-9b", "provider": "openai", "effort": None, "dialect": "neutral",
+           "mode": "single", "level": "vague"}
+    runs = tmp_path / "runs"
+    old, rep = _published(tmp_path, "nine-v3", key)
+    R.publish(old, rep, runs_root=runs)
+    R.publish(old, rep, runs_root=runs)                 # the same run again is its own row: allowed
+    new, rep2 = _published(tmp_path, "nine-pin1", key)
+    assert [c["run_ids"] for c in R.repeated_keys([old, new])] == [["nine-v3", "nine-pin1"]]
+    with pytest.raises(ValueError, match="already ranks under the same row.*nine-v3 and nine-pin1.*retire"):
+        R.publish(new, rep2, runs_root=runs)
+    assert not (runs / "nine-pin1").exists()
+    # another row is another row: thinking off, another prompt level, another set, a cost subset, the text pilots
+    for i, (k, extra) in enumerate([({**key, "thinking": "off"}, {}), ({**key, "level": "explicit"}, {}),
+                                    (key, {"taskset": "d1-real"}), (key, {"cost_subset": {"tag": "cost5"}}),
+                                    (key, {"coverage": {"text_only": {"tasks": 89, "of": 112}}})]):
+        s, r = _published(tmp_path, f"other-{i}", k, **extra)
+        R.publish(s, r, runs_root=runs)
+    # a run that is not ranked takes no row: partial, unrankable, a development set, the harness's own agents
+    for i, extra in enumerate([{"partial": True}, {"taskset": "d1-dev"}]):
+        s, r = _published(tmp_path, f"unranked-{i}", key, **extra)
+        R.publish(s, r, runs_root=runs)
+    s, r = _published(tmp_path, "oracle-2", {**key, "provider": "harness"})
+    R.publish(s, r, runs_root=runs)
+    assert R.repeated_keys(R.published(runs)) == []
+
+
+def test_no_published_row_is_ranked_from_two_runs():
+    assert R.repeated_keys(R.published()) == []

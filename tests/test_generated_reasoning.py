@@ -51,7 +51,7 @@ class _Script(Agent):
 
 
 def test_the_generated_sets_are_their_own_seeds_and_share_nothing():
-    assert tasksets.PROBE_TRAIN_NAMES == ("train-deeds", "train-qa")
+    assert tasksets.PROBE_TRAIN_NAMES[:2] == ("train-deeds", "train-qa")
     assert not set(tasksets.PROBE_TRAIN_NAMES) & set(tasksets.NAMES + tasksets.TRAIN_NAMES)
     assert tasksets.train_overlap() == []
     for name, module in (("train-deeds", deeds), ("train-qa", planted)):
@@ -158,7 +158,8 @@ def test_a_generated_episode_carries_its_own_sets_pins(tmp_path, monkeypatch):
         edited = tmp_path / sources[-1].name
         edited.write_bytes(sources[-1].read_bytes() + b"\n# edited\n")
         assert probe_tasks.check_version(sources[:-1] + [edited]) != verifier
-    assert len({tasksets.current_verifier(n) for n in tasksets.PROBE_TRAIN_NAMES}) == 2
+    assert len({tasksets.current_verifier(n) for n in tasksets.PROBE_TRAIN_NAMES}) \
+        == len(tasksets.PROBE_TRAIN_NAMES)
     # a pilot and a pilot-dev instance keep their sets' pins
     from roaddraft.probes import pilot_dev
     assert probe_tasks.generated_set(probe_tasks.pilots()[0].id) is None

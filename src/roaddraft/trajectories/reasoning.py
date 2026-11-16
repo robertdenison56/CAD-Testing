@@ -16,6 +16,10 @@ add:
 - a QA note (``QA: ...``) is grounded when what follows the colon is a fixed
   phrase of the review, optionally followed by a value seen.
 
+The generated plan-and-profile sheets (``tasks.planprofile``, the ``p06`` family,
+2026-11-15) are drafted by ``reasoning_profile``, which states the forms it adds;
+``audit`` applies them to a plan-and-profile brief only.
+
 A recording is kept when the episode submitted, its check passed and the audit
 finds nothing ungrounded.  ``python -m roaddraft.trajectories.reasoning
 --taskset train-deeds --out DIR --level vague`` records a set.
@@ -87,9 +91,19 @@ CHOICES = (0.75,)
 
 
 def audit(text: str, tools: Sequence[dict], turns: Sequence[dict]) -> List[dict]:
-    """``grounded.audit`` with this module's forms."""
-    return grounded_audit(text + "\n" + ungrouped(text), tools, turns, rules=RULES,
-                          numbers=CHOICES)
+    """``grounded.audit`` with this module's forms; a plan-and-profile task
+    (``reasoning_profile``, the ``p06`` family) with that family's as well."""
+    rules, numbers = RULES, CHOICES
+    from roaddraft.trajectories import reasoning_profile
+    if reasoning_profile.is_brief(text):
+        rules, numbers = rules + reasoning_profile.RULES, numbers + reasoning_profile.rounded(turns)
+    # a striping plan (``reasoning_striping``): the MUTCD's own values, and the square
+    # roots its shown work states and gets right
+    from roaddraft.trajectories import reasoning_striping as striping
+    if striping.is_striping(text):
+        numbers = numbers + striping.MUTCD_NUMBERS + striping.roots(turns)
+    return grounded_audit(text + "\n" + ungrouped(text), tools, turns, rules=rules,
+                          numbers=numbers)
 
 
 # ------------------------------------------------------------ helpers
@@ -249,6 +263,12 @@ def _solver(task_type: str):
     if task_type == "train-qa-review":
         from roaddraft.trajectories.reasoning_qa import solve_review
         return solve_review
+    if task_type == "train-striping":
+        from roaddraft.trajectories.reasoning_striping import solve_striping
+        return solve_striping
+    if task_type == "train-plan-profile":
+        from roaddraft.trajectories.reasoning_profile import solve_profile
+        return solve_profile
     return SOLVERS[task_type]
 
 

@@ -188,11 +188,19 @@ def generated(probe_id: str) -> Optional[Probe]:
     if name == "train-qa":
         from roaddraft.tasks import planted
         return planted.qa_task(int(seed)).probe
+    if name == "train-striping":  # ``tasks.striping``: ``t13-striping-<seed>``
+        from roaddraft.tasks import striping
+        return striping.striping_task(int(seed)).probe
+    if name == "train-profile":
+        from roaddraft.tasks import planprofile
+        return planprofile.profile_task(int(seed)).probe
     return None
 
 
 #: the generated training sets by the stem of their probe ids
 GENERATED_SETS = {"t03-deed": "train-deeds", "t14-qa": "train-qa"}
+GENERATED_SETS["t13-striping"] = "train-striping"   # tasks.striping (p13)
+GENERATED_SETS["t06-profile"] = "train-profile"     # tasks.planprofile (p06)
 
 
 def generated_set(probe_id: str) -> Optional[str]:
@@ -244,7 +252,9 @@ def check_sources(name: str = PILOT_SET) -> List[Path]:
         paths.append(Path(dev.__file__))
     elif name in GENERATED_SETS.values():
         import importlib
-        module = {"train-deeds": "roaddraft.tasks.deeds", "train-qa": "roaddraft.tasks.planted"}[name]
+        module = {"train-deeds": "roaddraft.tasks.deeds", "train-qa": "roaddraft.tasks.planted",
+                  "train-striping": "roaddraft.tasks.striping",
+                  "train-profile": "roaddraft.tasks.planprofile"}[name]
         paths.append(Path(importlib.import_module(module).__file__))
     return paths
 

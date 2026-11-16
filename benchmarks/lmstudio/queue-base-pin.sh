@@ -41,8 +41,20 @@
 # rest run as planned. Only runs made at the tag's commit are carried on. Under the same QUEUE_NAME the log is
 # carried on too. Without --resume an existing run or log is a reason not to start, as before.
 #
+# A trained checkpoint (2026-11-15) is a fourth kind, run only when asked for: PHASES=ckpt CKPT=<name>.
+#   ckpt     the checkpoint's GGUF (merged, quantized, the no-think template inside), --thinking off like nothink:
+#            its like-for-like base is the nothink run of the same set on the same pin
+# The checkpoint is not in the pin's models.json (the pin predates it), so its entry is read from the MAIN
+# checkout's models.json (benchmarks/lmstudio/add_checkpoint.py writes it after `lms import`), and its runs are
+# driven by the main checkout's lms_campaign.py, which must be byte for byte the pin's; the harness, the task
+# sets and the T0 sheet are the pin's as for every other kind (--worktree). A checkpoint without the vision tower
+# (vision not true in its entry) runs the text pilots of hard-pilots only (--pilots text): pair it by task.
+# Order: the validation sets (SETS="d1-dev d1-real-dev pilot-dev" is the checkpoint-selection pass), d1-test,
+# d1-real, then the hard sets. It has its own thinking-off check episode and is read like a nothink run.
+#
 # Settings (environment): SUFFIX=pin1  PHASES="base nothink t0"  SETS="" (all; or a list of set names)
 #   MODEL=qwen3.5-9b  NOTHINK_MODEL=$MODEL (a models.json name; another one if the no-think base is its own file)
+#   CKPT= (a name in the main checkout's models.json; needed by PHASES=ckpt only)
 #   ATTEMPTS=30  GAP_S=180  POLL_S=120  IDLE_POLLS=6  QUEUE_NAME=queue-<date>-base-<suffix>
 set -u
 SELF=${0:A}          # this script, absolute before any cd: what the re-exec runs and what is stored beside the log
@@ -73,13 +85,20 @@ PHASES=${PHASES:-"base nothink t0"}
 SETS=${SETS:-}
 MODEL=${MODEL:-qwen3.5-9b}
 NOTHINK_MODEL=${NOTHINK_MODEL:-$MODEL}
-Q=""; QN=""          # the labels of MODEL and NOTHINK_MODEL in the pin's models.json, read with the checks below
+CKPT=${CKPT:-}
+CAMP_MAIN="$REPO/benchmarks/lmstudio/lms_campaign.py"   # the checkpoint's driver: the pin's file, the main checkout's models.json
+Q=""; QN=""; QC=""   # the labels of MODEL, NOTHINK_MODEL (the pin's models.json) and CKPT (the main checkout's)
+CKPT_TEXT_ONLY=0     # 1 when the checkpoint's entry does not say it takes images
 ATTEMPTS=${ATTEMPTS:-30}
 GAP_S=${GAP_S:-180}
 POLL_S=${POLL_S:-120}
 IDLE_POLLS=${IDLE_POLLS:-6}
 SHEET=benchmarks/training/conventions-v1.md
-QUEUE_NAME=${QUEUE_NAME:-queue-$(date +%Y-%m-%d)-base-$SUFFIX}
+if [[ $PHASES == ckpt && -n $CKPT ]]; then
+  QUEUE_NAME=${QUEUE_NAME:-queue-$(date +%Y-%m-%d)-ckpt-$CKPT-$SUFFIX}
+else
+  QUEUE_NAME=${QUEUE_NAME:-queue-$(date +%Y-%m-%d)-base-$SUFFIX}
+fi
 LOG="$OUT/$QUEUE_NAME.log"
 
 # kind and set, in the order they run
@@ -90,6 +109,8 @@ STEPS=(
   "base d1-real" "t0 d1-real" "nothink d1-real"
   "base d1-real-hard" "base d1-test-hard" "base hard-pilots"
   "nothink d1-real-hard" "nothink d1-test-hard" "nothink hard-pilots"
+  "ckpt d1-dev" "ckpt d1-real-dev" "ckpt pilot-dev" "ckpt d1-test" "ckpt d1-real"
+  "ckpt d1-real-hard" "ckpt d1-test-hard" "ckpt hard-pilots"
 )
 
 log() {
@@ -98,25 +119,36 @@ log() {
 refuse() {  # a reason not to start: fatal for a real run, a line of the dry run
   if (( DRY )); then echo "# dry run: a real run would refuse to start: $*"; else echo "NOT run: $*" >&2; exit 1; fi
 }
-label_of() {  # a models.json name -> its label there (what lms_campaign's own run ids carry); nothing when unknown
+label_of() {  # a models.json name [the checkout] -> its label there (what lms_campaign's own run ids carry); nothing when unknown
   "$PY" -c 'import json, sys; print(json.load(open(sys.argv[1]))["models"][sys.argv[2]]["label"])' \
-    "$WT/benchmarks/lmstudio/models.json" "$1" 2> /dev/null
+    "${2:-$WT}/benchmarks/lmstudio/models.json" "$1" 2> /dev/null
 }
+camp_of() { [[ $1 == ckpt ]] && echo "$CAMP_MAIN" || echo "$CAMP"; }   # kind -> the driver that knows its model
+off_kind() { [[ $1 == nothink || $1 == ckpt ]]; }                        # kind: run with --thinking off, and read for it
 run_id_of() {  # kind set
   case $1 in
     base) echo "e3-$2-$Q-single-vague-$SUFFIX" ;;
     nothink) echo "e3-$2-$QN-single-vague-nothink-$SUFFIX" ;;
     t0) echo "e3-$2-$Q-single-vague-t0-$SUFFIX" ;;
+    ckpt) echo "e3-$2-$QC-single-vague-nothink-$SUFFIX" ;;
   esac
 }
 e3_args() {  # kind set -> the e3 arguments after the model name, one per line
   print -l -- --taskset "$2" --samples 1 --run-id "$(run_id_of $1 $2)" --worktree "$WT" --level vague
-  [[ $2 == hard-pilots ]] && print -l -- --pilots all
-  [[ $1 == nothink ]] && print -l -- --thinking off
+  if [[ $2 == hard-pilots ]]; then
+    if [[ $1 == ckpt ]] && (( CKPT_TEXT_ONLY )); then print -l -- --pilots text; else print -l -- --pilots all; fi
+  fi
+  off_kind $1 && print -l -- --thinking off
   [[ $1 == t0 ]] && print -l -- --system-extra "$SHEET"
   return 0
 }
-model_of() { [[ $1 == nothink ]] && echo "$NOTHINK_MODEL" || echo "$MODEL"; }
+model_of() {
+  case $1 in
+    nothink) echo "$NOTHINK_MODEL" ;;
+    ckpt) echo "$CKPT" ;;
+    *) echo "$MODEL" ;;
+  esac
+}
 wanted() {  # kind set: in PHASES and (when given) in SETS
   [[ " $PHASES " == *" $1 "* ]] && { [[ -z $SETS ]] || [[ " $SETS " == *" $2 "* ]]; }
 }
@@ -170,7 +202,7 @@ run_e3() {  # kind set attempts: the run, retried while it exits non-zero
     wait_link
     wait_quiet 1                # another queue's run that started meanwhile: hold, no attempt spent
     log "start $run_id (attempt $try of $attempts) from $WT"
-    "$PY" "$CAMP" e3 "$(model_of $kind)" "${args[@]}" >> "$LOG" 2>&1
+    "$PY" "$(camp_of $kind)" e3 "$(model_of $kind)" "${args[@]}" >> "$LOG" 2>&1
     rc=$?
     log "end $run_id: exit $rc"
     (( rc == 0 )) && break
@@ -210,18 +242,19 @@ night() {  # kind set: run, one error pass, report
   PYTHONPATH="$WT/src" "$PY" -m roaddraft.eval report "$OUT/$run_id" >> "$LOG" 2>&1
   log "$run_id report written (not published)"
 }
-CHECK_ID=""          # e3-nothink-check-<label>-<suffix>, set with the checks below
-nothink_holds() {  # one d1-dev episode with --thinking off, read for reasoning tokens; 0 when the server obeyed
+typeset -A CHECK_ID  # kind -> e3-nothink-check-<label>-<suffix>, set with the checks below
+nothink_holds() {  # kind: one d1-dev episode with --thinking off, read for reasoning tokens; 0 when the server obeyed
+  local kind=$1
   wait_link
-  log "thinking-off check: one d1-dev episode as $CHECK_ID"
+  log "thinking-off check ($kind): one d1-dev episode as ${CHECK_ID[$kind]}"
   local try=1
   while (( try <= 3 )); do
     wait_quiet 1
-    "$PY" "$CAMP" e3 "$NOTHINK_MODEL" --taskset d1-dev --limit 1 --samples 1 --run-id "$CHECK_ID" \
+    "$PY" "$(camp_of $kind)" e3 "$(model_of $kind)" --taskset d1-dev --limit 1 --samples 1 --run-id "${CHECK_ID[$kind]}" \
       --worktree "$WT" --level vague --thinking off >> "$LOG" 2>&1 && break
     (( try++ )); sleep $GAP_S
   done
-  "$PY" "$CAMP" thinking "$CHECK_ID" >> "$LOG" 2>&1
+  "$PY" "$CAMP" thinking "${CHECK_ID[$kind]}" >> "$LOG" 2>&1
 }
 
 # ---------------------------------------------------------------- the checks before anything starts
@@ -231,7 +264,17 @@ Q=$(label_of "$MODEL")
 [[ -n $Q ]] || { refuse "no model $MODEL with a label in $WT/benchmarks/lmstudio/models.json"; Q=$MODEL; }
 QN=$(label_of "$NOTHINK_MODEL")
 [[ -n $QN ]] || { refuse "no model $NOTHINK_MODEL with a label in $WT/benchmarks/lmstudio/models.json"; QN=$NOTHINK_MODEL; }
-CHECK_ID="e3-nothink-check-$QN-$SUFFIX"
+CHECK_ID[nothink]="e3-nothink-check-$QN-$SUFFIX"
+if [[ " $PHASES " == *" ckpt "* ]]; then
+  [[ -n $CKPT ]] || refuse "PHASES has ckpt and no CKPT=<a name in the main checkout's models.json> is given"
+  cmp -s "$CAMP" "$CAMP_MAIN" || refuse "$CAMP_MAIN is not the pin's lms_campaign.py: the checkpoint's driver must be the pin's"
+  QC=$(label_of "$CKPT" "$REPO")
+  [[ -n $QC ]] || { refuse "no model $CKPT with a label in $REPO/benchmarks/lmstudio/models.json (add_checkpoint.py writes it)"; QC=$CKPT; }
+  [[ $QC != $Q && $QC != $QN ]] || refuse "the checkpoint $CKPT carries the base's label $QC: its runs would take the base's run ids"
+  "$PY" -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1]))["models"][sys.argv[2]].get("vision") is True else 1)' \
+    "$REPO/benchmarks/lmstudio/models.json" "$CKPT" 2> /dev/null || CKPT_TEXT_ONLY=1
+  CHECK_ID[ckpt]="e3-nothink-check-$QC-$SUFFIX"
+fi
 head=$(git -C "$WT" rev-parse HEAD 2> /dev/null)
 want=$(git -C "$WT" rev-parse --verify --quiet "refs/tags/$TAG^{commit}" 2> /dev/null)
 if [[ -z $head ]]; then refuse "$WT is not a git worktree"
@@ -269,14 +312,15 @@ for step in $STEPS; do
   esac
 done
 # the thinking-off check is run afresh by each launch: an earlier launch's episode is never the one judged
-if [[ " $PHASES " == *" nothink "* && -e "$OUT/$CHECK_ID" ]]; then
+for k in nothink ckpt; do
+  [[ " $PHASES " == *" $k "* && -n ${CHECK_ID[$k]:-} && -e "$OUT/${CHECK_ID[$k]}" ]] || continue
   if (( RESUME )); then
-    n=2; while [[ -e "$OUT/$CHECK_ID-r$n" ]]; do (( n++ )); done
-    CHECK_ID="$CHECK_ID-r$n"
+    n=2; while [[ -e "$OUT/${CHECK_ID[$k]}-r$n" ]]; do (( n++ )); done
+    CHECK_ID[$k]="${CHECK_ID[$k]}-r$n"
   else
-    refuse "a check run $CHECK_ID exists already; give this pin another SUFFIX (--resume starts a stopped queue again)"
+    refuse "a check run ${CHECK_ID[$k]} exists already; give this pin another SUFFIX (--resume starts a stopped queue again)"
   fi
-fi
+done
 
 # ---------------------------------------------------------------- the dry run: every command, nothing started
 if (( DRY )); then
@@ -286,12 +330,13 @@ if (( DRY )); then
        "(now: $(echo $(other_queues) | sed 's/^$/none/')) to end,"
   echo "#   then for $IDLE_POLLS looks in a row, $POLL_S s apart, with no local run; before each attempt it looks again"
   rc=0
-  if [[ " $PHASES " == *" nothink "* ]]; then
-    echo "# thinking-off check before the nothink runs:"
-    "$PY" "$CAMP" e3 "$NOTHINK_MODEL" --taskset d1-dev --limit 1 --samples 1 --run-id "$CHECK_ID" \
+  for k in nothink ckpt; do
+    [[ " $PHASES " == *" $k "* ]] || continue
+    echo "# thinking-off check before the $k runs:"
+    "$PY" "$(camp_of $k)" e3 "$(model_of $k)" --taskset d1-dev --limit 1 --samples 1 --run-id "${CHECK_ID[$k]}" \
       --worktree "$WT" --level vague --thinking off --print || rc=1
-    echo "$PY $CAMP thinking $CHECK_ID"
-  fi
+    echo "$PY $CAMP thinking ${CHECK_ID[$k]}"
+  done
   for step in $STEPS; do
     kind=${step% *}; set=${step#* }
     wanted $kind $set || continue
@@ -302,9 +347,9 @@ if (( DRY )); then
       continue
     fi
     echo "# $kind $set$([[ ${STATE[$id]:-new} == partial ]] && echo " (resumes $id: ${DETAIL[$id]})")"
-    "$PY" "$CAMP" e3 "$(model_of $kind)" "${args[@]}" --print || rc=1
+    "$PY" "$(camp_of $kind)" e3 "$(model_of $kind)" "${args[@]}" --print || rc=1
     # the harness's own dry run: the command parses and the matrix builds; no model is asked
-    "$PY" "$CAMP" e3 "$(model_of $kind)" "${args[@]}" --dry-run 2>&1 | grep -E "^run |thinking|system extra|error|usage" || rc=1
+    "$PY" "$(camp_of $kind)" e3 "$(model_of $kind)" "${args[@]}" --dry-run 2>&1 | grep -E "^run |thinking|system extra|error|usage" || rc=1
   done
   echo "# dry run done (exit $rc)"
   exit $rc
@@ -321,7 +366,7 @@ cd "$REPO" || exit 1
 cmp -s "$SELF" "$OUT/$QUEUE_NAME.sh" || cp "$SELF" "$OUT/$QUEUE_NAME.sh" \
   || { echo "NOT run: could not store $SELF as $OUT/$QUEUE_NAME.sh" >&2; exit 1; }
 log "$QUEUE_NAME (pid $$)$( (( RESUME )) && echo ', started again with --resume'): pin $WT at ${head[1,8]} (tag $TAG)," \
-    "phases '$PHASES', suffix $SUFFIX, model $MODEL$([[ $NOTHINK_MODEL != $MODEL ]] && echo ", nothink model $NOTHINK_MODEL")"
+    "phases '$PHASES', suffix $SUFFIX, model $MODEL$([[ $NOTHINK_MODEL != $MODEL ]] && echo ", nothink model $NOTHINK_MODEL")$([[ -n $CKPT ]] && echo ", checkpoint $CKPT ($QC$( (( CKPT_TEXT_ONLY )) && echo ', text pilots only'))")"
 if [[ -n $AFTER ]]; then
   log "waiting for pid $AFTER to end"
   wait_pid $AFTER
@@ -333,32 +378,32 @@ if (( $#others )); then
 fi
 wait_quiet $IDLE_POLLS
 
-nothink_ok=""
+typeset -A off_ok    # kind -> yes or no once its thinking-off check is run; a kind marked no runs no further set
 for step in $STEPS; do
   kind=${step% *}; set=${step#* }
   wanted $kind $set || continue
   id=$(run_id_of $kind $set)
   if [[ ${STATE[$id]:-new} == finished ]]; then
     log "$id is finished already (${DETAIL[$id]}): not run again"
-    if [[ $kind == nothink && $nothink_ok != no ]]; then   # read as when it ended
+    if off_kind $kind && [[ ${off_ok[$kind]:-} != no ]]; then   # read as when it ended
       "$PY" "$CAMP" thinking "$id" >> "$LOG" 2>&1 \
-        || { nothink_ok=no; log "$id did not pass the thinking read (the line above): the nothink sets left are not run"; }
+        || { off_ok[$kind]=no; log "$id did not pass the thinking read (the line above): the $kind sets left are not run"; }
     fi
     continue
   fi
   [[ ${STATE[$id]:-new} == partial ]] && log "$id is carried on (${DETAIL[$id]})"
-  if [[ $kind == nothink ]]; then
-    if [[ -z $nothink_ok ]]; then
-      if nothink_holds; then nothink_ok=yes; log "thinking off holds on the check episode"
-      else nothink_ok=no; log "NOT run: every nothink set. The check episode thought, ended in error or shows no output tokens (see above)"
+  if off_kind $kind; then
+    if [[ -z ${off_ok[$kind]:-} ]]; then
+      if nothink_holds $kind; then off_ok[$kind]=yes; log "thinking off holds on the check episode ($kind)"
+      else off_ok[$kind]=no; log "NOT run: every $kind set. The check episode thought, ended in error or shows no output tokens (see above)"
       fi
     fi
-    [[ $nothink_ok == yes ]] || continue
+    [[ ${off_ok[$kind]} == yes ]] || continue
   fi
   night $kind $set
-  if [[ $kind == nothink ]]; then
+  if off_kind $kind; then
     "$PY" "$CAMP" thinking "$id" >> "$LOG" 2>&1 \
-      || { nothink_ok=no; log "$id did not pass the thinking read (the line above): the nothink sets left are not run"; }
+      || { off_ok[$kind]=no; log "$id did not pass the thinking read (the line above): the $kind sets left are not run"; }
   fi
 done
 log "$QUEUE_NAME done. Nothing is published: read the reports, then from main"

@@ -64,6 +64,10 @@ def main(argv=None) -> int:
         print(("stale: " if args.check else "wrote ") + str(p))
     if not stale:
         print("leaderboard current")
+    for c in report.repeated_keys(report.published(runs)):   # said, never fixed here: which run stays is a decision
+        print(f"warning: {c['label']} on {c['taskset']} is ranked from {len(c['run_ids'])} runs "
+              f"({', '.join(c['run_ids'])}); the overall score takes one of them. Retire all but one.",
+              file=sys.stderr)
     return 1 if (args.check and stale) else 0
 
 

@@ -805,6 +805,99 @@ under both trees have the same prompt, budgets and pins.
   one on 16 of 71 D1 runs (by 0.004 to 0.49, real sheets mostly), and 38 summaries are from report
   version `e4-v1`. Stored scores as read do not move; publishing any of them again would.
 
+### Status, 2026-11-15 (the pin is cut; the free builds after it)
+
+The branch of 2026-11-14 is merged into main (`95eed64d`) and tagged `pin/training-1` (Robert: "Merge and
+tag"); neither is pushed. Everything below was built after the tag, on main, and none of it moves a tool
+definition, a task id, a prompt, a manifest or a stored score: the pin stays the commit every base, T0 and
+checkpoint run is made at.
+
+**A checkpoint's eval package.** `benchmarks/lmstudio/queue-base-pin.sh` has a fourth kind, `ckpt`
+(`PHASES=ckpt CKPT=<name>`): the checkpoint's GGUF with `--thinking off`, on the pin's harness and task sets,
+after its own thinking-off check episode. Its `models.json` entry lives in the main checkout
+(`benchmarks/lmstudio/add_checkpoint.py NAME --lms-key KEY --check check.json` writes it from the base's:
+the same sampling, context and quantization, `vision` false), because the pin predates any checkpoint; the
+driver it runs must be byte for byte the pin's `lms_campaign.py`. A checkpoint without the vision tower runs
+the 89 text pilots of `hard-pilots` only. The base, no-think and T0 kinds are unchanged (the real dry run
+against the pin worktree prints the same commands as before). The steps are in
+`benchmarks/training/T1_SMOKE.md` §5a.
+
+**The number a stage ends on.** `python -m roaddraft.eval delta RUN BASE` (`eval/delta.py`) pairs two run
+reports by task: the gap with the board's bootstrap interval, the same by task type, the tasks at 100 in
+each (the pilots passed, on a probe set), the tasks only one of the two ran, and everything that keeps the
+two from being like for like (set, prompt level, mode, thinking, a system extra, tool surface, instructions,
+spec, generator, verifier, harness, a partial or re-scored run). It reads what `eval report` wrote and
+scores nothing.
+
+**Two runs under one row.** `report.publish` refuses a run whose row (set, model, provider, effort, mode,
+prompt level, thinking, system extra, cost subset, text pilots or all) a published ranked run already holds,
+and `make_leaderboard.py` warns of any such pair. No published row is ranked from two runs today, so the
+board is byte for byte what it was. When the base rerun is published its `-pin1` rows will be refused until
+the `-v3` 9B vague rows are retired: which stays is still Robert's call (the open item of 2026-11-14).
+
+**T2's tooling** (a subagent's build in a worktree of its own, brought into main after its tests ran here;
+the runbook is `benchmarks/training/T2.md`). Nothing has been run against a model.
+`python -m roaddraft.eval t2 plan RUN_DIR --round 1 --size 600 --name d1-train-t2-r1` reads a checkpoint's
+run on `d1-dev`, a training set or an earlier round (a held-out run is refused), takes a miss rate for each
+of the 42 cells (training flavour and task type), shrunk toward the run's rate on the same type elsewhere
+because a dev run has three or four episodes a type, and builds a manifest on seeds 21000-22999 (1,000 a
+round) with the existing entry builders: a quarter of the tasks keep the training mix (`--floor`), the rest
+go to what the run misses. An all-pass or all-fail run gives the training mix. The manifest carries the
+record it was planned from, `t2 check` rebuilds it from that record, and writing one that shares an id or a
+seed with any held-out, training or T2 set is refused. No T2 manifest is in the repo, and the names are in
+no tuple the regenerating tests read. `eval run --taskset d1-train-t2-r1` runs it (oracle 100 on 60 of 60).
+`python -m roaddraft.trajectories.conversations rollouts RUN_DIR --taskset d1-train-t2-r1` converts a
+round's episodes; a rollout is kept when it submitted, was not nudged, matches its task, prompt and tools,
+re-scores 100, and passes the two finished-document legs of the keep rule (`twist_ignored`, `left_stale`),
+since the verifier gives 100 to some lettering made without the twist. The turn-by-turn grounding audit is
+the scripted drafter's and is not applied to a model (`--audit none` is the bare "submitted and 100").
+Known: weighting toward what a checkpoint fails lowers the share kept (the plan table prints an estimate);
+a revised task untouched scores above 0 as in `d1-train-revise`; the token counter and the trainer's
+preparation have not been run on a folder that holds rollout files.
+
+**`train-profile`: plan-and-profile sheets (`p06`)** (a subagent's build in a worktree of its own, brought
+into main; `tasks/planprofile.py`, `trajectories/reasoning_profile.py`, seeds 25000-25299). 299 tasks (seed
+25150 has no tangent long enough), each a generated two-sheet road with a seeded profile, an empty ANSI B, C
+or D sheet (`standard` or `fdot` border), 1"=50' or 1"=40', vertical a tenth of that or 1"=10'. The prompts
+are the pilots' own wording and the check is the pilots' own items (`profile.make_check` at 1"=50', the same
+item functions in the stated grid's frame at 1"=40', `make_vague_check` at the vague level), so the plan
+view's stations lined up over the profile's is graded on every task. Registered beside `train-deeds` and
+`train-qa`, outside `probes/pilot`; `hard-pilots` and `pilot-dev` keep their hashes. Recorded in the
+subagent's worktree: 299 of 299 kept at each level, a median 6 turns and 41 to 44 calls; the converter takes
+all 598 with none dropped. What the five pilots have and the set has not: `wfl` and `caltrans` borders (three
+of the five are WFL sheets; their title blocks sit inside the usable area the engine reports), referenced
+corridor files in the plan view, agency layer names, a grade break above 1 %. Engine facts: no query gives
+the elevation at a station, so the drafter shows 30 to 100 sums an episode; `_grade_item` wants a line at
+the exact station a grade begins or ends, which a drafter working to four decimals misses at 1"=40' unless
+the station is snapped (the generator snaps it; a model can meet the same edge on a pilot). The audit takes
+four new forms, on a plan-and-profile brief only. Not done: recording in main, faulted copies, the token
+count, and the dataset rebuild that would take the set in.
+
+**`train-striping`: striping plans (`p13`)** (a subagent's build in a worktree of its own, brought into
+main; `tasks/striping.py`, `trajectories/reasoning_striping.py`, seeds 24000-24299). 300 tasks, none skipped
+or dialed: a generated line with its edges of pavement, a seeded profile, two empty marking layers and no
+sheet; the range is 600 to 1,200 ft, the speed 40 to 70 mph. Six kinds: a no-passing zone for up-station
+traffic (75), for down-station traffic (75), one each way (75), the two overlapping into a double solid
+(25), a crest that restricts nothing (25), a sag (25). The briefs are the pilots' own wording, the check is
+the pilots' `make_check` on the generated line, and the truth is the pilots' sweep. Recorded in the
+subagent's worktree: 300 of 300 kept at each level, 4 turns and a median 11 calls; the converter takes all
+600 with none dropped. The drafter finds the zones in closed form from `get_design_data kind=vcs` (the least
+sight distance on the crest, then the tangent sight line), each step a sum the audit follows; the audit
+takes the MUTCD's own numbers and a stated square root, on a striping brief only.
+**The limit to know:** every generated crest stands alone, and none of the six pilots' crests does. Applied
+by hand to the pilots' profiles with the neighbouring curves ignored, the method lands inside the check's
+25 ft on three (wfl15, wfl16, wfl19) and outside on three (wfl17 60 ft, wfl20 42 ft, cflpnp 70 ft). So the
+set teaches the table, the eye and object heights, which side the solid goes on, the stripe pattern and
+zones clipped by the range, and not the interplay of neighbouring vertical curves or joining zones under
+400 ft apart. Engine facts: no query gives an elevation at a station or a sight distance; `array_entities
+kind=path` turns each copy by the path's bearing, so a stripe pattern has to be drawn pointing east. Not
+done: recording in main, faulted copies, the token count, the dataset rebuild.
+
+**Where this leaves the dataset.** The pin's dataset (17,495 conversations) is unchanged. The two new sets
+add 599 tasks a level once recorded in main, faulted and converted; that rebuild is free and not done here,
+since it changes the card the T1 smoke is sized from. Checked on the combined tree: every held-out and
+training manifest current, `make_leaderboard.py --check` current.
+
 ## 6. Decisions for Robert
 
 1. **The rig for base, T0 and checkpoints.** PC only: free, one to one and a half nights per 100 episodes, and
@@ -943,6 +1036,48 @@ under both trees have the same prompt, budgets and pins.
     (`open_document` and `reload_references` in a D1 episode) was left for the pin. **Decided 2026-11-13:
     allow them, in the pin's cut**, so the drafter can make a revision where the design lives in the base
     drawing too. My proposal for the scope: shown on a revised task's list only, like the two above.
+    **Built 2026-11-13** (34e494ad, a subagent's build in a worktree of its own; 1b5ce003 after an
+    independent review). The revision dial has a third flavour, `revise="base-radius"`, `"base-pi"`
+    or `"base-station"` (`tasks.revise.BASE_KINDS`, `annotate-base` only): the base drawing is
+    handed over on the old design and the change is the drafter's to make where the design lives.
+    Its truth's scope carries a second mark, `base`, beside `revision`; with both, an episode shows
+    `open_document` and `reload_references`, and no other scope's tool list or definitions move
+    (519 scope and mode combinations against the old `eval/tools.py`; 380 episodes of 19 other
+    tasks run under the old and the new code came out identical, key order included).
+    `create_alignment` is not on that list though the design is in the scope: a line of the same
+    name made in the sheet file stands in front of the base drawing's and cost a right answer every
+    label (41 for the whole reference solution plus that one call). `save_document` stays hidden:
+    the episode writes the other document to its file after each command, as the MCP server's
+    autosave does. In a D1 episode `open_document` is the harness's own tool: the same name and
+    `path` as the MCP server's, with a description of its own that says what the pilots' prompt
+    says of saving and of which file is graded. It reaches only the handed document and the files
+    the task ships, inside the episode folder. `submit` with the base drawing open is refused with
+    the way back and the episode goes on; however an episode ends, the handed document is graded
+    with its references read from the files. On a truth marked `base` the verifier reads the
+    design, its centerline and its edges (D1-15, D1-01, D1-12) in the base drawing through the
+    reference (`verify.context.design_home`); every other truth takes the old path, and the
+    verifier's version does not move.
+    The route: open the base drawing, `modify_alignment` with the centerline redrawn, `draw_offset
+    replace` for the edges on a radius or PI change, back to the sheet file, `reload_references`,
+    take the old lettering off, restation the notes, letter again. `update_labels` in place of
+    taking off and lettering again was run on all 300 tasks and left 49 short of 100 (after a
+    restation the ticks and station numbers stop short of the new stations on 35, and labels come
+    out upside down on 14: decision 12's guess again, judged against the revised line), so
+    neither the reference nor the drafter uses it; that is decision 14 below.
+    The tasks are a set of their own, so `d1-train-revise` keeps its 600 ids:
+    `d1-train-revise-base`, seeds 18000-18299, 300 tasks, none skipped, 26 dialed to the next kind
+    (126 restations, 99 radius changes, 75 PI moves; every kind at every curve count, 147 through
+    a turned viewport). Oracle 100 and null 0 on all 300 at both levels; 300 of 300 kept a level,
+    a median 20 turns and 34.5 calls (45 at most).
+    Known and left: the converter keeps such an episode only when it scored 100 as it ended as
+    well as replayed, because what the sheet file had read of the base drawing when is not all in
+    the journal (a replay scored 100 where the episode scored 0, and the other way, on episodes
+    made to show it; every stored recording reloads after its one visit and is unaffected). The
+    CLI agents (`claude-code`, `codex`) answer their own `submit` before the loop can refuse it
+    with the base drawing open, so the flavour is for the model routes the training uses, not
+    for a CLI row. `report.tool_use`'s check prefixes and `ReplayAgent` read only the handed
+    document's journal on such an episode. `HARNESS_VERSION` stays `e3-v3`: no rule changes for
+    any task that existed.
 12. **The labels' follow guessed a twist on an untwisted sheet** (2026-11-12, found by build 4). **Decided
     2026-11-12: "Fix it now".** `commands/label_updates.py::_view_rotation` keeps no twist when no twist poses
     every label of a set as it stands, and guesses only when it does not. Stored rows stand as recorded.

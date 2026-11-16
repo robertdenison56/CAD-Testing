@@ -230,6 +230,40 @@ cd "/Volumes/RobertsExternalSSD/repos/CAD Testing" && PYTHONPATH="$PWD/src" .ven
    About 30-40 min (the 9B's `d1-test` vague clock was 4.8 h per 100). The smoke's checkpoint is 50
    conversations of training: the result shows it serves and calls tools, not that it is better.
 
+### 5a. A checkpoint's eval package on the PC (built 2026-11-15; free, on Robert's word)
+
+Step 8 above is the smoke's ten episodes by hand. A checkpoint that is to be read against the base runs
+through the pin's queue instead, so its rows are made the way the base's are:
+
+```bash
+cd "/Volumes/RobertsExternalSSD/repos/CAD Testing" && .venv/bin/python benchmarks/lmstudio/add_checkpoint.py qwen3.5-9b-t1 --lms-key KEY_FROM_LMS_LS --check runs/t1/gguf/check.json
+```
+
+```bash
+cd "/Volumes/RobertsExternalSSD/repos/CAD Testing" && PHASES=ckpt CKPT=qwen3.5-9b-t1 SETS="d1-dev d1-real-dev pilot-dev" zsh benchmarks/lmstudio/queue-base-pin.sh .claude/worktrees/pin-cut pin/training-1 --dry-run
+```
+
+- `add_checkpoint.py` writes the checkpoint's entry in the main checkout's `models.json` from the base's
+  (the same sampling, context and quantization; `vision` false, since the merge drops the vision tower). It
+  loads nothing. The entry is uncommitted until Robert says otherwise.
+- `PHASES=ckpt` runs the checkpoint with `--thinking off` under run ids
+  `e3-<set>-<label>-single-vague-nothink-<suffix>`, after one check episode that must show no reasoning
+  tokens. The harness, task sets and budgets are the pin's; the driver must be byte for byte the pin's
+  `lms_campaign.py`. The three validation sets are the checkpoint-selection pass; without `SETS` it goes on
+  to `d1-test`, `d1-real` and the hard sets. `hard-pilots` runs the 89 text pilots only.
+- Drop `--dry-run` and start it under `nohup` as the header of the script shows. Nothing is published.
+- Read each set against the no-think base of the same pin, paired by task:
+
+```bash
+cd "/Volumes/RobertsExternalSSD/repos/CAD Testing" && PYTHONPATH="$PWD/src" .venv/bin/python -m roaddraft.eval delta results/e3-lms/e3-d1-dev-qwen3.5-9b-t1-q4km-lms-single-vague-nothink-pin1 results/e3-lms/e3-d1-dev-qwen3.5-9b-q4km-lms-single-vague-nothink-pin1
+```
+
+  `eval delta RUN BASE` prints the gap with the board's bootstrap interval, the same by task type, the tasks
+  at 100 in each, and anything that keeps the two from being like for like (another tool surface, prompt
+  level, thinking setting, verifier). T0 minus base is the same command on the `-t0-` and plain runs.
+- Publishing a base `-pin1` row is refused while the `-v3` row of the same model, set and prompt is
+  published (`report.repeated_keys`): retire the older row first. That is Robert's call.
+
 ## 6. Cost, all estimates
 
 **Throughput (unmeasured, the smoke measures it).** The 9B's text model has 8.95B parameters: 6.92B in the

@@ -1262,6 +1262,13 @@ def publish(s: dict, report_dir, runs_root=RUNS_DIR, allow_unrankable: bool = Fa
     if s["publish_problems"] and not allow_unrankable:
         raise ValueError("not publishable: " + "; ".join(s["publish_problems"])
                          + " (pass --allow-unrankable to publish it marked as such)")
+    clashes = repeated_keys([p for p in published(runs_root) if p.get("run_id") != s["run_id"]] + [s])
+    if clashes:
+        raise ValueError("a published run already ranks under the same row: "
+                         + "; ".join(f"{c['label']} on {c['taskset']} is {' and '.join(c['run_ids'])}" for c in clashes)
+                         + ". Two runs under one row are both listed on the set's board, and the overall score "
+                           "takes one of them without saying which; retire the older run first "
+                           "(benchmarks/runs/RETIRED.md) or leave this one unpublished")
     dest = Path(runs_root) / s["run_id"]
     dest.mkdir(parents=True, exist_ok=True)
     for name in ("summary.json", "leaderboard.md", "per_check.svg"):
@@ -1273,6 +1280,32 @@ def publish(s: dict, report_dir, runs_root=RUNS_DIR, allow_unrankable: bool = Fa
 
 README_BEGIN = "<!-- d1-leaderboard:begin -->"
 README_END = "<!-- d1-leaderboard:end -->"
+
+
+def _ranks(s: dict) -> bool:
+    """Whether a published run's rows are ranked on a board (``board`` applies the same rule)."""
+    return not s.get("publish_problems") and s.get("taskset") in LEADERBOARD_SETS and not s.get("partial")
+
+
+def repeated_keys(summaries: Sequence[dict]) -> List[dict]:
+    """The rows two or more ranked runs share: the same set, the same row key (model, provider, effort, mode,
+    prompt level, thinking, system extra), the same cost subset or none, both with or both without the image
+    pilots.  The set's board lists both; ``overall`` keeps one row a key and would take one of them unsaid
+    (2026-11-14: the base rerun on the training pin shares its key with the published ``-v3`` 9B rows).  The
+    harness's own agents are reference rows and never clash."""
+    seen: Dict[Tuple, dict] = {}
+    for s in summaries:
+        if not _ranks(s):
+            continue
+        sub = (s.get("cost_subset") or {}).get("tag")
+        text = bool((s.get("coverage") or {}).get("text_only"))
+        for g in s.get("rows") or []:
+            if g["key"].get("provider") == "harness":
+                continue
+            k = (s.get("taskset"), json.dumps(g["key"], sort_keys=True), sub, text)
+            seen.setdefault(k, {"taskset": s.get("taskset"), "key": g["key"], "label": g["label"],
+                                "run_ids": []})["run_ids"].append(s["run_id"])
+    return [c for c in seen.values() if len(set(c["run_ids"])) > 1]
 
 
 def published(runs_root=RUNS_DIR) -> List[dict]:

@@ -85,6 +85,20 @@ and ``trajectories.reasoning.audit`` finds nothing ungrounded.  An episode
 that looked at an attachment is dropped as ``vision``: the scan it was sent
 is not in its file.
 
+**A model's rollouts (stage T2).**  ``rollouts RUN_DIR --taskset NAME`` converts
+a model run on a T2 round's manifest (``eval.t2``).  The grounded audit of rule 4
+reads the shown work of the scripted drafter and a model's turns do not pass it
+(the plain oracle does not either), so a rollout is held to rules 1 to 3 and to
+the two parts of rule 4 that read the finished document and not the turns
+(``audit="document"``): lettering on a twisted sheet made for the twist, nothing
+left stale on a revised sheet.  ``--audit none`` holds it to rules 1 to 3 alone.
+So a rollout is kept when it submitted and its journal re-scores an effective
+100 on the manifest's task and this checkout's tools, and is dropped otherwise,
+the reasons tallied.  Of several samples of one task at one level the first
+kept is written.  Only a T2 manifest's run converts this way: a run on a
+held-out set is never training data, and a rollout on a reference set's task
+would take a reference's id.
+
 ``python -m roaddraft.trajectories.conversations convert`` writes one JSONL
 of conversations per training set and level into ``results/training/``,
 ``tools.json`` and ``summary.json``; ``scripts/training_tokens.py`` counts
@@ -118,6 +132,8 @@ CARD = REPO / "benchmarks" / "training" / "DATASET_CARD.md"
 LEVELS = ("vague", "explicit")
 #: modes whose episodes are text only: a vision episode's images are never written to its file
 TEXT_MODES = ("single", "self_correct")
+#: ``audit="document"``: the checks of the finished document only (a model's rollout)
+DOCUMENT = "document"
 #: why an episode is not a training example, in the order the checks run
 REASONS = ("not_submitted", "vision", "nudged", "no_task", "prompt", "truth", "start", "tools",
            "replay", "score", "ungrounded", "twist_ignored", "left_stale", "error")
@@ -294,22 +310,22 @@ def messages(system: str, brief: str, turns: Sequence[dict], budgets) -> List[di
 
 # ------------------------------------------------------------ one episode
 
-def _entries(taskset: str) -> Dict[str, dict]:
-    key = f"entries|{taskset}"
+def _entries(taskset: str, root=None) -> Dict[str, dict]:
+    key = f"entries|{taskset}" + (f"|{root}" if root else "")
     if key not in _CACHE:
         from roaddraft.eval import taskset as tasksets
-        _CACHE[key] = {e["task_id"]: e for e in tasksets.entries(taskset)}
+        _CACHE[key] = {e["task_id"]: e for e in tasksets.entries(taskset, root=root)}
     return _CACHE[key]
 
 
-def rebuild_task(taskset: str, task_id: str, level: Optional[str] = None):
-    """The task ``task_id`` of the ``taskset`` manifest.  A probe task is its
-    own id at each prompt level and is built posed at ``level``; a D1 task is
-    the same at every level."""
+def rebuild_task(taskset: str, task_id: str, level: Optional[str] = None, root=None):
+    """The task ``task_id`` of the ``taskset`` manifest (under ``root``; default
+    the repo's task sets).  A probe task is its own id at each prompt level
+    and is built posed at ``level``; a D1 task is the same at every level."""
     from roaddraft.eval import taskset as tasksets
-    entry = _entries(taskset).get(task_id)
+    entry = _entries(taskset, root).get(task_id)
     if entry is None and level == "vague":
-        entry = next((e for e in _entries(taskset).values()
+        entry = next((e for e in _entries(taskset, root).values()
                       if e.get("vague_task_id") == task_id), None)
     if entry is None:
         raise Drop("no_task", f"{task_id} is not in the {taskset} manifest")
@@ -335,9 +351,13 @@ class Example:
     detail: str = ""
 
 
-def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[dict]]:
+def convert_episode(path, taskset: str, audit: Union[bool, str] = True,
+                    root=None) -> Tuple[dict, List[dict]]:
     """The training conversation of one episode file and the tool definitions
-    it names, or ``Drop``.  ``taskset`` is the manifest that rebuilds its task."""
+    it names, or ``Drop``.  ``taskset`` is the manifest that rebuilds its task
+    (read under ``root``; default the repo's task sets).  ``audit``: True for
+    the whole of keep rule 4, ``"document"`` for its checks of the finished
+    document alone (a model's rollout), False for none of it."""
     from roaddraft.eval.trajectory import read_episode, replay_journal
     from roaddraft.tasks.brief import GroundTruth
     from roaddraft.tasks.prompts import task_text
@@ -359,8 +379,8 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
 
     level = header["level"]
     if header.get("probe") or journal.get("probe"):
-        return _convert_probe(path, taskset, records, audit)
-    task = rebuild_task(taskset, header["task_id"])
+        return _convert_probe(path, taskset, records, audit, root)
+    task = rebuild_task(taskset, header["task_id"], root=root)
     if getattr(task, "probe", None) is not None:
         raise Drop("no_task", f"{header['task_id']} is a probe task of {taskset}, the episode "
                               "is not a probe episode")
@@ -393,7 +413,7 @@ def convert_episode(path, taskset: str, audit: bool = True) -> Tuple[dict, List[
         from roaddraft.tasks.revise import left_stale
         from roaddraft.trajectories import faults, grounded
         # an injected fault's broken turn is wrong on purpose and weighs 0: its own findings are left out
-        found = faults.audit_turns(brief, defs, turns)
+        found = faults.audit_turns(brief, defs, turns) if audit != DOCUMENT else []
         if found:
             raise Drop("ungrounded", json.dumps(found[:3], ensure_ascii=False))
         blind = grounded.twist_ignored(task, session.doc)
@@ -492,7 +512,8 @@ def _plain(value):
     return json.loads(json.dumps(value, ensure_ascii=False))
 
 
-def _convert_probe(path, taskset: str, records: dict, audit: bool) -> Tuple[dict, List[dict]]:
+def _convert_probe(path, taskset: str, records: dict, audit: Union[bool, str],
+                   root=None) -> Tuple[dict, List[dict]]:
     """``convert_episode`` for a probe-task episode (``eval.probe_tasks``)."""
     from roaddraft.eval.agents.llm import system_for
     from roaddraft.eval.episode import EpisodeConfig
@@ -505,7 +526,7 @@ def _convert_probe(path, taskset: str, records: dict, audit: bool) -> Tuple[dict
                      for c in (t.get("assistant") or {}).get("tool_calls") or [])]
     if looked:
         raise Drop("vision", f"turns {looked} looked at an attachment: the scan is not in the file")
-    task = rebuild_task(taskset, header["task_id"], level)
+    task = rebuild_task(taskset, header["task_id"], level, root)
     probe = getattr(task, "probe", None)
     if probe is None:
         raise Drop("no_task", f"{header['task_id']} is not a probe task of {taskset}")
@@ -545,7 +566,7 @@ def _convert_probe(path, taskset: str, records: dict, audit: bool) -> Tuple[dict
     if report.effective_score < 100.0:
         raise Drop("score", f"the task's check fails on the replayed files: "
                             f"{str(getattr(report, 'detail', ''))[:160]}")
-    if audit:
+    if audit and audit != DOCUMENT:
         from roaddraft.trajectories import faults, reasoning
         broken = faults.broken_turns(turns)
         found = [f for f in reasoning.audit(brief, defs, turns) if f.get("turn") not in broken]
@@ -556,15 +577,15 @@ def _convert_probe(path, taskset: str, records: dict, audit: bool) -> Tuple[dict
     system = header.get("system_prompt") or system_for(agent.context)
     msgs = messages(system, brief, turns, budgets)
     more = {"harness": "probe", "probe": probe.id, "start": probe.start,
-            "seed": _entry_seed(taskset, header["task_id"], header.get("seed"))}
+            "seed": _entry_seed(taskset, header["task_id"], header.get("seed"), root)}
     return _conversation(path, taskset, header, turns, msgs, system, tools_digest,
                          report.verifier_version, report, more), defs
 
 
-def _entry_seed(taskset: str, task_id: str, default=None):
+def _entry_seed(taskset: str, task_id: str, default=None, root=None):
     """The seed a generated probe task was made from, which its episode header does not
     carry: the manifest entry's."""
-    for e in _entries(taskset).values():
+    for e in _entries(taskset, root).values():
         if task_id in (e.get("task_id"), e.get("vague_task_id")):
             return e.get("seed", default)
     return default
@@ -578,11 +599,11 @@ def _shown_path(path) -> str:
         return str(p)
 
 
-def convert(path, taskset: str, audit: bool = True) -> Example:
+def convert(path, taskset: str, audit: Union[bool, str] = True, root=None) -> Example:
     """``convert_episode`` with a drop, or any failure, kept as the reason."""
     ex = Example(path=str(path))
     try:
-        conversation, defs = convert_episode(path, taskset, audit=audit)
+        conversation, defs = convert_episode(path, taskset, audit=audit, root=root)
     except Drop as d:
         ex.drop, ex.detail = d.reason, d.detail
     except Exception as exc:  # a broken file is counted, not fatal to the set
@@ -593,7 +614,7 @@ def convert(path, taskset: str, audit: bool = True) -> Example:
     return ex
 
 
-def _convert_job(job: Tuple[str, str, bool]) -> Example:
+def _convert_job(job: tuple) -> Example:
     return convert(*job)
 
 
@@ -626,14 +647,23 @@ def _stats(values: Sequence[int]) -> dict:
     return {"min": min(values), "median": statistics.median(values), "max": max(values)}
 
 
-def convert_set(src: Path, taskset: str, out_file: Path, jobs: int = 1, audit: bool = True,
+def convert_set(src: Path, taskset: str, out_file: Path, jobs: int = 1,
+                audit: Union[bool, str] = True,
                 limit: Optional[int] = None, pins: Optional[dict] = None,
-                log=None) -> Tuple[dict, Dict[str, List[dict]]]:
+                log=None, paths: Optional[Sequence[Path]] = None, root=None,
+                one_per_id: bool = False) -> Tuple[dict, Dict[str, List[dict]]]:
     """Convert one recording folder into ``out_file`` (JSONL, one conversation
-    a line, by task id): the set's tally and the tool sets it names."""
-    paths, recorder = sources(Path(src))
+    a line, by task id): the set's tally and the tool sets it names.  With
+    ``paths``, those episode files of the folder and no other; ``root`` is
+    where the ``taskset`` manifest is read; ``one_per_id`` writes the first
+    kept conversation of an id (a run of several samples a task) and counts
+    the rest under ``more_samples``."""
+    if paths is None:
+        paths, recorder = sources(Path(src))
+    else:
+        paths, recorder = list(paths), {}
     paths = paths[:limit] if limit is not None else paths
-    jobs_list = [(str(p), taskset, audit) for p in paths]
+    jobs_list = [(str(p), taskset, audit) + ((str(root),) if root else ()) for p in paths]
     if jobs > 1 and len(jobs_list) > 1:
         from multiprocessing import get_context
         with get_context("spawn").Pool(jobs) as pool:
@@ -642,6 +672,12 @@ def convert_set(src: Path, taskset: str, out_file: Path, jobs: int = 1, audit: b
         examples = [_convert_job(j) for j in jobs_list]
     kept = sorted((e for e in examples if e.conversation), key=lambda e: e.task_id)
     dropped = [e for e in examples if not e.conversation]
+    more = 0
+    if one_per_id:
+        first: Dict[str, Example] = {}
+        for e in kept:   # (the sort is stable: a task's samples stay in file order)
+            first.setdefault(e.conversation["id"], e)
+        more, kept = len(kept) - len(first), list(first.values())
     tools: Dict[str, List[dict]] = {}
     out_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_file.with_suffix(out_file.suffix + ".tmp")
@@ -672,6 +708,8 @@ def convert_set(src: Path, taskset: str, out_file: Path, jobs: int = 1, audit: b
     }
     if any(h.get("harness") == "probe" for h in heads):
         tally["harness"] = "probe"   # episodes of the pilots' harness (eval.probe_tasks)
+    if one_per_id:
+        tally["more_samples"] = more   # kept too, and not written: a later sample of a written task
     kinds = Counter(f["kind"] for h in heads for f in h.get("injected") or [])
     if kinds:
         tally["injected"] = dict(sorted(kinds.items()))
@@ -682,9 +720,9 @@ def convert_set(src: Path, taskset: str, out_file: Path, jobs: int = 1, audit: b
     return tally, tools
 
 
-def manifest_seeds(taskset: str) -> Optional[List[int]]:
+def manifest_seeds(taskset: str, root=None) -> Optional[List[int]]:
     from roaddraft.eval import taskset as tasksets
-    seeds = [e["seed"] for e in tasksets.entries(taskset) if "seed" in e]
+    seeds = [e["seed"] for e in tasksets.entries(taskset, root=root) if "seed" in e]
     return [min(seeds), max(seeds)] if seeds else None
 
 
@@ -756,6 +794,84 @@ def run(sets: Sequence[str], levels: Sequence[str] = LEVELS, source: Path = SOUR
     return summary
 
 
+def _level_of(path) -> Optional[str]:
+    """The prompt level of an episode file, from its header (its first record)."""
+    try:
+        with Path(path).open(encoding="utf-8") as fh:
+            first = json.loads(fh.readline() or "{}")
+    except (OSError, ValueError):
+        return None
+    return first.get("level", "explicit") if first.get("type") == "header" else None
+
+
+def run_rollouts(run_dir, taskset: str, out: Path = OUT, tasksets_root=None, jobs: int = 1,
+                 audit: Union[bool, str] = DOCUMENT, limit: Optional[int] = None,
+                 log=print) -> dict:
+    """Convert a model's run on the T2 manifest ``taskset`` (``eval.t2``) into
+    ``<taskset>-<level>.jsonl`` under ``out``, a file a prompt level, beside
+    the references: the keep rule of the module's docstring, *A model's
+    rollouts*.  ``summary.json`` and ``tools.json`` are carried on as ``run``
+    carries them.  ``ValueError`` for a set that is not a T2 round's, a
+    manifest that shares anything with another set, or a run made on another
+    set."""
+    from roaddraft import __version__
+    from roaddraft.eval import taskset as tasksets
+    from roaddraft.eval.episode import HARNESS_VERSION
+    from roaddraft.runners.core import pins as current_pins
+    from roaddraft.verify import VERIFIER_VERSION
+    run_dir, out = Path(run_dir), Path(out)
+    if not tasksets.is_t2(taskset):
+        raise ValueError(f"{taskset}: rollouts convert for a T2 round's set only "
+                         f"({tasksets.T2_PREFIX}<tag>): a run on a held-out set is never training "
+                         "data, and a rollout on a reference set's task would take its reference's id")
+    shared = tasksets.t2_overlap(tasksets.load(taskset, tasksets_root), tasksets_root)
+    if shared:
+        raise ValueError(f"{taskset} shares with another set; nothing converted: " + "; ".join(shared))
+    meta_path = run_dir / "run.json"
+    ran = ((json.loads(meta_path.read_text()).get("spec") or {}).get("taskset")
+           if meta_path.exists() else None)
+    if ran is not None and ran != taskset:
+        raise ValueError(f"{run_dir} is a run on {ran}, not on {taskset}")
+    files = sorted((run_dir / "episodes").glob("*.jsonl"))
+    if not files:
+        raise FileNotFoundError(f"{run_dir}: no episodes under {run_dir / 'episodes'}")
+    by_level: Dict[str, List[Path]] = {}
+    unread = 0
+    for path in files:
+        level = _level_of(path)
+        if level is None:
+            unread += 1
+        else:
+            by_level.setdefault(level, []).append(path)
+    pins = current_pins()
+    started = time.time()
+    summary = {"format": FORMAT, "made_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               "roaddraft": __version__, "git_commit": pins.get("commit"),
+               "git_dirty": pins.get("dirty") or [], "verifier_version": VERIFIER_VERSION,
+               "harness_version": HARNESS_VERSION, "audit": audit, "sets": {}}
+    all_tools: Dict[str, List[dict]] = {}
+    for level in sorted(by_level, key=lambda lv: (LEVELS.index(lv) if lv in LEVELS else 99, lv)):
+        tally, tools = convert_set(run_dir, taskset, out / f"{taskset}-{level}.jsonl", jobs=jobs,
+                                   audit=audit, limit=limit, pins=pins, log=log,
+                                   paths=by_level[level], root=tasksets_root, one_per_id=True)
+        tally["level"] = level
+        tally["variant"] = "rollouts"
+        tally["run_id"] = run_dir.name
+        tally["manifest_seeds"] = manifest_seeds(taskset, tasksets_root)
+        summary["sets"][f"{taskset}-{level}"] = _stamped(tally, summary)
+        for dig, defs in tools.items():
+            all_tools.setdefault(dig, defs)
+    if unread and log:
+        log(f"{run_dir}: {unread} episode file(s) with no header, left out")
+    out.mkdir(parents=True, exist_ok=True)
+    held = json.loads(write_tools(out, all_tools).read_text())
+    _carry_forward(out, summary, log)
+    summary["tools"] = {dig: row["count"] for dig, row in sorted(held.items())}
+    summary["seconds"] = round(time.time() - started, 1)
+    (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
+    return summary
+
+
 def _stamped(tally: dict, summary: dict) -> dict:
     """The tally with the call that wrote its file: the summary's own pins are
     the last call's, and a folder converted set by set holds files of several."""
@@ -813,7 +929,7 @@ def histogram(values: Sequence[int], edges: Sequence[int]) -> List[Tuple[str, in
 
 
 #: the probe-task training sets, in the card's order
-PROBE_ORDER = ("train-deeds", "train-qa")
+PROBE_ORDER = ("train-deeds", "train-qa", "train-striping", "train-profile")
 EDGES = (0, 26000, 28000, 30000, 32000, 36000, 40000, 48000, 56000, 64000, 80000, 96000, 131072)
 
 
@@ -869,6 +985,15 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
       "(100 or dropped); and the grounded audit run again (nothing ungrounded, lettering made for "
       "a twisted sheet, nothing left stale on a revised one).")
     w("")
+    rolled = sorted({t["taskset"] for t in sets.values() if t.get("variant") == "rollouts"})
+    if rolled:
+        w(", ".join(f"`{n}`" for n in rolled) + " are a model's own rollouts (stage T2, "
+          "`conversations rollouts`), not references: each submitted and re-scored 100 on its "
+          "manifest's task and tools as above, and was held to the checks of the finished document "
+          "(lettering made for a twisted sheet, nothing left stale on a revised one) where its "
+          "tally's `audit` is `document`; the grounded audit of the turns is the scripted drafter's "
+          "and was not run on them.")
+        w("")
     if probe_sets:
         w(", ".join(f"`{n}`" for n in probe_sets) + " are probe tasks: they run on the pilots' harness "
           "(`roaddraft.eval.probe_tasks`), on the MCP server's own tools and that harness's system "
@@ -1160,6 +1285,17 @@ def main(argv=None) -> int:
     c.add_argument("--no-faults", dest="faults", action="store_const", const=None,
                    default=argparse.SUPPRESS,
                    help="convert the references only")
+    r = sub.add_parser("rollouts", help="a model's run on a T2 round's manifest -> conversations "
+                                        "(kept: submitted and re-scored 100)")
+    r.add_argument("run_dir", type=Path, help="the run folder, results/<run_id>")
+    r.add_argument("--taskset", required=True, help="the round's manifest (python -m roaddraft.eval t2 plan)")
+    r.add_argument("--tasksets-root", type=Path, help="where that manifest is (default benchmarks/tasksets)")
+    r.add_argument("--out", type=Path, default=OUT)
+    r.add_argument("--jobs", type=int, default=max(1, min(6, (os.cpu_count() or 2) - 2)))
+    r.add_argument("--limit", type=int, help="convert the first N episodes of each level")
+    r.add_argument("--audit", choices=(DOCUMENT, "none"), default=DOCUMENT,
+                   help="document (default): also drop lettering not made for a twisted sheet and "
+                        "anything left stale on a revised one; none: submitted and 100 alone")
     k = sub.add_parser("card", help="write the dataset card from results/training")
     k.add_argument("--out", type=Path, default=OUT)
     k.add_argument("--card", type=Path, default=CARD)
@@ -1173,6 +1309,23 @@ def main(argv=None) -> int:
         print(f"{kept} conversations written to {args.out}, {dropped} dropped, "
               f"{len(summary['tools'])} tool set(s), {summary['seconds']} s")
         return 0
+    if args.command == "rollouts":
+        try:
+            summary = run_rollouts(args.run_dir, args.taskset, args.out, args.tasksets_root,
+                                   jobs=args.jobs, audit=False if args.audit == "none" else DOCUMENT,
+                                   limit=args.limit)
+        except (ValueError, FileNotFoundError) as why:
+            print(f"rollouts: {why}", file=sys.stderr)
+            return 2
+        mine = [t for t in summary["sets"].values() if t.get("run_id") == Path(args.run_dir).name
+                and t.get("taskset") == args.taskset]
+        for t in mine:
+            drops = ", ".join(f"{reason} {n}" for reason, n in t["dropped"].items()) or "none"
+            print(f"{t['file']}: {t['kept']} kept of {t['episodes']} episodes; dropped: {drops}"
+                  + (f"; {t['more_samples']} later samples of a kept task not written"
+                     if t.get("more_samples") else ""))
+        print(f"{sum(t['kept'] for t in mine)} conversations written to {args.out}")
+        return 0
     path = card(args.out, args.card)
     print(f"wrote {path}")
     return 0
@@ -1181,7 +1334,8 @@ def main(argv=None) -> int:
 __all__ = ["FORMAT", "REASONS", "Drop", "Example", "digest", "tools_sha256", "tool_set",
            "function_tools", "system_text", "system_extra_of", "held_to_prompt", "rebuild_task",
            "budgets_of", "messages", "convert_episode", "convert",
-           "convert_set", "sources", "run", "write_tools", "card", "histogram", "main"]
+           "convert_set", "sources", "run", "write_tools", "card", "histogram", "main",
+           "DOCUMENT", "run_rollouts"]
 
 if __name__ == "__main__":
     sys.exit(main())

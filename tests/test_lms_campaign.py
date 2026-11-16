@@ -671,3 +671,91 @@ def test_the_queue_leaves_the_nothink_sets_out_when_the_check_episode_ends_in_er
     assert r.returncode == 0, r.stdout + r.stderr
     assert rig.started() == [f"{check}-r2", f"e3-d1-dev-{Q9}-single-vague-nothink-pin1"]
     assert "thinking off holds on the check episode" in rig.log()
+
+
+# ------------------------------------------------------------------ a trained checkpoint (2026-11-15)
+
+ADD = ROOT / "benchmarks" / "lmstudio" / "add_checkpoint.py"
+CK = "qwen3.5-9b-t1s"
+QCK = "qwen3.5-9b-t1s-q4km-lms"
+
+
+def _add_checkpoint():
+    spec = importlib.util.spec_from_file_location("add_checkpoint_under_test", ADD)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _ckpt_rig(tmp_path, vision=False):
+    """The rig with a main checkout that knows a checkpoint: the pin's driver beside a models.json with its entry."""
+    import json
+    import shutil
+    rig = _rig(tmp_path)
+    lm = rig.repo / "benchmarks" / "lmstudio"
+    lm.mkdir(parents=True)
+    shutil.copy(rig.pin / "benchmarks" / "lmstudio" / "lms_campaign.py", lm / "lms_campaign.py")
+    data = json.loads((SCRIPT.parent / "models.json").read_text())
+    _add_checkpoint().add(data, CK, "qwen3.5-9b", "roaddraft/qwen3.5-9b-t1s", sha256="ab" * 32, today="2026-11-15")
+    data["models"][CK]["vision"] = vision
+    (lm / "models.json").write_text(json.dumps(data))
+    return rig
+
+
+def test_a_checkpoints_entry_carries_the_bases_sampling_and_its_own_label():
+    import json
+    import pytest
+    mod = _add_checkpoint()
+    data = json.loads((SCRIPT.parent / "models.json").read_text())
+    base = data["models"]["qwen3.5-9b"]
+    e = mod.add(data, CK, "qwen3.5-9b", "roaddraft/qwen3.5-9b-t1s", check={"gguf_sha256": "cd" * 32, "adapter": "runs/x"},
+                today="2026-11-15")
+    assert e["label"] == QCK and e["lms_key"] == "roaddraft/qwen3.5-9b-t1s" and e["vision"] is False
+    assert (e["extra_body"], e["context"], e["quantization"]) == (base["extra_body"], base["context"], "Q4_K_M")
+    assert e["checkpoint"]["sha256"] == "cd" * 32 and e["checkpoint"]["base"] == "qwen3.5-9b"
+    assert "variant" not in e                           # the file is its own key: no variant to select
+    with pytest.raises(ValueError, match="already"):    # never over an entry, never under the base's key or label
+        mod.add(data, CK, "qwen3.5-9b", "roaddraft/qwen3.5-9b-t1s")
+    with pytest.raises(ValueError, match="already carries"):
+        mod.add(data, "another", "qwen3.5-9b", base["lms_key"])
+    with pytest.raises(ValueError, match="no base model"):
+        mod.add(data, "x", "no-such", "k")
+
+
+def test_the_queue_runs_a_checkpoint_from_the_main_checkouts_entry_with_thinking_off(tmp_path):
+    rig = _ckpt_rig(tmp_path)
+    r = rig.run("--dry-run", PHASES="ckpt", CKPT=CK, SETS="d1-dev hard-pilots")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"e3 {CK} --taskset d1-dev --samples 1 --run-id e3-d1-dev-{QCK}-single-vague-nothink-pin1 " in r.stdout
+    line = next(l for l in r.stdout.splitlines() if f"--run-id e3-hard-pilots-{QCK}" in l)
+    assert "--pilots text" in line and "--thinking off" in line          # no vision tower: the text pilots only
+    assert f"--run-id e3-nothink-check-{QCK}-pin1 " in r.stdout and Q9 not in r.stdout
+    r = rig.run(PHASES="ckpt", CKPT=CK, SETS="d1-dev d1-real-dev")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert rig.started() == [f"e3-nothink-check-{QCK}-pin1", f"e3-d1-dev-{QCK}-single-vague-nothink-pin1",
+                             f"e3-d1-real-dev-{QCK}-single-vague-nothink-pin1"]
+    log = rig.log()
+    assert f"checkpoint {CK} ({QCK}, text pilots only)" in log and "thinking off holds on the check episode (ckpt)" in log
+    assert all(f"--worktree {rig.pin}" in c for c in rig.calls() if c.startswith("e3 "))    # the pin's harness
+
+
+def test_a_checkpoint_that_takes_images_runs_every_pilot(tmp_path):
+    rig = _ckpt_rig(tmp_path, vision=True)
+    r = rig.run("--dry-run", PHASES="ckpt", CKPT=CK, SETS="hard-pilots")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "--pilots all" in next(l for l in r.stdout.splitlines() if f"--run-id e3-hard-pilots-{QCK}" in l)
+
+
+def test_the_queue_refuses_a_checkpoint_it_cannot_place(tmp_path):
+    rig = _ckpt_rig(tmp_path)
+    r = rig.run(PHASES="ckpt")
+    assert r.returncode == 1 and "no CKPT=" in r.stderr
+    r = rig.run(PHASES="ckpt", CKPT="no-such")
+    assert r.returncode == 1 and "no model no-such" in r.stderr
+    main_driver = rig.repo / "benchmarks" / "lmstudio" / "lms_campaign.py"
+    main_driver.write_text(main_driver.read_text() + "# another version\n")
+    r = rig.run(PHASES="ckpt", CKPT=CK)
+    assert r.returncode == 1 and "is not the pin's lms_campaign.py" in r.stderr and rig.started() == []
+    # the base queue never looks at the main checkout's driver or at CKPT
+    r = rig.run(PHASES="base", SETS="d1-dev")
+    assert r.returncode == 0 and rig.started() == [f"e3-d1-dev-{Q9}-single-vague-pin1"]
