@@ -457,7 +457,8 @@ STUB_PGREP = '''#!/bin/sh
 for last; do :; done
 case "$last" in
   *"lms_campaign.py watch"*) exit 1 ;;
-  *queue-*) test -s "$STUB_DIR/queue-pids" && cat "$STUB_DIR/queue-pids" && exit 0; exit 1 ;;
+  *queue-*) test -f "$STUB_DIR/real-queue-pgrep" && exec /usr/bin/pgrep "$@"
+            test -s "$STUB_DIR/queue-pids" && cat "$STUB_DIR/queue-pids" && exit 0; exit 1 ;;
 esac
 answer=$(head -n 1 "$STUB_DIR/busy-answers" 2> /dev/null)
 test -f "$STUB_DIR/busy-answers" && sed -i.bak 1d "$STUB_DIR/busy-answers"
@@ -759,3 +760,21 @@ def test_the_queue_refuses_a_checkpoint_it_cannot_place(tmp_path):
     # the base queue never looks at the main checkout's driver or at CKPT
     r = rig.run(PHASES="base", SETS="d1-dev")
     assert r.returncode == 0 and rig.started() == [f"e3-d1-dev-{Q9}-single-vague-pin1"]
+
+
+def test_the_queue_does_not_wait_on_its_own_caffeinate(tmp_path):
+    """macOS's caffeinate runs as a child of the command it wraps, its command line holding the script's path: the
+    queue must not count it as another queue (2026-11-16: the first real launch waited on its own caffeinate)."""
+    rig = _rig(tmp_path)
+    # a caffeinate like macOS's: a child that outlives the wrapped command's start and names the script
+    rig._tool(rig.stubs / "caffeinate", '#!/bin/sh\n( /bin/sleep 300; : ) < /dev/null > /dev/null 2>&1 &\nshift\nexec "$@"\n')
+    (rig.stubs / "real-queue-pgrep").write_text("")
+    env = {k: v for k, v in rig.env.items() if k != "QUEUE_CAFFEINATED"}
+    try:
+        r = subprocess.run(["zsh", "benchmarks/lmstudio/queue-base-pin.sh", str(rig.pin), "pin/test"], cwd=rig.pin,
+                           env=dict(env, PHASES="base", SETS="d1-dev"), capture_output=True, text=True, timeout=90)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "other local queue script(s) alive at the start" not in rig.log()
+        assert rig.started() == [f"e3-d1-dev-{Q9}-single-vague-pin1"]
+    finally:
+        subprocess.run(["pkill", "-f", str(rig.stubs / "caffeinate")])

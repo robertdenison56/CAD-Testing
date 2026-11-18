@@ -29,11 +29,14 @@ VERSION_KEYS = ("spec_version", "spec_hash", "generator_version", "verifier_vers
 
 def load_summary(path) -> dict:
     """The summary of a run: ``summary.json`` in the folder (a published run), ``report/summary.json`` (a run
-    that was reported), or the report built now from the episodes (nothing is written)."""
+    that was reported), or the report built now from the episodes (nothing is written). A run folder also holds
+    the runner's own ``summary.json``, which has no rows; that one is passed over."""
     path = Path(path)
-    for f in (path / "summary.json", path / "report" / "summary.json"):
+    for f in (path / "report" / "summary.json", path / "summary.json"):
         if f.is_file():
-            return json.loads(f.read_text())
+            data = json.loads(f.read_text())
+            if "rows" in data:
+                return data
     if (path / "episodes").is_dir():
         from roaddraft.eval.report import build
         return build(path)

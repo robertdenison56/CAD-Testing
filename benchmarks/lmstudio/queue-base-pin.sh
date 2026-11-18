@@ -160,10 +160,14 @@ state_of() {  # run id -> new, partial, finished or other, then the detail (lms_
 # The PC is one rig. A local run is the harness on localhost:1234, or lms_campaign starting one (preflight, model load).
 LOCAL_RUN="roaddraft[.](runners|eval) run .*localhost:1234|lms_campaign[.]py (e3|k3|smoke|check|fit|vision|clear-errors) "
 LOCAL_QUEUE="zsh .*(e3-lms|lmstudio)/queue-[^ /]*[.]sh( |\$)"
-other_queues() {  # the pids of the other local queue scripts alive now: not this queue, nor the caffeinate above it
+other_queues() {  # the pids of the other local queue scripts alive now: not this queue, nor its own caffeinate
+  # (macOS's caffeinate runs as a CHILD of the command it wraps, with the script's path in its own command line,
+  # so it matches the pattern; a process whose parent is this queue is this queue's, never another one)
   local p
   for p in $(pgrep -f "$LOCAL_QUEUE"); do
-    [[ $p == $$ || $p == $PPID ]] || print -- $p
+    [[ $p == $$ || $p == $PPID ]] && continue
+    [[ $(ps -o ppid= -p $p 2> /dev/null | tr -d ' ') == $$ ]] && continue
+    print -- $p
   done
 }
 wait_pid() {  # hold while the process is alive

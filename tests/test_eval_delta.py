@@ -65,6 +65,8 @@ def test_runs_with_no_task_in_common_or_several_rows_are_refused():
 def test_the_command_reads_published_and_reported_folders_and_writes_both_files(tmp_path, capsys):
     (tmp_path / "run" / "report").mkdir(parents=True)
     (tmp_path / "run" / "report" / "summary.json").write_text(json.dumps(RUN))
+    # a run folder also holds the runner's own summary, which has no rows
+    (tmp_path / "run" / "summary.json").write_text(json.dumps({"run_id": "run", "groups": {}, "episodes": 4}))
     (tmp_path / "base").mkdir()
     (tmp_path / "base" / "summary.json").write_text(json.dumps(BASE))
     out = tmp_path / "delta.md"

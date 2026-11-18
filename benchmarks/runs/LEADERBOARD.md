@@ -2,7 +2,9 @@
 
 The benchmark board: every published run on the eval sets, scored by the verifier (`roaddraft.eval`), one ranking per set. The 33 capability probes of Track P are a separate board, closed 2026-10-27: [the probe board](../leaderboard/TRACK_P.md).
 
-Vague prompts only: the request in a sentence, the board's focus. Every other prompt level is ranked on a board of its own: [explicit prompts](LEADERBOARD_EXPLICIT.md).
+Vague prompts only: the request in a sentence, the board's focus. The explicit-prompt board was retired on 2026-11-16; its rows are listed in [RETIRED.md](RETIRED.md).
+
+Track D closed on 2026-11-16: what the board found is written up in `docs/Track_D_Findings.md`. Still to come: GPT-6 Astra's remaining sets, appended as they finish.
 
 ![Effective score by model on each eval set](leaderboard.svg)
 
@@ -23,6 +25,7 @@ Vague prompts only: the request in a sentence, the board's focus. Every other pr
 |  | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | – | – | 64.0 | – | 2.7 | – | – | 2 of 5 |
 |  | nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 · single · vague | thinking on | – | – | 82.4 | – | 4.5 | – | – | 2 of 5 |
 |  | openai/gpt-oss-120b · single · vague | medium (default) | – | – | 70.3 | – | 3.4 † | – | – | 2 of 5 |
+|  | qwen/qwen3.5-9b · single · vague · system extra conventions-v1@89b9a471 | default | – | – | 64.3 | 65.3 | – | – | – | 2 of 5 |
 |  | zai-org/glm-4.6v-flash · single · vague | default | – | – | 25.2 | 13.6 | – | – | – | 2 of 5 |
 |  | glm-5.3 · single · vague | default | – | – | 66.5 | – | – | – | – | 1 of 5 |
 |  | google/gemma-4-26B-A4B-it · single · vague | thinking on | – | – | – | – | 0.9 | – | – | 1 of 5 |
@@ -47,9 +50,15 @@ Overall = the weighted mean of the model's effective scores on the 5 sets below,
 | 9 | openai/gpt-oss-120b · single · vague | medium (default) | **70.3** | 65.0–75.5 | 75.5 | 8% | 39% | 2% | – | 100 × 1 | `e3-d1-test-gpt-oss-120b-single-vague-v3` |
 | 10 | google/gemma-4-12b · single · vague | thinking on | **67.2** | 63.6–70.7 | 72.3 | 9% | 32% | 2% | – | 100 × 1 | `e3-d1-test-gemma-4-12b-q8-lms-single-vague-v3` |
 | 11 | glm-5.3 · single · vague | default | **66.5** | 62.5–70.2 | 71.5 | 9% | 22% | 2% | $0.042 | 100 × 1 | `e3-d1-test-glm-5.3-single-vague-v3` |
-| 12 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **64.0** | 58.6–69.4 | 69.8 | 10% | 27% | 1% | – | 100 × 1 | `e3-d1-test-mistral-small-4-single-vague-v3` |
-| 13 | qwen/qwen3.5-9b · single · vague | default | **62.6** | 57.7–67.6 | 66.3 | 6% | 31% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague-v3` |
-| 14 | zai-org/glm-4.6v-flash · single · vague | default | **25.2** | 21.3–29.4 | 26.8 | 7% | 14% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single-vague-v3` |
+| 12 | qwen/qwen3.5-9b · single · vague · system extra conventions-v1@89b9a471 | default | **64.3** | 57.5–70.9 | 69.7 | 7% | 33% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague-t0-pin1` |
+| 13 | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | high | **64.0** | 58.6–69.4 | 69.8 | 10% | 27% | 1% | – | 100 × 1 | `e3-d1-test-mistral-small-4-single-vague-v3` |
+| 14 | qwen/qwen3.5-9b · single · vague | default | **62.6** | 57.7–67.6 | 66.3 | 6% | 31% | 0% | – | 100 × 1 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 15 | zai-org/glm-4.6v-flash · single · vague | default | **25.2** | 21.3–29.4 | 26.8 | 7% | 14% | 0% | – | 100 × 1 | `e3-d1-test-glm-4.6v-flash-q4km-lms-single-vague-v3` |
+
+Notes on `d1-test`:
+
+- Every row on this set ran on the pinned run code (3b7e7fe9; the Runpod rows ad6bf5e3), from before the seeded documents carried the title block's four names and date (designed by, drawn by, checked by, date: 234773ec, 2026-11-12). A vague prompt does not state them, so a drafter had nothing to read them from and left them blank or made them up. The rows stay ranked: the blank fields cost a row 0.3 to 0.95 points on the 19 tasks with a title block, and with each row's shortfall added back the order did not change (checked 2026-11-13, before GPT-6 Astra's row, which leads by 1.1).
+- gpt-6-astra (medium) via codex · single · vague (`e3-d1-test-gpt-6-astra-codex-medium-single-vague-v3`): as of 2026-11-16 this is GPT-6 Astra's only finished set. Its `d1-real` run stopped at 49 of 100 on the ChatGPT account's weekly limit (not published) and resumes when the limit resets on Nov 20, with `d1-test-hard` after it; it has no overall score until all five sets are in.
 
 ## `d1-real`: the sample plan sheets
 
@@ -61,9 +70,10 @@ Overall = the weighted mean of the model's effective scores on the 5 sets below,
 | 2 | claude-opus-5-5 (medium) via claude-code · single · vague | medium | **86.7** | 82.8–90.3 | 100.0 ± 0.0 (n 25) | 71.0 ± 11.5 (n 25) | 88.2 ± 5.3 (n 25) | 87.6 ± 7.5 (n 25) | 89.3 | 4% | 48% | 0% | $0.763 | 100 × 1 | `e3-d1-real-claude-opus-5-5-claude-code-medium-single-vague-v3` |
 | 3 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **75.1** | 70.9–79.1 | 85.0 ± 7.5 (n 25) | 68.1 ± 8.2 (n 25) | 73.1 ± 5.4 (n 25) | 74.2 ± 11.5 (n 25) | 78.1 | 5% | 25% | 0% | $0.329 | 100 × 1 | `e3-d1-real-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
 | 4 | gpt-6-luna (medium) via codex · single · vague | medium | **71.8** | 67.2–76.0 | 85.0 ± 7.5 (n 25) | 74.8 ± 4.6 (n 25) | 71.3 ± 6.6 (n 25) | 56.0 ± 13.6 (n 25) | 75.0 | 6% | 22% | 1% | – | 100 × 1 | `e3-d1-real-gpt-6-luna-codex-medium-single-vague-v3` |
-| 5 | qwen/qwen3.5-9b · single · vague | default | **59.6** | 54.3–64.6 | 95.5 ± 4.5 (n 25) | 53.0 ± 11.0 (n 25) | 49.3 ± 9.8 (n 25) | 40.8 ± 13.3 (n 25) | 61.2 | 7% | 29% | 0% | – | 100 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-v3` |
-| 6 | google/gemma-4-12b · single · vague | thinking on | **59.0** | 54.1–64.2 | 100.0 ± 0.0 (n 25) | 53.2 ± 9.1 (n 25) | 57.1 ± 10.5 (n 25) | 25.8 ± 14.2 (n 25) | 62.7 | 9% | 30% | 2% | – | 100 × 1 | `e3-d1-real-gemma-4-12b-q8-lms-single-vague-v3` |
-| 7 | zai-org/glm-4.6v-flash · single · vague | default | **13.6** | 8.5–19.2 | 20.0 ± 16.0 (n 25) | 7.8 ± 8.8 (n 25) | 23.1 ± 9.0 (n 25) | 3.4 ± 5.1 (n 25) | 13.6 | 0% | 6% | 0% | – | 100 × 1 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single-vague-v3` |
+| 5 | qwen/qwen3.5-9b · single · vague · system extra conventions-v1@89b9a471 | default | **65.3** | 58.7–71.2 | 80.0 ± 14.0 (n 25) | 75.5 ± 11.4 (n 25) | 60.9 ± 9.6 (n 25) | 44.7 ± 12.1 (n 25) | 68.0 | 4% | 26% | 0% | – | 100 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-t0-pin1` |
+| 6 | qwen/qwen3.5-9b · single · vague | default | **59.6** | 54.3–64.6 | 95.5 ± 4.5 (n 25) | 53.0 ± 11.0 (n 25) | 49.3 ± 9.8 (n 25) | 40.8 ± 13.3 (n 25) | 61.2 | 7% | 29% | 0% | – | 100 × 1 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 7 | google/gemma-4-12b · single · vague | thinking on | **59.0** | 54.1–64.2 | 100.0 ± 0.0 (n 25) | 53.2 ± 9.1 (n 25) | 57.1 ± 10.5 (n 25) | 25.8 ± 14.2 (n 25) | 62.7 | 9% | 30% | 2% | – | 100 × 1 | `e3-d1-real-gemma-4-12b-q8-lms-single-vague-v3` |
+| 8 | zai-org/glm-4.6v-flash · single · vague | default | **13.6** | 8.5–19.2 | 20.0 ± 16.0 (n 25) | 7.8 ± 8.8 (n 25) | 23.1 ± 9.0 (n 25) | 3.4 ± 5.1 (n 25) | 13.6 | 0% | 6% | 0% | – | 100 × 1 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single-vague-v3` |
 
 Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the probe board's tiers; `d1-real` draws 25 tasks a group): Draft = draft linework (`real-draw-alignment`); Letter = letter alignment data (`real-stationing`, `real-bearings`, `real-callouts`, `real-curve-table`, `real-alignment-data`); Sheet = produce the sheet (`real-attach-reference`, `real-title-block`, `real-sheet-setup`, `real-annotate-sheet`, `real-plan-sheet`); Notes = notes and dimensions (`real-construction-callouts`). Each cell is the effective mean over the row's tasks in that group ± its 95% half-width, with the number of tasks it rests on.
 
@@ -76,9 +86,10 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 3 | google/gemma-4-31B-it · single · vague | thinking on | **76.8** | 72.2–81.2 | 60 × 1 | subset run (60 of 100) | `e3-d1-real-gemma-4-31b-single-vague-cost5-v3` |
 | 4 | claude-sonnet-5-5 (medium) via claude-code · single · vague | medium | **72.8** | 68.4–76.9 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-claude-sonnet-5-5-claude-code-medium-single-vague-v3` |
 | 5 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **70.5** | 65.5–75.2 | 60 × 1 | subset run (60 of 100) | `e3-d1-real-qwen3.6-35b-a3b-single-vague-cost5-v3` |
-| 6 | google/gemma-4-12b · single · vague | thinking on | **55.5** | 49.5–61.2 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-gemma-4-12b-q8-lms-single-vague-v3` |
-| 7 | qwen/qwen3.5-9b · single · vague | default | **53.2** | 46.3–59.7 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-v3` |
-| 8 | zai-org/glm-4.6v-flash · single · vague | default | **12.9** | 7.6–18.1 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single-vague-v3` |
+| 6 | qwen/qwen3.5-9b · single · vague · system extra conventions-v1@89b9a471 | default | **64.2** | 56.5–71.2 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-t0-pin1` |
+| 7 | google/gemma-4-12b · single · vague | thinking on | **55.5** | 49.5–61.2 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-gemma-4-12b-q8-lms-single-vague-v3` |
+| 8 | qwen/qwen3.5-9b · single · vague | default | **53.2** | 46.3–59.7 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-vague-v3` |
+| 9 | zai-org/glm-4.6v-flash · single · vague | default | **12.9** | 7.6–18.1 | 60 × 1 | full run, re-scored on the subset's 60 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single-vague-v3` |
 
 ## `hard-pilots`: the harder tasks (pass or fail)
 
@@ -116,6 +127,11 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 11 | qwen/qwen3.5-9b · single · vague | default | **1.5** | 0.0–4.5 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-vague-v3` |
 | 12 | google/gemma-4-12b · single · vague | thinking on | **0.0** | 0.0–0.0 | 66 × 1 | full run, re-scored on the subset's 66 | `e3-hard-pilots-gemma-4-12b-q8-lms-single-vague-v3` |
 
+Notes on `hard-pilots`:
+
+- Pass or fail on 112 pilots at one sample each: the leading row's 95% interval is 33.9 to 46.4, a half-width of 6.2 points, over the 5-point target the leading rows of the four D1 sets meet. It is left so; a set of 112 pass-or-fail tasks cannot reach 5 points at k = 1.
+- google/gemma-4-12b · single · vague (`e3-hard-pilots-gemma-4-12b-q8-lms-single-vague-v3`): eight pilots ended on the provider's 30-minute turn limit and were rerun once (the stall rule); four did so again and stand as fails (p01-redraw-alignment-cflpnp, p01-redraw-alignment-wfl20, p10-typical-fdot9132, p10-typical-wfl05). Four more episodes were rerun after an engine or harness error. The final record is 96 submits and 16 budget stops (8 context, 4 turn limit, 3 clock, 1 faults), with no pass.
+
 ## `d1-test-hard`: seeded sheets, the whole job (3-5 curves, 2-3 sheets)
 
 **Best model 93.7/100 on d1-test-hard with the vague prompt (claude-opus-5-5 (medium) via claude-code · single · vague, 95% CI 93.1–94.3, hard-fail 0%).**
@@ -140,6 +156,10 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 | 5 | Qwen/Qwen3.6-35B-A3B · single · vague | thinking on (default) | **41.7** | 29.1–54.2 | 25 × 1 | subset run (25 of 100) | `e3-d1-test-hard-qwen3.6-35b-a3b-single-vague-cost5-v3` |
 | 6 | qwen/qwen3.5-9b · single · vague | default | **13.4** | 8.4–18.1 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-test-hard-qwen3.5-9b-q4km-lms-single-vague-v3` |
 | 7 | google/gemma-4-12b · single · vague | thinking on | **3.3** | 0.0–8.0 | 25 × 1 | full run, re-scored on the subset's 25 | `e3-d1-test-hard-gemma-4-12b-q8-lms-single-vague-v3` |
+
+Notes on `d1-test-hard`:
+
+- Every row on this set ran on the pinned run code (3b7e7fe9; the Runpod row ad6bf5e3), from before the seeded documents carried the title block's four names and date (234773ec, 2026-11-12). 80 of the 100 tasks letter a title block and every model left the four fields blank on all of them: 1.3 to 1.55 points a row, which reorders nothing. The rows stay ranked.
 
 ## `d1-real-hard`: the sample plan sheets, the whole job
 
@@ -170,14 +190,13 @@ Question groups (`tasks.types.REAL_GROUPS`, the real-sheet counterpart of the pr
 
 ## Published runs that are not ranked
 
-- `e3-d1-test-glm-4.6v-flash-q4km-lms-single-v3` (d1-test, 100 episodes, **partial, not scored: 100 of 100 tasks**): zai-org/glm-4.6v-flash · single · explicit, effort default (99 tasks × 1). Not ranked: partial, not scored: covers 100 of the set's 100 tasks; 1 episode(s) ended in error; a row ranks once the run holds every task with none in error or unfinished.
 - `e3-d1-variance-gemma-4-12b-single` (d1-variance, 100 episodes): google/gemma-4-12B-it · single · explicit, effort thinking on 69.3 ± 3.0 (20 tasks × 5). Not ranked: run on d1-variance, not a leaderboard set (d1-test, d1-real, hard-pilots, d1-test-hard, d1-real-hard).
 - `e3-d1-variance-qwen3.6-35b-a3b-single` (d1-variance, 100 episodes): Qwen/Qwen3.6-35B-A3B · single · explicit, effort thinking on (default) 86.7 ± 2.7 (20 tasks × 5). Not ranked: run on d1-variance, not a leaderboard set (d1-test, d1-real, hard-pilots, d1-test-hard, d1-real-hard).
 - `e3-hard-pilots-glm-5.3-single-vague-cost5-text-v3` (hard-pilots, 17 episodes, **partial, not scored: 17 of 66 tasks**): glm-5.3 · single · vague, effort default (17 tasks × 1). Not ranked: partial, not scored: covers 17 of its cost subset's 66 tasks; a row ranks once the run holds every task with none in error or unfinished.
 
 Each set is its own ranking: `d1-test` is 100 held-out tasks from the seeded generator (one synthetic centerline per task); `d1-real` is 100 held-out tasks on the redrafted sample plan sheets (Caltrans, WFL, CFL, FDOT), 25 in each of four question groups (draft linework, letter alignment data, produce the sheet, notes and dimensions), each group a column beside the blended score; `hard-pilots` is the 112 harder-task pilots on the sample sheets, each graded pass (100) or fail (0) by its own check, with the share of its items done as the rubric column; `d1-test-hard` is 100 held-out seeded whole-sheet jobs (three to five curves on two or three sheets, a station equation on one in five: the plan sheet with its pavement, the alignment created from stated geometry and then drafted, the sheet file lettered through its base drawing); `d1-real-hard` is 100 tasks on the redrafted sheets, every whole job (a sheet drafted from its base files or annotated from blank, construction callouts included) and the heaviest whole-line tasks `d1-real` did not draw. Within a set the rows rank on that set alone; the overall table at the top is the one place a model's sets are averaged, the real sheets and the hard pilots weighted double.
 
-Each prompt level is its own board (Robert, 2026-11-08): this file ranks the vague-prompt runs (the request in a sentence, the way a PE would ask for it; what belongs on the sheet is the drafter's to know), the main board and its focus; a score at one prompt level is not comparable with a score at the other. Every task has both prompts: a pilot's vague brief keeps what the drafter cannot know (the files, lines, stations and data given) and leaves its drafting standards to the drafter, graded by the lenient rules where the brief no longer states them.
+Each prompt level ranks apart (Robert, 2026-11-08): this file ranks the vague-prompt runs (the request in a sentence, the way a PE would ask for it; what belongs on the sheet is the drafter's to know), the main board and its focus; a score at one prompt level is not comparable with a score at the other. The explicit-prompt runs (the full brief, stating every standard the task is graded on) had a board of their own until it was retired on 2026-11-16 (`RETIRED.md`). Every task has both prompts: a pilot's vague brief keeps what the drafter cannot know (the files, lines, stations and data given) and leaves its drafting standards to the drafter, graded by the lenient rules where the brief no longer states them.
 
 A run that misses a task of its set, or has an episode that ended in error or never finished, is partial and not scored: it is listed on the main board without a score. The one exception is a cost-subset run (`benchmarks/tasksets/cost-subsets.json`: five tasks of each task type, Runpod runs only, to save cost), ranked in a table of its own under its set beside the full runs re-scored on the same tasks; it too is partial and not scored if it misses a task of the subset or has an episode in error or unfinished. A `hard-pilots` run that holds every text pilot of its set or subset and none of the pilots that come with a page (a model that takes no images) is not partial: it stays in its table, marked **text only**, scored on its text pilots alone, which is not the same tasks as the rows beside it.
 
