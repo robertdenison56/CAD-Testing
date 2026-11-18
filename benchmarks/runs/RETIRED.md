@@ -107,3 +107,80 @@ The published folders moved to `results/_retired-e3-v3/published/<run id>/` (not
 | `hard-pilots` | google/gemma-4-31B-it · single · vague | 3.0 | `e3-hard-pilots-gemma-4-31b-single-vague-v3` (1.8) | `e3-hard-pilots-gemma-4-31b-single-vague-cost5-v3` |
 | `hard-pilots` | mistralai/Mistral-Small-4-119B-2603-NVFP4 · single · vague | 3.0 | `e3-hard-pilots-mistral-small-4-single-vague-v3` (2.7) | `e3-hard-pilots-mistral-small-4-single-vague-cost5-v3` |
 | `hard-pilots` | google/gemma-4-26B-A4B-it · single · vague | 1.5 | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-v3` (0.9) | `e3-hard-pilots-gemma-4-26b-a4b-single-vague-cost5-v3` |
+
+# The explicit-prompt board, retired on 2026-11-16
+
+Robert, Nov 16 2026, at the Track D close-out: "retire the explicit board". The board's focus has been the vague prompt since Nov 8 (the request in a sentence, the drafting standards left to the drafter); the explicit-prompt rows (the full brief, stating every standard the task is graded on) ranked on a board of their own, `LEADERBOARD_EXPLICIT.md`, which is no longer generated (`report.RETIRED_BOARDS`). Nothing was wrong with these rows: they are retired with their board, not for a fix that changed what they recorded. The 40 ranked rows below are the board's last state (a785b2d7); one explicit run that was published but partial, and so never ranked, went with them.
+
+The published folders moved to `results/_retired-explicit/published/<run id>/` (not tracked), with the board's last file beside them (`results/_retired-explicit/LEADERBOARD_EXPLICIT.md`); the raw episodes stay under `results/e3-*/<run id>/`, where `eval causes` and `eval standards` still pair a vague run with its explicit twin. The two `d1-variance` runs (explicit prompts, Oct 20) stay published: they size the interval and were never on a board. To restore the board: move the folders back under `benchmarks/runs/`, put `"explicit": "LEADERBOARD_EXPLICIT.md"` back in `report.LEVEL_BOARD_FILES`, and run `scripts/make_leaderboard.py`. An explicit-prompt run published from now on is listed on the main board, not ranked.
+
+Overall at the explicit prompt, the three models with a full-set run on all five sets (the weighted mean of the set scores, the real sheets and the hard pilots double): gpt-6.1-terra (medium) via codex · single · explicit 82.5 ± 1.6; claude-sonnet-5-5 (medium) via claude-code · single · explicit 74.2 ± 2.1; gpt-6-luna (medium) via codex · single · explicit 61.8 ± 2.1.
+
+## `d1-test` (13 rows)
+
+| # | Row | Effective | 95% CI | Hard-fail | Tasks | Run |
+|---:|---|---:|---|---:|---:|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · vision · explicit | 100.0 | 100.0–100.0 | 0% | 100 | `e3-d1-test-claude-opus-5-5-claude-code-medium-vision` |
+| 2 | gpt-6.1-terra (medium) via codex · vision · explicit | 100.0 | 100.0–100.0 | 0% | 100 | `e3-d1-test-gpt-6.1-terra-codex-medium-vision` |
+| 3 | claude-opus-5-5 (medium) via claude-code · self_correct · explicit | 100.0 | 100.0–100.0 | 0% | 100 | `e3-d1-test-claude-opus-5-5-claude-code-medium-self_correct` |
+| 4 | gpt-6.1-terra (medium) via codex · self_correct · explicit | 100.0 | 100.0–100.0 | 0% | 100 | `e3-d1-test-gpt-6.1-terra-codex-medium-self_correct` |
+| 5 | gpt-6.1-terra (medium) via codex · single · explicit | 96.2 | 93.8–98.1 | 0% | 100 | `e3-d1-test-gpt-6.1-terra-codex-medium-single` |
+| 6 | gpt-6-luna (medium) via codex · self_correct · explicit | 94.8 | 91.5–97.6 | 1% | 100 | `e3-d1-test-gpt-6-luna-codex-medium-self_correct-v3` |
+| 7 | gpt-6-luna (medium) via codex · vision · explicit | 93.7 | 91.6–96.2 | 0% | 100 | `e3-d1-test-gpt-6-luna-codex-medium-vision-v3` |
+| 8 | claude-sonnet-5-5 (medium) via claude-code · vision · explicit | 92.9 | 90.6–95.6 | 0% | 100 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-vision` |
+| 9 | claude-sonnet-5-5 (medium) via claude-code · self_correct · explicit | 91.7 | 88.9–94.5 | 1% | 100 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-self_correct` |
+| 10 | gpt-6-luna (medium) via codex · single · explicit | 91.3 | 87.8–94.6 | 3% | 100 | `e3-d1-test-gpt-6-luna-codex-medium-single-v3` |
+| 11 | claude-sonnet-5-5 (medium) via claude-code · single · explicit | 88.3 | 84.0–92.3 | 3% | 100 | `e3-d1-test-claude-sonnet-5-5-claude-code-medium-single` |
+| 12 | qwen/qwen3.5-9b · single · explicit | 74.0 | 68.5–79.6 | 10% | 100 | `e3-d1-test-qwen3.5-9b-q4km-lms-single-v3` |
+| 13 | google/gemma-4-12b · single · explicit | 64.5 | 59.0–70.3 | 20% | 100 | `e3-d1-test-gemma-4-12b-q8-lms-single-v3` |
+
+## `d1-real` (11 rows)
+
+| # | Row | Effective | 95% CI | Hard-fail | Tasks | Run |
+|---:|---|---:|---|---:|---:|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · self_correct · explicit | 100.0 | 99.9–100.0 | 0% | 100 | `e3-d1-real-claude-opus-5-5-claude-code-medium-self_correct` |
+| 2 | gpt-6.1-terra (medium) via codex · self_correct · explicit | 99.8 | 99.5–100.0 | 0% | 100 | `e3-d1-real-gpt-6.1-terra-codex-medium-self_correct` |
+| 3 | gpt-6.1-terra (medium) via codex · single · explicit | 95.4 | 93.0–97.4 | 1% | 100 | `e3-d1-real-gpt-6.1-terra-codex-medium-single` |
+| 4 | claude-sonnet-5-5 (medium) via claude-code · self_correct · explicit | 92.1 | 88.8–95.0 | 3% | 100 | `e3-d1-real-claude-sonnet-5-5-claude-code-medium-self_correct` |
+| 5 | claude-sonnet-5-5 (medium) via claude-code · single · explicit | 89.9 | 86.3–93.1 | 4% | 100 | `e3-d1-real-claude-sonnet-5-5-claude-code-medium-single` |
+| 6 | gpt-6-luna (medium) via codex · vision · explicit | 84.9 | 81.1–88.8 | 4% | 100 | `e3-d1-real-gpt-6-luna-codex-medium-vision-v3` |
+| 7 | gpt-6-luna (medium) via codex · self_correct · explicit | 84.5 | 79.7–88.8 | 6% | 100 | `e3-d1-real-gpt-6-luna-codex-medium-self_correct-v3` |
+| 8 | gpt-6-luna (medium) via codex · single · explicit | 84.3 | 80.2–88.3 | 8% | 100 | `e3-d1-real-gpt-6-luna-codex-medium-single-v3` |
+| 9 | qwen/qwen3.5-9b · single · explicit | 70.8 | 66.0–75.7 | 10% | 100 | `e3-d1-real-qwen3.5-9b-q4km-lms-single-v3` |
+| 10 | google/gemma-4-12b · single · explicit | 68.6 | 64.4–72.7 | 11% | 100 | `e3-d1-real-gemma-4-12b-q8-lms-single-v3` |
+| 11 | zai-org/glm-4.6v-flash · single · explicit | 19.6 | 14.3–25.2 | 4% | 100 | `e3-d1-real-glm-4.6v-flash-q4km-lms-single-v3` |
+
+## `hard-pilots` (8 rows)
+
+| # | Row | Effective | 95% CI | Hard-fail | Tasks | Run |
+|---:|---|---:|---|---:|---:|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · single · explicit | 61.6 | 55.4–67.9 | 38% | 112 | `e3-hard-pilots-claude-opus-5-5-claude-code-medium-single-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · self_correct · explicit | 50.9 | 44.6–57.1 | 49% | 112 | `e3-hard-pilots-gpt-6.1-terra-codex-medium-self_correct-v3` |
+| 3 | gpt-6.1-terra (medium) via codex · single · explicit | 40.2 | 34.8–45.5 | 60% | 112 | `e3-hard-pilots-gpt-6.1-terra-codex-medium-single-v3` |
+| 4 | claude-sonnet-5-5 (medium) via claude-code · single · explicit | 33.0 | 27.7–38.4 | 67% | 112 | `e3-hard-pilots-claude-sonnet-5-5-claude-code-medium-single-v3` |
+| 5 | gpt-6-luna (medium) via codex · self_correct · explicit | 7.1 | 2.7–11.6 | 93% | 112 | `e3-hard-pilots-gpt-6-luna-codex-medium-self_correct-v3` |
+| 6 | gpt-6-luna (medium) via codex · single · explicit | 5.4 | 1.8–8.9 | 95% | 112 | `e3-hard-pilots-gpt-6-luna-codex-medium-single-v3` |
+| 7 | gpt-6-luna (medium) via codex · vision · explicit | 4.5 | 0.9–8.0 | 96% | 112 | `e3-hard-pilots-gpt-6-luna-codex-medium-vision-v3` |
+| 8 | qwen/qwen3.5-9b · single · explicit | 2.7 | 0.0–5.4 | 97% | 112 | `e3-hard-pilots-qwen3.5-9b-q4km-lms-single-v3` |
+
+## `d1-test-hard` (4 rows)
+
+| # | Row | Effective | 95% CI | Hard-fail | Tasks | Run |
+|---:|---|---:|---|---:|---:|---|
+| 1 | claude-opus-5-5 (medium) via claude-code · single · explicit | 98.5 | 98.3–98.8 | 0% | 100 | `e3-d1-test-hard-claude-opus-5-5-claude-code-medium-single-v3` |
+| 2 | gpt-6.1-terra (medium) via codex · single · explicit | 98.5 | 98.2–98.9 | 0% | 100 | `e3-d1-test-hard-gpt-6.1-terra-codex-medium-single-v3` |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · explicit | 90.8 | 87.8–93.0 | 2% | 100 | `e3-d1-test-hard-claude-sonnet-5-5-claude-code-medium-single-v3` |
+| 4 | gpt-6-luna (medium) via codex · single · explicit | 56.3 | 48.4–63.7 | 33% | 100 | `e3-d1-test-hard-gpt-6-luna-codex-medium-single-v3` |
+
+## `d1-real-hard` (4 rows)
+
+| # | Row | Effective | 95% CI | Hard-fail | Tasks | Run |
+|---:|---|---:|---|---:|---:|---|
+| 1 | gpt-6.1-terra (medium) via codex · single · explicit | 97.1 | 94.1–99.2 | 2% | 100 | `e3-d1-real-hard-gpt-6.1-terra-codex-medium-single-v3` |
+| 2 | claude-opus-5-5 (medium) via claude-code · single · explicit | 96.1 | 92.9–99.0 | 3% | 100 | `e3-d1-real-hard-claude-opus-5-5-claude-code-medium-single-v3` |
+| 3 | claude-sonnet-5-5 (medium) via claude-code · single · explicit | 84.5 | 79.1–89.5 | 9% | 100 | `e3-d1-real-hard-claude-sonnet-5-5-claude-code-medium-single-v3` |
+| 4 | gpt-6-luna (medium) via codex · single · explicit | 83.7 | 78.7–88.1 | 9% | 100 | `e3-d1-real-hard-gpt-6-luna-codex-medium-single-v3` |
+
+## Published, partial, never ranked (1 run)
+
+- `e3-d1-test-glm-4.6v-flash-q4km-lms-single-v3` (d1-test, 100 episodes; 100 of 100 tasks): zai-org/glm-4.6v-flash · single · explicit. partial, not scored: covers 100 of the set's 100 tasks; 1 episode(s) ended in error; a row ranks once the run holds every task with none in error or unfinished.

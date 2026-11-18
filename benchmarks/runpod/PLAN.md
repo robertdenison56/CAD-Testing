@@ -1,5 +1,23 @@
 # Plan: Track D on Runpod, the model tree (drafted 2026-10-28 evening)
 
+## Closed with Track D (2026-11-16)
+
+Robert, Nov 16, closing Track D: "drop kimi", "delete old runpod endpoints". Nothing below this section is a plan
+any more; it is the record of what ran.
+
+- **Kimi K2.6 is dropped.** Its smoke on the public `moonshot-kimi` route (`queue-trackd-v4.sh`, Nov 10 21:05) came
+  back with empty replies: 5 episodes, 0 steps, $0 (`results/e3-runpod/e3-smoke-v3-kimi-k2.6`), so its `d1-test` was
+  skipped. The cause was never diagnosed (a route or request-format problem, not the model's drafting). No retry and
+  no row; the `kimi-k2.6` spec and its price row stay in the tree, marked dropped.
+- **The two old endpoints are deleted** (Nov 16, read back gone): `d1aaw4ddzlsghg` (`roaddraft-qwen3.5-122b-a10b`)
+  and `7maayov2g1xjoi` (`roaddraft-gpt-oss-120b`), both REST-created on Oct 17, never run, and replaced by the Hub
+  redeploys `8jlpbwp0bkjooj` and `ioe4cjrhf39vp3`. Thirteen endpoints remain, every one parked at 0 max workers
+  (nothing bills idle).
+- **What the spread bought:** five queues, $150.27, the open-weight rows of the vague board
+  (`docs/Track_D_Findings.md`). Not run and not planned: Qwen3.5-122B (its endpoint is redeployed and parked), a
+  Gemma 26B pilot rerun with an output cap. Any further Runpod spend belongs to training (phase C) and needs
+  Robert's go.
+
 ## The second queue: the large models, $120 in all (2026-11-10, SET UP, NOT run)
 
 Robert, Nov 10, after the first queue: "still want to use the 100 for model testing, plan out those models and

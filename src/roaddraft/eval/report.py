@@ -55,10 +55,16 @@ seeded sheets), ``d1-real`` (the redrafted sample plan sheets) and
 ``eval/probe_tasks.py``), with ``d1-test-hard`` and ``d1-real-hard`` beside
 them.  Within a set the prompt levels rank apart (``BOARD_LEVELS``, Robert,
 2026-11-08): the vague-prompt rows are the set's board and its headline, and
-the explicit-prompt rows are a board of their own, in their own file
-(``LEVEL_BOARD_FILES``: ``LEADERBOARD_EXPLICIT.md``; Robert, 2026-11-08: "Move
-all explicit prompts to their own board. Main focus is now on vague"), since a
-score at one level is not comparable with one at the other.  Every task has
+the explicit-prompt rows ranked on a board of their own, in their own file
+(``LEADERBOARD_EXPLICIT.md``; Robert, 2026-11-08: "Move all explicit prompts to
+their own board. Main focus is now on vague"), since a score at one level is
+not comparable with one at the other.  That board was retired at the Track D
+close-out (``RETIRED_BOARDS``; Robert, 2026-11-16: "retire the explicit
+board"): its rows are listed in ``RETIRED.md``, no file is written for the
+level (``LEVEL_BOARD_FILES`` is empty), and an explicit-prompt run published
+since is listed on the main board, not ranked.  ``BOARD_NOTES.json`` beside
+the published runs holds the board's hand-kept notes (``board_notes``): a
+set's, printed under its table, and a row's, by its run id.  Every task has
 both prompts, the pilots too since 2026-11-08 (``Probe.vague``), so
 ``hard-pilots`` splits by level like the D1 sets.  A run is
 held to its own set's generator version
@@ -123,8 +129,16 @@ BOARD_LEVELS = ("vague", "explicit")
 #: hard-pilots split by level like the D1 sets (Robert: every eval task has a vague prompt)
 ONE_PROMPT_SETS: Tuple[str, ...] = ()
 #: the board of each prompt level other than the focus, its own file beside LEADERBOARD.md
-#: (Robert, 2026-11-08: "Move all explicit prompts to their own board. Main focus is now on vague")
-LEVEL_BOARD_FILES = {"explicit": "LEADERBOARD_EXPLICIT.md"}
+#: (Robert, 2026-11-08: "Move all explicit prompts to their own board. Main focus is now on vague").
+#: None since 2026-11-16: the explicit board (``LEADERBOARD_EXPLICIT.md``) was retired
+LEVEL_BOARD_FILES: Dict[str, str] = {}
+#: the prompt levels whose board was retired, each with the day and the record of its rows beside
+#: LEADERBOARD.md (Robert, 2026-11-16, the Track D close-out: "retire the explicit board"); a run
+#: published at one since is listed on the main board, not ranked
+RETIRED_BOARDS = {"explicit": ("2026-11-16", "RETIRED.md")}
+#: the board's hand-kept notes, beside the published runs: ``{"board": [note, ...], "sets": {set:
+#: [note, ...]}, "rows": {run id: note}}``; the one part of the board not computed from the runs
+BOARD_NOTES_FILE = "BOARD_NOTES.json"
 #: what each prompt level is, under its table's heading
 LEVEL_NOTES = {"vague": "the request in a sentence, the way a PE would ask for it; what belongs "
                         "on the sheet is the drafter's to know. The board's focus.",
@@ -1318,6 +1332,51 @@ def published(runs_root=RUNS_DIR) -> List[dict]:
     return out
 
 
+def board_notes(runs_root=RUNS_DIR) -> dict:
+    """The board's hand-kept notes (``BOARD_NOTES_FILE``): ``board`` is the lines under the main
+    board's head, ``sets`` maps a leaderboard set to the notes under its table, ``rows`` a run id to the
+    note on its row; empty when the file is missing or unread."""
+    try:
+        d = json.loads((Path(runs_root) / BOARD_NOTES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    top = [str(n) for n in d.get("board") or []] if isinstance(d.get("board") or [], list) else []
+    sets = {k: [str(n) for n in v] for k, v in (d.get("sets") or {}).items() if isinstance(v, list)}
+    rows = {k: str(v) for k, v in (d.get("rows") or {}).items()}
+    return {"board": top, "sets": sets, "rows": rows} if top or sets or rows else {}
+
+
+def _notes_md(name: str, rows: Sequence[dict], notes: Optional[dict]) -> List[str]:
+    """The notes under ``name``'s table: the set's, then one for each of ``rows`` that has one."""
+    notes = notes or {}
+    out = [f"- {n}" for n in (notes.get("sets") or {}).get(name) or []]
+    by_run = notes.get("rows") or {}
+    seen = set()
+    for r in rows:
+        rid = r.get("run_id")
+        if rid in by_run and rid not in seen:
+            seen.add(rid)
+            out.append(f"- {r['label']} (`{rid}`): {by_run[rid]}")
+    return ["", f"Notes on `{name}`:", ""] + out if out else []
+
+
+def _retired_level_rows(b: dict) -> List[Tuple[str, str, dict]]:
+    """(set, level, row) of every model row published at a prompt level that has no board of its
+    own any more (``RETIRED_BOARDS``): listed on the main board, not ranked."""
+    out = []
+    for name, one in (b.get("boards") or {}).items():
+        for lv, o in (one.get("other_prompts") or {}).items():
+            if lv in LEVEL_BOARD_FILES:
+                continue
+            rows = list(o.get("ranked") or [])
+            for sub in (o.get("subsets") or {}).values():
+                rows += [r for r in sub["rows"] if str(r.get("scored_as", "")).startswith("subset run")]
+            out += [(name, lv, r) for r in rows]
+    return out
+
+
 def _not_a_board(taskset: Optional[str]) -> str:
     return (f"run on {taskset}, not a leaderboard set "
             f"({', '.join(LEADERBOARD_SETS)})")
@@ -1693,9 +1752,15 @@ def _board_files_line(level: str, readme: bool) -> str:
     """Where the other prompt levels' boards are, from this board."""
     here = "benchmarks/runs/" if readme else ""
     if level == BOARD_LEVELS[0]:
-        links = ", ".join(f"[{lv} prompts]({here}{f})" for lv, f in LEVEL_BOARD_FILES.items())
-        return (f"Vague prompts only: the request in a sentence, the board's focus. Every other prompt "
-                f"level is ranked on a board of its own: {links}.")
+        line = "Vague prompts only: the request in a sentence, the board's focus."
+        if LEVEL_BOARD_FILES:
+            links = ", ".join(f"[{lv} prompts]({here}{f})" for lv, f in LEVEL_BOARD_FILES.items())
+            line += f" Every other prompt level is ranked on a board of its own: {links}."
+        for lv, (day, record) in RETIRED_BOARDS.items():
+            if lv not in LEVEL_BOARD_FILES:
+                line += (f" The {lv}-prompt board was retired on {day}; its rows are listed in "
+                         f"[{record}]({here}{record}).")
+        return line
     return (f"The {level}-prompt runs, ranked on their own: a score at the {level} level is not comparable "
             f"with one at the vague level, which is the main board's focus: [the main board]({here}LEADERBOARD.md).")
 
@@ -1707,15 +1772,16 @@ def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> 
     main_board = level in (None, focus)
     level = level or focus
     view = level_board(b, level)
+    top = [x for n in ((b.get("notes") or {}).get("board") or []) for x in (n, "")] if main_board else []
     L: List[str] = []
     if not readme:
         title = "# RoadDraft eval leaderboard" + ("" if main_board else f": {level} prompts")
         L += [title, "", eval_board_note("../leaderboard/TRACK_P.md"), "",
-              _board_files_line(level, readme), ""]
+              _board_files_line(level, readme), ""] + top
         if main_board:
             L += ["![Effective score by model on each eval set](leaderboard.svg)", ""]
     else:
-        L += [_board_files_line(level, readme), "",
+        L += [_board_files_line(level, readme), ""] + top + [
               "![Effective score by model on each eval set](benchmarks/runs/leaderboard.svg)", ""]
     ov = (b.get("overall") or {}).get(level)
     if ov and (ov["ranked"] or ov["partial"]):
@@ -1734,9 +1800,11 @@ def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> 
         elif not main_board:
             L += [f"No {level}-prompt run on `{name}`."]
         elif one.get("levels_with_rows"):
+            lvs = one["levels_with_rows"]
             L += [f"No vague-prompt run on `{name}` yet; its "
-                  + " and ".join(f"{lv}-prompt" for lv in one["levels_with_rows"])
-                  + " runs are ranked on their own board."]
+                  + " and ".join(f"{lv}-prompt" for lv in lvs)
+                  + (" runs are ranked on their own board." if all(lv in LEVEL_BOARD_FILES for lv in lvs)
+                     else " runs are listed below, not ranked (that board is retired).")]
         else:
             L += [_no_run(name)]
         if one.get("reference"):
@@ -1745,8 +1813,19 @@ def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> 
             L += _board_table(one["reference"], numbered=False, groups=groups)
         for sub in (one.get("subsets") or {}).values():
             L += ["", _subset_intro(name, sub, level), ""] + _subset_table_md(sub)
-    if not readme and main_board and b["others"]:
+        if main_board:
+            noted = list(one.get("ranked") or []) + [r for sub in (one.get("subsets") or {}).values()
+                                                     for r in sub["rows"]]
+            L += _notes_md(name, noted, b.get("notes"))
+    retired_rows = _retired_level_rows(b) if main_board else []
+    if not readme and main_board and (b["others"] or retired_rows):
         L += ["", "## Published runs that are not ranked", ""]
+        for name, lv, r in retired_rows:
+            day, record = RETIRED_BOARDS.get(lv, ("", "RETIRED.md"))
+            L.append(f"- `{r['run_id']}` ({name}, {lv} prompt): {r['label']} "
+                     f"{_f(r['effective_mean'])} ± {_f(r['half_width'])} ({r['n_tasks']} tasks × {r['k_max']}). "
+                     f"Not ranked: the {lv}-prompt board was retired"
+                     + (f" on {day}" if day else "") + f" ([{record}]({record})).")
         for o in b["others"]:
             part = o.get("partial")
             rows = "; ".join(f"{r['label']}"
@@ -1778,12 +1857,17 @@ def render_board(b: dict, readme: bool = False, level: Optional[str] = None) -> 
               "whole-line tasks `d1-real` did not draw. Within a set the rows rank on that set "
               "alone; the overall table at the top is the one place a model's sets are averaged, the "
               "real sheets and the hard pilots weighted double.",
-              "", "Each prompt level is its own board (Robert, 2026-11-08): this file ranks the "
+              "", "Each prompt level ranks apart (Robert, 2026-11-08): this file ranks the "
               + ("vague-prompt runs (the request in a sentence, the way a PE would ask for it; what belongs on "
                  "the sheet is the drafter's to know), the main board and its focus"
                  if main_board else
                  f"{level}-prompt runs (the full brief, stating every standard the task is graded on)")
-              + "; a score at one prompt level is not comparable with a score at the other. Every task "
+              + "; a score at one prompt level is not comparable with a score at the other."
+              + "".join(f" The {lv}-prompt runs (the full brief, stating every standard the task is graded "
+                        f"on) had a board of their own until it was retired on {day} (`{record}`)."
+                        for lv, (day, record) in RETIRED_BOARDS.items()
+                        if main_board and lv not in LEVEL_BOARD_FILES)
+              + " Every task "
               "has both prompts: a pilot's vague brief keeps what the drafter cannot know (the files, lines, "
               "stations and data given) and leaves its drafting standards to the drafter, graded by the "
               "lenient rules where the brief no longer states them.",
@@ -1894,7 +1978,8 @@ def replace_block(text: str, block: str) -> str:
 
 
 __all__ = ["REPORT_VERSION", "LEADERBOARD_SETS", "SET_TITLES", "NEVER_REPORTED",
-           "BOARD_LEVELS", "ONE_PROMPT_SETS", "LEVEL_NOTES", "LEVEL_BOARD_FILES", "level_board", "row_level",
+           "BOARD_LEVELS", "ONE_PROMPT_SETS", "LEVEL_NOTES", "LEVEL_BOARD_FILES", "RETIRED_BOARDS",
+           "BOARD_NOTES_FILE", "board_notes", "level_board", "row_level",
            "TAXONOMY", "CATEGORIES", "CATEGORY_OF", "GROUP_DIMS", "VARIANT_DIMS", "GAPS",
            "LEADERBOARD_SET", "RUNS_DIR", "bootstrap", "tool_use", "load_episode",
            "effort_label", "effort_cell", "variant_of", "variant_label", "key_dims",

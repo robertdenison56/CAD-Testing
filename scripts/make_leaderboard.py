@@ -7,8 +7,6 @@ Reads every ``benchmarks/runs/<run_id>/summary.json`` (written by
 
     benchmarks/runs/LEADERBOARD.md    the vague-prompt rows (the focus), the reference
                                       agents, every published run that is not ranked and why
-    benchmarks/runs/LEADERBOARD_EXPLICIT.md
-                                      the explicit-prompt rows, a board of their own
     benchmarks/runs/leaderboard.json  the same, for the tracker
     benchmarks/runs/leaderboard.svg   the picture: a bar per ranked row with its interval, per set
     README.md                         the board between the d1-leaderboard markers
@@ -16,7 +14,11 @@ Reads every ``benchmarks/runs/<run_id>/summary.json`` (written by
 A row is ranked only from a run on d1-test under a frozen spec with one
 verifier throughout (eval plan sections 4.8, 4.9 and 9); the files are
 generated, never edited by hand.  ``--check`` writes nothing and exits 1 when
-any of them is out of date.
+any of them is out of date.  The explicit-prompt rows had a board of their own
+(``LEADERBOARD_EXPLICIT.md``) until it was retired on 2026-11-16
+(``report.RETIRED_BOARDS``, ``benchmarks/runs/RETIRED.md``).  The one hand-kept
+input is ``benchmarks/runs/BOARD_NOTES.json``: the notes printed under a set's
+table (``report.board_notes``).
 """
 from __future__ import annotations
 
@@ -33,6 +35,9 @@ from roaddraft.eval import report  # noqa: E402
 
 def outputs(runs: Path, readme: Path) -> dict:
     b = report.board(report.published(runs))
+    notes = report.board_notes(runs)   # hand-kept: a set's notes and a row's, under its table
+    if notes:
+        b["notes"] = notes
     out = {runs / "LEADERBOARD.md": report.render_board(b),
            runs / "leaderboard.json": json.dumps(b, indent=1, ensure_ascii=False) + "\n",
            runs / "leaderboard.svg": report.render_board_svg(b)}

@@ -43,8 +43,9 @@ level. `hard-pilots` now splits by level like the D1 sets (`report.ONE_PROMPT_SE
 checks both levels (`python -m roaddraft.probes.pilot selftest`).
 
 **The boards.** `runs/LEADERBOARD.md`, the README block and `leaderboard.svg` rank the vague-prompt runs only, the
-main board; `runs/LEADERBOARD_EXPLICIT.md` ranks every explicit-prompt run, set by set
-(`report.LEVEL_BOARD_FILES`), the eight hard-pilots rows among them. No row was dropped or re-scored. The eval
+main board; `runs/LEADERBOARD_EXPLICIT.md` ranked every explicit-prompt run, set by set
+(`report.LEVEL_BOARD_FILES`), the eight hard-pilots rows among them, until that board was retired on 2026-11-16 at
+the Track D close-out (`runs/RETIRED.md`, `report.RETIRED_BOARDS`). No row was dropped or re-scored. The eval
 dashboard (Vr9ftxKwjEbAEfiqnPjxqi) follows: vague tables and grids first, the explicit board in a section of its own
 (page v3, datasets v5).
 

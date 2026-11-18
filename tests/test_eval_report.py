@@ -294,19 +294,31 @@ def test_each_set_ranks_its_prompt_levels_apart():
     hp = b["boards"]["hard-pilots"]
     assert hp["prompt"] == "vague" and hp["ranked"] == []
     assert [r["run_id"] for r in hp["other_prompts"]["explicit"]["ranked"]] == ["hp"]
-    # the explicit rows are a board of their own (Robert, 2026-11-08), in their own file
+    # the explicit rows ranked apart on a board of their own (Robert, 2026-11-08) until that board was
+    # retired (Robert, 2026-11-16): no file for the level, and an explicit run still published is listed
+    # on the main board, not ranked
     md = R.render_board(b)
     section = md.split("## `d1-test`: seeded sheets")[1].split("## `d1-real`")[0]
-    assert "**Best model 70.0/100" in section and "99.0/100" not in md and "explicit prompts](LEADERBOARD_EXPLICIT.md)" in md
-    assert "No vague-prompt run on `d1-test-hard` yet; its explicit-prompt runs are ranked on their own board." in md
+    assert "**Best model 70.0/100" in section and "99.0/100" not in md and "LEADERBOARD_EXPLICIT.md" not in md
+    assert "The explicit-prompt board was retired on 2026-11-16; its rows are listed in [RETIRED.md](RETIRED.md)." in md
+    assert ("No vague-prompt run on `d1-test-hard` yet; its explicit-prompt runs are listed below, "
+            "not ranked (that board is retired).") in md
     assert "No vague-prompt run on `hard-pilots` yet" in md
+    unranked = md.split("## Published runs that are not ranked")[1]
+    for run_id, name, label in (("t", "d1-test", "claude-c · single · explicit 99.0 ±"),
+                                ("th", "d1-test-hard", "claude-a · single · explicit 80.0 ±"),
+                                ("hp", "hard-pilots", "claude-a · single · explicit 40.0 ±")):
+        assert f"- `{run_id}` ({name}, explicit prompt): {label}" in unranked
+    assert unranked.count("Not ranked: the explicit-prompt board was retired on 2026-11-16") == 4
+    assert "oracle · single" not in unranked   # the reference agents are no model row
     ex = R.render_board(b, level="explicit")
     assert ex.startswith("# RoadDraft eval leaderboard: explicit prompts")
     assert "**Best model 99.0/100 on d1-test with the explicit prompt" in ex and "70.0/100" not in ex
     assert "**Best model 40.0/100 on hard-pilots with the explicit prompt" in ex
     assert "oracle · single" not in ex   # the reference agents stay on the main board
-    assert R.LEVEL_BOARD_FILES == {"explicit": "LEADERBOARD_EXPLICIT.md"}
-    assert "99.0/100" not in R.render_board(b, readme=True)
+    assert R.LEVEL_BOARD_FILES == {} and R.RETIRED_BOARDS == {"explicit": ("2026-11-16", "RETIRED.md")}
+    readme = R.render_board(b, readme=True)
+    assert "99.0/100" not in readme and "listed in [RETIRED.md](benchmarks/runs/RETIRED.md)." in readme
     svg = R.render_board_svg(b)
     assert "d1-test, vague prompt: seeded sheets" in svg and "explicit prompt" not in svg
 
@@ -385,6 +397,33 @@ def test_a_real_set_is_judged_against_the_real_generator():
     assert R.current_versions()["generator_version"] == GENERATOR_VERSION
     assert "d1-real-dev" in R.NEVER_REPORTED and "d1-real" in R.LEADERBOARD_SETS
     assert set(R.NEVER_REPORTED) == {"d1-dev", "d1-real-dev", "pilot-dev"}
+
+
+def test_board_notes_print_under_their_set(tmp_path):
+    # Robert, 2026-11-16 (the Track D close-out): the board carries hand-kept notes, a set's and a row's
+    test = _fake_summary("t", [_fake_row("claude-a", "anthropic", 70.0), _fake_row("claude-b", "anthropic", 60.0)])
+    assert R.board_notes(tmp_path) == {}
+    (tmp_path / R.BOARD_NOTES_FILE).write_text(json.dumps({
+        "board": ["Track D closed."],
+        "sets": {"d1-test": ["every row ran before the names were in the document"], "d1-real": ["unused"]},
+        "rows": {"t": "stalled twice", "gone": "a run no longer published"}}), encoding="utf-8")
+    notes = R.board_notes(tmp_path)
+    assert notes["rows"]["t"] == "stalled twice"
+    b = R.board([test])
+    assert "Notes on" not in R.render_board(b)
+    b["notes"] = notes
+    md = R.render_board(b)
+    section = md.split("## `d1-test`: seeded sheets")[1].split("## `d1-real`")[0]
+    assert "Notes on `d1-test`:" in section and "- every row ran before the names were in the document" in section
+    assert section.count("(`t`): stalled twice") == 1   # once a run, on its first row
+    assert "- claude-a · single · vague (`t`): stalled twice" in section
+    assert "a run no longer published" not in md
+    assert "Notes on `d1-real`:" in md and "- unused" in md   # a set's note shows with no row yet
+    assert md.index("Track D closed.") < md.index("![Effective score")   # the board's own notes, at its head
+    readme = R.render_board(b, readme=True)
+    assert "Notes on `d1-test`:" in readme and "Track D closed." in readme
+    ex = R.render_board(b, level="explicit")
+    assert "Notes on" not in ex and "Track D closed." not in ex
 
 
 def test_readme_board_is_current():
