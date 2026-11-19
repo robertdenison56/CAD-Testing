@@ -322,3 +322,54 @@ their answers are. The smoke's tokens a second replace every rate above.
 - Open: whether the lmstudio-community base file was quantized with an importance matrix (read its
   `quantize.imatrix.*` keys on the PC with `gguf-dump`); if it was, the checkpoints need one too
   (`--imatrix`), or the base should be re-quantized through the same script for like-for-like.
+
+## 8. The smoke, run 2026-11-18 (Robert: "run the smoke")
+
+Steps 1-6 ran on a Runpod A100 SXM 80 GB, secure cloud, $2.19/h: pod `yo0tozvnf32py3`, up 23:49:49 to
+00:31:32 UTC (41.7 min, about **$1.52**), deleted after the files came back. Two pods before it
+(`2ll346ojvk1v97`, `c93eqoqe606udi`) lived under a minute each: their 150 GB persistent volume at `/workspace`
+came up empty and full (xfs quota, `No space left on device`), so the third ran on a 160 GB container disk with
+no volume. The data was the rebuilt dataset (18,693 conversations; render check on the Mac first: thinking
+off 0 issues on 90 conversations, 1,989 turns, the striping and profile sets included).
+
+**What changed against §5 on the pod** (the image `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`):
+- `pip install unsloth … causal-conv1d` fails: the build pulls the newest torch (CUDA 13.2) against the image's
+  nvcc 12.8. Install `torch==2.9.1 torchvision==0.24.1` from the cu128 index first, then the rest with
+  `-c` a constraint `torch==2.9.1`, then `causal-conv1d` with `--no-build-isolation`. Versions: unsloth
+  2026.11.6, transformers 5.17.0, peft 0.21.3, flash-linear-attention 0.6.0, bitsandbytes 0.50.2.
+- Do not install llama.cpp's `requirements-convert_hf_to_gguf.txt`: it pins a CPU torch 2.11. The converter
+  runs under the trainer's python and needs only `sentencepiece` and `protobuf<5` (it loads `gguf` from the
+  checkout).
+- The image has no `cmake` (`apt-get install cmake`). b12340's `llama-server` fails on its web UI bundle (the
+  downloaded `latest` lacks the file names the check wants): `scripts/ui-assets.cmake` line 137
+  `FATAL_ERROR` to `WARNING`. `llama-quantize` builds as is.
+- Pass `--workers 16`: the default (cores minus one, 191 here) spawns that many tokenizer workers and
+  stalls the preparation.
+- Before the merge, `pip uninstall torchaudio torchao`: both are built for another torch and break `import
+  peft` (peft 0.21 refuses torchao below 0.16, and 0.16 wants a newer torch).
+
+**Results:**
+- Size check on the pod = the Mac: 50 conversations, 51 sequences kept (12 past 131,072 dropped), 3,208,963
+  tokens, 321,779 trained, longest 130,837; template `a4aee8af…`.
+- Training: 13 steps, 3,208,963 tokens in 1,362.8 s, **2,355 tokens/s overall; 2,800-3,350 tokens/s after the
+  first step** (1,186 on step 1, with the compile). First loss **0.275** (the base loaded; 12.4 would be
+  random weights), losses 0.25-0.51. Peak **58.8 GiB** on the card at the 130,837-token sequence (reserved
+  60.0), host peak 35.4 GiB. 80.2M trainable parameters on 200 modules; every `lora_B` non-zero.
+- Merge 61.6 s, convert 71.4 s, quantize 56.2 s: `verify_merge` argmax agree 1.0, the GGUF loads and
+  replies, `conversation_prompt_equal` true; `model-Q4_K_M.gguf` 5,629,108,640 bytes, sha256
+  `87000bf829ac471df2806851715790c583a667fb390b15f2a1a371351aae93d7` (matched after the transfer).
+- Render check against the real GGUF on the pod (step 4): thinking off, 40 conversations, 530 turns, **0
+  issues**.
+- On the Mac (gitignored): `runs/t1-smoke/t1-smoke/gguf/model-Q4_K_M.gguf`, `runs/t1-smoke/back/` (adapter,
+  metrics, run.json, check.json, logs).
+
+**T1 at the measured rate** (A100 SXM $2.19/h, 2,400-3,000 tokens/s; about 50.1k tokens a conversation):
+
+| T1 size | tokens | hours | cost |
+|---|---:|---:|---:|
+| 3,000 conversations, 1 epoch | ~150M | 14-17 | **$30-38** |
+| 3,000 conversations, 3 epochs | ~450M | 42-52 | **$91-114** |
+| all 18,693, 1 epoch (+3.6% for the note splits) | ~970M | 90-112 | **$197-246** |
+
+Not done yet: steps 7-8 (the GGUF onto the PC, `lms import`, 10 `d1-dev` episodes), which need the file
+copied to the PC by hand.
