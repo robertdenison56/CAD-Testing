@@ -371,5 +371,32 @@ off 0 issues on 90 conversations, 1,989 turns, the striping and profile sets inc
 | 3,000 conversations, 3 epochs | ~450M | 42-52 | **$91-114** |
 | all 18,693, 1 epoch (+3.6% for the note splits) | ~970M | 90-112 | **$197-246** |
 
-Not done yet: steps 7-8 (the GGUF onto the PC, `lms import`, 10 `d1-dev` episodes), which need the file
-copied to the PC by hand.
+**Steps 7-8, on the PC (2026-11-18 evening).** Robert copied the GGUF to
+`C:\Users\Denis\.lmstudio\hub\models\roadraft\qwen3.5-9b-t1-smoke`; LM Studio lists it as `qwen3.5-9b-t1-smoke`
+(9.0B, qwen35, 5.63 GB, RobertsPC) and loads it at context 131,072. Run `t1-smoke-d1-dev` (`results/e3-lms`,
+not published): `d1-dev --limit 10`, vague, single, the board's sampling, `--thinking off`.
+
+| task | score | end | steps |
+|---|---:|---|---:|
+| D1-000001 | 73.8 | submit | 24 |
+| D1-000002 | 69.0 | submit | 24 |
+| D1-000003 | 75.0 | submit | 2 |
+| D1-000004 | 80.0 | submit | 9 |
+| D1-000005 | 0.0 | submit | 0 |
+| D1-000006 | 0.0 | submit | 18 |
+| D1-000007 | 76.9 | submit | 20 |
+| D1-000008 | 100.0 | submit | 3 |
+| D1-000009 | 100.0 | submit | 17 |
+| D1-000010 | 0.0 | budget | 0 |
+
+**Effective 57.5** (10 episodes; 2 at 100, 9 submitted, 0% hard-fail). The checkpoint serves and drafts: tool
+calls parse, every turn carries its shown work as text, reasoning tokens 0. It is 50 conversations of training,
+and there is no base run on these ten with thinking off to read it against, so the number says nothing yet about
+whether training helps. The run was started without `caffeinate` and the Mac slept for 5.7 h of it (one turn
+per hourly dark wake, all in episode 1); a hand-started eval belongs under `caffeinate -i`.
+
+**Step 7's count against the server**: the two episodes at 100 converted (`convert_episode`, audit off,
+into a scratch folder: they are never training data), 20 requests: every one counts **2 tokens under** what
+LM Studio reported (27,947 against 27,949 on the first). The 2 are the generation prompt: the server sent
+thinking off (`<think>\n\n</think>\n\n`, 4 tokens) where `training_tokens.py` renders the thinking-on
+`<think>\n` (2). The conversation itself counts exact, as it did for the base (240/240).
