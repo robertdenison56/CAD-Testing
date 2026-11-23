@@ -179,7 +179,7 @@ gives is left blank and said so in the note, never made up; the verifier
 wants every field filled (D1-10), so such a recording scores short of 100
 and is not kept.
 
-    python -m roaddraft.trajectories.grounded --taskset d1-train --out results/grounded/d1-train
+    python -m roaddraft.trajectories.grounded --taskset d1-train --out results/grounded-v2/d1-train-vague
                                               [--level vague] [--type TYPE ...] [--limit N]
 
 Phases covered so far are ``COVERED``; a task that needs another is listed

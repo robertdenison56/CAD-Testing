@@ -36,9 +36,9 @@ call changes nothing), the episode must score 100, and the grounded audit
 must find nothing ungrounded outside the broken turns.  A copy that misses
 any of these is tried again at other places, up to ``ATTEMPTS`` times.
 
-``python -m roaddraft.trajectories.faults inject`` writes ``results/faults/
+``python -m roaddraft.trajectories.faults inject`` writes ``results/faults-v2/
 <set>-<level>/`` (episode files and ``index.json``, as the recorder lays out
-``results/grounded/``); ``conversations convert`` turns them into
+``results/grounded-v2/``); ``conversations convert`` turns them into
 ``results/training/<set>-<level>-faults.jsonl``.
 """
 from __future__ import annotations
@@ -57,8 +57,11 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from roaddraft.eval.agents.basic import Agent, ToolCall
 
 REPO = Path(__file__).resolve().parents[3]
-SOURCE = REPO / "results" / "grounded"
-OUT = REPO / "results" / "faults"
+#: the current recordings and their faulted copies.  ``results/grounded`` and
+#: ``results/faults`` hold the recordings made before the tool pin (superseded,
+#: see the SUPERSEDED.md in each) and are no longer any command's default.
+SOURCE = REPO / "results" / "grounded-v2"
+OUT = REPO / "results" / "faults-v2"
 LEVELS = ("vague", "explicit")
 #: a faulted copy is tried at other places this many times before the reference is left out
 ATTEMPTS = 3

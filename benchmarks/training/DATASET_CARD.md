@@ -66,7 +66,7 @@ Each conversation's header carries its own: `tools_sha256`, `prompt_hash` (the t
 | all | | vague | 5389 | | | 5381 | |
 | all | | explicit | 5389 | | | 5381 | |
 
-Tasks not covered wait on drafter phases not built yet (the width dimensions: `pavement`, `pavement-widths`, `plan-sheet-pavement`); covered and not kept are where the drafter stopped rather than guess. Both are the recorder's (`results/grounded/<set>-<level>/index.json`).
+Tasks not covered wait on drafter phases not built yet (the width dimensions: `pavement`, `pavement-widths`, `plan-sheet-pavement`); covered and not kept are where the drafter stopped rather than guess. Both are the recorder's (`results/grounded-v2/<set>-<level>/index.json`).
 
 **Kept by task type** (the same at both levels):
 

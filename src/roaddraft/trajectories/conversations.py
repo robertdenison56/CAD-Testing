@@ -121,9 +121,12 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 FORMAT = "roaddraft-d1-conversation/1"
 REPO = Path(__file__).resolve().parents[3]
-SOURCE = REPO / "results" / "grounded"
+#: the current recordings, <set>-<level>/ each.  ``results/grounded`` and
+#: ``results/faults`` hold the ones made before the tool pin (superseded, see the
+#: SUPERSEDED.md in each) and are no longer any command's default.
+SOURCE = REPO / "results" / "grounded-v2"
 #: the faulted copies of the references (``trajectories.faults``), <set>-<level>/ each
-FAULTS = REPO / "results" / "faults"
+FAULTS = REPO / "results" / "faults-v2"
 #: ``run``'s faults when none is named: ``FAULTS`` for the recordings in ``SOURCE``, the
 #: references they were made from, and no faulted copies for any other source
 PAIRED = "paired"
@@ -1072,7 +1075,7 @@ def card(out: Path = OUT, path: Path = CARD) -> Path:
     w("")
     w("Tasks not covered wait on drafter phases not built yet (the width dimensions: `pavement`, "
       "`pavement-widths`, `plan-sheet-pavement`); covered and not kept are where the drafter "
-      "stopped rather than guess. Both are the recorder's (`results/grounded/<set>-<level>/index.json`).")
+      "stopped rather than guess. Both are the recorder's (`results/grounded-v2/<set>-<level>/index.json`).")
     w("")
     same = all(sets.get(f"{n}-vague", {}).get("by_type") == sets.get(f"{n}-explicit", {}).get("by_type")
                for n in names)
@@ -1281,7 +1284,7 @@ def main(argv=None) -> int:
                    help="skip the grounded audit (score and pins are still checked)")
     c.add_argument("--faults", type=Path, default=argparse.SUPPRESS,
                    help="the faulted copies, <set>-<level>/ each (trajectories.faults); default: "
-                        "results/faults for the default --source, none for any other")
+                        "results/faults-v2 for the default --source, none for any other")
     c.add_argument("--no-faults", dest="faults", action="store_const", const=None,
                    default=argparse.SUPPRESS,
                    help="convert the references only")
