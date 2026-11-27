@@ -1042,6 +1042,78 @@ two of T1's seven losses are title blocks. (c) The construction callouts (the `n
 drafter does not cover on any sheet. (d) A second line in the base drawing. (e) No training run: a run on
 data that includes this set is Robert's call, as the 10,000-conversation run is.
 
+### Status, 2026-11-27 (training on real sheets: `d1-train-real`; Robert: "I'd rather focus on only the real sheet tasks, they are more realistic")
+
+**What was tried and dropped.** A base drawn from OpenStreetMap ("needs more detail"); an existing sheet
+re-laid on a new centerline ("not realistic enough", and of altering sheets at all: the whole approach);
+Minnesota's sample plans (a different drafting standard: downloaded, checked, deleted). Google Earth
+tracing was never an option (Google's terms). The terms of use of every public source looked at are in
+the memory note `plan-source-terms`; no dataset of roadway plan sheets is on Hugging Face.
+
+**What was built: 21 real sheets no eval set uses.** The 38 redrafted plan sheets without an alignment
+were screened. The Route 70 stage construction sheets (PPM-128 to 140, 142, 144) and the Route 121
+traffic handling sheets (PPM-145 to 150) draw a ticked centerline but letter its station numbers as
+strokes, so the fitter had nothing to number the ticks by. Each sheet's config now carries two tick
+readings (`stations`, read off the published sheet); `alignfit.fit(hints=)` numbers the line from them,
+`arcs_from_chords` reads a run of five or more chords as the curve it flattens, the stroke numbers go and
+the engine letters the stationing as on the other redrafts. Every fit is within 0.24 ft, and sheets of
+one stretch agree. Neither project is in `d1-real`, `d1-real-hard`, `d1-real-dev`, `hard-pilots` or
+`pilot-dev`. The other 17 of the 38: 5 are sheets of projects the eval sets use, 2 have no ticked line,
+8 Federal Lands sheets are of the eval sets' sample projects, one is a culvert detail at 1" = 10', and
+one electrical sheet may share a project with two test sheets.
+
+**Kept apart from the catalogue.** `tasks.real.TRAIN_SHEET_IDS` names the 21; `real_sheets()`,
+`candidates()` and `catalog()` leave them out (the catalogue is still 67 sheets), `train_sheets()` and
+`candidates(train=True)` take them. `benchmarks/real_tasks/catalog-train.json` holds the validated
+tasks (oracle 100, start 0 at both levels): 172 of 215 candidates; the 43 left out are the construction
+callouts and the two whole jobs, because these sheets draw their callouts as strokes.
+`benchmarks/tasksets/d1-train-real.json` is the set (`taskset.REAL_TRAIN_NAMES`); `shared()` lets it name
+a sheet only when the sheet is a training sheet and no eval set uses it, and `train_overlap()` is empty.
+Finding 3 and decision 7 stood on "every sample sheet is in an eval set"; these 21 were not usable then
+and are in none.
+
+**The drafter, extended to record them.** First pass: 64 of 172. What it now does:
+
+- a real sheet's base files: each attached under the name the task gives or, where it gives none, the
+  code its file name ends in (`aa01` as `AA01`);
+- an agency border's title block: the values a task states in the border's own words, written out
+  (`Sheet: SC-1`) or in passing (`sheet SC-1`), filled from the head of a cut sheet state; a captioned
+  box with no value given keeps its caption and no number is made up;
+- a sheet set up on an agency border: made first and read back, the viewport filling the usable area the
+  border leaves; a line stored without PIs has its ends asked for by station; a stretch that runs off
+  the paper at the larger plan scale is measured at the smaller;
+- the curve table on a sheet whose state came back cut, or whose top-left corner is over the plan: the
+  table goes down, the paper under it and the model through the view are searched, and a corner that is
+  taken gives way to the next (top-left, bottom-left, the middle of the top);
+- two bearings of one line that stand on each other (tangents shorter than the lettering): one of the
+  two is set again, on any sheet.
+
+Recorded (`results/grounded-new/d1-train-real-{vague,explicit}`): **172 of 172 kept at each level**,
+median 9 turns and 16 calls, at most 25 and 47.
+
+**Converted, 2026-11-27 (Robert: "Yes, convert them").** `faults inject` and `conversations convert` now
+take `d1-train-real` (their `--set` choices add `taskset.REAL_TRAIN_NAMES`). `faults inject --set
+d1-train-real --source results/grounded-new --out results/faults-new` kept 151 faulted copies of 172
+references at each level (195 faults a level; one fault on 107 copies, two on 44); the 21 with no copy
+are the attach-reference tasks, which have no place for a fault, as on the seeded sets. `conversations
+convert --set d1-train-real --source results/grounded-new --faults results/faults-new` wrote four files
+into `results/training`, none dropped, all on the tool set `0f108e6b…`. Counted with the 9B's tokenizer:
+
+| file | conversations | tokens | trained | median | longest | past 65,536 |
+|---|---:|---:|---:|---:|---:|---:|
+| `d1-train-real-vague` | 172 | 8,188,202 | 362,283 | 50,842 | 82,793 | 16 |
+| `d1-train-real-vague-faults` | 151 | 7,170,504 | 333,688 | 40,279 | 84,345 | 17 |
+| `d1-train-real-explicit` | 172 | 8,199,041 | 352,548 | 50,848 | 83,130 | 16 |
+| `d1-train-real-explicit-faults` | 151 | 7,180,520 | 323,421 | 40,709 | 83,823 | 19 |
+
+None is past 131,072. The set is 646 conversations, 30.7M tokens (1.4M trained); the vague half is 323
+conversations, 15.4M. The whole of `results/training` is now 21,731 conversations, 1,109.6M tokens, 97.8M
+trained, 6 past 131,072 (none of them real). `benchmarks/training/DATASET_CARD.md` is rewritten. No
+training run: that is Robert's call.
+
+**Thin spots.** Eleven stretches of two projects, several shown again at each construction stage; one
+agency's border; title blocks with two fields. Not converted yet (faults, conversations, token count).
+
 ## 6. Decisions for Robert
 
 1. **The rig for base, T0 and checkpoints.** PC only: free, one to one and a half nights per 100 episodes, and

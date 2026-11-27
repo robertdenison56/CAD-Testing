@@ -1271,7 +1271,8 @@ def main(argv=None) -> int:
                                      description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     c = sub.add_parser("convert", help="episode files -> conversations JSONL, tools.json, summary.json")
-    every = tuple(tasksets.TRAIN_NAMES) + tuple(tasksets.PROBE_TRAIN_NAMES)
+    every = (tuple(tasksets.TRAIN_NAMES) + tuple(tasksets.REAL_TRAIN_NAMES)
+             + tuple(tasksets.PROBE_TRAIN_NAMES))
     c.add_argument("--set", action="append", dest="sets", choices=every,
                    help="a training set (default: every D1 training set and the probe-task "
                         "sets, train-deeds and train-qa)")

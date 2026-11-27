@@ -195,6 +195,38 @@ def elements_of(chain, max_r=4000.0):
     return out
 
 
+def arcs_from_chords(els, max_r=4000.0, tol=0.006):
+    """A curve drawn as a run of short chords (five or more tangents that lie on one
+    circle) read as the curve; two or three tangents meeting at slight angle points
+    stay tangents.  For a line numbered from a config's readings, where
+    the PDF flattens every arc to two-point segments."""
+    out, i = [], 0
+    while i < len(els):
+        best = None
+        if els[i][0] == "tangent":
+            j = i
+            while j + 1 < len(els) and els[j + 1][0] == "tangent":
+                j += 1
+                if j - i + 1 < 5:
+                    continue
+                pts = [els[i][1]] + [e[2] for e in els[i:j + 1]]
+                fc = fit_circle(pts)
+                if not fc or fc[3] > tol or fc[2] > max_r:
+                    break
+                # chords of one curve are short beside its radius and turn one way
+                if max(math.dist(e[1], e[2]) for e in els[i:j + 1]) > 0.5 * fc[2]:
+                    break
+                best = (j, fc, pts)
+        if best:
+            j, fc, pts = best
+            out.append(["curve", pts[0], pts[-1], (fc[0], fc[1]), fc[2], pts[len(pts) // 2]])
+            i = j + 1
+        else:
+            out.append(els[i])
+            i += 1
+    return out
+
+
 def well_formed(els):
     """An alignment runs one way: no closed curve, no element doubling back on the last."""
     prev = None
@@ -299,9 +331,33 @@ def label_ticks(ticks, runs, spacing):
     return direction, [(h0 + direction * k) * 100.0 for k in ks], labelled
 
 
-def fit(heavy_paths, short_segs, runs, fpi, min_len=3.0):
+def hinted(ticks, hints, spacing):
+    """Stations from a config's own reading of two ticks (``hints``: [{"name", "ticks":
+    [[x, y, station ft], [x, y, station ft]]}], sheet inches), for a sheet that letters
+    its station numbers as strokes: (direction, stations, name) or None."""
+    a0 = ticks[0][0]
+    ks = [round((t[0] - a0) / spacing) for t in ticks]
+    for h in hints or ():
+        got = []
+        for x, y, sta in h["ticks"]:
+            near = min(range(len(ticks)), key=lambda i: math.dist(ticks[i][1], (x, y)))
+            if math.dist(ticks[near][1], (x, y)) > 0.15:
+                break
+            got.append((ks[near], float(sta)))
+        if len(got) != 2 or got[0][0] == got[1][0]:
+            continue
+        (k1, s1), (k2, s2) = got
+        direction = 1 if (s2 - s1) * (k2 - k1) > 0 else -1
+        if abs(abs(s2 - s1) - 100.0 * abs(k2 - k1)) > 1.0:
+            continue                  # the two readings do not fit the ticks between them
+        return direction, [s1 + direction * (k - k1) * 100.0 for k in ks], h.get("name")
+    return None
+
+
+def fit(heavy_paths, short_segs, runs, fpi, min_len=3.0, hints=None):
     """Alignments found on the sheet: list of dicts (sheet inches), each with
-    elements, begin station (ft), name, ticks and the labels used."""
+    elements, begin station (ft), name, ticks and the labels used.  ``hints``
+    (a config's ``stations``) number a line whose ticks no lettering numbers."""
     spacing = 100.0 / fpi
     for r in runs:
         a = math.radians(r["rot"])
@@ -319,8 +375,12 @@ def fit(heavy_paths, short_segs, runs, fpi, min_len=3.0):
         if len(ticks) < 2:
             continue
         lab = label_ticks(ticks, runs, spacing)
+        told = None
         if lab is None:
-            continue
+            told = hinted(ticks, hints, spacing)
+            if told is None:
+                continue
+            lab = (told[0], told[1], [None] * len(ticks))
         direction, stations, labels = lab
         if direction < 0:
             ch.reverse()
@@ -332,17 +392,19 @@ def fit(heavy_paths, short_segs, runs, fpi, min_len=3.0):
         resid = max(abs(begin + a * fpi - s) for (a, _, _), s in zip(ticks, stations))
         if resid > 10.0 or ticks[-1][0] > ch.length() + 0.05:
             continue                  # the numbers do not belong to these ticks
-        name = None
-        for r in runs:
+        name = (0.0, told[2], True) if told and told[2] else None
+        for r in ([] if name else runs):
             m = NAME.match(r["text"].strip())
             if not m:
                 continue
             d, _, u = ch.locate(r["center"])
             if d < 0.6 and (name is None or (m.group(2) and not name[2]) or d < name[0]):
                 name = (d, m.group(1), bool(m.group(2)))
-        out.append({"chain": ch, "paths": [pid for pid, _ in ch.parts], "elements": elements_of(ch),
+        els = arcs_from_chords(elements_of(ch)) if told else elements_of(ch)
+        out.append({"chain": ch, "paths": [pid for pid, _ in ch.parts], "elements": els,
                     "begin_station": begin, "fit_residual_ft": resid,
                     "name": name[1] if name else None, "name_dist": name[0] if name else None,
+                    "hinted": bool(told),
                     "ticks": ticks, "stations": stations,
                     "labels": [r["id"] if r else None for r in labels]})
     return out

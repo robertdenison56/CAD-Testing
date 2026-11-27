@@ -451,7 +451,7 @@ def build_bases(dig, out, names, title):
                 continue
             d.run("draw_alignment", {"alignment": name, "layer": "V-ALIGN-CNTR"})
             built.append(al)
-            if dig["text_mode"] == "strokes":
+            if dig["text_mode"] == "strokes" and not al.get("hinted"):
                 continue      # the sheet's own ticks and numbers stay, as drawn
             # stationing, lettered the Caltrans way, on the side the sheet letters it
             ticks = al["ticks"]

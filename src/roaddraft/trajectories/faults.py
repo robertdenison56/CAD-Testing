@@ -659,15 +659,16 @@ def main(argv=None) -> int:
                                      description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     c = sub.add_parser("inject", help="a faulted copy of every kept reference")
-    c.add_argument("--set", action="append", dest="sets", choices=tasksets.TRAIN_NAMES,
-                   help="a training set (default: all five)")
+    every = tuple(tasksets.TRAIN_NAMES) + tuple(tasksets.REAL_TRAIN_NAMES)
+    c.add_argument("--set", action="append", dest="sets", choices=every,
+                   help="a training set (default: every D1 training set, seeded and real-sheet)")
     c.add_argument("--level", action="append", dest="levels", choices=LEVELS)
     c.add_argument("--source", type=Path, default=SOURCE, help="the references, <set>-<level>/ each")
     c.add_argument("--out", type=Path, default=OUT)
     c.add_argument("--jobs", type=int, default=max(1, min(6, (os.cpu_count() or 2) - 2)))
     c.add_argument("--limit", type=int, help="the first N references of each folder")
     args = parser.parse_args(argv)
-    done = run(args.sets or list(tasksets.TRAIN_NAMES), args.levels or list(LEVELS), args.source,
+    done = run(args.sets or list(every), args.levels or list(LEVELS), args.source,
                args.out, jobs=args.jobs, limit=args.limit)
     kept = sum(i["kept"] for i in done.values())
     tasks = sum(i["tasks"] for i in done.values())

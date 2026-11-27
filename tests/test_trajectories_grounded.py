@@ -300,12 +300,12 @@ def test_stated_layout_reads_what_the_task_gives_of_the_sheets():
                 "at 150+00.00, 100 ft each side, and label it at its end on each sheet.")
     assert grounded.stated_layout(explicit) == {
         "sheets": ["C-101", "C-102"], "breaks": ["150+00.00"], "size": "ANSI_D", "scale": 50.0,
-        "twist": -62.48, "match_half_ft": 100.0}
+        "twist": -62.48, "match_half_ft": 100.0, "border": None}
     vague = ("Draft plan sheets C-101, C-102 and C-103 for ALIGN-1, breaking at stations "
              "83+00.00 and 94+00.00.")
     assert grounded.stated_layout(vague) == {
         "sheets": ["C-101", "C-102", "C-103"], "breaks": ["83+00.00", "94+00.00"], "size": None,
-        "scale": None, "twist": 0.0, "match_half_ft": None}
+        "scale": None, "twist": 0.0, "match_half_ft": None, "border": None}
     assert grounded.stated_layout("Station ALIGN-1.")["sheets"] == []
 
 

@@ -309,10 +309,12 @@ def test_a_cut_answer_is_read_only_where_a_caller_reads_its_head():
 
 
 def test_sheet_work_on_a_cut_sheet_is_not_guessed_at():
-    """The drafter does not place a table or fill a title block on a sheet whose
-    state it could not read: that route is not built, and it says so."""
+    """The drafter does not put a north arrow on a sheet whose state it could not read:
+    whether the sheet has one already is past the cut, and it says so.  (A title block is
+    filled from the head of the state and a curve table's place is searched for once it is
+    down, since 2026-11-27: ``tests/test_trajectories_grounded_real.py``.)"""
     task = _task(*SAMPLE[0])
-    solver = grounded.solve(grounded_text(task), ["stationing", "table"])
+    solver = grounded.solve(grounded_text(task), ["stationing", "north"])
     turn = next(solver)
     session = session_for_task(task)
     episode_results = None

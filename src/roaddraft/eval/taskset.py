@@ -580,9 +580,18 @@ def _hard_entry(seed: int, index: int) -> dict:
     raise RuntimeError(f"seed {seed}: no hard task type generates")
 
 
+#: ``d1-train-real`` (2026-11-27, Robert: "focus on only the real sheet tasks", "just record
+#: the 172"): every validated task on the redrafted sheets kept for training
+#: (``tasks.real.TRAIN_SHEET_IDS``: the Route 70 and Route 121 examples, in no eval set),
+#: from ``benchmarks/real_tasks/catalog-train.json``.  The one training set on real sheets:
+#: ``shared`` lets it name a sheet only when that sheet is a training sheet no eval set uses.
+REAL_TRAIN_NAMES = ("d1-train-real",)
+TRAIN_CATALOG = REPO / "benchmarks" / "real_tasks" / "catalog-train.json"
+
+
 def is_real(name: str) -> bool:
     """Whether ``name`` is a set on the redrafted sample sheets."""
-    return name in REAL_NAMES or name == "d1-real-hard"
+    return name in REAL_NAMES or name == "d1-real-hard" or name in REAL_TRAIN_NAMES
 
 
 def is_probe(name: str) -> bool:
@@ -798,6 +807,16 @@ def build_real_hard(catalog_path=None, jobs_path=None) -> dict:
 def build_real(name: str, catalog_path=None) -> dict:
     """A real set's manifest, drawn from the catalogue."""
     from roaddraft.tasks.real import REAL_GENERATOR_VERSION
+    if name in REAL_TRAIN_NAMES:
+        cat = load_catalog(catalog_path or TRAIN_CATALOG)
+        entries = [dict(_real_entry(t), train=True) for t in cat["tasks"]]
+        groups = Counter(e["group"] for e in entries)
+        return {"taskset": name, "generator_version": REAL_GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"], "spec_hash": spec_hash(DRAFTING_SPEC_V1),
+                "source": "benchmarks/real_tasks/catalog-train.json",
+                "catalog_verifier": cat.get("verifier_version"),
+                "groups": {key: groups[key] for key, _, _ in REAL_GROUPS if groups[key]},
+                "tasks": entries}
     cat = load_catalog(catalog_path)
     tasks = cat["tasks"]
     dev = set(real_dev_sheets(tasks))
@@ -1052,9 +1071,19 @@ def shared(train: dict, held_out: dict) -> List[str]:
     sheet or a probe is reported too: every sample sheet and every pilot is in
     an eval set, and none can be trained on."""
     a, b = train.get("taskset"), held_out.get("taskset")
-    problems = [f"{a}: {e.get('task_id')} is not a seeded task; a training set holds no real sheet "
-                "and no probe" for e in train["tasks"]
-                if "seed" not in e or "sheet_id" in e or "probe" in e]
+    if a in REAL_TRAIN_NAMES:
+        # the training set on real sheets: every sheet a training sheet, none in an eval set
+        from roaddraft.tasks.real import TRAIN_SHEET_IDS
+        problems = [f"{a}: {e.get('task_id')} is on {e.get('sheet_id')}, not a training sheet"
+                    for e in train["tasks"] if e.get("sheet_id") not in TRAIN_SHEET_IDS]
+        both = sorted({e["sheet_id"] for e in train["tasks"]}
+                      & {e["sheet_id"] for e in held_out["tasks"] if e.get("sheet_id")})
+        if both and b not in REAL_TRAIN_NAMES:
+            problems.append(f"{a} and {b} share {len(both)} sheet(s); first: {both[0]}")
+    else:
+        problems = [f"{a}: {e.get('task_id')} is not a seeded task; a training set holds no real "
+                    "sheet and no probe" for e in train["tasks"]
+                    if "seed" not in e or "sheet_id" in e or "probe" in e]
     # a generated probe task's id, and the id of the seeded design it is set on
     ids = {e[k] for e in train["tasks"] for k in ("task_id", "vague_task_id", "base_task_id")
            if e.get(k)}
@@ -1076,7 +1105,7 @@ def train_overlap(root=None) -> List[str]:
     training set, from the manifests on disk: empty when the training data is
     clean.  The tripwire the training plan rests on; a test holds it empty."""
     problems: List[str] = []
-    trains = {name: load(name, root) for name in TRAIN_NAMES + PROBE_TRAIN_NAMES}
+    trains = {name: load(name, root) for name in TRAIN_NAMES + PROBE_TRAIN_NAMES + REAL_TRAIN_NAMES}
     for name, manifest in trains.items():
         for other in NAMES:
             problems += shared(manifest, load(other, root))
@@ -1142,7 +1171,7 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "TRAIN_REVISE_SEEDS", "revise_dials", "TRAIN_TWIST_WIDTH_SEEDS", "TWIST_WIDTH_TYPES",
            "twist_width_dials", "TRAIN_REVISE_BASE_SEEDS", "revise_base_dials", "shared",
            "train_overlap", "TRAIN_BREAKS_SEEDS", "breaks_dials",
-           "TRAIN_BULK_SEEDS", "bulk_dials"]
+           "TRAIN_BULK_SEEDS", "bulk_dials", "REAL_TRAIN_NAMES", "TRAIN_CATALOG"]
 
 
 # ------------------------------------------------------------ stage T2 (2026-11-15)

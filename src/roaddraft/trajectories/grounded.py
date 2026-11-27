@@ -293,6 +293,10 @@ _NOT_YET = re.compile(r"(\S+) is not in the design yet")
 _EQUATION = re.compile(rf"{_S} BK = {_S} AH")
 _LANES = re.compile(r"two (\d+(?:\.\d+)?)-ft lanes")
 _BASEFILE = re.compile(r"(\S+\.rdoc\.json)")
+#: the base files of a real sheet (``tasks.real``), each with the name the task gives it, if any
+_BASEFILES = re.compile(r"([\w()-]+\.rdraft)(?: as ([A-Z][A-Z0-9-]*))?")
+#: a base file named the Caltrans way: the project's number, then the file's own code (aa01)
+_FILE_CODE = re.compile(r"([a-z]{2}\d{2})\.rdraft$")
 _SCALE = r"1\" = \d+'"
 _TITLE = re.compile(
     r"project (?P<project>.+?), agency (?P<agency>.+?), sheet title (?P<sheet_title>.+?), "
@@ -310,6 +314,8 @@ _TURNED = re.compile(r"turned (-?\d+(?:\.\d+)?)°")
 _BREAKS = re.compile(rf"breaking at stations? ({_ST}(?:(?:, | and ){_ST})*)")
 _MATCH_HALF = re.compile(r"(\d+(?:\.\d+)?) ft each side")
 _SIZE = re.compile(r"\b(ANSI|ARCH) ([A-E])\b")
+#: the agency border a task names for a sheet it asks for (``tasks.real``)
+_BORDER = re.compile(r"title_block_template '(\w+)'")
 #: a layout left to the drafter (``tasks.breaks``): only the first sheet's number is given
 _NUMBERED = re.compile(rf"numbered from ({_SHEET_NAME})")
 #: the title block such a task states: every value but the sheet's number and the count
@@ -380,6 +386,55 @@ def stated_title(text: str) -> Optional[dict]:
     return fields
 
 
+#: an agency border's title block: what a task calls each field, and the key the border
+#: letters it under (``fill_title_block`` lists every border's keys)
+BORDER_FIELDS = {
+    "caltrans": (("Dist", "dist"), ("County", "county"), ("Route", "route"),
+                 ("Post miles", "post_miles"), ("Project number & phase", "project_number_phase"),
+                 ("Sheet title", "sheet_title"), ("Sheet", "sheet_id"), ("Scale", "scale")),
+    "wfl": (("Project name", "project_name"), ("Project", "project"),
+            ("Sheet number", "sheet_number"), ("Sheet title", "sheet_title")),
+    "fdot": (("Road no.", "road_no"), ("County", "county"), ("Financial project ID", "fpid"),
+             ("Sheet no.", "sheet_number"), ("Engineer of record", "eor_name"),
+             ("License", "eor_license"), ("Firm", "eor_firm")),
+}
+#: the boxes a border letters with a caption of their own ahead of the value: where nothing
+#: gives the value, the caption stands alone, as on a sheet plotted before the number is set
+BORDER_CAPTIONS = {"caltrans": {"project_number_phase": "PROJECT NUMBER & PHASE"}}
+_BORDER_TITLE = re.compile(r"(?:Fill in the title block[^:\n]*|title block): ([^\n]+)")
+
+
+def stated_border_title(text: str, border: str) -> Optional[List[tuple]]:
+    """The title block values a task on an agency sheet states, as ``(what the task calls
+    the field, the border's key for it, the value)``: written out in full (``Sheet: L-39;
+    Route: 65``) or in passing (``route 65, sheet L-39``).  None when the task states none
+    this way; raises ``NotCovered`` for a field the border's table does not name."""
+    found = _BORDER_TITLE.search(text)
+    table = BORDER_FIELDS.get(border)
+    if not found or not table:
+        return None
+    body = found.group(1).strip()
+    body = body[:-1] if body.endswith(".") else body
+    by_length = sorted(table, key=lambda row: -len(row[0]))
+    out = []
+    if re.match(r"[A-Z][^:;]*: ", body):
+        for part in body.split("; "):
+            label, _colon, value = part.partition(": ")
+            key = dict(table).get(label)
+            if key is None or not value.strip() or '"' in value and " lines" in value:
+                raise NotCovered(f"the title block value {part!r} is not one the drafter reads")
+            out.append((label, key, value.strip()))
+        return out
+    for part in body.split(", "):
+        for label, key in by_length:
+            if part.startswith(label.lower() + " "):
+                out.append((label, key, part[len(label) + 1:].strip()))
+                break
+        else:
+            return None
+    return out or None
+
+
 def stated_open(text: str) -> Optional[str]:
     """The number of the first sheet, when the task leaves the layout to the
     drafter (how many sheets, and where they break) and says only where the
@@ -422,7 +477,8 @@ def stated_layout(text: str) -> dict:
             "size": f"{size.group(1)}_{size.group(2)}" if size else None,
             "scale": float(scale.group(1)) if scale else None,
             "twist": float(twist.group(1)) if twist else 0.0,
-            "match_half_ft": float(half.group(1)) if half else None}
+            "match_half_ft": float(half.group(1)) if half else None,
+            "border": (_BORDER.search(text).group(1) if _BORDER.search(text) else None)}
 
 
 # ------------------------------------------------------------ paper geometry
@@ -1013,10 +1069,23 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
         rows = {kind: r["rows"] for kind, r in zip(kinds, results[1:])}
         cuts = [{"text": b, "raw": float(r["station"]), "point": list(r["point"])}
                 for b, r in zip(breaks, results[1 + len(kinds):])]
+    if line.get("pis"):
+        first_pt, last_pt = list(line["pis"][0]["point"]), list(line["pis"][-1]["point"])
+    else:
+        # a line stored by its elements lists no PIs: its two ends are asked for by station
+        calls = [_q("station_to_xy", alignment=alignment, station=float(line["begin_station"])),
+                 _q("station_to_xy", alignment=alignment, station=float(line["end_station"]))]
+        at_ends = yield Turn(
+            f"{alignment} is stored by its tangents and curves and lists no PIs, so its two "
+            f"ends are not in what was read. Ask the engine where the line begins, at "
+            f"{line['begin_station_text']}, and where it ends, at {line['end_station_text']}.",
+            calls)
+        _ok(at_ends, calls)
+        first_pt, last_pt = list(at_ends[0]["point"]), list(at_ends[1]["point"])
     ends = ([{"text": line["begin_station_text"], "raw": float(line["begin_station"]),
-              "point": list(line["pis"][0]["point"])}] + cuts
+              "point": first_pt}] + cuts
             + [{"text": line["end_station_text"], "raw": float(line["end_station"]),
-                "point": list(line["pis"][-1]["point"])}])
+                "point": last_pt}])
     stretch = {name: (ends[i], ends[i + 1]) for i, name in enumerate(names)}
 
     # -- the scale: stated, read off the lettering, or tried from the office's own
@@ -1046,6 +1115,38 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
     (cx, cy), fw, fh = frame["center_paper"], frame["width_in"], frame["height_in"]
     fit_w, fit_h = sheet_spec["fit_window_in"]
     size = ask["size"] or sheet_spec["size"]
+    #: sheets made ahead of their views: on an agency border the frame is set from the
+    #: usable area the border leaves, which is read off the sheet once it exists
+    premade: List[str] = []
+    framed = ""
+    if ask.get("border") and not chosen:
+        if several:
+            raise NotCovered("an agency border on a layout of several sheets")
+        calls = [_q("create_sheet", name=names[0], size=size, title_block_template=ask["border"]),
+                 _q("get_sheet_state", sheet=names[0])]
+        results = yield Turn(
+            f"The task names the border: make {names[0]} on {size.replace('_', ' ')} with the "
+            f"{ask['border']} title block, and read it back for the usable area that border "
+            "leaves, before the viewport goes on it.", calls)
+        _ok(results, calls)
+        premade = [names[0]]
+        ua = results[1]["sheet"]["usable_area"]
+        office = (cx - fw / 2.0, cy - fh / 2.0, cx + fw / 2.0, cy + fh / 2.0)
+        if not (ua[0] <= office[0] and ua[1] <= office[1] and office[2] <= ua[2]
+                and office[3] <= ua[3]):
+            # the office's frame does not sit inside this border: the viewport fills the
+            # usable area instead, as the agency's own sheets have it
+            w0, h0 = fw, fh
+            tx, cx = _mid(ua[0], ua[2])
+            ty, cy = _mid(ua[1], ua[3])
+            fw, fh = round(_r(ua[2]) - _r(ua[0]), 3), round(_r(ua[3]) - _r(ua[1]), 3)
+            framed = (f"The {ask['border']} border leaves a usable area from x {_n(ua[0])} to "
+                      f"{_n(ua[2])} and y {_n(ua[1])} to {_n(ua[3])}, and the office's plan "
+                      f"viewport, {_n(w0)} by {_n(h0)} in, does not sit inside it where the office "
+                      f"puts it. On this border the viewport fills the usable area, as the "
+                      f"agency's sheets have it: {_n(ua[2])} - {_n(ua[0])} = {_n(fw)} in wide and "
+                      f"{_n(ua[3])} - {_n(ua[1])} = {_n(fh)} in high, centred at x {tx} and "
+                      f"y {ty}. ")
     turned = {"rotation_deg": twist} if twist else {}
     scale = tries[0]
 
@@ -1080,7 +1181,9 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
     #: a sheet made already (the first of a layout the drafter chose, measured on), with
     #: its viewport's id: its view is moved to the start, not made
     made: Dict[str, str] = dict((chosen or {}).get("made") or {})
-    calls = [_q("create_sheet", name=name, size=size) for name in names if name not in made]
+    calls = [_q("create_sheet", name=name, size=size) for name in names
+             if name not in made and name not in premade]
+    made_now = len(calls)
     starts = []
     for name in names:
         lo, hi = stretch[name]
@@ -1111,6 +1214,15 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
                f"the two ends of the line: {'; '.join(starts)}. Then ask the engine where the "
                "line falls on the paper from there. Its two ends and the PI of each curve bound "
                "it: a curve lies inside the corner its tangents make at the PI.")
+    elif premade:
+        say = (
+            f"{why}{framed}Give {names[0]} its viewport: {_n(fw)} by {_n(fh)} in, centred at "
+            f"x {_n(cx)}, y {_n(cy)}, at {_n(scale)} ft to the inch"
+            + (f" and turned {_n(twist)}° as the task asks" if twist else "")
+            + f". Start the view on the point midway between the ends of its stretch: "
+            f"{'; '.join(starts)}. Then ask the engine where the stretch falls on the paper. "
+            "Its two ends and the PI of each curve on it bound it: a curve lies inside the "
+            "corner its tangents make at the PI.")
     else:
         say = (
             f"{why}Make {_and(names)} on {size.replace('_', ' ')}, "
@@ -1124,7 +1236,7 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
             "corner its tangents make at the PI.")
     results = yield Turn(say, calls)
     _ok(results, calls)
-    views = len(fresh)  # (the calls run: the sheets made, a view each, then each sheet read)
+    views = made_now  # (the calls run: the sheets made, a view each, then each sheet read)
     vp = {name: made[name] if name in made else results[views + i]["created"][0]
           for i, name in enumerate(names)}
     state = {name: results[views + count + i]["sheet"] for i, name in enumerate(names)}
@@ -1134,7 +1246,26 @@ def _lay_out(request: str, alignment: str, summary: dict, kinds: Sequence[str],
         if not (ua[0] <= frame_box[0] and ua[1] <= frame_box[1]
                 and frame_box[2] <= ua[2] and frame_box[3] <= ua[3]):
             raise NotCovered(f"the office's plan viewport does not fit the usable area of {name}")
-    boxes = boxes_of({name: _sheet_points(results[a:b]) for name, (a, b) in spans.items()})
+    measured = {name: _sheet_points(results[a:b]) for name, (a, b) in spans.items()}
+    if (len(tries) > 1 and any(min(q) < 0 for pts in measured.values() for q in pts)):
+        # at the larger scale the stretch does not even stay on the paper: nothing can be
+        # measured from a point off the sheet, so the view is set to the smallest scale the
+        # office plots at and the stretch measured there
+        scale, tries = tries[-1], [tries[-1]]
+        calls = [_q("modify_viewport", sheet=name, viewport_id=vp[name],
+                    changes={"feet_per_inch": scale}) for name in names]
+        spans = asked(calls)
+        results = yield Turn(
+            f"At {_n(allowed[0])} ft to the inch an end of the stretch "
+            f"falls off the paper altogether, so that scale is too large whatever room the "
+            f"lettering needs. Set the view{'s' if several else ''} to {_n(scale)} ft to the "
+            "inch, the smallest scale the office plots at, and ask again where the stretch "
+            "falls.", calls)
+        _ok(results, calls)
+        measured = {name: _sheet_points(results[a:b]) for name, (a, b) in spans.items()}
+        for name in names:
+            state[name]["viewports"][0].update(feet_per_inch=scale)
+    boxes = boxes_of(measured)
 
     # -- a scale left to the drafter: the largest that leaves room for the lettering.  The
     # stretch was measured at the first of them; at another its spans are those times the
@@ -1853,9 +1984,13 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
                    for e in (sheet.get("entities") or {}).values()) else [])
         results = yield Turn(
             (lead + " " if lead else "")
-            + f"{alignment} is not alone on {name}: {_and(there)}. The engine sets a line's "
-            "lettering clear of itself, not of anything else, so read back where the new labels "
-            f"fell: every text {name} shows from the model, each with the corners of its "
+            + (f"{alignment} is not alone on {name}: {_and(there)}. The engine sets a line's "
+               "lettering clear of itself, not of anything else, so read back where the new "
+               "labels fell" if there else
+               f"{alignment} has tangents so short that their bearings, each lettered at its "
+               "tangent's middle, may stand on one another, so read back where the new labels "
+               "fell")
+            + f": every text {name} shows from the model, each with the corners of its "
             "lettering on the paper, and what is drawn on the paper.", calls)
         _ok(results, calls)
         shown = list(results[0]["entities"])
@@ -2003,9 +2138,13 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
             if other["id"] == i:
                 continue
             if same_line(other):
-                # one line's lettering as its labelers set it is clear of itself; a label
-                # set again is kept from its line's lettering across the line by the line
-                if i not in moved and other["id"] not in moved:
+                # one line's lettering as its labelers set it is clear of itself, but for the
+                # bearings of two short tangents that meet: each is lettered at its tangent's
+                # middle, and the two middles can be closer than the lettering is long.  A
+                # label set again is kept from its line's lettering across the line by the line
+                both_bearings = ((row.get("anchor") or {}).get("kind") == "bearing"
+                                 and (other.get("anchor") or {}).get("kind") == "bearing")
+                if i not in moved and other["id"] not in moved and not both_bearings:
                     continue
                 if (other.get("anchor") or {}).get("side") != row["anchor"]["side"]:
                     continue
@@ -2020,6 +2159,11 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
         before = len(said)
         for i in ids:
             for other in partners(i):
+                # two bearings of one line that meet: one of them moves, the other stays
+                if (other.get("id") in bad and same_line(other)
+                        and (other.get("anchor") or {}).get("kind") == "bearing"
+                        and (by_id[i].get("anchor") or {}).get("kind") == "bearing"):
+                    continue
                 closer = closer or bool(_meet(box_of(footprint(by_id[i])),
                                               box_of(footprint(other))))
                 why = compare(i, other)
@@ -2150,6 +2294,127 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
 LINEWORK_KINDS = ("element", "offset")
 #: how far off the revised line an old tick may lie and still mark a point of it (ft)
 ON_LINE_FT = 0.01
+
+
+def _table_room(name: str, view: dict, alignment: str, table_layer: str, lead: str,
+                region: Optional[Sequence[float]] = None,
+                start: Optional[tuple] = None) -> Generator[Turn, List[dict], dict]:
+    """The curve data table where its first place will not do.
+
+    On a sheet whose state came back cut the usable area and what is on the paper are not
+    known: the table goes inside the viewport's frame, which the head of the state gives,
+    and its place is searched once it is down: the paper under it and, through the view,
+    the model.  With ``region`` (a usable area that was read) and ``start`` (``(the table's
+    id, its box, why its place is taken)``) the table is down already, in the region's
+    top-left corner, and found in the way: it is moved on.  A corner that is taken gives
+    way to the next: top-left, bottom-left, the middle of the top."""
+    m = MARGIN_IN
+    if region is None:
+        (cx, cy), w, h = view["center_paper"], view["width_in"], view["height_in"]
+        x0, y0 = round(_r(cx) - _r(w) / 2.0, 3), round(_r(cy) - _r(h) / 2.0, 3)
+        x1, y1 = round(_r(cx) + _r(w) / 2.0, 3), round(_r(cy) + _r(h) / 2.0, 3)
+        whose, mid_words = "the frame's", f"{_n(cx)}"
+        mid = _r(cx)
+    else:
+        x0, y0, x1, y1 = (float(_n(v)) for v in region)
+        whose = "the usable area's"
+        mid = round((x0 + x1) / 2.0, 3)
+        mid_words = f"({_n(x0)} + {_n(x1)}) / 2 = {_n(mid)}"
+    x, y = round(x0 + m, 3), round(y1 - m, 3)
+    if start is None:
+        calls = [_q("place_curve_table", space=name, alignment=alignment, position=[x, y],
+                    layer=table_layer)]
+        results = yield Turn(
+            (lead + " " if lead else "")
+            + f"The usable area of {name} was past the cut, but the head gave the viewport's "
+            f"frame: {_n(w)} by {_n(h)} in, centred at x {_n(cx)}, y {_n(cy)}, so it runs from x "
+            f"{_n(cx)} - {_n(w)} / 2 = {_n(x0)} to {_n(cx)} + {_n(w)} / 2 = {_n(x1)} and from y "
+            f"{_n(cy)} - {_n(h)} / 2 = {_n(y0)} to {_n(cy)} + {_n(h)} / 2 = {_n(y1)}. The table's "
+            f"position is its top-left corner. Try it a quarter inch inside the frame's top-left "
+            f"corner first: {_n(x0)} + {_n(m)} = {_n(x)} and {_n(y1)} - {_n(m)} = {_n(y)}. The "
+            f"engine's own curve table is the standard one, so only the layer is named: "
+            f"{table_layer}. Where it lands is checked once it is down.", calls)
+        _ok(results, calls)
+        tid = results[0]["created"][0]
+        calls = [_q("get_entity", id=tid)]
+        results = yield Turn("Read the table back for the box it takes up.", calls)
+        _ok(results, calls)
+        box = results[0]["bbox"]
+    else:
+        tid, box, _why = start
+    a, b, c, d = (float(_n(v)) for v in box)
+    tw, th = round(c - a, 3), round(d - b, 3)
+    low = round(y0 + m + th, 3)
+    left = round(mid - tw / 2.0, 3)
+    mid_x = (f"{_n(mid)} - {_n(tw)} / 2 = {_n(left)}" if region is None else
+             f"{mid_words}, less half the table, {_n(mid)} - {_n(tw)} / 2 = {_n(left)}")
+    spots = [(f"{whose} top-left corner", None),
+             (f"{whose} bottom-left corner",
+              (x, low, f"{_n(x0)} + {_n(m)} = {_n(x)} and, with the table {_n(d)} - {_n(b)} = "
+                       f"{_n(th)} in high, {_n(y0)} + {_n(m)} + {_n(th)} = {_n(low)}")),
+             (f"the middle of {whose} top edge",
+              (left, y, f"with the table {_n(c)} - {_n(a)} = {_n(tw)} in wide, {mid_x} and "
+                        f"{_n(y1)} - {_n(m)} = {_n(y)}"))]
+    say = f"{tid} takes up x {_n(a)} to {_n(c)} and y {_n(b)} to {_n(d)} on {name}."
+    for k, (where, _spot) in enumerate(spots):
+        if k == 0 and start is not None:
+            taken = (lead + " " if lead else "") + start[2]
+        else:
+            g = (round(a - m, 3), round(b - m, 3), round(c + m, 3), round(d + m, 3))
+            calls = [_q("find_entities", space=name, bounds=list(g))]
+            calls += [_q("sheet_to_model", sheet=name, point=[px, py])
+                      for px, py in ((g[0], g[1]), (g[2], g[1]), (g[2], g[3]), (g[0], g[3]))]
+            results = yield Turn(
+                f"{say} A quarter inch round it: {_n(a)} - {_n(m)} = {_n(g[0])}, {_n(b)} - "
+                f"{_n(m)} = {_n(g[1])}, {_n(c)} + {_n(m)} = {_n(g[2])} and {_n(d)} + {_n(m)} = "
+                f"{_n(g[3])}. Search the paper of {name} inside that box, and take its corners "
+                "back to the model to see what the view shows under it.", calls)
+            _ok(results, calls)
+            found = results[0]
+            on_paper = [row for row in found.get("entities") or [] if row.get("id") != tid]
+            more = int(found.get("total") or 0) > len(found.get("entities") or [])
+            taken = ""
+            if on_paper or more:
+                count = ("more than one answer lists" if more
+                         else _s(len(on_paper), "thing"))
+                taken = (f"The paper already holds {count} inside that box"
+                         + (f", {on_paper[0]['id']} among them" if on_paper else "")
+                         + f", so {where} is taken.")
+            else:
+                pts = [r["point"] for r in results[1:5]]
+                bounds = [min(q[0] for q in pts), min(q[1] for q in pts),
+                          max(q[0] for q in pts), max(q[1] for q in pts)]
+                calls = [_q("find_entities", bounds=bounds, visible_on=name, limit=1)]
+                results = yield Turn(
+                    "Nothing else on the paper is inside that box. The four corners span this "
+                    f"box in the model; search it for anything {name} shows.", calls)
+                _ok(results, calls)
+                if not results[0].get("total"):
+                    return {"table": tid,
+                            "carry": f"Nothing {name} shows from the model is within a quarter "
+                                     f"inch of the table, and nothing else on the paper is: it "
+                                     f"stands at {where}.",
+                            "done": f"placed the curve data table on {name} ({table_layer}) at "
+                                    f"{where}, clear of the paper and of the plan"}
+                taken = (f"The view shows {_s(int(results[0]['total']), 'thing')} from the model "
+                         f"under that box, so {where} is not clear of the plan.")
+        if k + 1 == len(spots):
+            break
+        nxt, (nx, ny, sums) = spots[k + 1]
+        calls = [_q("delete_entities", ids=[tid]),
+                 _q("place_curve_table", space=name, alignment=alignment, position=[nx, ny],
+                    layer=table_layer)]
+        results = yield Turn(
+            f"{taken} Take the table off and set it at {nxt} instead, a quarter inch inside: "
+            f"{sums}.", calls)
+        _ok(results, calls)
+        tid = results[1]["created"][0]
+        calls = [_q("get_entity", id=tid)]
+        results = yield Turn("Read the table back where it now stands.", calls)
+        _ok(results, calls)
+        a, b, c, d = (float(_n(v)) for v in results[0]["bbox"])
+        say = f"{tid} takes up x {_n(a)} to {_n(c)} and y {_n(b)} to {_n(d)} on {name}."
+    raise NotCovered(f"no corner on {name} is clear for the table")
 
 
 def _station_text(raw: float) -> str:
@@ -3524,7 +3789,10 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
         #: the sheets whose state came back cut: what they carry is asked for by place
         wide = [name for name in sheets if state.get(name, {}).get("cut")]
         if wide:
-            if sheet_work or widths or revision or layout or len(sheets) > 1:
+            # (a title block is filled from the head of the state, which came whole)
+            # (... and the table's place is searched for once it is down: ``_table_room``)
+            if ([p for p in sheet_work if p not in ("title", "table")] or widths or revision
+                    or layout or len(sheets) > 1):
                 raise NotCovered(f"the state of {_and(wide)} was cut, and the work needs what "
                                  "is on the paper")
             carry = (f"The answer for {wide[0]} was cut: the sheet carries more than one answer "
@@ -3624,7 +3892,13 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
         # (A line alone on its sheet is lettered clear of itself by the engine's labelers.)
         notes = [eid for eid, e in (state[sheets[0]].get("entities") or {}).items()
                  if e.get("type") == "text" and not (e.get("anchor") or {}).get("kind")]
-        if others or notes or state[sheets[0]].get("cut"):
+        # ... but for two tangents so short that their bearings, each at its tangent's
+        # middle, stand closer than the lettering is long (a line with slight angle points)
+        tangents = rows.get("tangents") or []
+        crowded = "bearings" in lettering and any(
+            (float(t0["length"]) + float(t1["length"])) / 2.0 < 2.0 * float(scale)
+            for t0, t1 in zip(tangents, tangents[1:]))
+        if others or notes or state[sheets[0]].get("cut") or crowded:
             if len(sheets) > 1:
                 raise NotCovered("other lettering to keep clear of on a layout of several sheets")
             lead, carry = carry, ""
@@ -3666,7 +3940,33 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
             f"{'each' if len(cuts) > 1 else 'it'} joins")
 
     # -- the base drawing
-    if "reference" in todo:
+    if "reference" in todo and _BASEFILES.search(request):
+        # a real sheet's own base files: each attached under the name the task gives it, or,
+        # where it gives none, under the code its file name ends in, as the office names them
+        files = _BASEFILES.findall(request)
+        calls, says, names = [], [], []
+        for path, name in files:
+            if not name:
+                code = _FILE_CODE.search(path)
+                if not code:
+                    raise NotCovered(f"the task gives {path} no name and its file name carries "
+                                     "no code to name it by")
+                name = code.group(1).upper()
+                says.append(f"{path} ends in {code.group(1)}, so it is attached as {name}")
+            names.append(name)
+            calls.append(_q("attach_reference", name=name, path=path, space="model"))
+        results = yield Turn(said(
+            f"The sheet's viewport shows nothing until its base files are attached. Attach "
+            f"{_and([p for p, _n in files])} in model space, each at its own coordinates with "
+            "nothing moved, turned or scaled, so the sheet's viewport shows them where they "
+            "were drawn."
+            + (" The task gives no names for them: a base file is named by the code its file "
+               "name ends in. " + "; ".join(says) + "." if says else
+               " Each takes the name the task gives it.")), calls)
+        _ok(results, calls)
+        done.append("attached " + _and([f"{p} as {n}" for (p, _g), n in zip(files, names)])
+                    + " in model space")
+    elif "reference" in todo:
         base = _BASEFILE.search(request)
         if not base:
             raise NotCovered("the task names no base drawing")
@@ -3681,6 +3981,12 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
     # -- the curve data table, on each sheet that shows a curve
     if "table" in todo and not rows["curves"]:
         done.append(f"{alignment} has no curve, so no curve data table")
+    elif "table" in todo and state[sheets[0]].get("cut"):
+        lead, carry = carry, ""
+        placed = yield from _table_room(sheets[0], state[sheets[0]]["viewports"][0], alignment,
+                                        layer("tables"), lead)
+        carry = placed["carry"]
+        done.append(placed["done"])
     elif "table" in todo:
         curves = rows["curves"]
         several = len(sheets) > 1
@@ -3859,6 +4165,18 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
                 f"{'shows' if len(under) == 1 else 'show'}.", calls)
             _ok(results, calls)
             for name, result in zip(under, results):
+                if result.get("total") and not several:
+                    # the corner is over the plan: the table is moved on, corner by corner
+                    tid = tables[tabled.index(name)]
+                    moved_on = yield from _table_room(
+                        name, state[name]["viewports"][0], alignment, layer("tables"), "",
+                        region=state[name]["usable_area"],
+                        start=(tid, under[name],
+                               f"The view shows {_s(int(result['total']), 'thing')} from the "
+                               f"model under that box, so the top-left corner of {name} is not "
+                               "clear of the plan."))
+                    checked[name] = moved_on["carry"]
+                    continue
                 if result.get("total"):
                     raise NotCovered(f"the top-left corner of {name} is not clear of the plan")
                 checked[name] = (f"Nothing {name} shows from the model is within a quarter inch "
@@ -3914,7 +4232,44 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
                         + (f", turned {_n(twist)}° to north" if twist else ""))
 
     # -- the title block of every sheet
-    if "title" in todo:
+    border = str((state.get(sheets[0]) or {}).get("title_block_template") or "") if sheets else ""
+    given = stated_border_title(request, border) if "title" in todo else None
+    if given:
+        # an agency border: the task says what goes in its title block, in the border's words
+        if len(sheets) != 1:
+            raise NotCovered("an agency title block on more than one sheet")
+        name = sheets[0]
+        have = state[name].get("title_block_fields") or {}
+        keys = state[name].get("title_block_keys")
+        if keys is not None and any(key not in keys for _label, key, _v in given):
+            raise NotCovered(f"the border of {name} does not letter a field the task gives")
+        fields = {key: value for _label, key, value in given
+                  if str(have.get(key, "")).strip() != value}
+        there = [label for label, key, value in given if key not in fields]
+        # a captioned box the task gives no value for and the sheet leaves empty
+        bare = {key: caption for key, caption in BORDER_CAPTIONS.get(border, {}).items()
+                if key not in {k for _l, k, _v in given} and not str(have.get(key, "")).strip()
+                and (keys is None or key in keys)}
+        fields.update(bare)
+        if fields:
+            calls = [_q("fill_title_block", sheet=name, fields=fields)]
+            results = yield Turn(said(
+                f"{name} is on the {border} border, and fill_title_block lists the keys that "
+                "border letters. "
+                + " ".join(f"{label} is its {key}: {value}." for label, key, value in given
+                           if key in fields)
+                + "".join(f" Its {key} box letters a caption of its own, {caption}, ahead of "
+                          "the value; neither the task nor the document gives a value, so the "
+                          "caption stands alone, as the border is plotted before one is set."
+                          for key, caption in bare.items())
+                + (f" {_and(there)} {'is' if len(there) == 1 else 'are'} lettered already as "
+                   "the task gives." if there else "")
+                + " Only what the task gives is filled; nothing else is made up."), calls)
+            _ok(results, calls)
+            done.append(f"filled {_and([key for key in fields])} in the title block of {name}")
+        else:
+            done.append(f"the title block of {name} already reads as the task gives")
+    elif "title" in todo:
         stated = stated_title(request)
         project, about = meta.get("project_name"), str(meta.get("description") or "")
         calls, blank, on_record = [], [], {}
@@ -4172,6 +4527,10 @@ class Seen:
         if label:  # the office's form: the station and the sheet have to be ones seen
             return (self.number(numbers_in(label.group(1))[0], standards=False)
                     and self.string(label.group(2), tool_text))
+        if any(value in captions.values() for captions in BORDER_CAPTIONS.values()):
+            return True  # a caption an agency border letters in a box of its own
+        if re.fullmatch(r"[A-Z]{2}\d{2}", value) and f"{value.lower()}.rdraft" in self.text:
+            return True  # a base file's name: the code the task's own file name ends in
         if ":" in value:  # an alignment named through its reference
             return all(self.string(part, tool_text) for part in value.split(":"))
         # a part of something read: the agency out of the project's description

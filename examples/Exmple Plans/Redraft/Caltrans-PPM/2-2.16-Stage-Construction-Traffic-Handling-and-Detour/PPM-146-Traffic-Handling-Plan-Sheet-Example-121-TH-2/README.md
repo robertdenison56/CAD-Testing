@@ -5,7 +5,7 @@ Caltrans PPM example sheet **TH-2** (STAGE 1), redrafted as a RoadDraft file set
 | File | What it holds |
 |---|---|
 | `0000000000bb01.rdraft` | **BB01** Master Topographic ("bb"): existing features -- the sheet's dotted linework (existing roads, railroad, fence, contours) and contour elevations. |
-| `0000000000aa01.rdraft` | **AA01** Master Design, roadway ("aa"): the proposed roadway linework. References BB01. |
+| `0000000000aa01.rdraft` | **AA01** Master Design, roadway ("aa"): alignment(s) B rebuilt from the centerline, ticks and station numbers, with stationing; the proposed roadway linework. References BB01. |
 | `0000000000md002.rdraft` | Sheet **TH-2**: references the base files through a 1" = 50' viewport (twist -11.610°); border, title block, notes, callouts, match lines, tables and symbols in sheet view. |
 | `0000000000md002.pdf` / `.dxf` / `.png` | Plot, CAD exchange, render |
 | `0000000000md002-overlay.png` | Check: published sheet blue, redraft red, black where they agree |

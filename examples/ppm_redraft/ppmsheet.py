@@ -892,11 +892,11 @@ def digitise(ppm_id, rel, extract, cfg):
                       not any(alignfit.NAME.match(q["text"].strip()) for q in free_runs if q["id"] == r["id"])]
         if not cfg.get("no_alignments"):
             heavy = [p for p in cand if p["lw"] >= 1.85 and not p["dash"]]
-            aligns = alignfit.fit(heavy, segs, free_runs, fpi)
+            aligns = alignfit.fit(heavy, segs, free_runs, fpi, hints=cfg.get("stations"))
             got = {pid for al in aligns for pid in al["paths"]}
             light_c = [p for p in cand if p["id"] not in got and not (p["lw"] >= 1.85 and not p["dash"])
                        and plen(p["pts"]) > 0.3]
-            more = alignfit.fit(light_c, segs, free_runs, fpi, min_len=3.0)
+            more = alignfit.fit(light_c, segs, free_runs, fpi, min_len=3.0, hints=cfg.get("stations"))
             aligns += [al for al in more if al["name"] or len(al["ticks"]) >= 3]
             aligns, dupes = alignfit.tidy(aligns, fpi)
             dup_ids = {pid for al in dupes for pid in al["paths"]}
@@ -915,7 +915,38 @@ def digitise(ppm_id, rel, extract, cfg):
             for rid_ in al["labels"]:
                 if rid_ and rid[rid_]["kind"] is None:
                     rid[rid_]["kind"] = "station"
-            for along, m, half in (al["ticks"] if text_mode != "strokes" else []):
+            if al.get("hinted"):
+                # a line numbered from the config's readings: the numbers the sheet draws
+                # as strokes beside its ticks go, and the builder letters the stationing.
+                # They stand in one band beside the line; the band most ticks have is theirs.
+                near = []
+                for along, m, half in al["ticks"]:
+                    u = al["chain"].locate(m)[2]
+                    got = []
+                    for q in pgrid.near((m[0], m[1], m[0], m[1]), 0.5):
+                        if q["dest"] not in (None, "drop:glyph", "sheet:glyph") or q["id"] in used:
+                            continue
+                        xs = [v[0] for v in q["pts"]]; ys = [v[1] for v in q["pts"]]
+                        if math.hypot(max(xs) - min(xs), max(ys) - min(ys)) > 0.2:
+                            continue
+                        c = centroid(q["pts"])
+                        da = (c[0] - m[0]) * u[0] + (c[1] - m[1]) * u[1]
+                        dp = -(c[0] - m[0]) * u[1] + (c[1] - m[1]) * u[0]
+                        if abs(da) < 0.24 and 0.05 < abs(dp) < 0.45:
+                            got.append((dp, q))
+                    near.append(got)
+                best = (0, None)
+                for k in range(-22, 23):
+                    d0 = k * 0.02
+                    n = sum(1 for got in near if any(abs(dp - d0) < 0.09 for dp, _q in got))
+                    if abs(d0) >= 0.06 and n > best[0]:
+                        best = (n, d0)
+                if best[1] is not None and best[0] >= 0.6 * len(near):
+                    for got in near:
+                        for dp, q in got:
+                            if abs(dp - best[1]) < 0.09:
+                                q["dest"] = "drop:station-number"
+            for along, m, half in (al["ticks"] if text_mode != "strokes" or al.get("hinted") else []):
                 for p in pgrid.near((m[0], m[1], m[0], m[1]), 0.02):
                     if p["dest"] is None and len(p["pts"]) == 2 and \
                             math.dist(centroid(p["pts"]), m) < 0.01:

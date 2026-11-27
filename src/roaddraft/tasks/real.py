@@ -216,9 +216,27 @@ def _locate(agency: str, row: dict) -> Optional[Path]:
     return hits[0].parent if len(hits) == 1 else None
 
 
-@lru_cache(maxsize=1)
+#: redrafted sheets whose alignment was rebuilt for TRAINING (2026-11-26): the Route 70
+#: stage construction and Route 121 traffic handling sheets of the PPM examples, numbered
+#: from readings in their redraft configs (``stations``).  No held-out set draws on these
+#: two projects.  They are not catalogue sheets: ``real_sheets``, ``candidates`` and
+#: ``catalog`` leave them out, so the held-out catalogue is what it was.
+TRAIN_SHEET_IDS = frozenset(f"PPM-{n}" for n in (*range(128, 141), 142, *range(144, 151)))
+
+
 def real_sheets() -> Tuple[RealSheet, ...]:
-    """Every redrafted plan sheet with a rebuilt alignment, in catalogue order."""
+    """Every redrafted plan sheet with a rebuilt alignment, in catalogue order
+    (the training sheets, ``TRAIN_SHEET_IDS``, left out: ``train_sheets``)."""
+    return tuple(s for s in _all_sheets() if s.id not in TRAIN_SHEET_IDS)
+
+
+def train_sheets() -> Tuple[RealSheet, ...]:
+    """The redrafted plan sheets kept for training (``TRAIN_SHEET_IDS``)."""
+    return tuple(s for s in _all_sheets() if s.id in TRAIN_SHEET_IDS)
+
+
+@lru_cache(maxsize=1)
+def _all_sheets() -> Tuple[RealSheet, ...]:
     out: List[RealSheet] = []
     for agency in AGENCIES:
         manifest = REDRAFT_ROOT / agency / "redraft-manifest.csv"
@@ -239,7 +257,7 @@ def real_sheets() -> Tuple[RealSheet, ...]:
 
 
 def real_sheet(sheet_id: str) -> RealSheet:
-    for s in real_sheets():
+    for s in _all_sheets():
         if s.id == sheet_id:
             return s
     raise ValueError(f"no redrafted plan sheet {sheet_id!r}")
@@ -289,11 +307,13 @@ def type_fits(align: Alignment, ttype: TaskType) -> Optional[str]:
     return None
 
 
-def candidates(types: Optional[Dict[str, TaskType]] = None) -> List[Tuple[RealSheet, str, str]]:
+def candidates(types: Optional[Dict[str, TaskType]] = None,
+               train: bool = False) -> List[Tuple[RealSheet, str, str]]:
     """``(sheet, alignment, task type)`` for every pairing worth building, of
-    ``types`` (``REAL_TASK_TYPES``; ``REAL_JOB_TYPES`` for the whole-job catalogue)."""
+    ``types`` (``REAL_TASK_TYPES``; ``REAL_JOB_TYPES`` for the whole-job catalogue);
+    ``train`` takes the training sheets instead of the catalogue's."""
     out = []
-    for src in real_sheets():
+    for src in (train_sheets() if train else real_sheets()):
         doc = _load(src.folder / src.sheet_file)
         sheet = _only_sheet(doc)
         if len(sheet.viewports) != 1:
