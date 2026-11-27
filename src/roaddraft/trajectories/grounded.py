@@ -179,6 +179,18 @@ gives is left blank and said so in the note, never made up; the verifier
 wants every field filled (D1-10), so such a recording scores short of 100
 and is not kept.
 
+A sheet at a real one's size (the generator's bulk dial, ``tasks.bulk``,
+2026-11-25, Robert: "Go with 1") does not fit one answer: ``get_sheet_state``
+comes back cut at the harness's cap.  Until then the drafter stopped there, as
+the T1 checkpoint does on the real sheets (``T1.md`` section 11).  Now it reads
+what the cut answer still holds (``_cut_sheet``: the size, the title block and
+the viewport are written before the entities, so the scale and the twist come
+whole), says so, does not ask again, and asks for the rest by kind and by
+place: its own line's lettering by the line's anchor, then only what lies in
+the box its new labels take (``_clear``).  Work that needs the whole paper on
+such a sheet (a table's corner, a title block's keys) is not built, and the
+drafter stops rather than guess.
+
     python -m roaddraft.trajectories.grounded --taskset d1-train --out results/grounded-v2/d1-train-vague
                                               [--level vague] [--type TYPE ...] [--limit N]
 
@@ -510,13 +522,46 @@ def _share(matches: Sequence[dict], centre: float) -> tuple:
 # ------------------------------------------------------------ the drafter
 
 
-def _ok(results: Sequence[dict], calls: Sequence[ToolCall]) -> None:
+def _ok(results: Sequence[dict], calls: Sequence[ToolCall], cut: Sequence[str] = ()) -> None:
+    """Every call answered, and whole: an answer the harness cut is read only
+    from a query named in ``cut``, by a caller that reads its head."""
     for call, result in zip(calls, results):
         if not result.get("ok"):
             why = (result.get("error") or {}).get("message")
             raise NotCovered(f"{call.name} failed: {why}")
-        if result.get("truncated"):
+        if result.get("truncated") and call.name not in cut:
             raise NotCovered(f"{call.name}: the result was cut; nothing to read it from")
+
+
+#: what the head of a sheet's state holds, in the order it is written: all of it comes
+#: before the sheet's entities, which is where an answer too long for the harness is cut
+_SHEET_HEAD = ("name", "size", "width_in", "height_in", "title_block_template",
+               "title_block_fields", "viewports")
+
+
+def _cut_sheet(result: dict) -> dict:
+    """What a ``get_sheet_state`` answer still says after the harness cut it
+    (``eval.episode``: an answer over the cap comes back as its first 30,000
+    characters under ``text``).  The sheet's size, its title block and its
+    viewports are written before its entities, so they come whole: the scale
+    and the twist are read there.  The entities, the usable area and the
+    title block's keys do not come, and are marked not known (``"cut"``)."""
+    text = str(result.get("text") or "")
+    start = text.find('"sheet": {')
+    end = text.find('"entities": {', start)
+    if start < 0 or end < 0:
+        raise NotCovered("get_sheet_state: the result was cut before its viewports")
+    decoder = json.JSONDecoder()
+    state: dict = {"cut": True}
+    for key in _SHEET_HEAD:
+        at = text.find(f'"{key}": ', start, end)
+        if at < 0:
+            raise NotCovered(f"get_sheet_state: the result was cut before its {key}")
+        try:
+            state[key], _stop = decoder.raw_decode(text, at + len(key) + 4)
+        except ValueError:
+            raise NotCovered(f"get_sheet_state: the result was cut inside its {key}") from None
+    return state
 
 
 def _and(names: Sequence[str]) -> str:
@@ -1648,8 +1693,17 @@ _PAPER_WORDS = {"text": "the note", "table": "the table", "blockref": "the symbo
 
 def _named(request: str, names: Sequence[str]) -> str:
     """The line the request is about, of the ones the design holds: the one it
-    names first (``BASE:ALIGN-1`` is named by ``ALIGN-1``), else the first."""
-    found = [(request.find(n.rsplit(":", 1)[-1]), i) for i, n in enumerate(names)]
+    names first (``BASE:ALIGN-1`` is named by ``ALIGN-1``), else the first.  A name is
+    looked for as a word of its own first: a design file's second line called ``AN`` is
+    not named by "ANSI D" (the bulk dial's sheets, ``tasks.bulk``)."""
+    found = []
+    for i, n in enumerate(names):
+        hit = re.search(r"(?<![A-Za-z0-9_-])" + re.escape(n.rsplit(":", 1)[-1])
+                        + r"(?![A-Za-z0-9_-])", request)
+        if hit:
+            found.append((hit.start(), i))
+    if not found:
+        found = [(request.find(n.rsplit(":", 1)[-1]), i) for i, n in enumerate(names)]
     found = [(at, i) for at, i in found if at >= 0]
     return names[min(found)[1]] if found else names[0]
 
@@ -1686,34 +1740,128 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
     is deleted and placed again by the same labeler on the other side of its
     line, then further off by multiples of its text height (``CLEAR_MOVES``),
     read back with its corners and compared again, now with its own line's
-    lettering on that side as well.  Returns ``{"carry", "done"}``."""
+    lettering on that side as well.  Returns ``{"carry", "done"}``.
+
+    On a sheet whose state came back cut (``sheet["cut"]``: a sheet at a real
+    one's size, ``tasks.bulk``) the whole of what it shows is not read: a list
+    of every text on it runs to hundreds of rows.  The drafter asks by line and
+    then by place instead.  First its own line's lettering, the new labels among
+    it, by the line's anchor.  Then the box the new labels take on the paper, a
+    quarter inch added all round, its corners taken back to the model by the
+    engine, and only what lies in that box: what is drawn on the paper there,
+    and the text the sheet shows from the model there.  A label set again on such a
+    sheet may land on paper that was not searched (a base file's text stands inside the
+    line's lettering on a bulked sheet): the box it now takes is searched the same way
+    before it is compared."""
     shown_q = {"visible_on": name, "type": "text", "detail": "full", "limit": FULL_ROWS}
     paper_q = {"space": name, "type": ["text", "table", "blockref"], "detail": "full",
                "limit": FULL_ROWS}
-    calls = [_q("find_entities", **shown_q), _q("find_entities", **paper_q)]
-    there = ([f"the design holds {_and(list(others))} as well"] if others else []) + (
-        ["the paper carries lettering of its own"]
-        if any(e.get("type") == "text" and not (e.get("anchor") or {}).get("kind")
-               for e in (sheet.get("entities") or {}).values()) else [])
-    results = yield Turn(
-        (lead + " " if lead else "")
-        + f"{alignment} is not alone on {name}: {_and(there)}. The engine sets a line's "
-        "lettering clear of itself, not of anything else, so read back where the new labels "
-        f"fell: every text {name} shows from the model, each with the corners of its lettering "
-        "on the paper, and what is drawn on the paper.", calls)
-    _ok(results, calls)
-    shown: List[dict] = list(results[0]["entities"])
-    paper: List[dict] = list(results[1]["entities"])
-    more = [(shown_q, shown, results[0].get("more")), (paper_q, paper, results[1].get("more"))]
-    while any(m for _query, _rows, m in more):
-        ask = [(query, rows, m) for query, rows, m in more if m]
-        calls = [_q("find_entities", **query, start=m["start"]) for query, _rows, m in ask]
-        results = yield Turn("The list runs on: read the rest of it.", calls)
+    wide = bool(sheet.get("cut"))
+
+    def rest(more: List[tuple]) -> Generator[Turn, List[dict], None]:
+        """Read on through each list that runs past its first rows."""
+        while any(m for _query, _rows, m in more):
+            ask = [(query, rows, m) for query, rows, m in more if m]
+            calls = [_q("find_entities", **query, start=m["start"]) for query, _rows, m in ask]
+            results = yield Turn("The list runs on: read the rest of it.", calls)
+            _ok(results, calls)
+            more[:] = []
+            for (query, rows, _m), result in zip(ask, results):
+                rows.extend(result["entities"])
+                more.append((query, rows, result.get("more")))
+
+    #: the boxes of paper searched so far on a sheet too large to read whole
+    searched: List[list] = []
+
+    def look(rows: Sequence[dict], head: str,
+             tail: str) -> Generator[Turn, List[dict], tuple]:
+        """Search the paper ``rows`` take, a quarter inch added all round: ``(what is
+        on the paper there, the text the sheet shows from the model there, the box)``."""
+        px = [float(_n4(c[0])) for row in rows for c in row["paper_corners"]]
+        py = [float(_n4(c[1])) for row in rows for c in row["paper_corners"]]
+        on_paper = (min(px), min(py), max(px), max(py))
+        if min(on_paper[:2]) < MARGIN_IN:
+            raise NotCovered(f"the new lettering reaches the edge of {name}")
+        box = [round(on_paper[0] - MARGIN_IN, 4), round(on_paper[1] - MARGIN_IN, 4),
+               round(on_paper[2] + MARGIN_IN, 4), round(on_paper[3] + MARGIN_IN, 4)]
+        calls = [_q("sheet_to_model", sheet=name, point=[x, y])
+                 for x, y in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]),
+                              (box[0], box[3]))]
+        results = yield Turn(
+            f"{head} from x {_n4(on_paper[0])} to "
+            f"{_n4(on_paper[2])} and y {_n4(on_paper[1])} to {_n4(on_paper[3])}. A quarter "
+            f"inch round that: {_n4(on_paper[0])} - {_n(MARGIN_IN)} = {_n4(box[0])}, "
+            f"{_n4(on_paper[1])} - {_n(MARGIN_IN)} = {_n4(box[1])}, {_n4(on_paper[2])} + "
+            f"{_n(MARGIN_IN)} = {_n4(box[2])} and {_n4(on_paper[3])} + {_n(MARGIN_IN)} = "
+            f"{_n4(box[3])}. {tail} Take its "
+            "corners back to the model, to ask what the sheet shows there.", calls)
         _ok(results, calls)
-        more = []
-        for (query, rows, _m), result in zip(ask, results):
-            rows.extend(result["entities"])
-            more.append((query, rows, result.get("more")))
+        pts = [r["point"] for r in results]
+        bounds = [min(q[0] for q in pts), min(q[1] for q in pts),
+                  max(q[0] for q in pts), max(q[1] for q in pts)]
+        # (a text is listed with its corners; a table or a symbol is its box, which only
+        # the full row carries, and there are few of those)
+        here_q = {"space": name, "type": "text", "bounds": box}
+        boxed_q = {"space": name, "type": ["table", "blockref"], "detail": "full",
+                   "limit": FULL_ROWS, "bounds": box}
+        near_q = {"visible_on": name, "type": "text", "bounds": bounds}
+        calls = [_q("find_entities", **here_q), _q("find_entities", **boxed_q),
+                 _q("find_entities", **near_q)]
+        results = yield Turn(
+            ("The view is turned, so the corners span a wider box in the model than on the "
+             "paper. " if view else "")
+            + f"Ask only for what lies in the box: the lettering on the paper of {name} there, "
+            f"any table or symbol there, and the text {name} shows from the model there.", calls)
+        _ok(results, calls)
+        on: List[dict] = list(results[0]["entities"])
+        boxed: List[dict] = list(results[1]["entities"])
+        by: List[dict] = list(results[2]["entities"])
+        yield from rest([(here_q, on, results[0].get("more")),
+                         (boxed_q, boxed, results[1].get("more")),
+                         (near_q, by, results[2].get("more"))])
+        return on + boxed, by, box
+
+    if wide:
+        # this line's own lettering, by its anchor: a row as listed has the corners of
+        # its lettering on the paper and its anchor, which is all the comparison reads
+        own_q = {"visible_on": name, "type": "text", "anchor": {"alignment": alignment}}
+        calls = [_q("find_entities", **own_q)]
+        results = yield Turn(
+            (lead + " " if lead else "")
+            + f"{name} carries too much to read whole, and the engine sets a line's lettering "
+            "clear of itself, not of anything else. So see what the new labels fell on by "
+            f"asking narrowly. First {alignment}'s own lettering as {name} shows it, the new "
+            "labels among it, each with the corners of its lettering on the paper.", calls)
+        _ok(results, calls)
+        shown: List[dict] = list(results[0]["entities"])
+        yield from rest([(own_q, shown, results[0].get("more"))])
+        new = [row for row in shown if row["id"] in groups]
+        if not new:
+            raise NotCovered(f"{name} shows none of the new lettering")
+        paper, near, box = yield from look(
+            new, f"{_s(len(new), 'new label').capitalize()} among {_s(len(shown), 'text')} of "
+                 f"{alignment}'s. On the paper their corners run",
+            "Whatever a new label could sit on lies in that box.")
+        searched.append(box)
+        have = {row["id"] for row in shown}
+        shown += [row for row in near if row["id"] not in have]
+    else:
+        calls = [_q("find_entities", **shown_q), _q("find_entities", **paper_q)]
+        there = ([f"the design holds {_and(list(others))} as well"] if others else []) + (
+            ["the paper carries lettering of its own"]
+            if any(e.get("type") == "text" and not (e.get("anchor") or {}).get("kind")
+                   for e in (sheet.get("entities") or {}).values()) else [])
+        results = yield Turn(
+            (lead + " " if lead else "")
+            + f"{alignment} is not alone on {name}: {_and(there)}. The engine sets a line's "
+            "lettering clear of itself, not of anything else, so read back where the new labels "
+            f"fell: every text {name} shows from the model, each with the corners of its "
+            "lettering on the paper, and what is drawn on the paper.", calls)
+        _ok(results, calls)
+        shown = list(results[0]["entities"])
+        paper = list(results[1]["entities"])
+        yield from rest([(shown_q, shown, results[0].get("more")),
+                         (paper_q, paper, results[1].get("more"))])
     by_id: Dict[str, dict] = {row["id"]: row for row in shown}
     paper_rows = {id(row) for row in paper}
     mine = [row["id"] for row in shown if row["id"] in groups]
@@ -1887,6 +2035,22 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
     bad = check(mine)
     count = 0
     while bad:
+        short = [i for i in bad if "entity" not in by_id[i]]
+        if short:
+            # a row of the narrow list has a label's corners and anchor, not its height,
+            # and a label is set further off by multiples of that
+            calls = [_q("get_entity", id=i) for i in short]
+            one = len(short) == 1
+            results = yield Turn(
+                " ".join(said) + (" " if said else "")
+                + " ".join(f"{why[0].upper() + why[1:]}." for why in bad.values())
+                + f" {'It has' if len(bad) == 1 else 'They have'} to be set again, by "
+                f"{'its' if one else 'their'} own text height, which the list did not give: "
+                f"read {'it' if one else 'them'}.", calls)
+            _ok(results, calls)
+            del said[:]
+            for i, result in zip(short, results):
+                by_id[i]["entity"] = result["entity"]
         calls, says, placing = [], list(said), []
         del said[:]
         for i, why in bad.items():
@@ -1945,6 +2109,25 @@ def _clear(name: str, sheet: dict, alignment: str, groups: Dict[str, List[str]],
             moved.add(row["id"])
             fresh.append(row["id"])
         count += len(placing)
+        if wide:
+            # where a label now sits may not be paper that was searched: search it too
+            rows = [by_id[j] for j in fresh]
+            cs = [(r4(c[0]), r4(c[1])) for row in rows for c in row["paper_corners"]]
+            if not all(any(b[0] <= x <= b[2] and b[1] <= y <= b[3] for b in searched)
+                       for x, y in cs):
+                one = len(rows) == 1
+                on, by, box = yield from look(
+                    rows, f"Where {'it now sits' if one else 'they now sit'} is not all paper "
+                          f"that was searched. {'Its' if one else 'Their'} corners run",
+                    f"Whatever {'it' if one else 'they'} could sit on now lies in that box.")
+                searched.append(box)
+                have = {row["id"] for row in paper}
+                for row in on:
+                    if row["id"] not in have:
+                        paper.append(row)
+                        paper_rows.add(id(row))
+                for row in by:
+                    by_id.setdefault(row["id"], row)
         bad = check(fresh)
     tail = " ".join(said)
     if count:
@@ -3309,11 +3492,14 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
         results = []
         if calls:
             results = yield Turn(said(say), calls)
-            _ok(results, calls)
+            _ok(results, calls, cut=("get_sheet_state",))
 
         def take(names: Sequence[str], sheet_results: Sequence[dict]) -> None:
             for name, result in zip(names, sheet_results):
-                state[name] = result["sheet"]
+                # a sheet that carries more than one answer holds comes back cut: its head
+                # still has the viewport, and so the scale and the twist
+                state[name] = (_cut_sheet(result) if result.get("truncated")
+                               else result["sheet"])
                 if not state[name].get("viewports"):
                     raise NotCovered(f"{name} has no viewport to read a scale from")
 
@@ -3329,12 +3515,24 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
                 f"The viewport of {sheets[0]} is turned {_n(twist)}°. The model is lettered "
                 f"once for every sheet that shows it, so read {_and(rest)} too, to see that "
                 f"{'it is' if len(rest) == 1 else 'they are'} turned the same.", calls)
-            _ok(results, calls)
+            _ok(results, calls, cut=("get_sheet_state",))
             take(rest, results)
         turns = {name: float(state[name]["viewports"][0].get("rotation_deg") or 0.0)
                  for name in state}
         if any(abs(t - twist) > 1e-6 for t in turns.values()):
             raise NotCovered("the sheets' viewports are not turned alike")
+        #: the sheets whose state came back cut: what they carry is asked for by place
+        wide = [name for name in sheets if state.get(name, {}).get("cut")]
+        if wide:
+            if sheet_work or widths or revision or layout or len(sheets) > 1:
+                raise NotCovered(f"the state of {_and(wide)} was cut, and the work needs what "
+                                 "is on the paper")
+            carry = (f"The answer for {wide[0]} was cut: the sheet carries more than one answer "
+                     f"holds. Its head came whole, and the viewport is in it: the model at "
+                     f"{_n(scale)} ft to the inch"
+                     + (f", turned {_n(twist)}°" if twist else ", not turned")
+                     + ". Asking again would cut it at the same place, so what is on the paper "
+                     "is asked for by kind and by place where the work needs it.")
 
     # -- a revised design: what was lettered before the change comes off first
     if revision and ":" not in alignment:
@@ -3372,8 +3570,10 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
         if anno_scale != scale:
             calls = [_q("set_annotation_scale", scale=scale)]
             results = yield Turn(said(
-                f"{sheets[0]} shows the model at {scale:g} ft to the inch. Set the annotation "
-                "scale to match, so the engine sizes the lettering for that sheet."), calls)
+                ("Set the annotation scale to match, so the engine sizes the lettering for "
+                 f"{sheets[0]}." if state[sheets[0]].get("cut") else
+                 f"{sheets[0]} shows the model at {scale:g} ft to the inch. Set the annotation "
+                 "scale to match, so the engine sizes the lettering for that sheet.")), calls)
             _ok(results, calls)
             anno_scale = scale
         anno = layer("labels")
@@ -3424,7 +3624,7 @@ def solve(text: str, phases: Sequence[str]) -> Generator[Turn, List[dict], Turn]
         # (A line alone on its sheet is lettered clear of itself by the engine's labelers.)
         notes = [eid for eid, e in (state[sheets[0]].get("entities") or {}).items()
                  if e.get("type") == "text" and not (e.get("anchor") or {}).get("kind")]
-        if others or notes:
+        if others or notes or state[sheets[0]].get("cut"):
             if len(sheets) > 1:
                 raise NotCovered("other lettering to keep clear of on a layout of several sheets")
             lead, carry = carry, ""

@@ -105,6 +105,16 @@ manifests, ``{"taskset", "generator_version", "spec_hash", "tasks": [{"seed",
   three sheets), half of them through turned viewports, no station equation.
   The seeded counterpart of the sheet break pilots (``p05``).  A seed whose line the generator lays on more sheets
   than carry it takes another sheet count and says so under ``dialed``.
+- ``d1-train-bulk`` (2026-11-25, Robert: "Go with 1"): seeded sheets at a real
+  sheet's size (``tasks.bulk``), seeds 26000-26599, over the three training-only
+  types that letter one piece of a line living in the attached base drawing
+  (``base-stationing``, ``base-bearings``, ``base-callouts``: the seeded
+  counterparts of the real lettering types).  The line, the sheet and the
+  references carry an office's names, a survey base is attached beside the
+  design's, and the paper carries enough notes and schedules that the sheet's
+  state comes back cut.  One sheet, one to three curves, two in three through
+  a turned viewport (77 of ``d1-real``'s 100 are), no station equation.  An
+  entry carries ``"bulk": true``.
 
 - ``train-deeds``, ``train-qa`` (2026-11-13, plan §8 build 5): the reasoning
   families that need none of the pilots' sheets, as generated probe tasks on the
@@ -183,6 +193,8 @@ TRAIN_NAMES = ("d1-train", "d1-train-hard", "d1-train-twist", "d1-train-crowd", 
 #: ... and the set of the training-only type (2026-11-13), last, on a line of its own so that
 #: a name added to the tuple above merges without touching it
 TRAIN_NAMES += ("d1-train-breaks",)
+#: ... and the bulked sheets (2026-11-25), on a line of its own for the same reason
+TRAIN_NAMES += ("d1-train-bulk",)
 TRAIN_SEEDS = range(10000, 11200)
 TRAIN_HARD_SEEDS = range(12000, 12300)
 #: ``d1-train-twist`` (2026-11-11): twisted sheets on seeds of their own, over the seeded
@@ -218,6 +230,9 @@ TRAIN_BREAKS_SEEDS = range(17000, 17300)
 #: the sheet counts its lines are stretched for, in the order dialed: two tasks in five take
 #: two sheets, two take three, one takes one (no break is a right answer too)
 BREAKS_SHEETS = (2, 3, 2, 3, 1)
+#: ``d1-train-bulk`` (2026-11-25): seeded sheets at a real sheet's size (``tasks.bulk``),
+#: on seeds of their own
+TRAIN_BULK_SEEDS = range(26000, 26600)
 BREAKS_CURVES = (1, 2, 3, 4)
 #: the generated probe tasks of plan §8 build 5 (2026-11-13): the reasoning families that need
 #: none of the pilots' sheets, run on the pilots' own harness (``eval.probe_tasks``) and graded
@@ -245,9 +260,45 @@ def dials(index: int) -> dict:
 
 
 def make_task(seed: int, curves: int, equations: bool, task_type: str, sheets: int,
-              twist: bool = False, crowd: bool = False, revise=None) -> Task:
+              twist: bool = False, crowd: bool = False, revise=None,
+              bulk: bool = False) -> Task:
     return generate_task(seed, curves=curves, equations=equations, task_type=task_type,
-                         sheets=sheets, twist=twist, crowd=crowd, revise=revise)
+                         sheets=sheets, twist=twist, crowd=crowd, revise=revise, bulk=bulk)
+
+
+def bulk_dials(index: int) -> dict:
+    """The dials of the ``index``-th task of ``d1-train-bulk``: one sheet, the
+    type cycling through the three bulked types, the curve count through its
+    three on every round of the types, and the viewport turned on two rounds
+    in three of those (so every type meets every curve count turned and not);
+    no station equation."""
+    from roaddraft.tasks.bulk import BULK_TYPES
+    n = len(BULK_TYPES)
+    return {"task_type": BULK_TYPES[index % n], "curves": CURVES[(index // n) % len(CURVES)],
+            "twist": (index // (n * len(CURVES))) % 3 != 0, "equations": False, "sheets": 1}
+
+
+def _bulk_entry(seed: int, index: int) -> dict:
+    """The ``index``-th entry of ``d1-train-bulk``.  A type the seed's sheet
+    cannot be bulked for takes the next in the cycle; ``RuntimeError`` when
+    none can."""
+    from roaddraft.tasks.bulk import BULK_TYPES
+    d = bulk_dials(index)
+    start = BULK_TYPES.index(d["task_type"])
+    for k in range(len(BULK_TYPES)):
+        ttype = BULK_TYPES[(start + k) % len(BULK_TYPES)]
+        try:
+            task = make_task(seed, d["curves"], False, ttype, 1, d["twist"], bulk=True)
+        except (ValueError, AssertionError):
+            continue
+        entry = {"seed": seed, "curves": d["curves"], "equations": False, "task_type": ttype,
+                 "sheets": 1, "task_id": task.task_id, "bulk": True}
+        if d["twist"]:
+            entry["twist"] = True
+        if ttype != d["task_type"]:
+            entry["dialed"] = {"task_type": d["task_type"], "sheets": 1}
+        return entry
+    raise RuntimeError(f"seed {seed}: no bulked task generates")
 
 
 def revise_dials(index: int) -> dict:
@@ -868,6 +919,17 @@ def build(name: str) -> dict:
                 "spec_version": DRAFTING_SPEC_V1["version"],
                 "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
                 "tasks": tasks}
+    elif name == "d1-train-bulk":
+        tasks, skipped = [], []
+        for i, seed in enumerate(TRAIN_BULK_SEEDS):
+            try:
+                tasks.append(_bulk_entry(seed, i))
+            except RuntimeError:
+                skipped.append(seed)
+        return {"taskset": name, "generator_version": GENERATOR_VERSION,
+                "spec_version": DRAFTING_SPEC_V1["version"],
+                "spec_hash": spec_hash(DRAFTING_SPEC_V1), "skipped_seeds": skipped,
+                "tasks": tasks}
     else:
         raise ValueError(f"unknown task set {name!r}; sets: "
                          f"{', '.join(NAMES + TRAIN_NAMES + PROBE_TRAIN_NAMES)}")
@@ -1048,7 +1110,7 @@ def task_from_entry(entry: dict, strict: bool = True, level: str = "explicit") -
         return task
     task = make_task(entry["seed"], entry["curves"], entry["equations"], entry["task_type"],
                      entry["sheets"], bool(entry.get("twist")), bool(entry.get("crowd")),
-                     entry.get("revise"))
+                     entry.get("revise"), bool(entry.get("bulk")))
     if strict and task.task_id != entry["task_id"]:
         raise ValueError(f"task id of seed {entry['seed']} ({entry['task_type']}, "
                          f"{entry['sheets']} sheet) is {task.task_id}, the manifest says "
@@ -1079,7 +1141,8 @@ __all__ = ["NAMES", "SEEDED_NAMES", "REAL_NAMES", "REAL_CATALOG", "REAL_PER_GROU
            "TRAIN_TWIST_SEEDS", "TWIST_TYPES", "twist_dials", "TRAIN_CROWD_SEEDS", "crowd_dials",
            "TRAIN_REVISE_SEEDS", "revise_dials", "TRAIN_TWIST_WIDTH_SEEDS", "TWIST_WIDTH_TYPES",
            "twist_width_dials", "TRAIN_REVISE_BASE_SEEDS", "revise_base_dials", "shared",
-           "train_overlap", "TRAIN_BREAKS_SEEDS", "breaks_dials"]
+           "train_overlap", "TRAIN_BREAKS_SEEDS", "breaks_dials",
+           "TRAIN_BULK_SEEDS", "bulk_dials"]
 
 
 # ------------------------------------------------------------ stage T2 (2026-11-15)

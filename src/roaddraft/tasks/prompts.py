@@ -599,6 +599,48 @@ def _annotate_base(w: _Words, explicit: bool) -> str:
             f"its alignment data here:\n{_bullets(_alignment_data(w, 'it'))}")
 
 
+def _base_context(w: _Words) -> str:
+    """Where the drafter is on a finished sheet whose line lives in a base drawing: the
+    sheet, the base drawing and any other the sheet file references (the bulk dial's
+    survey base, ``tasks.bulk``)."""
+    also = [f"{r['file']} as {r['name']}" for r in w.D.get("references") or []]
+    more = (f" The sheet file references {_and(also)} too." if also else "")
+    return (f"{w.Sheet_list} is {_a(w.size)} plan sheet at {w.scale}, its viewport on {w.A}"
+            f"{w.turned()}. {w.A} is not in this file: it lives in the base drawing "
+            f"{w.basefile}, attached as {w.ref_name}, so reach it as {w.ref_name}:{w.A}.{more}"
+            f"{w.reading(stated=True)}")
+
+
+def _base_given(w: _Words) -> str:
+    """What a base lettering task is handed of the line's lettering."""
+    words = {"stationing": "its stationing", "bearings": "its bearings",
+             "callouts": "its curve callouts", "table": "its curve data table"}
+    given = [words[p] for p in ("stationing", "bearings", "callouts", "table")
+             if p in w.type.given]
+    return f" {_and(given).capitalize()} are already done; keep them."
+
+
+def _base_stationing(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Station the {w.A} line on {w.sheet_list}."
+    return (f"{_base_context(w)}\nWorking in model space, {w.stationing(w.A, 'station')}. "
+            f"{_sentences([w.curve_points(), w.lettering()])}{_base_given(w)}")
+
+
+def _base_bearings(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Add the bearings of the {w.A} line to {w.sheet_list}."
+    return (f"{_base_context(w)}\n{w.bearings(f' of {w.A}')}, in {w.label_h} text on "
+            f"{w.layer('labels')}.{_base_given(w)}")
+
+
+def _base_callouts(w: _Words, explicit: bool) -> str:
+    if not explicit:
+        return f"Number the curves of the {w.A} line on {w.sheet_list}."
+    return (f"{_base_context(w)}\n{w.callouts(f' of {w.A}')}, in {w.label_h} text on "
+            f"{w.layer('labels')}.{_base_given(w)}")
+
+
 def _attach_reference(w: _Words, explicit: bool) -> str:
     ref = w.S.get("reference", {})
     if explicit:
@@ -948,6 +990,9 @@ PROMPTS: Dict[str, Callable[[_Words, bool], str]] = {
     "create-plan-sheet": _create_plan_sheet,
     "base-plan-sheet": _base_plan_sheet,
     "plan-sheet-breaks": _plan_sheet_breaks,
+    "base-stationing": _base_stationing,
+    "base-bearings": _base_bearings,
+    "base-callouts": _base_callouts,
     "real-stationing": _real_stationing,
     "real-bearings": _real_bearings,
     "real-callouts": _real_callouts,

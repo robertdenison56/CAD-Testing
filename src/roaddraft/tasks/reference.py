@@ -145,15 +145,20 @@ def phase_commands(task: Task, phases: Iterable[str]) -> List[tuple]:
                     params["text_gap"] = wd["text_gap_ft"]
                 steps.append(("place_dimension", params))
         elif phase == "reference":
-            for r in D.get("references") or []:  # a real sheet's base files, as published
-                steps.append(("attach_reference", {"name": r["name"], "path": r["file"],
-                                                   "space": r.get("space", "model")}))
-            if not D.get("basefile"):
-                continue  # nothing to attach: the drawing is all in this document
-            ref_spec = S.get("reference", {})
-            steps.append(("attach_reference", {
-                "name": ref_spec.get("name", "BASE"), "path": D["basefile"],
-                "space": ref_spec.get("space", "model")}))
+            # a real sheet's base files, as published; a bulked sheet's survey files, which
+            # an office attaches before the design's or after it (``after_design``)
+            others = [("attach_reference", {"name": r["name"], "path": r["file"],
+                                            "space": r.get("space", "model")})
+                      for r in D.get("references") or []]
+            late = [bool(r.get("after_design")) for r in D.get("references") or []]
+            steps += [step for step, after in zip(others, late) if not after]
+            if D.get("basefile"):
+                ref_spec = S.get("reference", {})
+                steps.append(("attach_reference", {
+                    "name": D.get("design_reference") or ref_spec.get("name", "BASE"),
+                    "path": D["basefile"],
+                    "space": ref_spec.get("space", "model")}))
+            steps += [step for step, after in zip(others, late) if after]
         elif phase == "sheet":
             for sh in sheets:
                 params = {"name": sh["name"], "size": sh["size"]}

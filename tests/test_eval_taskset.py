@@ -219,7 +219,7 @@ def test_the_training_sets_share_nothing_with_any_eval_set():
     assert tasksets.TRAIN_NAMES == ("d1-train", "d1-train-hard", "d1-train-twist",
                                     "d1-train-crowd", "d1-train-revise",
                                     "d1-train-twist-widths", "d1-train-revise-base",
-                                    "d1-train-breaks")
+                                    "d1-train-breaks", "d1-train-bulk")
     train, hard, *_rest = (tasksets.load(n) for n in tasksets.TRAIN_NAMES)
     assert [t["seed"] for t in train["tasks"]] == list(tasksets.TRAIN_SEEDS)
     kept = [s for s in tasksets.TRAIN_HARD_SEEDS if s not in hard["skipped_seeds"]]

@@ -72,8 +72,11 @@ def _mixed(entry) -> float:
 def test_every_training_set_is_a_flavour_and_every_cell_is_dialed_by_its_own_set():
     assert [f.taskset for f in t2.FLAVOURS] == list(tasksets.TRAIN_NAMES)
     base = t2.base_counts()
-    assert len(base) == 42 and sum(base.values()) == sum(
+    # (45 since 2026-11-25: the three bulked types of d1-train-bulk)
+    assert len(base) == 45 and sum(base.values()) == sum(
         len(tasksets.load(n)["tasks"]) for n in tasksets.TRAIN_NAMES)
+    assert {t for f, t in base if f == "bulk"} == set(tasksets.bulk_dials(i)["task_type"]
+                                                      for i in range(3))
     assert {t for f, t in base if f == "plain"} == set(tasksets.SEEDED_TYPES)
     assert {t for f, t in base if f == "twist"} == set(tasksets.TWIST_TYPES)
     assert {t for f, t in base if f == "breaks"} == {"plan-sheet-breaks"}
@@ -293,8 +296,9 @@ def test_the_manifest_holds_the_planned_mix_as_the_training_sets_tasks(planned):
         assert bool(e.get("crowd")) == (f == "crowd")
         assert (e.get("revise") in ("radius", "pi", "station")) == (f == "revise")
         assert str(e.get("revise", "")).startswith("base-") == (f == "revise-base")
+        assert bool(e.get("bulk")) == (f == "bulk")
         assert set(e) <= {"seed", "curves", "equations", "task_type", "sheets", "task_id", "twist",
-                          "crowd", "revise", "dialed", "flavour"}
+                          "crowd", "revise", "bulk", "dialed", "flavour"}
         assert "sheet_id" not in e and "probe" not in e
     hard = [e for e in tasks if e["flavour"] == "hard"]
     assert {e["task_type"] for e in hard} == set(tasksets.HARD_SEEDED_TYPES)

@@ -52,7 +52,9 @@ def _part(report):
 
 
 def test_the_type_lives_in_a_registry_no_held_out_cycle_reads():
-    assert list(TRAIN_TASK_TYPES) == [breaks.TYPE]
+    # (the base lettering types joined the registry on 2026-11-25: tasks.bulk)
+    assert list(TRAIN_TASK_TYPES)[0] == breaks.TYPE
+    assert [n for n, t in TRAIN_TASK_TYPES.items() if OPEN_BREAKS in t.asks] == [breaks.TYPE]
     for registry in (TASK_TYPES, HARD_TASK_TYPES, REAL_TASK_TYPES, REAL_JOB_TYPES):
         assert breaks.TYPE not in registry
         assert not any(OPEN_BREAKS in t.asks for t in registry.values())

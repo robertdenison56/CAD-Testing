@@ -224,7 +224,27 @@ TRAIN_TASK_TYPES: Dict[str, TaskType] = {t.name: t for t in (
     _type("plan-sheet-breaks", list(LAYOUT_GROUPS) + [OPEN_BREAKS], [],
           "draft the plan sheets from the design at the scale given, the number of sheets and "
           "the breaks between them left to the drafter"),
+    # one piece of a line's lettering on a finished sheet whose design lives in the attached
+    # base drawing (2026-11-25, Robert: "Go with 1"): the seeded counterparts of
+    # ``real-stationing``, ``real-bearings`` and ``real-callouts``, which no seeded type was.
+    # The sheet, its north arrow and title block and the rest of the line's lettering are
+    # handed over, so every label anchors through the reference.  The bulk dial
+    # (``tasks.bulk``) draws on them
+    _type("base-stationing", ["ticks", "stations", "curve_points"],
+          ["layers", "reference", "sheet", "bearings", "callouts", "table", "north", "title"],
+          "station the alignment of the referenced base drawing on a finished sheet",
+          basefile=["linework", "edges"], owns_design=False),
+    _type("base-bearings", ["bearings"],
+          ["layers", "reference", "sheet", "stationing", "callouts", "table", "north", "title"],
+          "label the tangent bearings of the referenced base drawing's alignment on a finished "
+          "sheet", basefile=["linework", "edges"], owns_design=False),
+    _type("base-callouts", ["callouts"],
+          ["layers", "reference", "sheet", "stationing", "bearings", "table", "north", "title"],
+          "number the curves of the referenced base drawing's alignment on a finished sheet",
+          basefile=["linework", "edges"], owns_design=False),
 )}
+#: the training-only types that letter one piece of a referenced line (``tasks.bulk``)
+BASE_LETTER_TYPES: Tuple[str, ...] = ("base-stationing", "base-bearings", "base-callouts")
 
 DEFAULT_TYPE = "plan-sheet"
 
@@ -385,7 +405,7 @@ __all__ = ["PHASES", "PHASE_ORDER", "GROUPS", "GROUP_PHASE", "LAYOUT_PHASES", "L
            "DESIGN_GROUPS", "BASE_SCOPE",
            "MODEL_PHASES", "LABEL_GROUPS", "CHECK_GROUPS", "GROUP_LAYER_ROLE", "TaskType",
            "TASK_TYPES", "REAL_TASK_TYPES", "HARD_TASK_TYPES", "REAL_JOB_TYPES", "REAL_SHEET_PHASES",
-           "TRAIN_TASK_TYPES", "OPEN_BREAKS",
+           "TRAIN_TASK_TYPES", "OPEN_BREAKS", "BASE_LETTER_TYPES",
            "DEFAULT_TYPE", "task_type",
            "REAL_GROUPS", "D1_REAL_GROUPS", "REAL_GROUP_OF", "REAL_GROUP_NAMES", "REAL_GROUP_ORDER",
            "real_group",

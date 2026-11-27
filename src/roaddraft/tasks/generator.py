@@ -38,6 +38,7 @@ from __future__ import annotations
 import datetime as _dt
 import math
 import random
+from types import SimpleNamespace
 from typing import List, Optional, Sequence, Tuple
 
 from roaddraft.core import geometry as geo
@@ -559,7 +560,7 @@ def _baseline(design: dict, project: dict, task_id: str, v_mph: int, county: str
 def generate_task(seed: int, curves: Optional[int] = None, equations: bool = False,
                   design_speed_mph: Optional[int] = None, level: str = "D1",
                   task_type: str = DEFAULT_TYPE, sheets: int = 1, twist=False,
-                  crowd: bool = False, revise=None) -> Task:
+                  crowd: bool = False, revise=None, bulk: bool = False) -> Task:
     """Generate a deterministic D1 task from ``seed``.
 
     ``task_type`` names what the drafter starts with and is asked for
@@ -573,7 +574,12 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     task asks for.  The uncrowded task is the default, id and all.  ``revise``
     hands over the finished sheet after the designer has changed its design
     (``tasks.revise``): a kind of ``tasks.revise.KINDS``, or True for the
-    seed's own pick.  The unrevised task is the default, id and all."""
+    seed's own pick.  The unrevised task is the default, id and all.  ``bulk``
+    hands the task over at a real sheet's size (``tasks.bulk``): the line, the
+    sheet and the references named as an office names them, a survey base
+    attached beside the design's, and the paper carrying notes, a legend and
+    schedules, so the sheet's state no longer fits one answer.  The plain task
+    is the default, id and all."""
     ttype: TaskType = _task_type(task_type) if isinstance(task_type, str) else task_type
     n_sheets = int(sheets)
     if n_sheets < 1 or n_sheets > len(SHEET_NAMES):
@@ -581,6 +587,12 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     if crowd:
         from roaddraft.tasks.crowd import fits as _crowd_fits
         why = _crowd_fits(ttype, n_sheets)
+        if why:
+            raise ValueError(why)
+    if bulk:
+        from roaddraft.tasks import bulk as _bulk
+        why = ("a task is bulked, or crowded or revised, not both" if crowd or revise
+               else _bulk.fits(ttype, n_sheets, equations))
         if why:
             raise ValueError(why)
     if revise:
@@ -599,6 +611,9 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         if "sheet" not in shown:
             raise ValueError(f"a {ttype.name} task has no sheet, so nothing to twist")
     rng = random.Random(int(seed))
+    #: what the line and its sheets are called: the generator's own names, or an office's
+    #: (the bulk dial; its names are drawn once the route is, below, on their own stream)
+    align_name, sheet_names = ALIGNMENT_NAME, SHEET_NAMES
     v_mph = int(design_speed_mph) if design_speed_mph else rng.choice(SPEEDS)
     n = rng.choice(CURVE_COUNTS) if curves is None else int(curves)
     if n < 1:
@@ -628,7 +643,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         # turned under the sheet by the twist, and ``laid`` is the road as the sheet shows it
         pis = _build_pis(x0, y0, d0 - turn if turn else d0, radii, deltas, turns, extras)
         elements = compile_pis(pis)
-        align = Alignment(name=ALIGNMENT_NAME, elements=elements, pis=pis, source="pis")
+        align = Alignment(name=align_name, elements=elements, pis=pis, source="pis")
         laid = _laid(align, turn)
         fit = _fits(laid, n_sheets, align, turn)
         if fit is not None:
@@ -693,6 +708,12 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
 
     # ---- project metadata
     route = rng.choice(ROUTES)
+    bulk_names: dict = {}
+    if bulk:
+        bulk_names = _bulk.names(seed, route)
+        align_name, sheet_names = bulk_names["alignment"], [bulk_names["sheet"]]
+        align.name = align_name
+        profile.alignment = align_name
     kind = rng.choice(PROJECTS)
     agency = rng.choice(AGENCIES)
     county = rng.choice(COUNTIES)
@@ -736,7 +757,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
             label_boxes += _dimension_boxes(align, half_width, width_dims, fpi, turn)
     sheet_dicts: List[dict] = []
     for i in range(n_sheets):
-        name = SHEET_NAMES[i]
+        name = sheet_names[i]
         sheet = Sheet(id=f"SH-{i + 1:03d}", name=name, size=size, width_in=width,
                       height_in=height)
         lo, hi = bounds[i], bounds[i + 1]
@@ -772,7 +793,7 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
             if d not in (lo, hi):
                 continue
             raw = begin_station + d
-            other = SHEET_NAMES[i + 1] if d == hi else SHEET_NAMES[i - 1]
+            other = sheet_names[i + 1] if d == hi else sheet_names[i - 1]
             text = st.format(raw)
             label = f"MATCH LINE STA {text} SEE SHEET {other}"
             side, rotation, offset, rect = _match_layout(align, text, label, viewport, sheet)
@@ -781,11 +802,30 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                 "station": float(raw), "station_text": text,
                 "half_width_ft": _round2(MATCH_HALF_IN * fpi), "other_sheet": other,
                 "label": label, "label_offset_in": offset, "side": side, "rotation": rotation})
+        edge, table_on = None, sheet
+        if bulk:
+            # an agency's border where the line keeps its lettering off the title block
+            # that floats over the plan, else the seeded one (``tasks.bulk.borders``)
+            shown_line = segment_points(align, 0.0, align.length)
+            for edge in _bulk.borders(seed, width, height, viewport):
+                trial = dict(viewport, center_paper=list(edge["center_paper"]
+                                                         or viewport["center_paper"]))
+                if _bulk.border_fits(edge, trial, shown_line):
+                    break
+            viewport = trial
+            sheet.title_block_template = edge["template"]
+            label_rects = label_rects + [tuple(box) for box in edge["blocked"]]
+            if edge["north_arrow"]:
+                ax, ay = edge["north_arrow"]
+                reach = 1.8 * sheet_spec["north_arrow"]["scale"]
+                label_rects.append((ax - reach, ay - reach, ax + reach, ay + reach))
+            if edge["table_area"]:  # the table keeps to the paper the border leaves free
+                table_on = SimpleNamespace(usable_area=lambda area=edge["table_area"]: area)
         sheet_dicts.append({
             "name": name, "size": size, "viewport": viewport,
             "station_range": [float(begin_station + lo), float(begin_station + hi)],
             "curves": on_sheet,
-            "curve_table_position": _curve_table_position(align, on_sheet, sheet, viewport,
+            "curve_table_position": _curve_table_position(align, on_sheet, table_on, viewport,
                                                           columns, table_h, avoid=label_rects),
             "title_block_fields": {
                 "project": project["name"], "agency": agency, "sheet_title": "ROADWAY PLAN",
@@ -800,6 +840,16 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                                               "scale": na["scale"], "rotation_deg": turn}
             if "sheet" in ttype.asks:
                 sheet_dicts[-1]["twist_deg"] = turn
+        if edge and edge["template"] != "standard":
+            sh = sheet_dicts[-1]
+            sh["template"] = edge["template"]
+            sh["title_block_fields"] = _bulk.border_fields(seed, edge["template"],
+                                                           sh["title_block_fields"], project, name)
+            sh["required_title_fields"] = list(sh["title_block_fields"])
+            if edge["north_arrow"]:
+                sh["north_arrow"] = {"position": list(edge["north_arrow"]),
+                                     "scale": sheet_spec["north_arrow"]["scale"],
+                                     **({"rotation_deg": turn} if turn else {})}
     deliverable = {
         "task_type": ttype.name, "sheets": sheet_dicts, "feet_per_inch": float(fpi),
         "pavement": {"half_width_ft": half_width, "offsets_ft": [-half_width, half_width],
@@ -827,8 +877,16 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
         deliverable["view_rotation"] = turn
     if ttype.basefile:
         deliverable["basefile"] = f"{route.replace(' ', '')}-base{INTERCHANGE_EXT}"
+    if bulk:  # the base files as an office names them, the survey's beside the design's
+        deliverable["basefile"] = bulk_names["design_file"]
+        deliverable["design_reference"] = bulk_names["design"]
+        deliverable["references"] = [
+            {"name": r["name"], "file": r["file"], "space": "model",
+             **({"after_design": True} if bulk_names["design_first"] else {})}
+            for r in bulk_names["surveys"]]
+        deliverable["bulk"] = {"version": _bulk.BULK_VERSION}
     design = {"design_speed_mph": v_mph,
-              "alignments": {ALIGNMENT_NAME: align.to_dict()},
+              "alignments": {align_name: align.to_dict()},
               "profiles": {PROFILE_NAME: profile.to_dict()}}
     if "design" not in ttype.given:  # the alignment is the task; nothing else is designed yet
         design["profiles"] = {}
@@ -857,8 +915,24 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
                         baseline=_baseline(design, project, task_id, v_mph, county, agency).to_dict())
         base = _draft(designed, ["layers"] + sorted(ttype.basefile, key=PHASE_ORDER.index), seed)
         base.meta["description"] = f"{project['name']} — base drawing"
+        if bulk:  # the rest of what a project's design file carries
+            _bulk.draw_design(base, align, sheet_dicts[0]["viewport"], seed, half_width,
+                              bulk_names["side"], twist=turn)
         task.files[deliverable["basefile"]] = base.to_dict()
+    if bulk:
+        for r in bulk_names["surveys"]:
+            survey = _baseline({"alignments": {}, "profiles": {}}, project, task_id, v_mph,
+                               county, agency)
+            _bulk.draw_survey(survey, align, sheet_dicts[0]["viewport"], seed, r["parts"])
+            task.files[r["file"]] = survey.to_dict()
     drafted = sorted((p for p in ttype.given if p != "design"), key=PHASE_ORDER.index)
+    if ttype.design_referenced and "reference" in drafted and any(
+            p in drafted for p in ("stationing", "bearings", "callouts")):
+        # lettering handed over on a line that lives in the base drawing anchors through
+        # the reference, so the base is attached before anything is lettered
+        first = [p for p in drafted if p in ("layers", "reference")]
+        task.baseline = _draft(task, first, seed).to_dict()
+        drafted = [p for p in drafted if p not in first]
     if drafted:
         task.baseline = _draft(task, drafted, seed).to_dict()
     if crowd:
@@ -867,6 +941,8 @@ def generate_task(seed: int, curves: Optional[int] = None, equations: bool = Fal
     if revise:
         from roaddraft.tasks.revise import revised
         task = revised(task, seed, revise)
+    if bulk:
+        task = _bulk.furnished(task, seed)
     if OPEN_BREAKS in ttype.asks:  # the count and the breaks are the drafter's (tasks.breaks)
         from roaddraft.tasks.breaks import opened
         task = opened(task, seed)

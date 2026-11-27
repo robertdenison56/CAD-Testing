@@ -100,6 +100,7 @@ FLAVOURS: Tuple[Flavour, ...] = (
     Flavour("revise-base", "d1-train-revise-base", tasksets.revise_base_dials,
             tasksets._revise_base_entry),
     Flavour("breaks", "d1-train-breaks", tasksets.breaks_dials, tasksets._breaks_entry),
+    Flavour("bulk", "d1-train-bulk", tasksets.bulk_dials, tasksets._bulk_entry),
 )
 FLAVOUR = {f.name: f for f in FLAVOURS}
 assert {f.taskset for f in FLAVOURS} == set(tasksets.TRAIN_NAMES), "a training set has no T2 flavour"

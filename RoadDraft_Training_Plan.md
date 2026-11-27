@@ -898,6 +898,150 @@ add 599 tasks a level once recorded in main, faulted and converted; that rebuild
 since it changes the card the T1 smoke is sized from. Checked on the combined tree: every held-out and
 training manifest current, `make_leaderboard.py --check` current.
 
+### Status, 2026-11-25 (Robert: "Go with 1": the bulk dial)
+
+T1 loses on the real dev sheets (`benchmarks/training/T1.md` §11): it reads a long list page after page, or
+asks again for an answer that came back cut. The reference drafter stops at the same place. Run on the 24
+`d1-real-dev` tasks as a diagnostic (nothing kept, nothing trained on), it finishes 4: on 10 it stops at
+`get_sheet_state` cut at the harness's 30,000 characters. So no recording could have shown the way past it.
+Finding 3 and decision 7 stand (no real sheet trains), so the seeded sheets were given what the real ones
+have.
+
+**Measured gap.** A seeded training sheet carries 0 to 4 entities on its paper and one base drawing of 9 or
+10 elements attached as `BASE`. The three dev sheets carry 126 to 1,122 entities on the paper and base files
+of 121 to 6,621 elements attached as `AA01` and `BB01`.
+
+**Built** (`tasks/bulk.py`, `generate_task(..., bulk=True)`; nothing held out moves, see below):
+
+- three training-only types, `base-stationing`, `base-bearings`, `base-callouts` (`TRAIN_TASK_TYPES`): one
+  piece of a line's lettering on a finished sheet whose design lives in the attached base drawing, the
+  rest handed over. They are the seeded counterparts of `real-stationing`, `real-bearings` and
+  `real-callouts`, with the real vague prompts' words ("Station the SB16 line on sheet PL-203.");
+- the bulk dial on them: the line, the sheet, the references and their files named as an office names
+  them (drawn from patterns, none copied from a held-out sheet); a survey base attached beside the
+  design's (right of way, ticked fences, contours, buildings, trees, a parcel field off the sheet: 370 to
+  1,967 elements over a sample of 100); and the paper's own furniture as entities (notes, a legend,
+  schedules ruled by hand, revision strips: 237 to 608 entities, a sheet state of 43,000 to 116,000
+  characters). Nothing is aimed at the lettering (that is the crowd dial): the survey keeps two inches of
+  paper off the line. A bulked task is kept when it starts at 0, its reference scores 100 and its sheet's
+  state is over the cap;
+- `d1-train-bulk`, seeds 26000-26599: 600 tasks, none skipped, 200 a type, one to three curves, two in
+  three through a turned viewport;
+- the drafter (`trajectories/grounded.py`): it reads the head of the cut answer for the scale and the
+  twist, says the answer was cut and that asking again would cut it at the same place, and then asks by
+  kind and by place: its own line's lettering by the line's anchor, the box its new labels take (a quarter
+  inch added, its corners taken to the model by `sheet_to_model`), and only what lies in that box.
+
+**Recorded** (`results/grounded-new/d1-train-bulk-{vague,explicit}`): 600 of 600 kept at each level (100,
+nothing ungrounded). In every recording the sheet's state is asked for once, comes back cut, and is not asked
+for again; no other answer is cut (the largest is 19,363 characters); a search returns 2 rows at the median
+and 86 at the most; "the list runs on" is said in 11 of the 600. Median 9 turns and 17 calls.
+
+**Nothing held out moved.** No tool definition, verifier, prompt of an existing type or manifest changed;
+`pytest tests` passes with the new set in. `benchmarks/training/DATASET_CARD.md` is not regenerated.
+
+#### The same day, bulk-v2 (Robert: "verify that the training tasks are as realistic as possible. additional references, topo included in plan views")
+
+The first dial was checked against the three dev sheets element by element, as a count of structure only
+(what is attached, how much of it lies under the line, what the paper holds; no answer of a held-out task).
+The paragraphs above describe bulk-v1; this one replaces its numbers.
+
+| | real dev sheets (3) | bulk-v1 | bulk-v2 (30 sampled) |
+|---|---|---|---|
+| references on the sheet | 2 | 2 | 2 to 4 (7, 16 and 7 of 30) |
+| design file: elements | 177 to 4,576 | 9 to 21 | 154 to 540 |
+| design file: layers | 9 to 10 | 2 | 7 to 10 |
+| design file: lines (alignments) | 1 or 2 | 1 | 1 or 2 (two in 22 of 30) |
+| design file: elements within half an inch of the line on the paper | 12 to 105 | 6 to 14 | 7 to 325 |
+| survey: elements within half an inch of the line | 4 to 1,288 | 0 | 56 to 245 |
+| survey: elements touching the line | 1 to 555 | 0 | 0 to 86 a file |
+| base text within half an inch of the line | 1 to 14 | 0 | 0 |
+| paper: entities | 126 to 1,122 | 237 to 608 | 292 to 603 |
+| title block | the agency's (`caltrans`) | `standard` | `standard` |
+
+**What v1 had wrong.** It kept every base element two inches of paper off the line, so the plan view
+under the lettering was white. On a real sheet the topo runs under the road. Legibility judges text against
+text (and a leader or dimension line against text), never linework, so nothing graded needed that band.
+
+**bulk-v2** (`tasks/bulk.py`; `BULK_VERSION`): the survey is one to three files (the topo; the right of way
+and parcels; the existing utilities), so a sheet carries two to four references, the design's attached
+first or last. The topo crosses the line (contours, culverts, fences, spot shots) and runs along it (the
+existing pavement and its stripe, ditches, driveways); mains run under the road. Much of it is drawn a
+stroke at a time, as a digitised base is. The design file gains shoulders, hinge and catch lines with
+slope ticks, inlets, hatched patches, tags, and in seven of ten a second line, stationed in the file (a
+frontage road beside the first or a street across it): `list_alignments` then names two lines and the
+brief one. The paper gains details sketched in lines. Only base *text* keeps two inches off the line.
+
+`d1-train-bulk` rebuilt: 594 tasks (6 seeds skipped: the reference did not score 100 on the fuller sheet).
+Recorded again: 594 of 594 kept at each level. The sheet's state is asked for once and never twice; the
+largest whole answer is 25,270 characters; a search returns 6 rows at the median, 138 at the most; "the list
+runs on" in 39 of 594.
+
+**A fault the second line found in the drafter.** One explicit recording lettered the wrong line: the
+drafter took the design file's second line, `AN`, as the one the brief named, because "ANSI D" contains
+it. `grounded._named` now looks for a name as a word of its own first. The other 1,187 recordings chose
+the same line either way (each scored 100).
+
+**Still not a real sheet's.** The title block is the seeded `standard` one. No base text stands inside
+the line's lettering (on the real sheets another line's stationing does): the drafter does not yet move a
+label off base text on a cut sheet, so such a task would not record. Neither is built.
+
+#### The same day, bulk-v3 (Robert: "Yes, seeded sheets"): the two differences left
+
+| | real dev sheets (3) | bulk-v2 | bulk-v3 (589 of the set) |
+|---|---|---|---|
+| title block | the agency's (`caltrans`) | `standard` | `caltrans` 341, `wfl` 122, `standard` 126 |
+| base text within half an inch of the line | 1 to 14 | 0 | 0 to 9, median 3 (none on 24 sheets) |
+
+**The border.** A bulked sheet is drawn on an agency's border most times (`bulk.borders`): the Caltrans one
+the three dev sheets carry, or the Federal Lands one. Its title block floats over the plan and every field
+it letters is filled from patterns. On the Caltrans border the plan moves right of the binding strip, the
+north arrow stands beside the title block and the curve table keeps to the paper left of it. A sheet whose
+line would run under the title block keeps the seeded border. Nothing of the title block or north arrow is
+graded on these types (the sheet is handed over finished).
+
+**Base text inside the lettering.** A contour's elevation on the road, the old pavement's and the
+shoulder's tags, a main lettered along itself, a cross street stationed through the crossing. Where a
+label's default pose lands on one, the truth sets it as a drafter would (`crowd.choose_poses`: the other
+side of the line, then further off). That happens on 24 of the 598 sheets.
+
+**The drafter** (`grounded._clear`) can now do that on a sheet too large to read whole: it reads the
+label's own text height (the narrow list does not carry it), sets the label again, and where it lands on
+paper that was not searched, searches that box too before comparing. Before, it stopped.
+
+`d1-train-bulk` rebuilt: 598 tasks (2 seeds skipped). Recorded again: 598 of 598 kept at each level. The
+sheet's state is asked for once and never twice; the largest whole answer is 25,493 characters; a label is
+set again in 24 recordings a level and a second search made in 6.
+
+**Still not a real sheet's.** The text near the line is where the ground puts it, not aimed at the
+lettering, so only one sheet in twenty-five asks for a label to be moved. The crowd dial (`tasks.crowd`)
+is the one that aims; the two are not combined.
+
+**Converted, the same evening (Robert: "Convert the set").** `faults inject --set d1-train-bulk --source
+results/grounded-new --out results/faults-new` kept 1,196 of 1,196 faulted copies (752 faults vague, 766
+explicit; one fault on about three copies in four, two on the rest; `alignment_left_off` and
+`alignment_misnamed` are three quarters of them). `conversations convert --set d1-train-bulk --source
+results/grounded-new --faults results/faults-new` wrote four files into `results/training`, 598
+conversations each, none dropped, all on the one tool set `0f108e6b…`. Counted with the 9B's tokenizer:
+
+| file | conversations | tokens | trained | median | longest | past 65,536 |
+|---|---:|---:|---:|---:|---:|---:|
+| `d1-train-bulk-vague` | 598 | 35,465,751 | 1,172,908 | 58,949 | 80,318 | 56 |
+| `d1-train-bulk-vague-faults` | 598 | 35,722,098 | 1,130,885 | 59,341 | 80,928 | 61 |
+| `d1-train-bulk-explicit` | 598 | 35,583,064 | 1,172,908 | 59,154 | 80,528 | 58 |
+| `d1-train-bulk-explicit-faults` | 598 | 35,845,058 | 1,128,968 | 59,491 | 80,761 | 70 |
+
+None is past 131,072. The set is 142.6M tokens (4.6M trained); the vague half alone is 71.2M. The whole of
+`results/training` is now 21,085 conversations, 1,078.9M tokens, 96.4M trained, 6 past 131,072 (none of
+them bulk). `benchmarks/training/DATASET_CARD.md` is rewritten from the new summary. The conversion took 78
+minutes and the faults 40, against minutes for the older sets: the sheets are large.
+
+**Not built.** (a) done, above. (b) Sheet work on a cut sheet (a curve table's corner, a title block's keys: the usable
+area and the keys are past the cut), so `annotate-base`, `curve-table` and `title-block` are not bulked yet;
+two of T1's seven losses are title blocks. (c) The construction callouts (the `notes` phase), which the
+drafter does not cover on any sheet. (d) A second line in the base drawing. (e) No training run: a run on
+data that includes this set is Robert's call, as the 10,000-conversation run is.
+
 ## 6. Decisions for Robert
 
 1. **The rig for base, T0 and checkpoints.** PC only: free, one to one and a half nights per 100 episodes, and
