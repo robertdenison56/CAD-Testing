@@ -4,7 +4,7 @@ The benchmark board: every published run on the eval sets, scored by the verifie
 
 Vague prompts only: the request in a sentence, the board's focus. The explicit-prompt board was retired on 2026-11-16; its rows are listed in [RETIRED.md](RETIRED.md).
 
-Track D closed on 2026-11-16: what the board found is written up in `docs/Track_D_Findings.md`. Still to come: GPT-6 Astra's remaining sets, appended as they finish.
+Track D closed on 2026-11-16: what the board found is written up in `docs/Track_D_Findings.md`. Still to come: GPT-6 Astra's remaining sets, appended as they finish (`d1-real` was added on 2026-11-22).
 
 ![Effective score by model on each eval set](leaderboard.svg)
 
@@ -58,7 +58,7 @@ Overall = the weighted mean of the model's effective scores on the 5 sets below,
 Notes on `d1-test`:
 
 - Every row on this set ran on the pinned run code (3b7e7fe9; the Runpod rows ad6bf5e3), from before the seeded documents carried the title block's four names and date (designed by, drawn by, checked by, date: 234773ec, 2026-11-12). A vague prompt does not state them, so a drafter had nothing to read them from and left them blank or made them up. The rows stay ranked: the blank fields cost a row 0.3 to 0.95 points on the 19 tasks with a title block, and with each row's shortfall added back the order did not change (checked 2026-11-13, before GPT-6 Astra's row, which leads by 1.1).
-- gpt-6-astra (medium) via codex · single · vague (`e3-d1-test-gpt-6-astra-codex-medium-single-vague-v3`): as of 2026-11-16 this is GPT-6 Astra's only finished set. Its `d1-real` run stopped at 49 of 100 on the ChatGPT account's weekly limit (not published) and resumes when the limit resets on Nov 20, with `d1-test-hard` after it; it has no overall score until all five sets are in.
+- gpt-6-astra (medium) via codex · single · vague (`e3-d1-test-gpt-6-astra-codex-medium-single-vague-v3`): as of 2026-11-25 GPT-6 Astra has two finished sets, this one and `d1-real` (88.3, finished 2026-11-22). Its `d1-test-hard` run stopped at 55 of 100 on the ChatGPT account's weekly limit (not published) and can resume when the limit resets on Nov 27; `d1-real-hard` and `hard-pilots` are not queued. It has no overall score until all five sets are in.
 
 ## `d1-real`: the sample plan sheets
 
