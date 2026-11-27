@@ -29,7 +29,7 @@ python scripts/training_merge_quantize.py --adapter "$ADAPTER" --out "$OUT/gguf"
 python - <<'EOF'
 import json
 c = json.load(open("runs/t1/gguf/check.json"))
-print(json.dumps({k: c[k] for k in c if k in ("verify_merge", "conversation_prompt_equal", "sha256", "bytes")}, indent=1)[:1200])
+print(json.dumps({k: c[k] for k in c if k in ("adapter_load", "adapter_moves_logits", "verify_merge", "conversation_prompt_equal", "sha256", "bytes")}, indent=1)[:1200])
 EOF
 
 # The real file's embedded template against the training text: expect 0 issues.

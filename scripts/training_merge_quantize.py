@@ -57,9 +57,50 @@ def sh(cmd, log):
     return round(time.time() - t0, 1)
 
 
+def load_adapter(base, adapter: Path):
+    """The adapter on ``base``, with every one of its tensors loaded, or stop.
+
+    PEFT only warns when an adapter's keys do not name modules of the model
+    it is put on, and the LoRA then stays at its zero start: the "merged"
+    model is the base (T1, 2026-11-21: Unsloth trained on the
+    ConditionalGeneration class, whose layers sit under ``language_model``;
+    the merge loads the CausalLM class, whose layers do not). So the keys are
+    matched here, renamed when they differ only by that wrapper, and a tensor
+    that still finds no module ends the run.
+    """
+    from peft import LoraConfig, get_peft_model
+    from peft.utils import load_peft_weights, set_peft_model_state_dict
+    cfg = LoraConfig.from_pretrained(str(adapter))
+    cfg.inference_mode = True
+    model = get_peft_model(base, cfg)
+    want = {k for k in model.state_dict() if "lora_" in k}
+    sd = load_peft_weights(str(adapter), device="cpu")
+
+    def named(key):   # the saved key as the live model names it (PEFT adds the adapter's name)
+        for part in ("lora_A", "lora_B"):
+            key = key.replace(f".{part}.weight", f".{part}.default.weight")
+        return key
+
+    renamed = 0
+    if not {named(k) for k in sd} <= want:
+        fixed = {k.replace(".language_model.", "."): v for k, v in sd.items()}
+        if {named(k) for k in fixed} <= want:
+            renamed, sd = len(sd), fixed
+    lost = sorted(k for k in sd if named(k) not in want)
+    if lost or len(sd) != len(want):
+        raise SystemExit(f"the adapter does not fit the model: {len(lost)} of {len(sd)} tensors name no module "
+                         f"(first: {lost[:1]}), the model has {len(want)} LoRA tensors; nothing merged")
+    result = set_peft_model_state_dict(model, sd)
+    if getattr(result, "missing_keys", None) and any("lora_" in k for k in result.missing_keys):
+        raise SystemExit(f"adapter tensors not loaded: {result.missing_keys[:2]}; nothing merged")
+    zero = sum(1 for k, v in model.state_dict().items() if "lora_B" in k and float(v.abs().max()) == 0.0)
+    if zero:
+        raise SystemExit(f"{zero} LoRA B tensors are all zero after loading: the adapter is not applied")
+    return model, {"tensors": len(sd), "renamed_language_model": renamed}
+
+
 def merge(args, merged: Path) -> dict:
     import torch
-    from peft import PeftModel
     t0 = time.time()
     if args.tiny:
         import training_lora
@@ -70,21 +111,29 @@ def merge(args, merged: Path) -> dict:
         base = AutoModelForCausalLM.from_pretrained(args.base, revision=args.revision, dtype=torch.bfloat16,
                                                     device_map="cpu" if args.cpu else "auto")
         tok = AutoTokenizer.from_pretrained(args.tokenizer or args.base, revision=args.revision)
-    model = PeftModel.from_pretrained(base, str(args.adapter))
-    info = {"adapter": str(args.adapter)}
-    probe = None
+    probe = plain = None
     if args.verify_merge:
         text = "Draft the stationing along BASE:ALIGN-1 on sheet C-101 at 1\" = 40'. " * 40
         probe = tok(text, return_tensors="pt", add_special_tokens=False)["input_ids"][:, :args.verify_merge]
-        probe = probe.to(next(model.parameters()).device)
+        probe = probe.to(next(base.parameters()).device)
+        with torch.no_grad():
+            plain = base(input_ids=probe).logits.float()   # the base alone, before any adapter
+    model, loaded = load_adapter(base, args.adapter)
+    info = {"adapter": str(args.adapter), "adapter_load": loaded}
+    if probe is not None:
         with torch.no_grad():
             before = model(input_ids=probe).logits.float()
+        moved = float((before - plain).abs().max())
+        info["adapter_moves_logits"] = moved
+        if moved == 0.0:
+            raise SystemExit("the adapter leaves the base's logits unchanged: it is not applied; nothing merged")
     model = model.merge_and_unload()
     if probe is not None:
         with torch.no_grad():
             after = model(input_ids=probe).logits.float()
         info["verify_merge"] = {"tokens": int(probe.shape[1]),
                                 "max_abs_logit_diff": float((before - after).abs().max()),
+                                "mean_abs_logit_diff": float((before - after).abs().mean()),
                                 "argmax_agree": float((before.argmax(-1) == after.argmax(-1)).float().mean())}
     merged.mkdir(parents=True, exist_ok=True)
     if args.tiny:
